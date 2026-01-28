@@ -10,9 +10,10 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_foundation.config.utils import get_config
 from google.adk.tools import BaseTool
 from google.genai.types import Part
+
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -21,7 +22,9 @@ if TYPE_CHECKING:
 class VideoPlayerTool(BaseTool):
     """Tool for playing videos with frame tagging based on search results"""
 
-    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+    ):
         """Initialize video player tool
 
         Args:

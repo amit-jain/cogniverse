@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import dspy
 import pytest
+
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,

@@ -65,7 +65,10 @@ class TestMultiTurnEvaluation:
         # Multi-turn format
         input_data = {
             "conversation": [
-                {"query": "show me basketball videos", "response": "Here are basketball videos..."},
+                {
+                    "query": "show me basketball videos",
+                    "response": "Here are basketball videos...",
+                },
                 {"query": "any dunks?", "response": ""},  # Current turn
             ]
         }
@@ -90,8 +93,14 @@ class TestMultiTurnEvaluation:
 
         input_data = {
             "conversation": [
-                {"query": "find sports videos", "response": "Here are sports videos..."},
-                {"query": "basketball specifically", "response": "Here are basketball videos..."},
+                {
+                    "query": "find sports videos",
+                    "response": "Here are sports videos...",
+                },
+                {
+                    "query": "basketball specifically",
+                    "response": "Here are basketball videos...",
+                },
                 {"query": "show dunks from those", "response": ""},
             ]
         }
@@ -154,9 +163,7 @@ class TestReferenceBasedMultiTurn:
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
         expected = ["v1", "v2"]
 
-        _ = evaluator.evaluate(
-            input=input_data, output=output_data, expected=expected
-        )
+        _ = evaluator.evaluate(input=input_data, output=output_data, expected=expected)
 
         # Verify history in prompt
         call_args = mock_call_llm.call_args
@@ -187,9 +194,7 @@ class TestHybridMultiTurn:
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
         expected = ["v1"]
 
-        _ = evaluator.evaluate(
-            input=input_data, output=output_data, expected=expected
-        )
+        _ = evaluator.evaluate(input=input_data, output=output_data, expected=expected)
 
         # Both evaluators should have been called with conversation format
         assert mock_free_llm.called
@@ -246,7 +251,7 @@ class TestEdgeCases:
             "query": "ignored query",
             "conversation": [
                 {"query": "used query", "response": ""},
-            ]
+            ],
         }
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
 

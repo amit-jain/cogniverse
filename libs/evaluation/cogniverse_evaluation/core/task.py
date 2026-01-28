@@ -65,13 +65,18 @@ def evaluation_task(
         asyncio.get_running_loop()
         # If we're here, loop is running - run in a separate thread
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             dataset_data = pool.submit(
-                lambda: asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+                lambda: asyncio.run(
+                    provider.telemetry.datasets.get_dataset(dataset_name)
+                )
             ).result()
     except RuntimeError:
         # No event loop running, safe to use asyncio.run()
-        dataset_data = asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+        dataset_data = asyncio.run(
+            provider.telemetry.datasets.get_dataset(dataset_name)
+        )
 
     if not dataset_data or not dataset_data.get("examples"):
         raise ValueError(f"Dataset '{dataset_name}' not found or empty")

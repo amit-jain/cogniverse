@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
-from cogniverse_foundation.config.utils import get_config_value
 from litellm import arerank, rerank
 
 from cogniverse_agents.search.multi_modal_reranker import SearchResult
+from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,12 @@ class LearnedReranker:
     Configuration is loaded from config.json under "reranking" section.
     """
 
-    def __init__(self, model: Optional[str] = None, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        tenant_id: str = "default",
+        config_manager: "ConfigManager" = None,
+    ):
         """
         Initialize learned reranker
 
@@ -58,7 +63,9 @@ class LearnedReranker:
             )
 
         # Load config
-        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
+        rerank_config = get_config_value(
+            "reranking", {}, tenant_id=tenant_id, config_manager=config_manager
+        )
 
         # Determine model to use
         if model:
@@ -142,7 +149,9 @@ class LearnedReranker:
             reranked = []
             for result_item in response.results:
                 original_result = results[result_item.index]
-                original_result.metadata["reranking_score"] = result_item.relevance_score
+                original_result.metadata["reranking_score"] = (
+                    result_item.relevance_score
+                )
                 original_result.metadata["reranker_model"] = self.model
                 original_result.metadata["original_rank"] = result_item.index
                 reranked.append(original_result)
@@ -203,7 +212,9 @@ class LearnedReranker:
             reranked = []
             for result_item in response.results:
                 original_result = results[result_item.index]
-                original_result.metadata["reranking_score"] = result_item.relevance_score
+                original_result.metadata["reranking_score"] = (
+                    result_item.relevance_score
+                )
                 original_result.metadata["reranker_model"] = self.model
                 original_result.metadata["original_rank"] = result_item.index
                 reranked.append(original_result)

@@ -209,7 +209,9 @@ def create_batch_solver(
 
                 # Initialize ConfigManager for dependency injection
                 ground_truth_config_manager = ConfigManager()
-                main_config = get_config(tenant_id="default", config_manager=ground_truth_config_manager)
+                main_config = get_config(
+                    tenant_id="default", config_manager=ground_truth_config_manager
+                )
                 search_service = SearchService(main_config)
                 backend = search_service.backend
             except Exception as e:
@@ -221,7 +223,7 @@ def create_batch_solver(
             # Get spans and filter by trace_ids client-side
             df = await provider.telemetry.traces.get_spans(
                 project=config.get("project_name", "cogniverse-default"),
-                limit=config.get("limit", 1000)
+                limit=config.get("limit", 1000),
             )
             if not df.empty and "trace_id" in df.columns:
                 df = df[df["trace_id"].isin(trace_ids)]
@@ -236,7 +238,7 @@ def create_batch_solver(
             df = await provider.telemetry.traces.get_spans(
                 project=config.get("project_name", "cogniverse-default"),
                 start_time=start_time,
-                limit=limit
+                limit=limit,
             )
 
         if df.empty:
@@ -339,7 +341,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
             df = await provider.telemetry.traces.get_spans(
                 project=config.get("project_name", "cogniverse-default"),
                 start_time=last_check,
-                limit=100
+                limit=100,
             )
 
             if not df.empty:

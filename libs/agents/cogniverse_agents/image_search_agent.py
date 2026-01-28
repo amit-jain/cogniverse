@@ -11,13 +11,13 @@ from typing import Any, Dict, List, Optional
 import dspy
 import numpy as np
 import torch
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.common.models.model_loaders import get_or_load_model
 from PIL import Image
 from pydantic import Field
 
 from cogniverse_agents.query.encoders import ColPaliQueryEncoder
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.models.model_loaders import get_or_load_model
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,15 @@ class ImageResult(AgentOutput):
     title: str = Field("", description="Image title")
     description: str = Field("", description="Image description")
     relevance_score: float = Field(0.0, description="Relevance score")
-    detected_objects: List[str] = Field(default_factory=list, description="Detected objects")
-    detected_scenes: List[str] = Field(default_factory=list, description="Detected scenes")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    detected_objects: List[str] = Field(
+        default_factory=list, description="Detected objects"
+    )
+    detected_scenes: List[str] = Field(
+        default_factory=list, description="Detected scenes"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class ImageSearchInput(AgentInput):
@@ -52,7 +58,9 @@ class ImageSearchInput(AgentInput):
 class ImageSearchOutput(AgentOutput):
     """Type-safe output from image search"""
 
-    results: List[ImageResult] = Field(default_factory=list, description="Search results")
+    results: List[ImageResult] = Field(
+        default_factory=list, description="Search results"
+    )
     count: int = Field(0, description="Number of results")
 
 
@@ -86,6 +94,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             TypeError: If deps is not ImageSearchDeps
             ValidationError: If deps fails Pydantic validation
         """
+
         # Create DSPy module
         class ImageSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Image search query")
@@ -381,7 +390,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             "agent": self.agent_name,
             "result_type": "image_search_results",
             "count": result.get("count", len(results)),
-            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+            "results": [
+                r.model_dump() if hasattr(r, "model_dump") else r for r in results
+            ],
         }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -390,7 +401,11 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             {
                 "name": "search_images",
                 "description": "Search images using ColPali semantic search",
-                "input_schema": {"query": "string", "search_mode": "string", "limit": "integer"},
+                "input_schema": {
+                    "query": "string",
+                    "search_mode": "string",
+                    "limit": "integer",
+                },
                 "output_schema": {"results": "list", "count": "integer"},
             },
             {

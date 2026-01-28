@@ -243,7 +243,9 @@ class WorkflowIntelligence:
 
             self.db_connection = sqlite3.connect(str(db_path), check_same_thread=False)
             self._create_tables()
-            self.logger.info(f"Workflow intelligence persistence initialized: {db_path}")
+            self.logger.info(
+                f"Workflow intelligence persistence initialized: {db_path}"
+            )
 
         except Exception as e:
             self.logger.error(f"Failed to initialize persistence: {e}")

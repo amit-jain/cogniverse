@@ -7,14 +7,14 @@ Handle rejection feedback and regenerate synthetic data with DSPy.
 import logging
 from typing import Any, Dict, Optional
 
+from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
+
 from cogniverse_agents.approval.interfaces import (
     ApprovalStatus,
     FeedbackHandler,
     ReviewDecision,
     ReviewItem,
 )
-
-from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 
 logger = logging.getLogger(__name__)
 

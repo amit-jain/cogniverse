@@ -17,12 +17,18 @@ class TestExperimentTracker:
     def mock_dependencies(self):
         """Mock all external dependencies."""
         with (
-            patch("cogniverse_evaluation.core.experiment_tracker.register_plugin") as mock_reg,
-            patch("cogniverse_evaluation.core.experiment_tracker.get_evaluation_provider") as mock_provider,
+            patch(
+                "cogniverse_evaluation.core.experiment_tracker.register_plugin"
+            ) as mock_reg,
+            patch(
+                "cogniverse_evaluation.core.experiment_tracker.get_evaluation_provider"
+            ) as mock_provider,
         ):
             # Mock provider to avoid actual Phoenix connection
             mock_provider_instance = Mock()
-            mock_provider_instance.get_dataset_url.return_value = "http://localhost:6006/datasets/test"
+            mock_provider_instance.get_dataset_url.return_value = (
+                "http://localhost:6006/datasets/test"
+            )
             mock_provider.return_value = mock_provider_instance
 
             yield {
@@ -90,7 +96,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_register_evaluator_plugins_llm(self, mock_dependencies):
         """Test registering LLM evaluator plugins."""
-        with patch("cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
+        with patch(
+            "cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
+        ):
             ExperimentTracker(enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
@@ -111,7 +119,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_default(self, tracker):
         """Test getting experiment configurations with defaults."""
-        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
+        with patch(
+            "cogniverse_core.registries.registry.get_registry"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1", "profile2"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -136,7 +146,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_profiles(self, tracker):
         """Test getting configurations for specific profiles."""
-        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
+        with patch(
+            "cogniverse_core.registries.registry.get_registry"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_ranking_strategies.return_value = [
                 "binary_binary",
@@ -152,7 +164,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_strategies(self, tracker):
         """Test getting configurations for specific strategies."""
-        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
+        with patch(
+            "cogniverse_core.registries.registry.get_registry"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -173,7 +187,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_all_strategies(self, tracker):
         """Test getting configurations with all strategies."""
-        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
+        with patch(
+            "cogniverse_core.registries.registry.get_registry"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -192,7 +208,9 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_registry_error(self, tracker):
         """Test handling registry errors gracefully."""
-        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
+        with patch(
+            "cogniverse_core.registries.registry.get_registry"
+        ) as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.side_effect = Exception(
@@ -273,7 +291,9 @@ class TestExperimentTracker:
     def test_create_or_get_dataset_existing(self, tracker, mock_dependencies):
         """Test getting existing dataset."""
         # Mock provider method
-        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/existing_dataset"
+        mock_dependencies["provider"].get_dataset_url.return_value = (
+            "http://localhost:6006/datasets/existing_dataset"
+        )
 
         result = tracker.create_or_get_dataset(dataset_name="existing_dataset")
 
@@ -281,14 +301,18 @@ class TestExperimentTracker:
         assert tracker.dataset_url == "http://localhost:6006/datasets/existing_dataset"
 
     @pytest.mark.unit
-    def test_create_or_get_dataset_new_from_csv(self, tracker, mock_dependencies, tmp_path):
+    def test_create_or_get_dataset_new_from_csv(
+        self, tracker, mock_dependencies, tmp_path
+    ):
         """Test creating new dataset from CSV."""
         # Create a test CSV file
         csv_path = tmp_path / "test.csv"
         csv_path.write_text("query,expected\ntest query,test result\n")
 
         mock_dependencies["provider"].create_dataset.return_value = "new_dataset_id"
-        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/new_dataset"
+        mock_dependencies["provider"].get_dataset_url.return_value = (
+            "http://localhost:6006/datasets/new_dataset"
+        )
 
         result = tracker.create_or_get_dataset(
             dataset_name="new_dataset", csv_path=str(csv_path), force_new=True
@@ -301,7 +325,9 @@ class TestExperimentTracker:
     def test_create_or_get_dataset_test_dataset(self, tracker, mock_dependencies):
         """Test creating test dataset."""
         mock_dependencies["provider"].create_dataset.return_value = "test_dataset_id"
-        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/test"
+        mock_dependencies["provider"].get_dataset_url.return_value = (
+            "http://localhost:6006/datasets/test"
+        )
 
         result = tracker.create_or_get_dataset()
 

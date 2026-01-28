@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 import requests
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -32,7 +33,6 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
-
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 
@@ -161,9 +161,9 @@ class TestRealVespaIntegration:
                 # Unexpected status code, fail immediately
                 assert False, f"Got unexpected status {response.status_code}"
 
-        assert response.status_code == 200, (
-            f"Got {response.status_code} after {max_wait}s"
-        )
+        assert (
+            response.status_code == 200
+        ), f"Got {response.status_code} after {max_wait}s"
         print(f"✅ Test Vespa service is running and accessible on {base_url}")
 
         # Test document API is working - 400 is OK if path is incomplete
@@ -189,9 +189,9 @@ class TestRealVespaIntegration:
                 # Unexpected status code, fail immediately
                 assert False, f"Got unexpected search status {response.status_code}"
 
-        assert response.status_code == 200, (
-            f"Search API got {response.status_code} after {max_search_wait}s"
-        )
+        assert (
+            response.status_code == 200
+        ), f"Search API got {response.status_code} after {max_search_wait}s"
         print("✅ Test Vespa search API is working")
 
     def test_real_video_search_agent(self, shared_system_vespa):
@@ -281,9 +281,9 @@ class TestRealVespaIntegration:
                 )
                 print(f"   Agent schema: {video_agent.search_backend.schema_name}")
 
-                assert search_results is not None, (
-                    f"Enhanced search should return results for '{query}'"
-                )
+                assert (
+                    search_results is not None
+                ), f"Enhanced search should return results for '{query}'"
 
                 # search_by_text() returns a list directly, not a dict
                 results = search_results if isinstance(search_results, list) else []
@@ -308,9 +308,9 @@ class TestRealVespaIntegration:
 
                     # Verify result structure
                     assert "video_id" in result, f"Result {i} missing video_id"
-                    assert "score" in result or "relevance" in result, (
-                        f"Result {i} missing score/relevance"
-                    )
+                    assert (
+                        "score" in result or "relevance" in result
+                    ), f"Result {i} missing score/relevance"
 
             print("\n🎉 Enhanced Video Search Agent integration test COMPLETED!")
             print("Agent successfully used isolated Vespa backend for agentic search")
@@ -740,14 +740,14 @@ class TestRealEndToEndIntegration:
             print(f"   ✅ Routing result: {routing_result}")
 
             # STRICT ASSERTION 1: Must recommend a search agent
-            assert hasattr(routing_result, "recommended_agent"), (
-                "Routing result missing recommended_agent"
-            )
+            assert hasattr(
+                routing_result, "recommended_agent"
+            ), "Routing result missing recommended_agent"
             # Accept either 'search_agent' (current) or 'video_search_agent' (legacy)
             valid_agents = {"search_agent", "video_search_agent"}
-            assert routing_result.recommended_agent in valid_agents, (
-                f"Expected one of {valid_agents}, got '{routing_result.recommended_agent}'"
-            )
+            assert (
+                routing_result.recommended_agent in valid_agents
+            ), f"Expected one of {valid_agents}, got '{routing_result.recommended_agent}'"
 
             # STRICT ASSERTION 2: Must have extracted entities matching our query
             if hasattr(routing_result, "entities") and routing_result.entities:
@@ -764,9 +764,9 @@ class TestRealEndToEndIntegration:
                     if any(e in text for text in entity_texts)
                 ]
 
-                assert len(found_entities) >= 1, (
-                    f"Expected entities {expected_entities}, only found {found_entities} in {entity_texts}"
-                )
+                assert (
+                    len(found_entities) >= 1
+                ), f"Expected entities {expected_entities}, only found {found_entities} in {entity_texts}"
                 print(f"      ✅ Found expected entities: {found_entities}")
 
             print("   ✅ Routing validation PASSED")
@@ -803,9 +803,9 @@ class TestRealEndToEndIntegration:
             found_relevant = [
                 label for label in entity_labels if label in relevant_labels
             ]
-            assert len(found_relevant) > 0, (
-                f"Expected relevant entity labels {relevant_labels}, got {entity_labels}"
-            )
+            assert (
+                len(found_relevant) > 0
+            ), f"Expected relevant entity labels {relevant_labels}, got {entity_labels}"
             print(f"      ✅ Found relevant entity types: {found_relevant}")
 
         except Exception as e:
@@ -881,18 +881,18 @@ class TestRealEndToEndIntegration:
             print(f"   Search results: {len(search_results)} videos found")
 
             # STRICT ASSERTION 1: Must have search results
-            assert len(search_results) > 0, (
-                "CRITICAL: No search results found despite 28 documents ingested!"
-            )
+            assert (
+                len(search_results) > 0
+            ), "CRITICAL: No search results found despite 28 documents ingested!"
 
             # STRICT ASSERTION 2: Results must have proper structure
             for i, result in enumerate(search_results[:5]):
-                assert "video_id" in result, (
-                    f"Result {i} missing video_id: {result.keys()}"
-                )
-                assert "score" in result or "relevance" in result, (
-                    f"Result {i} missing score/relevance: {result.keys()}"
-                )
+                assert (
+                    "video_id" in result
+                ), f"Result {i} missing video_id: {result.keys()}"
+                assert (
+                    "score" in result or "relevance" in result
+                ), f"Result {i} missing score/relevance: {result.keys()}"
 
                 video_id = result.get("video_id", "unknown")
                 score = result.get("score", result.get("relevance", 0))
@@ -902,9 +902,7 @@ class TestRealEndToEndIntegration:
                 expected_video_ids = ["v_-6dz6tBH77I", "v_-D1gdv_gQyw"]
                 assert any(
                     expected_id in video_id for expected_id in expected_video_ids
-                ), (
-                    f"Result {i} has unexpected video_id '{video_id}', expected one of {expected_video_ids}"
-                )
+                ), f"Result {i} has unexpected video_id '{video_id}', expected one of {expected_video_ids}"
 
             # STRICT ASSERTION 4: Should have diverse results (both videos)
             unique_videos = set(
@@ -973,12 +971,12 @@ class TestRealEndToEndIntegration:
 
                 # STRICT ASSERTION 6: Summary must have required fields
                 assert hasattr(summary, "summary"), "Summary missing 'summary' field"
-                assert hasattr(summary, "key_points"), (
-                    "Summary missing 'key_points' field"
-                )
-                assert hasattr(summary, "confidence_score"), (
-                    "Summary missing 'confidence_score' field"
-                )
+                assert hasattr(
+                    summary, "key_points"
+                ), "Summary missing 'key_points' field"
+                assert hasattr(
+                    summary, "confidence_score"
+                ), "Summary missing 'confidence_score' field"
 
                 # STRICT ASSERTION 7: Summary content should be meaningful
                 summary_text = getattr(summary, "summary", "")
@@ -1053,9 +1051,9 @@ class TestRealEndToEndIntegration:
         )
 
         # STRICT ASSERTION 10: At least 4/5 components must work
-        assert successful_components >= 4, (
-            f"System integrity check failed: only {successful_components}/{total_components} components working"
-        )
+        assert (
+            successful_components >= 4
+        ), f"System integrity check failed: only {successful_components}/{total_components} components working"
 
         print("\n🎉 Comprehensive agentic system test completed!")
         print("✅ All major components tested with real functionality")

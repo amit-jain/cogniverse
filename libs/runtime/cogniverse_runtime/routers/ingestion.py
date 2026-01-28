@@ -4,12 +4,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
+
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class IngestionStatus(BaseModel):
 
 # In-memory job tracking (replace with Redis/DB in production)
 ingestion_jobs: Dict[str, IngestionStatus] = {}
+
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
 def get_config_manager_dependency():
@@ -93,7 +95,8 @@ async def start_ingestion(
         video_dir = Path(request.video_dir)
         if not video_dir.exists():
             raise HTTPException(
-                status_code=400, detail=f"Video directory not found: {request.video_dir}"
+                status_code=400,
+                detail=f"Video directory not found: {request.video_dir}",
             )
 
         # Get backend with dependency injection
@@ -177,10 +180,11 @@ async def upload_video(
 
         # Process video
         from cogniverse_foundation.config.utils import get_config
-
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        config = get_config(tenant_id=tenant_id or "default", config_manager=config_manager)
+        config = get_config(
+            tenant_id=tenant_id or "default", config_manager=config_manager
+        )
 
         pipeline = VideoIngestionPipeline(
             config=config, profile=profile, backend=backend_instance
@@ -205,15 +209,15 @@ async def upload_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def run_ingestion(
-    job_id: str, request: IngestionRequest, backend: Any
-) -> None:
+async def run_ingestion(job_id: str, request: IngestionRequest, backend: Any) -> None:
     """Run ingestion process (background task)."""
     try:
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
         config_manager = create_default_config_manager()
-        config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
+        config = get_config(
+            tenant_id=request.tenant_id or "default", config_manager=config_manager
+        )
 
         pipeline = VideoIngestionPipeline(
             config=config, profile=request.profile, backend=backend

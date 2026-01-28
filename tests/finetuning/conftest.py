@@ -24,9 +24,9 @@ def isolate_transformers_imports():
 
     # After test: clear trl trainer modules that depend on transformers
     modules_to_clear = [
-        'trl.trainer.sft_trainer',
-        'trl.trainer.dpo_trainer',
-        'trl.trainer',
+        "trl.trainer.sft_trainer",
+        "trl.trainer.dpo_trainer",
+        "trl.trainer",
     ]
 
     for module_name in modules_to_clear:

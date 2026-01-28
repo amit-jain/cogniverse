@@ -14,7 +14,9 @@ from typing import Tuple
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 
-def generate_unique_ports(module_name: str, base_http_port: int = 8100) -> Tuple[int, int]:
+def generate_unique_ports(
+    module_name: str, base_http_port: int = 8100
+) -> Tuple[int, int]:
     """
     Generate unique HTTP and config ports based on module name.
 
@@ -69,13 +71,17 @@ def wait_for_container_removal(container_name: str, timeout: int = 30) -> bool:
         # Check if container still exists (running or stopped)
         result = subprocess.run(
             [
-                "docker", "ps", "-a",
-                "--filter", f"name={container_name}",
-                "--format", "{{.Names}}"
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                f"name={container_name}",
+                "--format",
+                "{{.Names}}",
             ],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         if container_name not in result.stdout:
@@ -111,16 +117,12 @@ def cleanup_vespa_container(container_name: str, timeout: int = 30) -> bool:
     try:
         # Stop container
         stop_result = subprocess.run(
-            ["docker", "stop", container_name],
-            capture_output=True,
-            timeout=timeout
+            ["docker", "stop", container_name], capture_output=True, timeout=timeout
         )
 
         # Remove container
         remove_result = subprocess.run(
-            ["docker", "rm", container_name],
-            capture_output=True,
-            timeout=timeout
+            ["docker", "rm", container_name], capture_output=True, timeout=timeout
         )
 
         if stop_result.returncode == 0 and remove_result.returncode == 0:

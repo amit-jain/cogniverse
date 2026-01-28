@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
@@ -17,11 +18,15 @@ class TestModalitySpanCollector:
     @pytest.fixture
     def collector(self):
         """Create collector instance with mocked telemetry provider"""
-        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager") as mock_manager:
+        with patch(
+            "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
+        ) as mock_manager:
             # Mock provider
             mock_provider = MagicMock()
             mock_manager.return_value.get_provider.return_value = mock_provider
-            mock_manager.return_value.config.get_project_name.return_value = "test-project"
+            mock_manager.return_value.config.get_project_name.return_value = (
+                "test-project"
+            )
             mock_manager.return_value.config.provider_config = {}
 
             collector = ModalitySpanCollector(tenant_id="test-tenant")
@@ -145,9 +150,8 @@ class TestModalitySpanCollector:
         """Test collecting spans when none found"""
         # Mock provider traces to return empty dataframe
         from unittest.mock import AsyncMock
-        collector.provider.traces.get_spans = AsyncMock(
-            return_value=pd.DataFrame()
-        )
+
+        collector.provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
         result = await collector.collect_spans_by_modality(lookback_hours=1)
 
@@ -193,6 +197,7 @@ class TestModalitySpanCollector:
         )
 
         from unittest.mock import AsyncMock
+
         collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(lookback_hours=1)
@@ -231,6 +236,7 @@ class TestModalitySpanCollector:
         )
 
         from unittest.mock import AsyncMock
+
         collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(
@@ -261,6 +267,7 @@ class TestModalitySpanCollector:
         )
 
         from unittest.mock import AsyncMock
+
         collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(lookback_hours=1)
@@ -298,6 +305,7 @@ class TestModalitySpanCollector:
         )
 
         from unittest.mock import AsyncMock
+
         collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         stats = await collector.get_modality_statistics(lookback_hours=1)

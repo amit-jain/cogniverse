@@ -59,8 +59,9 @@ def shared_system_vespa():
 
     # Clear StrategyRegistry singleton (critical - it caches strategy config)
     from cogniverse_core.registries.registry import get_registry
+
     strategy_registry = get_registry()
-    if hasattr(strategy_registry, '_strategy_cache'):
+    if hasattr(strategy_registry, "_strategy_cache"):
         strategy_registry._strategy_cache.clear()
     # Force reload of strategy config with new env var
     strategy_registry.reload()
@@ -136,7 +137,7 @@ def shared_system_vespa():
 
             # Clear StrategyRegistry
             strategy_registry = get_registry()
-            if hasattr(strategy_registry, '_strategy_cache'):
+            if hasattr(strategy_registry, "_strategy_cache"):
                 strategy_registry._strategy_cache.clear()
 
             # Clear ConfigManager singleton

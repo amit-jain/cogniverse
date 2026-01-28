@@ -7,12 +7,11 @@ Provides REST API endpoints for generating synthetic training data for all optim
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import ValidationError
-
 from cogniverse_synthetic.registry import list_optimizers, validate_optimizer_exists
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
 from cogniverse_synthetic.service import SyntheticDataService
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,9 @@ def configure_service(
 
 
 @router.post("/generate", response_model=SyntheticDataResponse)
-async def generate_synthetic_data(request: SyntheticDataRequest) -> SyntheticDataResponse:
+async def generate_synthetic_data(
+    request: SyntheticDataRequest,
+) -> SyntheticDataResponse:
     """
     Generate synthetic training data for an optimizer
 
@@ -113,8 +114,7 @@ async def get_optimizer_details(optimizer_name: str) -> dict:
     """
     if not validate_optimizer_exists(optimizer_name):
         raise HTTPException(
-            status_code=404,
-            detail=f"Optimizer '{optimizer_name}' not found"
+            status_code=404, detail=f"Optimizer '{optimizer_name}' not found"
         )
 
     service = get_service()
@@ -150,7 +150,9 @@ async def generate_batch_synthetic_data(
     optimizer: str = Query(..., description="Optimizer name"),
     count_per_batch: int = Query(100, ge=1, le=1000, description="Examples per batch"),
     num_batches: int = Query(5, ge=1, le=20, description="Number of batches"),
-    vespa_sample_size: int = Query(200, ge=1, le=10000, description="Vespa sample size"),
+    vespa_sample_size: int = Query(
+        200, ge=1, le=10000, description="Vespa sample size"
+    ),
     max_profiles: int = Query(3, ge=1, le=10, description="Max profiles to use"),
 ) -> dict:
     """
@@ -172,10 +174,7 @@ async def generate_batch_synthetic_data(
         HTTPException: If generation fails
     """
     if not validate_optimizer_exists(optimizer):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown optimizer: '{optimizer}'"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown optimizer: '{optimizer}'")
 
     service = get_service()
     all_examples = []
@@ -193,13 +192,17 @@ async def generate_batch_synthetic_data(
             response = await service.generate(request)
 
             all_examples.extend(response.data)
-            batch_metadata.append({
-                "batch_index": batch_idx,
-                "count": response.count,
-                "profiles": response.selected_profiles,
-            })
+            batch_metadata.append(
+                {
+                    "batch_index": batch_idx,
+                    "count": response.count,
+                    "profiles": response.selected_profiles,
+                }
+            )
 
-            logger.info(f"Batch {batch_idx + 1}/{num_batches} completed: {response.count} examples")
+            logger.info(
+                f"Batch {batch_idx + 1}/{num_batches} completed: {response.count} examples"
+            )
 
         return {
             "optimizer": optimizer,

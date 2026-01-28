@@ -247,7 +247,9 @@ class WorkflowCheckpointStorage:
             return None
 
         except Exception as e:
-            logger.error(f"Error getting latest checkpoint for workflow {workflow_id}: {e}")
+            logger.error(
+                f"Error getting latest checkpoint for workflow {workflow_id}: {e}"
+            )
             return None
 
     async def _find_latest_active_checkpoint(
@@ -517,7 +519,11 @@ class WorkflowCheckpointStorage:
                     continue
 
                 # Check if workflow is resumable (not completed/cancelled)
-                if latest.workflow_status in ["running", "failed", "partially_completed"]:
+                if latest.workflow_status in [
+                    "running",
+                    "failed",
+                    "partially_completed",
+                ]:
                     resumable.append(
                         {
                             "workflow_id": workflow_id,
@@ -525,9 +531,11 @@ class WorkflowCheckpointStorage:
                             "workflow_status": latest.workflow_status,
                             "current_phase": latest.current_phase,
                             "total_phases": len(latest.execution_order),
-                            "original_query": latest.original_query[:100] + "..."
-                            if len(latest.original_query) > 100
-                            else latest.original_query,
+                            "original_query": (
+                                latest.original_query[:100] + "..."
+                                if len(latest.original_query) > 100
+                                else latest.original_query
+                            ),
                             "checkpoint_time": latest.checkpoint_time.isoformat(),
                             "resume_count": latest.resume_count,
                         }

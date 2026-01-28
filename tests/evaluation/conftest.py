@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+
 # Standardized Phoenix Docker container fixture for integration tests
 @pytest.fixture(scope="function")
 def phoenix_test_server():
@@ -39,25 +40,39 @@ def phoenix_test_server():
         if result.stdout.strip():
             old_containers = result.stdout.strip().split("\n")
             for container_id in old_containers:
-                subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, timeout=10)
+                subprocess.run(
+                    ["docker", "rm", "-f", container_id],
+                    capture_output=True,
+                    timeout=10,
+                )
     except Exception:
         pass
 
     try:
         # Create temporary directory for Phoenix data
-        test_data_dir = os.path.join(tempfile.gettempdir(), f"phoenix_test_{int(time.time())}")
+        test_data_dir = os.path.join(
+            tempfile.gettempdir(), f"phoenix_test_{int(time.time())}"
+        )
         os.makedirs(test_data_dir, exist_ok=True)
 
         # Start Phoenix container
         subprocess.run(
             [
-                "docker", "run", "-d",
-                "--name", container_name,
-                "-p", "26006:6006",  # HTTP port
-                "-p", "24317:4317",  # gRPC port
-                "-v", f"{test_data_dir}:/phoenix_data",
-                "-e", "PHOENIX_WORKING_DIR=/phoenix_data",
-                "-e", "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                "26006:6006",  # HTTP port
+                "-p",
+                "24317:4317",  # gRPC port
+                "-v",
+                f"{test_data_dir}:/phoenix_data",
+                "-e",
+                "PHOENIX_WORKING_DIR=/phoenix_data",
+                "-e",
+                "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
                 "arizephoenix/phoenix:latest",
             ],
             check=True,
@@ -67,6 +82,7 @@ def phoenix_test_server():
 
         # Wait for Phoenix to be ready
         import requests
+
         for _ in range(60):
             try:
                 response = requests.get("http://localhost:26006", timeout=1)
@@ -93,6 +109,7 @@ def phoenix_test_server():
 def phoenix_client(phoenix_test_server):
     """Get Phoenix client connected to test server."""
     import phoenix as px
+
     return px.Client(endpoint=phoenix_test_server.base_url)
 
 
@@ -298,7 +315,9 @@ def mock_get_config():
 @pytest.fixture
 def mock_evaluator_provider(mock_phoenix_client):
     """Mock evaluator provider for testing."""
-    with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
+    with patch(
+        "cogniverse_evaluation.providers.get_evaluation_provider"
+    ) as mock_get_provider:
         # Create mock provider structure
         mock_provider = MagicMock()
 
@@ -354,13 +373,16 @@ def mock_provider_for_unit_tests(request):
         from unittest.mock import AsyncMock, MagicMock, patch
 
         # Mock the provider to prevent initialization errors
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get:
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider"
+        ) as mock_get:
             mock_provider = MagicMock()
 
             # Mock Phoenix evaluator base class
 
             class MockPhoenixEvaluator:
                 """Mock Phoenix evaluator base"""
+
                 pass
 
             # Mock framework
@@ -373,7 +395,7 @@ def mock_provider_for_unit_tests(request):
                     score=score,
                     label=label,
                     explanation=explanation,
-                    metadata=metadata or {}
+                    metadata=metadata or {},
                 )
 
             mock_framework.create_evaluation_result = mock_create_result
@@ -384,15 +406,19 @@ def mock_provider_for_unit_tests(request):
 
             # Mock datasets with async get_dataset
             mock_datasets = MagicMock()
+
             async def mock_get_dataset(name):
                 return None  # Default return, tests can override
+
             mock_datasets.get_dataset = AsyncMock(side_effect=mock_get_dataset)
             mock_telemetry.datasets = mock_datasets
 
             # Mock traces with async get_spans
             mock_traces = MagicMock()
+
             async def mock_get_spans(**kwargs):
                 return pd.DataFrame()  # Default empty dataframe
+
             mock_traces.get_spans = AsyncMock(side_effect=mock_get_spans)
             mock_telemetry.traces = mock_traces
 

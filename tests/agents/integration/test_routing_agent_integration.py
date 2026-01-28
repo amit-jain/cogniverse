@@ -8,6 +8,7 @@ import os
 import tempfile
 
 import pytest
+
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
@@ -69,7 +70,10 @@ class TestRoutingAgentIntegration:
         """Test RoutingAgent initialization with actual config file"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
@@ -77,9 +81,9 @@ class TestRoutingAgentIntegration:
 
         # Verify agent initialized properly
         assert agent.config is not None
-        assert hasattr(agent, 'logger')
+        assert hasattr(agent, "logger")
         # Agent should have DSPy components initialized
-        assert hasattr(agent, 'routing_module')
+        assert hasattr(agent, "routing_module")
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -87,7 +91,10 @@ class TestRoutingAgentIntegration:
         """Test actual routing decision flow through comprehensive router"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
@@ -118,7 +125,10 @@ class TestRoutingAgentIntegration:
         """Test that context is properly propagated through routing layers"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
@@ -142,19 +152,24 @@ class TestRoutingAgentIntegration:
         # Test with minimal valid config (default values)
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
         assert agent.config is not None
-        assert hasattr(agent, 'logger')
+        assert hasattr(agent, "logger")
 
         # Test with another tenant
-        deps2 = RoutingDeps(tenant_id="test_tenant_2", telemetry_config=telemetry_config)
+        deps2 = RoutingDeps(
+            tenant_id="test_tenant_2", telemetry_config=telemetry_config
+        )
         agent2 = RoutingAgent(deps=deps2)
         assert agent2.config is not None
-        assert hasattr(agent2, 'routing_module')
+        assert hasattr(agent2, "routing_module")
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -162,7 +177,10 @@ class TestRoutingAgentIntegration:
         """Test that workflow generation is consistent across multiple calls"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)

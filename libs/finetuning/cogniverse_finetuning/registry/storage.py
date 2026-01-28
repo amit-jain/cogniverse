@@ -153,7 +153,9 @@ class HuggingFaceStorage(AdapterStorage):
             token=self.token,
         )
 
-        logger.info(f"Downloaded adapter from hf://{repo_id}/{revision} to {local_path}")
+        logger.info(
+            f"Downloaded adapter from hf://{repo_id}/{revision} to {local_path}"
+        )
         return downloaded_path
 
     def exists(self, uri: str) -> bool:

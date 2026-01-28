@@ -12,6 +12,7 @@ Tests use:
 
 import dspy
 import pytest
+
 from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionAgent,
     EntityExtractionDeps,
@@ -30,7 +31,6 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
 )
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-
 from tests.agents.integration.conftest import skip_if_no_ollama
 
 
@@ -102,7 +102,9 @@ def full_orchestrator_with_search(
         AgentType.SEARCH: search_agent_with_vespa,
     }
 
-    orchestrator_deps = OrchestratorDeps(tenant_id="test_tenant", agent_registry=agent_registry)
+    orchestrator_deps = OrchestratorDeps(
+        tenant_id="test_tenant", agent_registry=agent_registry
+    )
     orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
     return orchestrator
 

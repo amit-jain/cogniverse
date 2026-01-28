@@ -113,7 +113,6 @@ class VespaTestManager:
             traceback.print_exc()
             return False
 
-
     def setup_application_directory(self) -> bool:
         """Just create temp directory for cleanup tracking"""
         try:
@@ -136,7 +135,7 @@ class VespaTestManager:
             container_info = self.docker_manager.start_container(
                 module_name="system_test",
                 http_port=self.http_port,  # Use port from VespaTestManager init
-                config_port=self.config_port
+                config_port=self.config_port,
             )
 
             # Update instance variables from container info
@@ -158,6 +157,7 @@ class VespaTestManager:
             # MUST happen before VespaConfigStore can be used
             print("Deploying metadata schemas for VespaConfigStore...")
             from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
             schema_manager = VespaSchemaManager(
                 backend_endpoint="http://localhost",
                 backend_port=self.config_port,
@@ -175,6 +175,7 @@ class VespaTestManager:
         except Exception as e:
             print(f"❌ Failed to start isolated Vespa: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -220,6 +221,7 @@ class VespaTestManager:
             # Clear backend registry cache BEFORE creating config_manager
             # This ensures new backends get fresh SchemaRegistry with temp DB
             from cogniverse_core.registries.backend_registry import get_backend_registry
+
             registry = get_backend_registry()
             if hasattr(registry, "_backend_instances"):
                 registry._backend_instances.clear()
@@ -237,7 +239,9 @@ class VespaTestManager:
             # Store config_manager as instance variable so tests can access it
             self.config_manager = config_manager
 
-            _original_config_values = get_config(tenant_id="default", config_manager=config_manager)
+            _original_config_values = get_config(
+                tenant_id="default", config_manager=config_manager
+            )
             _original_config_vespa_url = _original_config_values.get("vespa_url")
             _original_config_vespa_port = _original_config_values.get("vespa_port")
 
@@ -276,7 +280,9 @@ class VespaTestManager:
             )
 
             # IMPORTANT: Reuse temp DB config_manager created above, don't create a new one!
-            current_config = get_config(tenant_id="default", config_manager=config_manager)
+            current_config = get_config(
+                tenant_id="default", config_manager=config_manager
+            )
             current_backend_config = current_config.get("backend", {})
             loaded_profiles = current_backend_config.get("profiles", {})
             print(
@@ -352,8 +358,12 @@ class VespaTestManager:
                 pipeline = (
                     create_pipeline()
                     .with_config(config)
-                    .with_config_manager(config_manager)  # Required for dependency injection
-                    .with_schema_loader(schema_loader)  # Required for dependency injection
+                    .with_config_manager(
+                        config_manager
+                    )  # Required for dependency injection
+                    .with_schema_loader(
+                        schema_loader
+                    )  # Required for dependency injection
                     .with_app_config(test_config)  # Pass test_config with correct port!
                     .with_schema(self.default_test_schema)
                     .with_tenant_id(
@@ -399,10 +409,11 @@ class VespaTestManager:
                     # Wait for Vespa indexing to complete (eventual consistency)
                     print("⏳ Waiting for Vespa indexing to complete...")
                     from tests.utils.async_polling import wait_for_vespa_indexing
+
                     wait_for_vespa_indexing(
                         vespa_url=f"http://localhost:{self.http_port}",
                         delay=5.0,
-                        description="Vespa document indexing after ingestion"
+                        description="Vespa document indexing after ingestion",
                     )
                     print("✅ Indexing wait complete")
 
@@ -536,11 +547,17 @@ class VespaTestManager:
                 "config_port": self.config_port,  # Use test instance config port
                 "tenant_id": "test_tenant",
                 "profile": self.default_test_schema,  # Explicit profile selection (best practice)
-                "backend": full_config.get("backend", {}),  # Pass entire backend section
+                "backend": full_config.get(
+                    "backend", {}
+                ),  # Pass entire backend section
             }
 
             backend = registry.get_search_backend(
-                "vespa", "test_tenant", backend_config, config_manager=config_manager, schema_loader=schema_loader
+                "vespa",
+                "test_tenant",
+                backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
             )
 
             # Use backend's search method with query_dict format
@@ -637,7 +654,7 @@ class VespaTestManager:
         tenant_id: str,
         config_manager,
         schema_loader=None,
-        backend_type: str = "ingestion"
+        backend_type: str = "ingestion",
     ):
         """
         Helper method to get backend instance via BackendRegistry.

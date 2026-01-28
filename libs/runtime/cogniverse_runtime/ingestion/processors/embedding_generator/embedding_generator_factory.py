@@ -51,7 +51,7 @@ class EmbeddingGeneratorFactory:
             config=config,
             logger=logger,
             config_manager=config_manager,
-            schema_loader=schema_loader
+            schema_loader=schema_loader,
         )
 
         return EmbeddingGeneratorImpl(
@@ -93,9 +93,7 @@ def create_embedding_generator(
     backend_config = config.get("backend", {})
     profiles = backend_config.get("profiles", {})
     if schema_name not in profiles:
-        raise ValueError(
-            f"Profile '{schema_name}' not found in backend.profiles"
-        )
+        raise ValueError(f"Profile '{schema_name}' not found in backend.profiles")
 
     profile_config = profiles[schema_name]
     # Add schema_name to profile_config so it's available

@@ -91,24 +91,34 @@ class TestProfileConcurrentOperations:
 
         def create_profile(thread_id: int):
             try:
-                response = test_client.post("/admin/profiles", json={
-                    "profile_name": f"concurrent_profile_{thread_id}",
-                    "tenant_id": "test_tenant",
-                    "type": "video",
-                    "schema_name": "video_test",
-                    "embedding_model": f"model_{thread_id}",
-                    "embedding_type": "frame_based"
-                })
-                results.append({
-                    "thread_id": thread_id,
-                    "status_code": response.status_code,
-                    "response": response.json() if response.status_code == 201 else None
-                })
+                response = test_client.post(
+                    "/admin/profiles",
+                    json={
+                        "profile_name": f"concurrent_profile_{thread_id}",
+                        "tenant_id": "test_tenant",
+                        "type": "video",
+                        "schema_name": "video_test",
+                        "embedding_model": f"model_{thread_id}",
+                        "embedding_type": "frame_based",
+                    },
+                )
+                results.append(
+                    {
+                        "thread_id": thread_id,
+                        "status_code": response.status_code,
+                        "response": (
+                            response.json() if response.status_code == 201 else None
+                        ),
+                    }
+                )
             except Exception as e:
                 errors.append(e)
 
         # Create threads
-        threads = [threading.Thread(target=create_profile, args=(i,)) for i in range(num_threads)]
+        threads = [
+            threading.Thread(target=create_profile, args=(i,))
+            for i in range(num_threads)
+        ]
 
         # Start all threads
         for thread in threads:
@@ -127,7 +137,9 @@ class TestProfileConcurrentOperations:
         assert success_count == num_threads
 
         # Verify all profiles were created
-        list_response = test_client.get("/admin/profiles", params={"tenant_id": "test_tenant"})
+        list_response = test_client.get(
+            "/admin/profiles", params={"tenant_id": "test_tenant"}
+        )
         assert list_response.status_code == 200
         profile_names = [p["profile_name"] for p in list_response.json()["profiles"]]
 
@@ -139,15 +151,18 @@ class TestProfileConcurrentOperations:
         profile_name = "update_test_profile"
 
         # Create initial profile
-        test_client.post("/admin/profiles", json={
-            "profile_name": profile_name,
-            "tenant_id": "test_tenant",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model",
-            "embedding_type": "frame_based",
-            "pipeline_config": {"initial": "value"}
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": profile_name,
+                "tenant_id": "test_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model",
+                "embedding_type": "frame_based",
+                "pipeline_config": {"initial": "value"},
+            },
+        )
 
         num_threads = 5
         results: List[dict] = []
@@ -155,20 +170,34 @@ class TestProfileConcurrentOperations:
 
         def update_profile(thread_id: int):
             try:
-                response = test_client.put(f"/admin/profiles/{profile_name}", json={
-                    "tenant_id": "test_tenant",
-                    "pipeline_config": {f"thread_{thread_id}": f"value_{thread_id}"}
-                })
-                results.append({
-                    "thread_id": thread_id,
-                    "status_code": response.status_code,
-                    "version": response.json().get("version") if response.status_code == 200 else None
-                })
+                response = test_client.put(
+                    f"/admin/profiles/{profile_name}",
+                    json={
+                        "tenant_id": "test_tenant",
+                        "pipeline_config": {
+                            f"thread_{thread_id}": f"value_{thread_id}"
+                        },
+                    },
+                )
+                results.append(
+                    {
+                        "thread_id": thread_id,
+                        "status_code": response.status_code,
+                        "version": (
+                            response.json().get("version")
+                            if response.status_code == 200
+                            else None
+                        ),
+                    }
+                )
             except Exception as e:
                 errors.append(e)
 
         # Create threads
-        threads = [threading.Thread(target=update_profile, args=(i,)) for i in range(num_threads)]
+        threads = [
+            threading.Thread(target=update_profile, args=(i,))
+            for i in range(num_threads)
+        ]
 
         # Start all threads
         for thread in threads:
@@ -190,7 +219,9 @@ class TestProfileConcurrentOperations:
         assert len(set(versions)) == num_threads, "Versions should be unique"
 
         # Final profile should have one of the updates
-        final_response = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "test_tenant"})
+        final_response = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "test_tenant"}
+        )
         assert final_response.status_code == 200
         final_config = final_response.json()["pipeline_config"]
 
@@ -207,23 +238,28 @@ class TestProfileConcurrentOperations:
 
         def create_for_tenant(tenant_id: int):
             try:
-                response = test_client.post("/admin/profiles", json={
-                    "profile_name": profile_name,
-                    "tenant_id": f"tenant_{tenant_id}",
-                    "type": "video",
-                    "schema_name": "video_test",
-                    "embedding_model": f"model_{tenant_id}",
-                    "embedding_type": "frame_based"
-                })
-                results.append({
-                    "tenant_id": tenant_id,
-                    "status_code": response.status_code
-                })
+                response = test_client.post(
+                    "/admin/profiles",
+                    json={
+                        "profile_name": profile_name,
+                        "tenant_id": f"tenant_{tenant_id}",
+                        "type": "video",
+                        "schema_name": "video_test",
+                        "embedding_model": f"model_{tenant_id}",
+                        "embedding_type": "frame_based",
+                    },
+                )
+                results.append(
+                    {"tenant_id": tenant_id, "status_code": response.status_code}
+                )
             except Exception as e:
                 errors.append(e)
 
         # Create threads
-        threads = [threading.Thread(target=create_for_tenant, args=(i,)) for i in range(num_tenants)]
+        threads = [
+            threading.Thread(target=create_for_tenant, args=(i,))
+            for i in range(num_tenants)
+        ]
 
         # Start all threads
         for thread in threads:
@@ -240,7 +276,9 @@ class TestProfileConcurrentOperations:
 
         # Verify each tenant has their own profile
         for i in range(num_tenants):
-            response = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": f"tenant_{i}"})
+            response = test_client.get(
+                f"/admin/profiles/{profile_name}", params={"tenant_id": f"tenant_{i}"}
+            )
             assert response.status_code == 200
             assert response.json()["embedding_model"] == f"model_{i}"
 
@@ -249,15 +287,18 @@ class TestProfileConcurrentOperations:
         profile_name = "read_update_test"
 
         # Create initial profile
-        test_client.post("/admin/profiles", json={
-            "profile_name": profile_name,
-            "tenant_id": "test_tenant",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model",
-            "embedding_type": "frame_based",
-            "description": "Initial"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": profile_name,
+                "tenant_id": "test_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model",
+                "embedding_type": "frame_based",
+                "description": "Initial",
+            },
+        )
 
         num_readers = 10
         num_updaters = 5
@@ -266,27 +307,41 @@ class TestProfileConcurrentOperations:
 
         def read_profile(thread_id: int):
             try:
-                response = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "test_tenant"})
-                results.append({
-                    "type": "read",
-                    "thread_id": thread_id,
-                    "status_code": response.status_code,
-                    "description": response.json().get("description") if response.status_code == 200 else None
-                })
+                response = test_client.get(
+                    f"/admin/profiles/{profile_name}",
+                    params={"tenant_id": "test_tenant"},
+                )
+                results.append(
+                    {
+                        "type": "read",
+                        "thread_id": thread_id,
+                        "status_code": response.status_code,
+                        "description": (
+                            response.json().get("description")
+                            if response.status_code == 200
+                            else None
+                        ),
+                    }
+                )
             except Exception as e:
                 errors.append(e)
 
         def update_profile(thread_id: int):
             try:
-                response = test_client.put(f"/admin/profiles/{profile_name}", json={
-                    "tenant_id": "test_tenant",
-                    "description": f"Updated by thread {thread_id}"
-                })
-                results.append({
-                    "type": "update",
-                    "thread_id": thread_id,
-                    "status_code": response.status_code
-                })
+                response = test_client.put(
+                    f"/admin/profiles/{profile_name}",
+                    json={
+                        "tenant_id": "test_tenant",
+                        "description": f"Updated by thread {thread_id}",
+                    },
+                )
+                results.append(
+                    {
+                        "type": "update",
+                        "thread_id": thread_id,
+                        "status_code": response.status_code,
+                    }
+                )
             except Exception as e:
                 errors.append(e)
 
@@ -299,6 +354,7 @@ class TestProfileConcurrentOperations:
 
         # Shuffle and start
         import random
+
         random.shuffle(threads)
         for thread in threads:
             thread.start()
@@ -324,39 +380,53 @@ class TestProfileConcurrentOperations:
 
         # Create initial profiles
         for i in range(5):
-            test_client.post("/admin/profiles", json={
-                "profile_name": f"initial_profile_{i}",
-                "tenant_id": tenant_id,
-                "type": "video",
-                "schema_name": "video_test",
-                "embedding_model": "model",
-                "embedding_type": "frame_based"
-            })
+            test_client.post(
+                "/admin/profiles",
+                json={
+                    "profile_name": f"initial_profile_{i}",
+                    "tenant_id": tenant_id,
+                    "type": "video",
+                    "schema_name": "video_test",
+                    "embedding_model": "model",
+                    "embedding_type": "frame_based",
+                },
+            )
 
         results: List[dict] = []
         errors: List[Exception] = []
 
         def list_profiles(thread_id: int):
             try:
-                response = test_client.get("/admin/profiles", params={"tenant_id": tenant_id})
-                results.append({
-                    "type": "list",
-                    "thread_id": thread_id,
-                    "count": len(response.json()["profiles"]) if response.status_code == 200 else 0
-                })
+                response = test_client.get(
+                    "/admin/profiles", params={"tenant_id": tenant_id}
+                )
+                results.append(
+                    {
+                        "type": "list",
+                        "thread_id": thread_id,
+                        "count": (
+                            len(response.json()["profiles"])
+                            if response.status_code == 200
+                            else 0
+                        ),
+                    }
+                )
             except Exception as e:
                 errors.append(e)
 
         def add_profile(thread_id: int):
             try:
-                test_client.post("/admin/profiles", json={
-                    "profile_name": f"added_profile_{thread_id}",
-                    "tenant_id": tenant_id,
-                    "type": "video",
-                    "schema_name": "video_test",
-                    "embedding_model": "model",
-                    "embedding_type": "frame_based"
-                })
+                test_client.post(
+                    "/admin/profiles",
+                    json={
+                        "profile_name": f"added_profile_{thread_id}",
+                        "tenant_id": tenant_id,
+                        "type": "video",
+                        "schema_name": "video_test",
+                        "embedding_model": "model",
+                        "embedding_type": "frame_based",
+                    },
+                )
                 results.append({"type": "add", "thread_id": thread_id})
             except Exception as e:
                 errors.append(e)
@@ -380,7 +450,9 @@ class TestProfileConcurrentOperations:
         assert len(errors) == 0, f"Errors occurred: {errors}"
 
         # Final count should be consistent
-        final_response = test_client.get("/admin/profiles", params={"tenant_id": tenant_id})
+        final_response = test_client.get(
+            "/admin/profiles", params={"tenant_id": tenant_id}
+        )
         final_count = len(final_response.json()["profiles"])
 
         # Should have 5 initial + 5 added = 10 profiles
@@ -393,14 +465,17 @@ class TestProfileConcurrentOperations:
 
         # Create profiles
         for i in range(num_profiles):
-            test_client.post("/admin/profiles", json={
-                "profile_name": f"deletable_profile_{i}",
-                "tenant_id": tenant_id,
-                "type": "video",
-                "schema_name": "video_test",
-                "embedding_model": "model",
-                "embedding_type": "frame_based"
-            })
+            test_client.post(
+                "/admin/profiles",
+                json={
+                    "profile_name": f"deletable_profile_{i}",
+                    "tenant_id": tenant_id,
+                    "type": "video",
+                    "schema_name": "video_test",
+                    "embedding_model": "model",
+                    "embedding_type": "frame_based",
+                },
+            )
 
         results: List[dict] = []
         errors: List[Exception] = []
@@ -409,17 +484,19 @@ class TestProfileConcurrentOperations:
             try:
                 response = test_client.delete(
                     f"/admin/profiles/deletable_profile_{profile_id}",
-                    params={"tenant_id": tenant_id}
+                    params={"tenant_id": tenant_id},
                 )
-                results.append({
-                    "profile_id": profile_id,
-                    "status_code": response.status_code
-                })
+                results.append(
+                    {"profile_id": profile_id, "status_code": response.status_code}
+                )
             except Exception as e:
                 errors.append(e)
 
         # Create delete threads
-        threads = [threading.Thread(target=delete_profile, args=(i,)) for i in range(num_profiles)]
+        threads = [
+            threading.Thread(target=delete_profile, args=(i,))
+            for i in range(num_profiles)
+        ]
 
         # Start all
         for thread in threads:
@@ -436,6 +513,8 @@ class TestProfileConcurrentOperations:
         assert all(r["status_code"] == 200 for r in results)
 
         # Verify all profiles are gone
-        list_response = test_client.get("/admin/profiles", params={"tenant_id": tenant_id})
+        list_response = test_client.get(
+            "/admin/profiles", params={"tenant_id": tenant_id}
+        )
         assert list_response.status_code == 200
         assert len(list_response.json()["profiles"]) == 0

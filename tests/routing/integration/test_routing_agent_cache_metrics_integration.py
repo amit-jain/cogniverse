@@ -9,6 +9,7 @@ Integration tests for cache and metrics components in RoutingAgent:
 import asyncio
 
 import pytest
+
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
@@ -23,7 +24,10 @@ class TestRoutingAgentCacheMetricsIntegration:
         """Create routing agent with real components"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
@@ -45,7 +49,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         result1 = await routing_agent.route_query(query, tenant_id=tenant_id)
         # route_query now returns a RoutingDecision object directly
         assert result1 is not None
-        assert hasattr(result1, 'recommended_agent')
+        assert hasattr(result1, "recommended_agent")
 
         # Get cache stats
         video_stats = routing_agent.cache_manager.get_cache_stats(QueryModality.VIDEO)
@@ -130,7 +134,9 @@ class TestRoutingAgentCacheMetricsIntegration:
         tenant_id = "test-concurrent-cache"
 
         # Execute same query concurrently
-        tasks = [routing_agent.route_query(query, tenant_id=tenant_id) for _ in range(5)]
+        tasks = [
+            routing_agent.route_query(query, tenant_id=tenant_id) for _ in range(5)
+        ]
 
         results = await asyncio.gather(*tasks)
 
@@ -157,12 +163,8 @@ class TestRoutingAgentCacheMetricsIntegration:
 
         # Execute queries twice to populate caches
         for query, _ in queries:
-            await routing_agent.route_query(
-                query, tenant_id="test-modality-cache"
-            )
-            await routing_agent.route_query(
-                query, tenant_id="test-modality-cache"
-            )
+            await routing_agent.route_query(query, tenant_id="test-modality-cache")
+            await routing_agent.route_query(query, tenant_id="test-modality-cache")
 
         # Verify we have cache hits (queries executed twice each)
         total_hits = 0
@@ -211,14 +213,14 @@ class TestRoutingAgentCacheMetricsIntegration:
         ]
 
         for query, _ in queries:
-            await routing_agent.route_query(
-                query, tenant_id="test-per-modality"
-            )
+            await routing_agent.route_query(query, tenant_id="test-per-modality")
 
         # Verify total requests across all modalities
         # Note: Duplicate queries may be cached, so total_requests may be less than len(queries)
         summary = routing_agent.metrics_tracker.get_summary_stats()
-        assert summary["total_requests"] >= 2  # At least 2 unique queries were processed
+        assert (
+            summary["total_requests"] >= 2
+        )  # At least 2 unique queries were processed
 
     async def test_modality_detection_integration(self, routing_agent):
         """Test modality detection works correctly in routing flow"""
@@ -232,12 +234,10 @@ class TestRoutingAgentCacheMetricsIntegration:
 
         for query, expected_modality in test_cases:
             # Execute routing and verify the decision contains proper structure
-            result = await routing_agent.route_query(
-                query, tenant_id="test-detection"
-            )
+            result = await routing_agent.route_query(query, tenant_id="test-detection")
             # route_query now returns a RoutingDecision object directly
             assert result is not None
-            assert hasattr(result, 'recommended_agent')
+            assert hasattr(result, "recommended_agent")
             assert result.recommended_agent is not None
 
             # Verify that routing produces a valid agent recommendation

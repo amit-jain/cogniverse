@@ -11,6 +11,7 @@ Tests:
 import json
 
 import pytest
+
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     BackendProfileConfig,
@@ -135,7 +136,11 @@ class TestBackendConfigDataclasses:
 
         # Merge partial overrides
         merged = config.merge_profile(
-            "base", {"embedding_model": "custom/model", "pipeline_config": {"transcribe_audio": True}}
+            "base",
+            {
+                "embedding_model": "custom/model",
+                "pipeline_config": {"transcribe_audio": True},
+            },
         )
 
         assert merged.embedding_model == "custom/model"
@@ -220,7 +225,9 @@ class TestConfigManagerBackendMethods:
         )
         config_manager.set_backend_config(backend_config)
 
-        retrieved = config_manager.get_backend_profile("test_profile", tenant_id="test_tenant")
+        retrieved = config_manager.get_backend_profile(
+            "test_profile", tenant_id="test_tenant"
+        )
 
         assert retrieved is not None
         assert retrieved.profile_name == "test_profile"
@@ -234,7 +241,9 @@ class TestConfigManagerBackendMethods:
 
         config_manager.add_backend_profile(profile, tenant_id="test_tenant")
 
-        retrieved = config_manager.get_backend_profile("new_profile", tenant_id="test_tenant")
+        retrieved = config_manager.get_backend_profile(
+            "new_profile", tenant_id="test_tenant"
+        )
         assert retrieved is not None
         assert retrieved.profile_name == "new_profile"
 
@@ -261,11 +270,15 @@ class TestConfigManagerBackendMethods:
         assert updated.schema_name == "base_schema"  # Unchanged
 
         # Verify it was saved to acme tenant
-        acme_profile = config_manager.get_backend_profile("base_profile", tenant_id="acme")
+        acme_profile = config_manager.get_backend_profile(
+            "base_profile", tenant_id="acme"
+        )
         assert acme_profile.embedding_model == "acme/custom-model"
 
         # Verify default tenant unchanged
-        default_profile = config_manager.get_backend_profile("base_profile", tenant_id="default")
+        default_profile = config_manager.get_backend_profile(
+            "base_profile", tenant_id="default"
+        )
         assert default_profile.embedding_model == "base/model"
 
     def test_tenant_isolation(self, config_manager):
@@ -280,8 +293,12 @@ class TestConfigManagerBackendMethods:
         config_manager.add_backend_profile(profile_a, tenant_id="tenant_a")
         config_manager.add_backend_profile(profile_b, tenant_id="tenant_b")
 
-        retrieved_a = config_manager.get_backend_profile("shared_profile", tenant_id="tenant_a")
-        retrieved_b = config_manager.get_backend_profile("shared_profile", tenant_id="tenant_b")
+        retrieved_a = config_manager.get_backend_profile(
+            "shared_profile", tenant_id="tenant_a"
+        )
+        retrieved_b = config_manager.get_backend_profile(
+            "shared_profile", tenant_id="tenant_b"
+        )
 
         assert retrieved_a.schema_name == "schema_a"
         assert retrieved_b.schema_name == "schema_b"
@@ -339,7 +356,9 @@ class TestConfigUtilsBackendConfig:
         # Change to temp directory so configs/config.json can be found
         monkeypatch.chdir(tmp_path)
 
-        config_utils = ConfigUtils(tenant_id="default", config_manager=memory_config_manager)
+        config_utils = ConfigUtils(
+            tenant_id="default", config_manager=memory_config_manager
+        )
         backend = config_utils.get("backend")
 
         assert backend is not None
@@ -361,7 +380,9 @@ class TestConfigUtilsBackendConfig:
         memory_config_manager.add_backend_profile(tenant_profile, tenant_id="acme")
 
         # Get merged config for acme tenant
-        config_utils = ConfigUtils(tenant_id="acme", config_manager=memory_config_manager)
+        config_utils = ConfigUtils(
+            tenant_id="acme", config_manager=memory_config_manager
+        )
         backend = config_utils.get("backend")
 
         # Should have both system and tenant profiles
@@ -382,12 +403,20 @@ class TestConfigUtilsBackendConfig:
         )
         memory_config_manager.add_backend_profile(overridden_profile, tenant_id="acme")
 
-        config_utils = ConfigUtils(tenant_id="acme", config_manager=memory_config_manager)
+        config_utils = ConfigUtils(
+            tenant_id="acme", config_manager=memory_config_manager
+        )
         backend = config_utils.get("backend")
 
         # Tenant profile should win
-        assert backend["profiles"]["system_profile"]["schema_name"] == "tenant_custom_schema"
-        assert backend["profiles"]["system_profile"]["embedding_model"] == "tenant/custom-model"
+        assert (
+            backend["profiles"]["system_profile"]["schema_name"]
+            == "tenant_custom_schema"
+        )
+        assert (
+            backend["profiles"]["system_profile"]["embedding_model"]
+            == "tenant/custom-model"
+        )
 
 
 class TestBackendConfigEdgeCases:
@@ -416,9 +445,7 @@ class TestBackendConfigEdgeCases:
 
     def test_backend_profile_optional_fields(self):
         """Test that optional fields can be omitted"""
-        profile = BackendProfileConfig(
-            profile_name="minimal", schema_name="test"
-        )
+        profile = BackendProfileConfig(profile_name="minimal", schema_name="test")
 
         data = profile.to_dict()
         assert data["type"] == "video"  # Default

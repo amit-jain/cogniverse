@@ -17,6 +17,7 @@ import time
 
 import pytest
 import requests
+
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 from cogniverse_foundation.telemetry.manager import TelemetryManager
@@ -47,14 +48,23 @@ def phoenix_container():
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
-    telemetry_manager_module._telemetry_manager = TelemetryManager(config=telemetry_config)
+    telemetry_manager_module._telemetry_manager = TelemetryManager(
+        config=telemetry_config
+    )
 
     container_name = f"phoenix_routing_span_eval_test_{int(time.time() * 1000)}"
 
     # Clean up old containers AND data directories
     try:
         result = subprocess.run(
-            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_routing_span_eval_test"],
+            [
+                "docker",
+                "ps",
+                "-a",
+                "-q",
+                "--filter",
+                "name=phoenix_routing_span_eval_test",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -75,11 +85,14 @@ def phoenix_container():
     try:
         import glob
         import shutil
+
         tmp_dir = tempfile.gettempdir()
         pattern = os.path.join(tmp_dir, "phoenix_routing_span_eval_*")
         logger.info(f"🧹 Searching for old Phoenix data directories: {pattern}")
         old_data_dirs = glob.glob(pattern)
-        logger.info(f"🧹 Found {len(old_data_dirs)} old Phoenix data directories to clean")
+        logger.info(
+            f"🧹 Found {len(old_data_dirs)} old Phoenix data directories to clean"
+        )
         for old_dir in old_data_dirs:
             logger.info(f"🧹 Attempting to remove: {old_dir}")
             try:
@@ -186,15 +199,19 @@ def phoenix_container():
         # Clean up data directory
         try:
             import shutil
-            logger.info(f"🧹 Attempting final cleanup of Phoenix data directory: {test_data_dir}")
-            if 'test_data_dir' in locals() and os.path.exists(test_data_dir):
+
+            logger.info(
+                f"🧹 Attempting final cleanup of Phoenix data directory: {test_data_dir}"
+            )
+            if "test_data_dir" in locals() and os.path.exists(test_data_dir):
                 shutil.rmtree(test_data_dir)
                 logger.info(f"✅ Cleaned up Phoenix data directory: {test_data_dir}")
             else:
-                logger.info("📭 No data directory to clean up (doesn't exist or not in locals)")
+                logger.info(
+                    "📭 No data directory to clean up (doesn't exist or not in locals)"
+                )
         except Exception as e:
             logger.warning(f"❌ Error cleaning up data directory: {e}")
-
 
 
 @pytest.fixture
@@ -228,7 +245,7 @@ async def routing_agent_with_spans(phoenix_container):
     for query, expected_agent in test_queries:
         result = await agent.route_query(query, tenant_id="test-tenant")
         # result is a RoutingDecision object
-        agent_name = result.recommended_agent if result else 'unknown'
+        agent_name = result.recommended_agent if result else "unknown"
         logger.info(
             f"✅ Processed query: '{query}', "
             f"agent: {agent_name}, "
@@ -276,11 +293,10 @@ class TestRoutingSpanEvaluatorIntegration:
         logger.info(f"📊 Querying spans from project: {span_evaluator.project_name}")
 
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id="test-tenant")
-        spans_df = await provider.traces.get_spans(
-            project=span_evaluator.project_name
-        )
+        spans_df = await provider.traces.get_spans(project=span_evaluator.project_name)
 
         logger.info(f"📊 Total spans in project: {len(spans_df)}")
 
@@ -348,10 +364,8 @@ class TestRoutingSpanEvaluatorIntegration:
         logger.info("🔄 Generating unique routing spans for optimizer test...")
         for query, _ in unique_queries:
             result = await agent.route_query(query, tenant_id="test-tenant")
-            agent_name = result.recommended_agent if result else 'unknown'
-            logger.info(
-                f"✅ Processed query: '{query}', agent: {agent_name}"
-            )
+            agent_name = result.recommended_agent if result else "unknown"
+            logger.info(f"✅ Processed query: '{query}', agent: {agent_name}")
 
         # Force flush telemetry spans
         success = agent.telemetry_manager.force_flush(timeout_millis=10000)
@@ -363,7 +377,9 @@ class TestRoutingSpanEvaluatorIntegration:
 
         # Create optimizer with temporary storage to avoid loading existing data
         with tempfile.TemporaryDirectory() as temp_dir:
-            optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", base_storage_dir=temp_dir)
+            optimizer = AdvancedRoutingOptimizer(
+                tenant_id="test-tenant", base_storage_dir=temp_dir
+            )
 
             # Verify optimizer starts empty (no loaded data)
             initial_count = len(optimizer.experience_replay)
@@ -373,7 +389,9 @@ class TestRoutingSpanEvaluatorIntegration:
             ), f"Expected empty optimizer, got {initial_count} experiences"
 
             # Create span evaluator with our optimizer
-            evaluator = RoutingSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
+            evaluator = RoutingSpanEvaluator(
+                optimizer=optimizer, tenant_id="test-tenant"
+            )
 
             # Evaluate routing spans
             logger.info(f"📊 Evaluating spans from project: {evaluator.project_name}")
@@ -540,11 +558,10 @@ class TestRoutingSpanEvaluatorIntegration:
 
         # Query telemetry directly to inspect span structure
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id="test-tenant")
-        spans_df = await provider.traces.get_spans(
-            project=span_evaluator.project_name
-        )
+        spans_df = await provider.traces.get_spans(project=span_evaluator.project_name)
 
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
 

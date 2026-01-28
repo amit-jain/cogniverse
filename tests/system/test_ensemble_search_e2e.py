@@ -32,14 +32,15 @@ def ensemble_system_setup():
     """
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
-
     from tests.system.vespa_test_manager import VespaTestManager
     from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
     ensemble_http_port, ensemble_config_port = generate_unique_ports("ensemble_e2e")
 
-    logger.info(f"🚀 Ensemble E2E test using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)")
+    logger.info(
+        f"🚀 Ensemble E2E test using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)"
+    )
 
     # Clear singletons
     registry = get_backend_registry()
@@ -49,7 +50,9 @@ def ensemble_system_setup():
         ConfigManager._instance = None
 
     # Create manager
-    manager = VespaTestManager(http_port=ensemble_http_port, config_port=ensemble_config_port)
+    manager = VespaTestManager(
+        http_port=ensemble_http_port, config_port=ensemble_config_port
+    )
 
     try:
         # Setup Vespa
@@ -234,15 +237,20 @@ class TestEnsembleSearchEndToEnd:
         agent.search_backend.search = mock_search_with_profile_mapping
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
+            with patch(
+                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                side_effect=mock_create_encoder,
+            ):
                 start_time = time.time()
 
-                result = await agent._process_impl({
-                    "query": "machine learning tutorial videos",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 5,
-                    "rrf_k": 60
-                })
+                result = await agent._process_impl(
+                    {
+                        "query": "machine learning tutorial videos",
+                        "profiles": list(profiles.keys()),
+                        "top_k": 5,
+                        "rrf_k": 60,
+                    }
+                )
 
                 elapsed_ms = (time.time() - start_time) * 1000
         finally:
@@ -250,7 +258,9 @@ class TestEnsembleSearchEndToEnd:
 
         # VALIDATE: Ensemble mode
         assert result["search_mode"] == "ensemble", "Should use ensemble mode"
-        assert set(result["profiles"]) == set(profiles.keys()), "Should query all profiles"
+        assert set(result["profiles"]) == set(
+            profiles.keys()
+        ), "Should query all profiles"
 
         # VALIDATE: Results structure
         assert "results" in result
@@ -265,13 +275,17 @@ class TestEnsembleSearchEndToEnd:
             assert "num_profiles" in first_result, "Should have profile count"
 
         # VALIDATE: Latency (relaxed for E2E with mocked encoders)
-        logger.info(f"⏱️  E2E ensemble search latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles")
+        logger.info(
+            f"⏱️  E2E ensemble search latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles"
+        )
 
         # With real data but mocked encoders, should be reasonably fast
         # Real target is <700ms with real models
         assert elapsed_ms < 10000, f"E2E ensemble took {elapsed_ms:.2f}ms (too slow)"
 
-        logger.info(f"✅ E2E ensemble search completed: {result['total_results']} results in {elapsed_ms:.2f}ms")
+        logger.info(
+            f"✅ E2E ensemble search completed: {result['total_results']} results in {elapsed_ms:.2f}ms"
+        )
 
     @pytest.mark.asyncio
     async def test_e2e_ensemble_latency_requirement(self, ensemble_search_agent):
@@ -320,19 +334,24 @@ class TestEnsembleSearchEndToEnd:
             return encoder
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
+            with patch(
+                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                side_effect=mock_create_encoder,
+            ):
                 # Run multiple times to get average latency
                 latencies = []
 
                 for i in range(3):
                     start_time = time.time()
 
-                    _result = await agent._process_impl({
-                        "query": f"test query {i}",
-                        "profiles": list(profiles.keys()),
-                        "top_k": 10,
-                        "rrf_k": 60
-                    })
+                    _result = await agent._process_impl(
+                        {
+                            "query": f"test query {i}",
+                            "profiles": list(profiles.keys()),
+                            "top_k": 10,
+                            "rrf_k": 60,
+                        }
+                    )
                     assert _result is not None  # Verify execution completed
 
                     latency_ms = (time.time() - start_time) * 1000
@@ -343,12 +362,16 @@ class TestEnsembleSearchEndToEnd:
         avg_latency = sum(latencies) / len(latencies)
         max_latency = max(latencies)
 
-        logger.info(f"⏱️  Latency - Avg: {avg_latency:.2f}ms, Max: {max_latency:.2f}ms, Target: <700ms")
+        logger.info(
+            f"⏱️  Latency - Avg: {avg_latency:.2f}ms, Max: {max_latency:.2f}ms, Target: <700ms"
+        )
 
         # VALIDATE: Average latency meets target (with mocked encoders)
         # Real target with real models is <700ms
         # With mocked encoders and real Vespa in E2E test, allow <1000ms (includes test overhead)
-        assert avg_latency < 1000, f"Average latency {avg_latency:.2f}ms exceeds 1000ms threshold"
+        assert (
+            avg_latency < 1000
+        ), f"Average latency {avg_latency:.2f}ms exceeds 1000ms threshold"
 
         logger.info(f"✅ Latency requirement validated: {avg_latency:.2f}ms < 1000ms")
 
@@ -374,23 +397,29 @@ class TestEnsembleSearchEndToEnd:
 
             # Simulate profile-specific result patterns
             if profile == "colpali_profile":
-                return _create_mock_search_results([
-                    ("test_video_0", 0.95),
-                    ("test_video_1", 0.90),
-                    ("test_video_2", 0.85),
-                ])
+                return _create_mock_search_results(
+                    [
+                        ("test_video_0", 0.95),
+                        ("test_video_1", 0.90),
+                        ("test_video_2", 0.85),
+                    ]
+                )
             elif profile == "videoprism_profile":
-                return _create_mock_search_results([
-                    ("test_video_1", 0.92),  # Overlap with colpali
-                    ("test_video_3", 0.88),
-                    ("test_video_0", 0.80),  # Overlap with colpali
-                ])
+                return _create_mock_search_results(
+                    [
+                        ("test_video_1", 0.92),  # Overlap with colpali
+                        ("test_video_3", 0.88),
+                        ("test_video_0", 0.80),  # Overlap with colpali
+                    ]
+                )
             else:  # colqwen_profile
-                return _create_mock_search_results([
-                    ("test_video_4", 0.93),
-                    ("test_video_1", 0.87),  # Overlap with both
-                    ("test_video_5", 0.82),
-                ])
+                return _create_mock_search_results(
+                    [
+                        ("test_video_4", 0.93),
+                        ("test_video_1", 0.87),  # Overlap with both
+                        ("test_video_5", 0.82),
+                    ]
+                )
 
         agent.search_backend.search = realistic_profile_search
 
@@ -400,13 +429,18 @@ class TestEnsembleSearchEndToEnd:
             return encoder
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
-                result = await agent._process_impl({
-                    "query": "test query for quality",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 10,
-                    "rrf_k": 60
-                })
+            with patch(
+                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                side_effect=mock_create_encoder,
+            ):
+                result = await agent._process_impl(
+                    {
+                        "query": "test query for quality",
+                        "profiles": list(profiles.keys()),
+                        "top_k": 10,
+                        "rrf_k": 60,
+                    }
+                )
 
             results = result["results"]
 
@@ -415,7 +449,9 @@ class TestEnsembleSearchEndToEnd:
             assert len(video1_results) == 1, "test_video_1 should appear once"
 
             video1 = video1_results[0]
-            assert video1["num_profiles"] == 3, f"test_video_1 should appear in 3 profiles, got {video1['num_profiles']}"
+            assert (
+                video1["num_profiles"] == 3
+            ), f"test_video_1 should appear in 3 profiles, got {video1['num_profiles']}"
 
             # VALIDATE: test_video_0 appears in 2 profiles
             video0_results = [r for r in results if r["id"] == "test_video_0"]
@@ -424,13 +460,21 @@ class TestEnsembleSearchEndToEnd:
 
             # VALIDATE: Videos in more profiles rank higher (generally)
             # Get rank of video1 (3 profiles) vs video4 (1 profile)
-            video1_rank = next((i for i, r in enumerate(results) if r["id"] == "test_video_1"), None)
-            video4_rank = next((i for i, r in enumerate(results) if r["id"] == "test_video_4"), None)
+            video1_rank = next(
+                (i for i, r in enumerate(results) if r["id"] == "test_video_1"), None
+            )
+            video4_rank = next(
+                (i for i, r in enumerate(results) if r["id"] == "test_video_4"), None
+            )
 
             if video1_rank is not None and video4_rank is not None:
-                logger.info(f"📊 Result quality: video1 (3 profiles) rank={video1_rank}, video4 (1 profile) rank={video4_rank}")
+                logger.info(
+                    f"📊 Result quality: video1 (3 profiles) rank={video1_rank}, video4 (1 profile) rank={video4_rank}"
+                )
 
-            logger.info(f"✅ Result quality validated: {len(results)} results with proper RRF ranking")
+            logger.info(
+                f"✅ Result quality validated: {len(results)} results with proper RRF ranking"
+            )
 
         finally:
             agent.search_backend.search = original_search
@@ -458,10 +502,12 @@ class TestEnsembleSearchEndToEnd:
                 raise Exception("VideoPrism profile unavailable")
 
             # Other profiles succeed
-            return _create_mock_search_results([
-                ("test_video_0", 0.9),
-                ("test_video_1", 0.8),
-            ])
+            return _create_mock_search_results(
+                [
+                    ("test_video_0", 0.9),
+                    ("test_video_1", 0.8),
+                ]
+            )
 
         agent.search_backend.search = failing_profile_search
 
@@ -471,19 +517,26 @@ class TestEnsembleSearchEndToEnd:
             return encoder
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
-                result = await agent._process_impl({
-                    "query": "test query with failure",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 10,
-                    "rrf_k": 60
-                })
+            with patch(
+                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                side_effect=mock_create_encoder,
+            ):
+                result = await agent._process_impl(
+                    {
+                        "query": "test query with failure",
+                        "profiles": list(profiles.keys()),
+                        "top_k": 10,
+                        "rrf_k": 60,
+                    }
+                )
 
             # VALIDATE: Ensemble still succeeded despite one failure
             assert result["search_mode"] == "ensemble"
 
             # Should have results from 2/3 profiles
-            logger.info(f"✅ Error recovery validated: {result['total_results']} results from 2/3 profiles")
+            logger.info(
+                f"✅ Error recovery validated: {result['total_results']} results from 2/3 profiles"
+            )
 
         finally:
             agent.search_backend.search = original_search

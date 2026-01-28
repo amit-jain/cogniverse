@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+
 from cogniverse_runtime.ingestion.processors.single_vector_processor import (
     SingleVectorVideoProcessor,
     VideoSegment,

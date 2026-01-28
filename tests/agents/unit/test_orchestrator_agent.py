@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
 import pytest
+
 from cogniverse_agents.orchestrator_agent import (
     AgentStep,
     AgentType,
@@ -60,7 +61,9 @@ def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps(tenant_id="test_tenant")
-        agent = OrchestratorAgent(deps=deps, agent_registry=mock_agent_registry, port=8013)
+        agent = OrchestratorAgent(
+            deps=deps, agent_registry=mock_agent_registry, port=8013
+        )
         return agent
 
 

@@ -243,7 +243,9 @@ class OrchestrationAnnotationStorage:
                 return []
 
             # Get evaluations for this span from provider
-            evals_df = await self.provider.evaluations.get_evaluations(span_ids=[span_id])
+            evals_df = await self.provider.evaluations.get_evaluations(
+                span_ids=[span_id]
+            )
 
             if evals_df.empty:
                 return []

@@ -59,8 +59,8 @@ class MemoryAwareMixin:
         backend_port: int = 8080,
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
-        config_manager = None,
-        schema_loader = None,
+        config_manager=None,
+        schema_loader=None,
     ) -> bool:
         """
         Initialize memory for this agent
@@ -157,7 +157,9 @@ class MemoryAwareMixin:
 
             context = "\n\n".join(context_parts)
 
-            logger.info(f"Retrieved {len(results)} memories for {self._memory_agent_name}")
+            logger.info(
+                f"Retrieved {len(results)} memories for {self._memory_agent_name}"
+            )
 
             return context
 
@@ -193,7 +195,9 @@ class MemoryAwareMixin:
             )
 
             if memory_id:
-                logger.debug(f"Updated memory for {self._memory_agent_name}: {memory_id}")
+                logger.debug(
+                    f"Updated memory for {self._memory_agent_name}: {memory_id}"
+                )
                 return True
 
             return False

@@ -12,6 +12,7 @@ Tests validate:
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
@@ -98,6 +99,7 @@ class TestPhoenixProviderSessionContext:
         """Import and return PhoenixProvider if available."""
         try:
             from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
             return PhoenixProvider()
         except ImportError:
             pytest.skip("cogniverse-telemetry-phoenix not installed")
@@ -109,7 +111,9 @@ class TestPhoenixProviderSessionContext:
 
     def test_session_context_uses_openinference(self, phoenix_provider):
         """Verify session_context uses openinference.using_session."""
-        with patch("cogniverse_telemetry_phoenix.provider.using_session") as mock_using_session:
+        with patch(
+            "cogniverse_telemetry_phoenix.provider.using_session"
+        ) as mock_using_session:
             # Setup mock context manager
             mock_cm = MagicMock()
             mock_cm.__enter__ = MagicMock(return_value=None)
@@ -245,6 +249,7 @@ class TestSearchRouterSessionIntegration:
         """Import search models if available."""
         try:
             from cogniverse_runtime.routers.search import SearchRequest, SearchResponse
+
             return SearchRequest, SearchResponse
         except ImportError:
             pytest.skip("cogniverse-runtime not installed")

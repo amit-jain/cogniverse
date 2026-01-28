@@ -81,13 +81,9 @@ class FilesystemSchemaLoader(SchemaLoader):
             with open(schema_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            raise SchemaLoadError(
-                f"Failed to parse schema '{schema_name}': {e}"
-            ) from e
+            raise SchemaLoadError(f"Failed to parse schema '{schema_name}': {e}") from e
         except Exception as e:
-            raise SchemaLoadError(
-                f"Failed to load schema '{schema_name}': {e}"
-            ) from e
+            raise SchemaLoadError(f"Failed to load schema '{schema_name}': {e}") from e
 
     def list_available_schemas(self) -> List[str]:
         """
@@ -101,11 +97,7 @@ class FilesystemSchemaLoader(SchemaLoader):
         """
         try:
             schema_files = self.base_path.glob("*_schema.json")
-            return [
-                f.stem.replace("_schema", "")
-                for f in schema_files
-                if f.is_file()
-            ]
+            return [f.stem.replace("_schema", "") for f in schema_files if f.is_file()]
         except Exception as e:
             raise SchemaLoadError(f"Failed to list schemas: {e}") from e
 
@@ -146,13 +138,9 @@ class FilesystemSchemaLoader(SchemaLoader):
             with open(strategies_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            raise SchemaLoadError(
-                f"Failed to parse ranking strategies: {e}"
-            ) from e
+            raise SchemaLoadError(f"Failed to parse ranking strategies: {e}") from e
         except Exception as e:
-            raise SchemaLoadError(
-                f"Failed to load ranking strategies: {e}"
-            ) from e
+            raise SchemaLoadError(f"Failed to load ranking strategies: {e}") from e
 
     def __repr__(self) -> str:
         """String representation for debugging."""

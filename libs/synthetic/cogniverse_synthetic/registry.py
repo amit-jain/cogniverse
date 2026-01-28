@@ -9,14 +9,13 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Type
 
-from pydantic import BaseModel
-
 from cogniverse_synthetic.schemas import (
     FusionHistorySchema,
     ModalityExampleSchema,
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +131,7 @@ def list_optimizers() -> Dict[str, str]:
     Returns:
         Dictionary mapping optimizer names to descriptions
     """
-    return {
-        name: config.description
-        for name, config in OPTIMIZER_REGISTRY.items()
-    }
+    return {name: config.description for name, config in OPTIMIZER_REGISTRY.items()}
 
 
 def get_optimizer_schema(optimizer_name: str) -> Type[BaseModel]:

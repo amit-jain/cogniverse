@@ -114,7 +114,8 @@ class SystemConfig:
             ingestion_api_url=data.get("ingestion_api_url", "http://localhost:8000"),
             search_backend=data.get("search_backend", "vespa"),
             backend_url=data.get("backend_url") or data.get("backend", {}).get("url"),
-            backend_port=data.get("backend_port") or data.get("backend", {}).get("port"),
+            backend_port=data.get("backend_port")
+            or data.get("backend", {}).get("port"),
             elasticsearch_url=data.get("elasticsearch_url"),
             llm_model=data.get("llm_model", "gpt-4"),
             base_url=data.get("base_url", "http://localhost:11434"),
@@ -401,7 +402,9 @@ class BackendProfileConfig:
         return result
 
     @classmethod
-    def from_dict(cls, profile_name: str, data: Dict[str, Any]) -> "BackendProfileConfig":
+    def from_dict(
+        cls, profile_name: str, data: Dict[str, Any]
+    ) -> "BackendProfileConfig":
         """Create from dictionary"""
         return cls(
             profile_name=profile_name,
@@ -437,8 +440,7 @@ class BackendConfig:
             "url": self.url,
             "port": self.port,
             "profiles": {
-                name: profile.to_dict()
-                for name, profile in self.profiles.items()
+                name: profile.to_dict() for name, profile in self.profiles.items()
             },
             "metadata": self.metadata,
         }
@@ -469,7 +471,9 @@ class BackendConfig:
         """Add or update a profile"""
         self.profiles[profile.profile_name] = profile
 
-    def merge_profile(self, profile_name: str, overrides: Dict[str, Any]) -> BackendProfileConfig:
+    def merge_profile(
+        self, profile_name: str, overrides: Dict[str, Any]
+    ) -> BackendProfileConfig:
         """
         Merge overrides into an existing profile.
 
@@ -518,14 +522,20 @@ class FieldMappingConfig:
     Allows synthetic data generator to work with any backend schema
     by defining which fields contain topics, descriptions, transcripts, etc.
     """
+
     topic_fields: List[str] = field(default_factory=lambda: ["video_title", "title"])
-    description_fields: List[str] = field(default_factory=lambda: ["segment_description", "description"])
-    transcript_fields: List[str] = field(default_factory=lambda: ["audio_transcript", "transcript"])
-    entity_fields: List[str] = field(default_factory=lambda: ["video_title", "segment_description"])
-    temporal_fields: Dict[str, str] = field(default_factory=lambda: {
-        "start": "start_time",
-        "end": "end_time"
-    })
+    description_fields: List[str] = field(
+        default_factory=lambda: ["segment_description", "description"]
+    )
+    transcript_fields: List[str] = field(
+        default_factory=lambda: ["audio_transcript", "transcript"]
+    )
+    entity_fields: List[str] = field(
+        default_factory=lambda: ["video_title", "segment_description"]
+    )
+    temporal_fields: Dict[str, str] = field(
+        default_factory=lambda: {"start": "start_time", "end": "end_time"}
+    )
     metadata_fields: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -544,10 +554,18 @@ class FieldMappingConfig:
         """Create from dictionary"""
         return cls(
             topic_fields=data.get("topic_fields", ["video_title", "title"]),
-            description_fields=data.get("description_fields", ["segment_description", "description"]),
-            transcript_fields=data.get("transcript_fields", ["audio_transcript", "transcript"]),
-            entity_fields=data.get("entity_fields", ["video_title", "segment_description"]),
-            temporal_fields=data.get("temporal_fields", {"start": "start_time", "end": "end_time"}),
+            description_fields=data.get(
+                "description_fields", ["segment_description", "description"]
+            ),
+            transcript_fields=data.get(
+                "transcript_fields", ["audio_transcript", "transcript"]
+            ),
+            entity_fields=data.get(
+                "entity_fields", ["video_title", "segment_description"]
+            ),
+            temporal_fields=data.get(
+                "temporal_fields", {"start": "start_time", "end": "end_time"}
+            ),
             metadata_fields=data.get("metadata_fields", {}),
         )
 
@@ -559,6 +577,7 @@ class DSPyModuleConfig:
 
     Instead of hardcoded templates, uses DSPy signatures that can be optimized.
     """
+
     signature_class: str  # Fully qualified class name
     module_type: str = "ChainOfThought"  # DSPy module type
     compiled_path: Optional[str] = None  # Path to optimized module
@@ -594,6 +613,7 @@ class AgentMappingRule:
 
     Replaces hardcoded agent selection logic with configuration.
     """
+
     modality: str
     agent_name: str
     confidence_threshold: float = 0.7
@@ -624,6 +644,7 @@ class ProfileScoringRule:
     Defines conditions and score adjustments for selecting backend profiles
     during synthetic data generation.
     """
+
     condition: Dict[str, Any]
     score_adjustment: float
     reason: str
@@ -654,8 +675,11 @@ class OptimizerGenerationConfig:
     Each optimizer (modality, cross_modal, routing, workflow, unified) can have
     its own DSPy modules for query generation, profile scoring rules, and agent mappings.
     """
+
     optimizer_type: str
-    dspy_modules: Dict[str, DSPyModuleConfig] = field(default_factory=dict)  # e.g., {"query_generator": DSPyModuleConfig(...)}
+    dspy_modules: Dict[str, DSPyModuleConfig] = field(
+        default_factory=dict
+    )  # e.g., {"query_generator": DSPyModuleConfig(...)}
     profile_scoring_rules: List[ProfileScoringRule] = field(default_factory=list)
     agent_mappings: List[AgentMappingRule] = field(default_factory=list)
     num_examples_target: int = 50
@@ -666,15 +690,12 @@ class OptimizerGenerationConfig:
         return {
             "optimizer_type": self.optimizer_type,
             "dspy_modules": {
-                key: module.to_dict()
-                for key, module in self.dspy_modules.items()
+                key: module.to_dict() for key, module in self.dspy_modules.items()
             },
             "profile_scoring_rules": [
                 rule.to_dict() for rule in self.profile_scoring_rules
             ],
-            "agent_mappings": [
-                mapping.to_dict() for mapping in self.agent_mappings
-            ],
+            "agent_mappings": [mapping.to_dict() for mapping in self.agent_mappings],
             "num_examples_target": self.num_examples_target,
             "metadata": self.metadata,
         }
@@ -714,6 +735,7 @@ class ApprovalConfig:
     Controls how AI-generated outputs are reviewed and approved before use.
     Supports confidence-based auto-approval and manual review workflows.
     """
+
     enabled: bool = False
     confidence_threshold: float = 0.85
     storage_backend: str = "phoenix"  # phoenix, database, file
@@ -760,9 +782,12 @@ class SyntheticGeneratorConfig:
     - Profile selection scoring
     - Sampling configuration
     """
+
     tenant_id: str = "default"
     field_mappings: FieldMappingConfig = field(default_factory=FieldMappingConfig)
-    optimizer_configs: Dict[str, OptimizerGenerationConfig] = field(default_factory=dict)
+    optimizer_configs: Dict[str, OptimizerGenerationConfig] = field(
+        default_factory=dict
+    )
     sampling_config: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -772,8 +797,7 @@ class SyntheticGeneratorConfig:
             "tenant_id": self.tenant_id,
             "field_mappings": self.field_mappings.to_dict(),
             "optimizer_configs": {
-                key: config.to_dict()
-                for key, config in self.optimizer_configs.items()
+                key: config.to_dict() for key, config in self.optimizer_configs.items()
             },
             "sampling_config": self.sampling_config,
             "metadata": self.metadata,
@@ -782,9 +806,7 @@ class SyntheticGeneratorConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SyntheticGeneratorConfig":
         """Create from dictionary"""
-        field_mappings = FieldMappingConfig.from_dict(
-            data.get("field_mappings", {})
-        )
+        field_mappings = FieldMappingConfig.from_dict(data.get("field_mappings", {}))
 
         optimizer_configs = {}
         for key, config_data in data.get("optimizer_configs", {}).items():
@@ -798,7 +820,9 @@ class SyntheticGeneratorConfig:
             metadata=data.get("metadata", {}),
         )
 
-    def get_optimizer_config(self, optimizer_type: str) -> Optional[OptimizerGenerationConfig]:
+    def get_optimizer_config(
+        self, optimizer_type: str
+    ) -> Optional[OptimizerGenerationConfig]:
         """Get configuration for a specific optimizer"""
         return self.optimizer_configs.get(optimizer_type)
 

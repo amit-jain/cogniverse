@@ -40,10 +40,7 @@ class BaseGenerator(ABC):
 
     @abstractmethod
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """
         Generate synthetic data from sampled content
@@ -62,9 +59,7 @@ class BaseGenerator(ABC):
         pass
 
     def validate_inputs(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int
+        self, sampled_content: List[Dict[str, Any]], target_count: int
     ) -> None:
         """
         Validate generator inputs

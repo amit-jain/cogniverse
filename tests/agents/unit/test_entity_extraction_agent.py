@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import dspy
 import pytest
+
 from cogniverse_agents.entity_extraction_agent import (
     Entity,
     EntityExtractionAgent,
@@ -107,7 +108,9 @@ class TestEntityExtractionAgent:
             return_value=dspy.Prediction(entities="", entity_types="")
         )
 
-        result = await entity_agent._process_impl(EntityExtractionInput(query="show me some videos"))
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="show me some videos")
+        )
 
         assert result.entity_count == 0
         assert result.has_entities is False

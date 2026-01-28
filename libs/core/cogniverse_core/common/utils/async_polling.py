@@ -13,7 +13,7 @@ def wait_for_service_ready(
     check_fn: Optional[Callable[[], bool]] = None,
     timeout: float = 30.0,
     poll_interval: float = 1.0,
-    description: str = "service"
+    description: str = "service",
 ) -> bool:
     """
     Wait for a service to be ready using a check function.
@@ -46,7 +46,7 @@ def wait_for_retry_backoff(
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     exponential: bool = True,
-    description: str = "retry backoff"
+    description: str = "retry backoff",
 ) -> None:
     """
     Wait with exponential or linear backoff for retries.
@@ -62,7 +62,7 @@ def wait_for_retry_backoff(
         description: Description of what we're retrying
     """
     if exponential:
-        delay = min(base_delay * (2 ** attempt), max_delay)
+        delay = min(base_delay * (2**attempt), max_delay)
     else:
         delay = min(base_delay * (attempt + 1), max_delay)
 

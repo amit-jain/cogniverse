@@ -54,7 +54,9 @@ def clear_singleton_state_between_tests():
         initial_count = len(registry._backend_instances)
         registry._backend_instances.clear()
         if initial_count > 0:
-            logger.debug(f"🧹 Cleared {initial_count} cached backend instances before test")
+            logger.debug(
+                f"🧹 Cleared {initial_count} cached backend instances before test"
+            )
 
     if hasattr(ConfigManager, "_instance"):
         if ConfigManager._instance is not None:

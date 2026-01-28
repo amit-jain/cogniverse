@@ -11,7 +11,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def calculate_reverse_backoff_intervals(max_timeout_seconds: int, min_interval: float = 1.0) -> list[float]:
+def calculate_reverse_backoff_intervals(
+    max_timeout_seconds: int, min_interval: float = 1.0
+) -> list[float]:
     """
     Calculate reverse exponential backoff intervals.
 
@@ -97,7 +99,7 @@ def wait_for_vespa_ready(
                 ready = True  # Any response means API is alive
 
             if ready:
-                total_wait = sum(intervals[:attempt + 1])
+                total_wait = sum(intervals[: attempt + 1])
                 logger.info(
                     f"Vespa ready after {attempt + 1} attempts "
                     f"(waited {total_wait:.1f}s total)"

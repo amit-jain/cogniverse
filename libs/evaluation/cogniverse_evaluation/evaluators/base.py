@@ -37,7 +37,7 @@ def create_evaluation_result(
     score: float,
     label: str,
     explanation: str,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ):
     """
     Create an evaluation result using the current provider.
@@ -55,10 +55,7 @@ def create_evaluation_result(
 
     provider = get_evaluation_provider()
     return provider.framework.create_evaluation_result(
-        score=score,
-        label=label,
-        explanation=explanation,
-        metadata=metadata
+        score=score, label=label, explanation=explanation, metadata=metadata
     )
 
 
@@ -105,5 +102,11 @@ class EvaluationResult:
     Wrapper for evaluation result that delegates to provider's result type.
     """
 
-    def __new__(cls, score: float, label: str, explanation: str, metadata: Optional[Dict[str, Any]] = None):
+    def __new__(
+        cls,
+        score: float,
+        label: str,
+        explanation: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         return create_evaluation_result(score, label, explanation, metadata)

@@ -106,9 +106,7 @@ class DatasetUtils:
 
         dataset = Dataset.from_list(data)
 
-        logger.info(
-            f"Uploading {len(data)} examples to {repo_id} (split={split})..."
-        )
+        logger.info(f"Uploading {len(data)} examples to {repo_id} (split={split})...")
 
         dataset.push_to_hub(repo_id, split=split, token=token)
 
@@ -149,17 +147,13 @@ class DatasetUtils:
         if format == "jsonl":
             # JSONL: One JSON object per line
             content = "\n".join(json.dumps(item) for item in data)
-            s3.put_object(
-                Bucket=bucket, Key=key, Body=content.encode("utf-8")
-            )
+            s3.put_object(Bucket=bucket, Key=key, Body=content.encode("utf-8"))
         elif format == "parquet":
             # Parquet: Efficient columnar format
             df = pd.DataFrame(data)
             buffer = BytesIO()
             df.to_parquet(buffer, index=False)
-            s3.put_object(
-                Bucket=bucket, Key=key, Body=buffer.getvalue()
-            )
+            s3.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue())
         else:
             raise ValueError(f"Unknown format: {format}. Supported: jsonl, parquet")
 

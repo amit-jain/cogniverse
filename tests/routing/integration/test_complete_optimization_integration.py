@@ -22,11 +22,11 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
+
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
 )
-
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)

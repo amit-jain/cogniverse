@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
-from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_agents.tools.a2a_utils import DataPart, Task
+from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,12 @@ app = FastAPI(
 class VideoSearchAgent:
     """Video search agent using unified search service."""
 
-    def __init__(self, profile: Optional[str] = None, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self,
+        profile: Optional[str] = None,
+        tenant_id: str = "default",
+        config_manager: "ConfigManager" = None,
+    ):
         """
         Initialize video search agent.
 
@@ -42,7 +47,6 @@ class VideoSearchAgent:
                 "config_manager is required for VideoSearchAgent. "
                 "Pass create_default_config_manager() explicitly."
             )
-
 
         self.tenant_id = tenant_id
         self.config_manager = config_manager

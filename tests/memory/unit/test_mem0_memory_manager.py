@@ -5,6 +5,7 @@ Unit tests for Mem0MemoryManager
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 
@@ -50,9 +51,7 @@ class TestMem0MemoryManager:
 
         # Mock the Backend instance returned by registry
         mock_backend = MagicMock()
-        mock_backend.get_tenant_schema_name.return_value = (
-            "agent_memories_test_tenant"
-        )
+        mock_backend.get_tenant_schema_name.return_value = "agent_memories_test_tenant"
         mock_backend.deploy_schema.return_value = True
 
         # Mock the registry
@@ -67,6 +66,7 @@ class TestMem0MemoryManager:
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
+
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
@@ -76,7 +76,7 @@ class TestMem0MemoryManager:
             backend_port=8080,
             base_schema_name="agent_memories",
             config_manager=config_manager,
-            schema_loader=schema_loader
+            schema_loader=schema_loader,
         )
 
         assert manager.memory is not None

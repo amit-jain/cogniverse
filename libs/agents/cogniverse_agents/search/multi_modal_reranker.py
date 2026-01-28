@@ -326,9 +326,7 @@ class MultiModalReranker:
         else:
             return 0.2
 
-    def get_modality_distribution(
-        self, results: List[SearchResult]
-    ) -> Dict[str, int]:
+    def get_modality_distribution(self, results: List[SearchResult]) -> Dict[str, int]:
         """
         Get distribution of modalities in results
 
@@ -344,9 +342,7 @@ class MultiModalReranker:
             distribution[modality] = distribution.get(modality, 0) + 1
         return distribution
 
-    def analyze_ranking_quality(
-        self, results: List[SearchResult]
-    ) -> Dict[str, Any]:
+    def analyze_ranking_quality(self, results: List[SearchResult]) -> Dict[str, Any]:
         """
         Analyze quality metrics of ranked results
 
@@ -377,9 +373,9 @@ class MultiModalReranker:
         diversity = entropy / max_entropy if max_entropy > 0 else 0.0
 
         # Calculate average reranking score
-        avg_score = sum(
-            r.metadata.get("reranking_score", 0.0) for r in results
-        ) / len(results)
+        avg_score = sum(r.metadata.get("reranking_score", 0.0) for r in results) / len(
+            results
+        )
 
         # Calculate temporal coverage
         timestamps = [r.timestamp for r in results if r.timestamp]
@@ -410,7 +406,9 @@ class ConfigurableMultiModalReranker:
     Configuration loaded from config.json under "reranking" section.
     """
 
-    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+    ):
         """
         Initialize configurable reranker from config.json
 
@@ -423,10 +421,9 @@ class ConfigurableMultiModalReranker:
         """
         import logging
 
-        from cogniverse_foundation.config.utils import get_config_value
-
         from cogniverse_agents.search.hybrid_reranker import HybridReranker
         from cogniverse_agents.search.learned_reranker import LearnedReranker
+        from cogniverse_foundation.config.utils import get_config_value
 
         if config_manager is None:
             raise ValueError(
@@ -441,7 +438,9 @@ class ConfigurableMultiModalReranker:
         self.config_manager = config_manager
 
         # Load config
-        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
+        rerank_config = get_config_value(
+            "reranking", {}, tenant_id=tenant_id, config_manager=config_manager
+        )
         self.enabled = rerank_config.get("enabled", False)
         model_key = rerank_config.get("model", "heuristic")
         use_hybrid = rerank_config.get("use_hybrid", False)
@@ -453,7 +452,9 @@ class ConfigurableMultiModalReranker:
         self.learned_reranker: Optional[LearnedReranker] = None
         if self.enabled and model_key != "heuristic":
             try:
-                self.learned_reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
+                self.learned_reranker = LearnedReranker(
+                    tenant_id=tenant_id, config_manager=config_manager
+                )
                 logger.info("Initialized learned reranker")
             except Exception as e:
                 logger.warning(
@@ -527,7 +528,12 @@ class ConfigurableMultiModalReranker:
         """
         from cogniverse_foundation.config.utils import get_config_value
 
-        rerank_config = get_config_value("reranking", {}, tenant_id=self.tenant_id, config_manager=self.config_manager)
+        rerank_config = get_config_value(
+            "reranking",
+            {},
+            tenant_id=self.tenant_id,
+            config_manager=self.config_manager,
+        )
 
         return {
             "enabled": self.enabled,

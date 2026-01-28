@@ -18,9 +18,10 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.config import TelemetryConfig
@@ -165,9 +166,7 @@ class A2AGateway:
             "average_response_time": 0.0,
         }
 
-    def _initialize_routing_system(
-        self, config: Optional[RoutingConfig]
-    ) -> None:
+    def _initialize_routing_system(self, config: Optional[RoutingConfig]) -> None:
         """Initialize routing and orchestration system"""
         try:
             # Initialize routing agent
@@ -185,7 +184,7 @@ class A2AGateway:
                 self.orchestrator = MultiAgentOrchestrator(
                     tenant_id=self.tenant_id,
                     telemetry_config=self.telemetry_config,
-                    routing_agent=self.router
+                    routing_agent=self.router,
                 )
 
             self.routing_system_available = True
@@ -195,7 +194,6 @@ class A2AGateway:
             self.logger.error(f"Failed to initialize enhanced system: {e}")
             self.routing_system_available = False
             raise RuntimeError("Routing system failed to initialize")
-
 
     def _create_fastapi_app(self) -> FastAPI:
         """Create FastAPI app with A2A protocol endpoints"""
@@ -375,7 +373,6 @@ class A2AGateway:
         )
 
         return response
-
 
     def _create_emergency_response(
         self, request: A2AQueryRequest, start_time: datetime, error: str

@@ -39,21 +39,29 @@ class TestPropertyAccess:
     async def test_uses_public_traces_property(self, selector, mock_provider):
         """Test that selector accesses .traces (not ._trace_store)"""
         # Setup mock responses
-        mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame([
-            {
-                "context.span_id": "span1",
-                "name": "routing_agent",
-                "start_time": datetime.utcnow(),
-            }
-        ]))
+        mock_provider.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "context.span_id": "span1",
+                        "name": "routing_agent",
+                        "start_time": datetime.utcnow(),
+                    }
+                ]
+            )
+        )
 
-        mock_provider.annotations.get_annotations = AsyncMock(return_value=pd.DataFrame([
-            {
-                "span_id": "span1",
-                "result.label": "approved",
-                "result.score": 1.0,
-            },
-        ]))
+        mock_provider.annotations.get_annotations = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "span_id": "span1",
+                        "result.label": "approved",
+                        "result.score": 1.0,
+                    },
+                ]
+            )
+        )
 
         try:
             await selector.analyze_data(
@@ -70,8 +78,16 @@ class TestPropertyAccess:
         mock_provider.annotations.get_annotations.assert_called()
 
         # Verify private attributes were NOT called
-        assert not mock_provider._trace_store.get_spans.called if hasattr(mock_provider._trace_store, 'get_spans') else True
-        assert not mock_provider._annotation_store.get_annotations.called if hasattr(mock_provider._annotation_store, 'get_annotations') else True
+        assert (
+            not mock_provider._trace_store.get_spans.called
+            if hasattr(mock_provider._trace_store, "get_spans")
+            else True
+        )
+        assert (
+            not mock_provider._annotation_store.get_annotations.called
+            if hasattr(mock_provider._annotation_store, "get_annotations")
+            else True
+        )
 
 
 @pytest.mark.unit
@@ -201,14 +217,20 @@ class TestDataAnalysis:
     @pytest.mark.asyncio
     async def test_analyze_with_spans_no_annotations(self, selector, mock_provider):
         """Test analysis when spans exist but no annotations"""
-        mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame([
-            {
-                "context.span_id": "span1",
-                "name": "routing_agent",
-                "start_time": datetime.utcnow(),
-            }
-        ]))
-        mock_provider.annotations.get_annotations = AsyncMock(return_value=pd.DataFrame())
+        mock_provider.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "context.span_id": "span1",
+                        "name": "routing_agent",
+                        "start_time": datetime.utcnow(),
+                    }
+                ]
+            )
+        )
+        mock_provider.annotations.get_annotations = AsyncMock(
+            return_value=pd.DataFrame()
+        )
 
         analysis = await selector.analyze_data(
             provider=mock_provider,
@@ -223,35 +245,44 @@ class TestDataAnalysis:
         assert analysis.needs_synthetic is True
 
     @pytest.mark.asyncio
-    async def test_analyze_with_sufficient_preference_pairs(self, selector, mock_provider):
+    async def test_analyze_with_sufficient_preference_pairs(
+        self, selector, mock_provider
+    ):
         """Test analysis with sufficient preference pairs for DPO"""
-        spans_df = pd.DataFrame([
-            {
-                "context.span_id": f"span{i}",
-                "name": "routing_agent",
-                "start_time": datetime.utcnow(),
-            }
-            for i in range(25)
-        ])
+        spans_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": f"span{i}",
+                    "name": "routing_agent",
+                    "start_time": datetime.utcnow(),
+                }
+                for i in range(25)
+            ]
+        )
 
-        annotations_df = pd.DataFrame([
-            {
-                "span_id": f"span{i}",
-                "result.label": "approved",
-                "result.score": 1.0,
-            }
-            for i in range(25)
-        ] + [
-            {
-                "span_id": f"span{i}",
-                "result.label": "rejected",
-                "result.score": 0.0,
-            }
-            for i in range(25)
-        ])
+        annotations_df = pd.DataFrame(
+            [
+                {
+                    "span_id": f"span{i}",
+                    "result.label": "approved",
+                    "result.score": 1.0,
+                }
+                for i in range(25)
+            ]
+            + [
+                {
+                    "span_id": f"span{i}",
+                    "result.label": "rejected",
+                    "result.score": 0.0,
+                }
+                for i in range(25)
+            ]
+        )
 
         mock_provider.traces.get_spans = AsyncMock(return_value=spans_df)
-        mock_provider.annotations.get_annotations = AsyncMock(return_value=annotations_df)
+        mock_provider.annotations.get_annotations = AsyncMock(
+            return_value=annotations_df
+        )
 
         analysis = await selector.analyze_data(
             provider=mock_provider,
@@ -279,11 +310,13 @@ class TestAgentFiltering:
 
     def test_filter_routing_agent_spans(self, selector):
         """Test filtering for routing agent"""
-        spans_df = pd.DataFrame([
-            {"name": "routing_agent", "context.span_id": "span1"},
-            {"name": "video_search_agent", "context.span_id": "span2"},
-            {"name": "router_decision", "context.span_id": "span3"},
-        ])
+        spans_df = pd.DataFrame(
+            [
+                {"name": "routing_agent", "context.span_id": "span1"},
+                {"name": "video_search_agent", "context.span_id": "span2"},
+                {"name": "router_decision", "context.span_id": "span3"},
+            ]
+        )
 
         filtered = selector._filter_agent_spans(spans_df, "routing")
 
@@ -294,11 +327,13 @@ class TestAgentFiltering:
 
     def test_filter_profile_selection_spans(self, selector):
         """Test filtering for profile selection agent"""
-        spans_df = pd.DataFrame([
-            {"name": "profile_selector", "context.span_id": "span1"},
-            {"name": "routing_agent", "context.span_id": "span2"},
-            {"name": "selection_decision", "context.span_id": "span3"},
-        ])
+        spans_df = pd.DataFrame(
+            [
+                {"name": "profile_selector", "context.span_id": "span1"},
+                {"name": "routing_agent", "context.span_id": "span2"},
+                {"name": "selection_decision", "context.span_id": "span3"},
+            ]
+        )
 
         filtered = selector._filter_agent_spans(spans_df, "profile_selection")
 
@@ -309,11 +344,13 @@ class TestAgentFiltering:
 
     def test_filter_entity_extraction_spans(self, selector):
         """Test filtering for entity extraction agent"""
-        spans_df = pd.DataFrame([
-            {"name": "entity_extractor", "context.span_id": "span1"},
-            {"name": "routing_agent", "context.span_id": "span2"},
-            {"name": "extraction_task", "context.span_id": "span3"},
-        ])
+        spans_df = pd.DataFrame(
+            [
+                {"name": "entity_extractor", "context.span_id": "span1"},
+                {"name": "routing_agent", "context.span_id": "span2"},
+                {"name": "extraction_task", "context.span_id": "span3"},
+            ]
+        )
 
         filtered = selector._filter_agent_spans(spans_df, "entity_extraction")
 

@@ -64,7 +64,8 @@ class StrategyConfig:
         # If config_dir not provided, try COGNIVERSE_CONFIG env var first, then default to "configs"
         if config_dir is None:
             import os
-            env_config = os.environ.get('COGNIVERSE_CONFIG')
+
+            env_config = os.environ.get("COGNIVERSE_CONFIG")
             if env_config:
                 # COGNIVERSE_CONFIG points to a specific config file
                 config_file = Path(env_config)
@@ -86,7 +87,9 @@ class StrategyConfig:
                     logger.info(f"StrategyConfig using COGNIVERSE_CONFIG: {env_config}")
                     logger.info(f"  Config dir: {self.config_dir}")
                 else:
-                    logger.warning(f"COGNIVERSE_CONFIG file not found: {env_config}, falling back to default")
+                    logger.warning(
+                        f"COGNIVERSE_CONFIG file not found: {env_config}, falling back to default"
+                    )
                     self.config_dir = Path("configs")
                     self.config_file = self.config_dir / "config.json"
             else:

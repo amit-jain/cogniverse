@@ -140,8 +140,7 @@ class QueryAnalysisTool(BaseTool):
             from cogniverse_core.common.utils.prompt_manager import PromptManager
 
             self.prompt_manager = PromptManager(
-                config_manager=create_default_config_manager(),
-                tenant_id="default"
+                config_manager=create_default_config_manager(), tenant_id="default"
             )
 
     async def execute(self, query: str) -> Dict[str, Any]:

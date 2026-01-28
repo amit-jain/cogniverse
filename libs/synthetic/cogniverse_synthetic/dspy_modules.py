@@ -7,7 +7,6 @@ Provides validated query generation modules that ensure output quality.
 import logging
 
 import dspy
-
 from cogniverse_synthetic.dspy_signatures import GenerateEntityQuery
 
 logger = logging.getLogger(__name__)
@@ -46,15 +45,15 @@ class ValidatedEntityQueryGenerator(dspy.Module):
         for attempt in range(self.max_retries):
             # Generate query
             result = self.generate(
-                topics=topics,
-                entities=entities,
-                entity_types=entity_types
+                topics=topics, entities=entities, entity_types=entity_types
             )
 
             # Validate: at least one entity must appear in query (case-insensitive)
             query_lower = result.query.lower()
             if any(entity.lower() in query_lower for entity in entity_list):
-                logger.debug(f"Generated valid query on attempt {attempt + 1}: {result.query}")
+                logger.debug(
+                    f"Generated valid query on attempt {attempt + 1}: {result.query}"
+                )
 
                 # Add generation metadata to result
                 result._retry_count = attempt

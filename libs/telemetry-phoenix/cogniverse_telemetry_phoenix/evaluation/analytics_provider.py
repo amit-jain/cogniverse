@@ -35,7 +35,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         self,
         project: str,
         start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        end_time: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """
         Get statistical summary of traces in a project.
@@ -51,9 +51,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         try:
             # Get spans dataframe from Phoenix
             spans_df = self.client.get_spans_dataframe(
-                project_name=project,
-                start_time=start_time,
-                end_time=end_time
+                project_name=project, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:
@@ -93,7 +91,9 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
             # Calculate error rate
             if "status_code" in spans_df.columns:
                 error_count = len(spans_df[spans_df["status_code"] == "ERROR"])
-                stats["error_rate"] = error_count / len(spans_df) if len(spans_df) > 0 else 0
+                stats["error_rate"] = (
+                    error_count / len(spans_df) if len(spans_df) > 0 else 0
+                )
 
             return stats
 
@@ -114,7 +114,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         project: str,
         metric: str,
         start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        end_time: Optional[datetime] = None,
     ) -> pd.DataFrame:
         """
         Get distribution of a metric across spans.
@@ -130,9 +130,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         """
         try:
             spans_df = self.client.get_spans_dataframe(
-                project_name=project,
-                start_time=start_time,
-                end_time=end_time
+                project_name=project, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:
@@ -151,10 +149,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
             return pd.DataFrame()
 
     async def detect_outliers(
-        self,
-        spans_df: pd.DataFrame,
-        method: str = "iqr",
-        threshold: float = 1.5
+        self, spans_df: pd.DataFrame, method: str = "iqr", threshold: float = 1.5
     ) -> List[str]:
         """
         Detect outlier spans based on metrics.
@@ -196,8 +191,8 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
             upper_bound = q3 + threshold * iqr
 
             outliers = spans_df[
-                (spans_df[latency_col] < lower_bound) |
-                (spans_df[latency_col] > upper_bound)
+                (spans_df[latency_col] < lower_bound)
+                | (spans_df[latency_col] > upper_bound)
             ]
 
         elif method == "zscore":
@@ -228,7 +223,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         metric: str,
         window_minutes: int = 60,
         start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        end_time: Optional[datetime] = None,
     ) -> pd.DataFrame:
         """
         Get time-series trends for a metric.
@@ -245,9 +240,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
         """
         try:
             spans_df = self.client.get_spans_dataframe(
-                project_name=project,
-                start_time=start_time,
-                end_time=end_time
+                project_name=project, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:
@@ -276,7 +269,9 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
             # Resample and aggregate
             spans_df = spans_df.set_index(timestamp_col)
             window_str = f"{window_minutes}T"  # T = minutes
-            trends = spans_df[[metric]].resample(window_str).agg(["mean", "count", "std"])
+            trends = (
+                spans_df[[metric]].resample(window_str).agg(["mean", "count", "std"])
+            )
             trends.columns = ["mean", "count", "std"]
             trends = trends.reset_index()
 

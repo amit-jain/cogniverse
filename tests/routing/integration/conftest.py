@@ -6,6 +6,7 @@ import subprocess
 
 import dspy
 import pytest
+
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     BackendConfig,
@@ -56,7 +57,9 @@ def test_generator_config():
                 },
                 agent_mappings=[
                     AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
-                    AgentMappingRule(modality="DOCUMENT", agent_name="document_search_agent"),
+                    AgentMappingRule(
+                        modality="DOCUMENT", agent_name="document_search_agent"
+                    ),
                 ],
             ),
             "routing": OptimizerGenerationConfig(

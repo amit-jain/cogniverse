@@ -64,7 +64,9 @@ class CreateTenantRequest:
     tenant_id: str  # Can be "org:tenant" or just "tenant" (org_id required separately)
     created_by: str  # Who is creating this tenant
     org_id: Optional[str] = None  # Required if tenant_id doesn't include org
-    base_schemas: Optional[List[str]] = None  # Schemas to deploy (default: all standard)
+    base_schemas: Optional[List[str]] = (
+        None  # Schemas to deploy (default: all standard)
+    )
 
 
 @dataclass

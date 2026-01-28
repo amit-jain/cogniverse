@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime
 
 import pytest
+
 from cogniverse_agents.workflow_intelligence import (
     AgentPerformance,
     OptimizationStrategy,
@@ -228,7 +229,9 @@ class TestWorkflowIntelligence:
         assert stats["successful_optimizations"] == 0
         assert stats["average_improvement"] == 0.0
 
-    def test_workflow_intelligence_initialization_with_persistence(self, workflow_store):
+    def test_workflow_intelligence_initialization_with_persistence(
+        self, workflow_store
+    ):
         """Test WorkflowIntelligence initialization with persistence"""
         intelligence = WorkflowIntelligence(
             max_history_size=1000,

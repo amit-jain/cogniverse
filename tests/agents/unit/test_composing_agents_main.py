@@ -111,7 +111,9 @@ mock_config = MockConfig(
 )
 
 # Apply multiple config mocks to handle different access patterns
-config_patcher = patch("cogniverse_core.config.utils.get_config", return_value=mock_config)
+config_patcher = patch(
+    "cogniverse_core.config.utils.get_config", return_value=mock_config
+)
 config_patcher.start()
 
 # Also mock the config import in the composing_agents_main module specifically
@@ -124,7 +126,7 @@ composing_config_patcher.start()
 mock_config_manager = MagicMock()
 config_manager_patcher = patch(
     "cogniverse_agents.composing_agents_main.create_default_config_manager",
-    return_value=mock_config_manager
+    return_value=mock_config_manager,
 )
 config_manager_patcher.start()
 
@@ -348,7 +350,9 @@ class TestQueryAnalysisTool:
 
         # Create a new tool instance with GLiNER config
         # Patch _get_config to return proper nested structure
-        with patch("cogniverse_agents.composing_agents_main._get_config") as mock_get_config:
+        with patch(
+            "cogniverse_agents.composing_agents_main._get_config"
+        ) as mock_get_config:
             mock_get_config.return_value = {
                 "query_inference_engine": {
                     "mode": "gliner_only",
@@ -650,7 +654,9 @@ class TestWebInterfaceAndConfiguration:
         from cogniverse_agents.composing_agents_main import start_web_interface
 
         # Should return early without starting ADK
-        with patch("cogniverse_agents.composing_agents_main.os.system") as mock_os_system:
+        with patch(
+            "cogniverse_agents.composing_agents_main.os.system"
+        ) as mock_os_system:
             start_web_interface()
             mock_os_system.assert_not_called()
 

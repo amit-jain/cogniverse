@@ -136,7 +136,9 @@ class ModalityCacheManager:
                 if time.time() - cached_entry["timestamp"] < ttl_seconds:
                     actual_modality = cached_entry["modality"]
                     self.cache_stats[actual_modality]["hits"] += 1
-                    logger.debug(f"✅ Cache HIT: {actual_modality.value} - {query[:50]}...")
+                    logger.debug(
+                        f"✅ Cache HIT: {actual_modality.value} - {query[:50]}..."
+                    )
                     return cached_entry["result"]
                 else:
                     # Expired
@@ -283,7 +285,9 @@ class ModalityCacheManager:
         for key in keys_to_remove:
             del self.cache.cache[key]
 
-        logger.info(f"🗑️ Invalidated {len(keys_to_remove)} cache entries for {modality.value}")
+        logger.info(
+            f"🗑️ Invalidated {len(keys_to_remove)} cache entries for {modality.value}"
+        )
 
     def invalidate_all(self):
         """Invalidate all caches"""

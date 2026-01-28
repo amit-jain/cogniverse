@@ -5,6 +5,7 @@ Unit tests for SummarizerAgent with proper DSPy integration
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.summarizer_agent import (
     SummarizerAgent,
     SummarizerDeps,
@@ -175,7 +176,9 @@ class TestSummarizerAgent:
 
     @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
-    @patch.object(SummarizerAgent, "_initialize_vlm_client")  # Prevent DSPy LM initialization
+    @patch.object(
+        SummarizerAgent, "_initialize_vlm_client"
+    )  # Prevent DSPy LM initialization
     @pytest.mark.asyncio
     async def test_process_a2a_task_success(
         self, mock_init_vlm, mock_vlm_class, mock_get_config

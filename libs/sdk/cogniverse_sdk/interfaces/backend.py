@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
-
 from cogniverse_sdk.document import Document
 
 
@@ -323,9 +322,7 @@ class Backend(IngestionBackend, SearchBackend):
     # ============================================================================
 
     @abstractmethod
-    def deploy_schemas(
-        self, schema_definitions: List[Dict[str, Any]]
-    ) -> bool:
+    def deploy_schemas(self, schema_definitions: List[Dict[str, Any]]) -> bool:
         """
         Deploy multiple schemas together (required for multi-tenant backends).
 
@@ -388,9 +385,7 @@ class Backend(IngestionBackend, SearchBackend):
         pass
 
     @abstractmethod
-    def schema_exists(
-        self, schema_name: str, tenant_id: Optional[str] = None
-    ) -> bool:
+    def schema_exists(self, schema_name: str, tenant_id: Optional[str] = None) -> bool:
         """
         Check if schema exists.
 
@@ -404,9 +399,7 @@ class Backend(IngestionBackend, SearchBackend):
         pass
 
     @abstractmethod
-    def get_tenant_schema_name(
-        self, tenant_id: str, base_schema_name: str
-    ) -> str:
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
         Get tenant-specific schema name.
 
@@ -469,7 +462,7 @@ class Backend(IngestionBackend, SearchBackend):
         schema: str,
         query: Optional[str] = None,
         yql: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Query metadata documents.

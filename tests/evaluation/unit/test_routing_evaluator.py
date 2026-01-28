@@ -424,7 +424,7 @@ class TestProviderQuery:
             project="cogniverse-default-routing-optimization",
             start_time=start,
             end_time=end,
-            limit=100
+            limit=100,
         )
 
     @pytest.mark.asyncio

@@ -17,12 +17,16 @@ class TestDatasetManager:
     @pytest.fixture
     def manager(self, mock_phoenix_client):
         """Create dataset manager with mocked storage."""
-        with patch("cogniverse_evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+        with patch(
+            "cogniverse_evaluation.data.storage.TelemetryStorage"
+        ) as mock_storage_class:
             # Create mock storage instance
             mock_storage = Mock()
             # Create mock provider structure
             mock_provider = Mock()
-            mock_provider.telemetry.traces.get_spans = Mock(return_value=mock_phoenix_client.get_spans_dataframe())
+            mock_provider.telemetry.traces.get_spans = Mock(
+                return_value=mock_phoenix_client.get_spans_dataframe()
+            )
             mock_storage.provider = mock_provider
             mock_storage.connection_state = Mock(value="connected")
             mock_storage_class.return_value = mock_storage
@@ -218,20 +222,28 @@ class TestTraceManager:
     def manager(self, mock_phoenix_client):
         """Create trace manager with mocked storage."""
         from unittest.mock import AsyncMock
-        with patch("cogniverse_evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+
+        with patch(
+            "cogniverse_evaluation.data.storage.TelemetryStorage"
+        ) as mock_storage_class:
             # Create mock storage instance
             mock_storage = Mock()
             # Create mock provider structure
             mock_provider = Mock()
-            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe())
+            mock_provider.telemetry.traces.get_spans = AsyncMock(
+                return_value=mock_phoenix_client.get_spans_dataframe()
+            )
             mock_storage.provider = mock_provider
             from cogniverse_evaluation.data.storage import ConnectionState
+
             mock_storage.connection_state = ConnectionState.CONNECTED
             mock_storage_class.return_value = mock_storage
 
             manager = TraceManager()
             # Mock get_traces_for_evaluation to return the mock dataframe directly
-            manager.storage.get_traces_for_evaluation = Mock(return_value=mock_phoenix_client.get_spans_dataframe())
+            manager.storage.get_traces_for_evaluation = Mock(
+                return_value=mock_phoenix_client.get_spans_dataframe()
+            )
             # Mock the removed methods that TraceManager still expects
             manager.storage.update_trace_metadata = Mock(return_value=True)
             return manager

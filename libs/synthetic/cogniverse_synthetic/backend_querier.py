@@ -10,11 +10,12 @@ import logging
 import random
 from typing import Any, Dict, List, Optional
 
+from cogniverse_sdk.interfaces.backend import Backend
+
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     FieldMappingConfig,
 )
-from cogniverse_sdk.interfaces.backend import Backend
 
 logger = logging.getLogger(__name__)
 
@@ -134,24 +135,17 @@ class BackendQuerier:
         try:
             # Use Backend interface query_metadata_documents()
             results = self.backend.query_metadata_documents(
-                schema=schema_name,
-                yql=yql,
-                hits=sample_size,
-                **query_params
+                schema=schema_name, yql=yql, hits=sample_size, **query_params
             )
             samples = self._extract_fields_from_results(results, profile_config)
-            logger.info(
-                f"Retrieved {len(samples)} samples from {schema_name}"
-            )
+            logger.info(f"Retrieved {len(samples)} samples from {schema_name}")
             return samples
 
         except Exception as e:
             logger.error(f"Query failed for {schema_name}: {e}")
             return []
 
-    def _build_yql(
-        self, schema_name: str, sample_size: int, strategy: str
-    ) -> str:
+    def _build_yql(self, schema_name: str, sample_size: int, strategy: str) -> str:
         """
         Build YQL query based on schema and strategy using configured field names
 
@@ -169,16 +163,26 @@ class BackendQuerier:
             where_clause = "true"
         elif strategy == "temporal_recent":
             # Recent content (last 90 days) - uses temporal field if configured
-            temporal_field = self.field_mappings.metadata_fields.get("creation_timestamp", "creation_timestamp")
+            temporal_field = self.field_mappings.metadata_fields.get(
+                "creation_timestamp", "creation_timestamp"
+            )
             where_clause = f"{temporal_field} > now() - 7776000"  # 90 days in seconds
         elif strategy == "entity_rich":
             # Content with descriptions and transcripts - uses configured fields
             desc_fields = self.field_mappings.description_fields
             trans_fields = self.field_mappings.transcript_fields
             # Check if at least one description or transcript field has content
-            desc_conditions = [f"{field} matches ''" for field in desc_fields[:1]]  # Use first field
-            trans_conditions = [f"{field} matches ''" for field in trans_fields[:1]]  # Use first field
-            where_clause = " AND ".join(desc_conditions + trans_conditions) if (desc_conditions and trans_conditions) else "true"
+            desc_conditions = [
+                f"{field} matches ''" for field in desc_fields[:1]
+            ]  # Use first field
+            trans_conditions = [
+                f"{field} matches ''" for field in trans_fields[:1]
+            ]  # Use first field
+            where_clause = (
+                " AND ".join(desc_conditions + trans_conditions)
+                if (desc_conditions and trans_conditions)
+                else "true"
+            )
         elif strategy == "multi_modal_sequences":
             # Longer content with multiple segments
             where_clause = "true"
@@ -231,11 +235,16 @@ class BackendQuerier:
 
             # Extract temporal fields
             temporal_mapping = self.field_mappings.temporal_fields
-            sample["start_time"] = doc.get(temporal_mapping.get("start", "start_time"), 0.0)
+            sample["start_time"] = doc.get(
+                temporal_mapping.get("start", "start_time"), 0.0
+            )
             sample["end_time"] = doc.get(temporal_mapping.get("end", "end_time"), 0.0)
 
             # Extract metadata fields
-            for semantic_name, field_name in self.field_mappings.metadata_fields.items():
+            for (
+                semantic_name,
+                field_name,
+            ) in self.field_mappings.metadata_fields.items():
                 if field_name in doc:
                     sample[semantic_name] = doc[field_name]
 
@@ -271,9 +280,7 @@ class BackendQuerier:
         Returns:
             List of mock documents
         """
-        logger.info(
-            f"Generating {sample_size} mock documents (no backend available)"
-        )
+        logger.info(f"Generating {sample_size} mock documents (no backend available)")
 
         mock_samples = []
         per_profile = max(1, sample_size // len(profile_configs))
@@ -310,18 +317,26 @@ class BackendQuerier:
                 if self.field_mappings.topic_fields:
                     topic_field = self.field_mappings.topic_fields[0]
                     sample[topic_field] = f"{topic.title()} Tutorial"
-                    sample["video_title"] = f"{topic.title()} Tutorial"  # Backward compat
+                    sample["video_title"] = (
+                        f"{topic.title()} Tutorial"  # Backward compat
+                    )
 
                 # Add description field (first configured description field name)
                 if self.field_mappings.description_fields:
                     desc_field = self.field_mappings.description_fields[0]
-                    sample[desc_field] = f"This segment covers {topic} concepts and practical examples."
-                    sample["segment_description"] = sample[desc_field]  # Backward compat
+                    sample[desc_field] = (
+                        f"This segment covers {topic} concepts and practical examples."
+                    )
+                    sample["segment_description"] = sample[
+                        desc_field
+                    ]  # Backward compat
 
                 # Add transcript field (first configured transcript field name)
                 if self.field_mappings.transcript_fields:
                     trans_field = self.field_mappings.transcript_fields[0]
-                    sample[trans_field] = f"In this tutorial, we'll explore {topic} and how to apply it in real-world scenarios."
+                    sample[trans_field] = (
+                        f"In this tutorial, we'll explore {topic} and how to apply it in real-world scenarios."
+                    )
                     sample["audio_transcript"] = sample[trans_field]  # Backward compat
 
                 # Add temporal fields
@@ -359,13 +374,16 @@ class BackendQuerier:
         """
         # For now, all our profiles are video-based
         # In future, this will query different document types
-        logger.info(
-            f"Querying by modality: {modality} (sample_size: {sample_size})"
-        )
+        logger.info(f"Querying by modality: {modality} (sample_size: {sample_size})")
 
         if self.backend is None:
             return self._generate_mock_data(
-                [{"schema_name": f"{modality.lower()}_content", "embedding_type": "mixed"}],
+                [
+                    {
+                        "schema_name": f"{modality.lower()}_content",
+                        "embedding_type": "mixed",
+                    }
+                ],
                 sample_size,
             )
 
@@ -373,10 +391,7 @@ class BackendQuerier:
         yql = f"select * from sources * where true limit {sample_size}"
         try:
             results = self.backend.query_metadata_documents(
-                schema="*",  # All schemas
-                yql=yql,
-                hits=sample_size,
-                ranking="random"
+                schema="*", yql=yql, hits=sample_size, ranking="random"  # All schemas
             )
             return self._extract_fields_from_results(
                 results, {"schema_name": "default", "embedding_type": "mixed"}

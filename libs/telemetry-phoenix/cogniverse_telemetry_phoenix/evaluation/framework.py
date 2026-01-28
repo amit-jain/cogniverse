@@ -41,7 +41,7 @@ class PhoenixEvaluatorFramework(EvaluatorFramework):
         score: float,
         label: str,
         explanation: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> EvaluationResult:
         """
         Create Phoenix evaluation result.
@@ -56,8 +56,5 @@ class PhoenixEvaluatorFramework(EvaluatorFramework):
             Phoenix EvaluationResult instance
         """
         return EvaluationResult(
-            score=score,
-            label=label,
-            explanation=explanation,
-            metadata=metadata or {}
+            score=score, label=label, explanation=explanation, metadata=metadata or {}
         )

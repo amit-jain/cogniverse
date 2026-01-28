@@ -28,11 +28,14 @@ def _register_backend_provider():
 
     # Make BackendConfig available for mem0 import
     from cogniverse_core.memory import backend_config
+
     sys.modules["mem0.configs.vector_stores.backend"] = backend_config
     logger.debug("Registered backend config module for mem0 import")
 
     # Register in VectorStoreConfig._provider_configs (access via private attrs)
-    provider_configs_attr = VectorStoreConfig.__private_attributes__["_provider_configs"]
+    provider_configs_attr = VectorStoreConfig.__private_attributes__[
+        "_provider_configs"
+    ]
     if "backend" not in provider_configs_attr.default:
         provider_configs_attr.default["backend"] = "BackendConfig"
         logger.info("Registered backend in VectorStoreConfig._provider_configs")
@@ -110,8 +113,8 @@ class Mem0MemoryManager:
         embedding_model: str = "nomic-embed-text",
         ollama_base_url: str = "http://localhost:11434/v1",
         auto_create_schema: bool = True,
-        config_manager = None,
-        schema_loader = None,
+        config_manager=None,
+        schema_loader=None,
     ) -> None:
         """
         Initialize Mem0 with backend using tenant-specific schema.
@@ -135,12 +138,11 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id must be set before initialize()")
 
         # Get backend instance for memory operations
+        from cogniverse_core.registries.backend_registry import get_backend_registry
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )
-
-        from cogniverse_core.registries.backend_registry import get_backend_registry
 
         # Use passed config_manager or create default if not provided
         if config_manager is None:
@@ -157,7 +159,11 @@ class Mem0MemoryManager:
         if isinstance(profiles_raw, dict):
             profiles = profiles_raw
         elif isinstance(profiles_raw, list):
-            profiles = {p.get("name", f"profile_{i}"): p for i, p in enumerate(profiles_raw) if isinstance(p, dict)}
+            profiles = {
+                p.get("name", f"profile_{i}"): p
+                for i, p in enumerate(profiles_raw)
+                if isinstance(p, dict)
+            }
         else:
             profiles = {}
 
@@ -191,8 +197,11 @@ class Mem0MemoryManager:
         # Create tenant-specific backend for memory operations
         # Each tenant gets their own memory schema (agent_memories_{tenant_id})
         backend = registry.get_ingestion_backend(
-            backend_type, tenant_id=self.tenant_id, config=backend_config_dict,
-            config_manager=config_manager, schema_loader=schema_loader
+            backend_type,
+            tenant_id=self.tenant_id,
+            config=backend_config_dict,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
         # Get tenant-specific schema name
@@ -203,8 +212,7 @@ class Mem0MemoryManager:
         # Deploy tenant schema if needed
         if auto_create_schema:
             backend.schema_registry.deploy_schema(
-                tenant_id=self.tenant_id,
-                base_schema_name=base_schema_name
+                tenant_id=self.tenant_id, base_schema_name=base_schema_name
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 

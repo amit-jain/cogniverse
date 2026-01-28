@@ -185,7 +185,9 @@ class TestRetrievalMonitor:
             monitor = RetrievalMonitor()
             with patch.object(monitor, "_monitoring_loop"):
                 monitor.start()
-                wait_for_phoenix_processing(delay=0.1, description="Phoenix processing")  # Let thread start
+                wait_for_phoenix_processing(
+                    delay=0.1, description="Phoenix processing"
+                )  # Let thread start
 
                 monitor.stop()
 

@@ -21,6 +21,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 # Import torch and configure threading before any tests run
 try:
     import torch
+
     torch.set_num_threads(1)
 except ImportError:
     pass

@@ -15,14 +15,13 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
-from cogniverse_foundation.config.utils import get_config_value
-
 from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,
 )
+from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +65,15 @@ class HybridReranker:
             )
 
         # Load config
-        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
+        rerank_config = get_config_value(
+            "reranking", {}, tenant_id=tenant_id, config_manager=config_manager
+        )
 
         # Initialize rerankers
         self.heuristic_reranker = heuristic_reranker or MultiModalReranker()
-        self.learned_reranker = learned_reranker or LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
+        self.learned_reranker = learned_reranker or LearnedReranker(
+            tenant_id=tenant_id, config_manager=config_manager
+        )
 
         # Load fusion settings from config
         self.strategy = strategy or rerank_config.get(
@@ -185,9 +188,7 @@ class HybridReranker:
             final_results.append(result)
 
         # Sort by final score
-        final_results.sort(
-            key=lambda x: x.metadata["reranking_score"], reverse=True
-        )
+        final_results.sort(key=lambda x: x.metadata["reranking_score"], reverse=True)
 
         return final_results
 
@@ -265,9 +266,7 @@ class HybridReranker:
             result.metadata["heuristic_rank"] = heuristic_ranks.get(
                 result.id, len(results)
             )
-            result.metadata["learned_rank"] = learned_ranks.get(
-                result.id, len(results)
-            )
+            result.metadata["learned_rank"] = learned_ranks.get(result.id, len(results))
             result.metadata["fusion_strategy"] = "consensus"
 
         results.sort(key=lambda x: x.metadata["reranking_score"], reverse=True)

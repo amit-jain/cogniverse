@@ -140,7 +140,9 @@ def phoenix_query_tool():
                 # Get dataset information
                 dataset_name = kwargs.get("name")
                 if dataset_name:
-                    dataset = await provider.telemetry.datasets.get_dataset(dataset_name)
+                    dataset = await provider.telemetry.datasets.get_dataset(
+                        dataset_name
+                    )
                     return {
                         "name": dataset.get("name"),
                         "num_examples": dataset.get("num_examples", 0),
@@ -156,7 +158,7 @@ def phoenix_query_tool():
                     # List all experiments by finding unique experiment names in spans
                     df = await provider.telemetry.traces.get_spans(
                         project=kwargs.get("project_name", "cogniverse-default"),
-                        limit=1000
+                        limit=1000,
                     )
                     if (
                         not df.empty
@@ -178,8 +180,13 @@ def phoenix_query_tool():
                         limit=kwargs.get("limit", 1000),
                     )
                     # Filter by experiment name
-                    if not df.empty and "attributes.metadata.experiment_name" in df.columns:
-                        df = df[df["attributes.metadata.experiment_name"] == experiment_name]
+                    if (
+                        not df.empty
+                        and "attributes.metadata.experiment_name" in df.columns
+                    ):
+                        df = df[
+                            df["attributes.metadata.experiment_name"] == experiment_name
+                        ]
                     if not df.empty:
                         return {
                             "experiment_name": experiment_name,

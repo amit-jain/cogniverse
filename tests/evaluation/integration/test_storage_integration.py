@@ -28,7 +28,7 @@ class TestTelemetryStorageIntegration:
         config = ConnectionConfig(
             http_endpoint="http://localhost:26006",
             otlp_endpoint="localhost:24317",
-            enable_health_checks=False
+            enable_health_checks=False,
         )
         storage = TelemetryStorage(config)
         yield storage
@@ -38,12 +38,12 @@ class TestTelemetryStorageIntegration:
     def test_connection_lifecycle(self, phoenix_test_server):
         """Test connection establishment and shutdown."""
         # Extract host:port from base_url for OTLP endpoint
-        #import urllib.parse
+        # import urllib.parse
 
         config = ConnectionConfig(
             http_endpoint="http://localhost:26006",
             otlp_endpoint="localhost:24317",
-            enable_health_checks=False
+            enable_health_checks=False,
         )
 
         # Test initialization
@@ -150,13 +150,13 @@ class TestTelemetryStorageIntegration:
     @pytest.mark.integration
     def test_health_check_recovery(self, phoenix_test_server):
         """Test health check and auto-recovery."""
-        #import urllib.parse
+        # import urllib.parse
 
         config = ConnectionConfig(
             http_endpoint="http://localhost:26006",
             otlp_endpoint="localhost:24317",
             enable_health_checks=True,
-            health_check_interval_seconds=0.5
+            health_check_interval_seconds=0.5,
         )
 
         storage = TelemetryStorage(config)
@@ -270,12 +270,12 @@ class TestTelemetryStorageIntegration:
     @pytest.mark.integration
     def test_context_manager_cleanup(self, phoenix_test_server):
         """Test context manager properly cleans up resources."""
-        #import urllib.parse
+        # import urllib.parse
 
         config = ConnectionConfig(
             http_endpoint="http://localhost:26006",
             otlp_endpoint="localhost:24317",
-            enable_health_checks=False
+            enable_health_checks=False,
         )
 
         with TelemetryStorage(config) as storage:

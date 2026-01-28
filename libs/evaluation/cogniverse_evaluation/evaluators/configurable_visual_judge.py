@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+
 from cogniverse_foundation.config.utils import get_config
 
 from .base import Evaluator, create_evaluation_result
@@ -233,7 +234,9 @@ class ConfigurableVisualJudge(Evaluator):
 
                 # Initialize ConfigManager for dependency injection
                 sample_config_manager = create_default_config_manager()
-                config = get_config(tenant_id="default", config_manager=sample_config_manager)
+                config = get_config(
+                    tenant_id="default", config_manager=sample_config_manager
+                )
                 evaluator_config = config.get("evaluators", {}).get(
                     self.evaluator_name, {}
                 )

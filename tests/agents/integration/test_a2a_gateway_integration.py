@@ -91,7 +91,9 @@ class TestA2AGatewayIntegration:
         assert "processing_time_ms" in data
 
     @pytest.mark.asyncio
-    async def test_orchestrate_endpoint_disabled(self, telemetry_manager_without_phoenix):
+    async def test_orchestrate_endpoint_disabled(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test /orchestrate endpoint when orchestration is disabled"""
         from cogniverse_agents.a2a_gateway import A2AGateway
 
@@ -112,7 +114,9 @@ class TestA2AGatewayIntegration:
         assert response.status_code in [400, 501, 503]
 
     @pytest.mark.asyncio
-    async def test_orchestrate_endpoint_enabled(self, telemetry_manager_without_phoenix):
+    async def test_orchestrate_endpoint_enabled(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test /orchestrate endpoint when orchestration is enabled"""
         from cogniverse_agents.a2a_gateway import A2AGateway
 

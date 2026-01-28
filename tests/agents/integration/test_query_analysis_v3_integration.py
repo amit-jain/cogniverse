@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisToolV3,
     QueryComplexity,
@@ -167,37 +168,35 @@ class TestQueryAnalysisV3OllamaIntegration:
     ):
         """Test complex query analysis with Qwen model"""
         with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-                analyzer = QueryAnalysisToolV3(
-                    config_manager=create_default_config_manager(),
-                    enable_thinking_phase=True,
-                    enable_query_expansion=True,
-                    enable_agent_integration=False,
-                )
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_thinking_phase=True,
+                enable_query_expansion=True,
+                enable_agent_integration=False,
+            )
 
-                # Test complex analytical query
-                complex_query = "analyze recent developments in artificial intelligence and create a comprehensive detailed report with visual analysis"
+            # Test complex analytical query
+            complex_query = "analyze recent developments in artificial intelligence and create a comprehensive detailed report with visual analysis"
 
-                result = await analyzer.analyze(
-                    complex_query, sample_conversation_context
-                )
+            result = await analyzer.analyze(complex_query, sample_conversation_context)
 
-                # Verify complex analysis
-                assert result.primary_intent in [
-                    QueryIntent.ANALYZE,
-                    QueryIntent.REPORT,
-                ]
-                assert result.complexity_level == QueryComplexity.COMPLEX
-                assert QueryIntent.TEMPORAL in result.secondary_intents
-                assert result.needs_visual_analysis is True
-                assert result.recommended_workflow == "detailed_report"
-                assert "detailed_report" in result.required_agents
-                assert len(result.thinking_phase.keys()) > 5
-                assert result.thinking_phase["has_context"] is True
-                assert len(result.thinking_phase["complexity_signals"]) >= 2
+            # Verify complex analysis
+            assert result.primary_intent in [
+                QueryIntent.ANALYZE,
+                QueryIntent.REPORT,
+            ]
+            assert result.complexity_level == QueryComplexity.COMPLEX
+            assert QueryIntent.TEMPORAL in result.secondary_intents
+            assert result.needs_visual_analysis is True
+            assert result.recommended_workflow == "detailed_report"
+            assert "detailed_report" in result.required_agents
+            assert len(result.thinking_phase.keys()) > 5
+            assert result.thinking_phase["has_context"] is True
+            assert len(result.thinking_phase["complexity_signals"]) >= 2
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -206,36 +205,36 @@ class TestQueryAnalysisV3OllamaIntegration:
     ):
         """Test thinking phase with Ollama-powered reasoning"""
         with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-                analyzer = QueryAnalysisToolV3(
-                    config_manager=create_default_config_manager(),
-                    enable_thinking_phase=True
-                )
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_thinking_phase=True,
+            )
 
-                # Test thinking phase for moderate complexity query
-                query = "compare different machine learning frameworks and explain their advantages"
+            # Test thinking phase for moderate complexity query
+            query = "compare different machine learning frameworks and explain their advantages"
 
-                result = await analyzer.analyze(query)
+            result = await analyzer.analyze(query)
 
-                # Verify thinking phase results
-                thinking = result.thinking_phase
-                assert thinking["query_length"] > 5
-                assert len(thinking["complexity_signals"]) > 0
-                assert "compare" in thinking["complexity_signals"]
-                assert (
-                    thinking["query_type_indicators"]["summary"] is False
-                )  # Not a summary
-                assert thinking["reasoning"] is not None
-                assert (
-                    len(thinking["reasoning"]) > 30
-                )  # Reduced from 50 to allow for concise reasoning
-                assert (
-                    "complexity signals" in thinking["reasoning"].lower()
-                    or "comparative" in thinking["reasoning"].lower()
-                )
+            # Verify thinking phase results
+            thinking = result.thinking_phase
+            assert thinking["query_length"] > 5
+            assert len(thinking["complexity_signals"]) > 0
+            assert "compare" in thinking["complexity_signals"]
+            assert (
+                thinking["query_type_indicators"]["summary"] is False
+            )  # Not a summary
+            assert thinking["reasoning"] is not None
+            assert (
+                len(thinking["reasoning"]) > 30
+            )  # Reduced from 50 to allow for concise reasoning
+            assert (
+                "complexity signals" in thinking["reasoning"].lower()
+                or "comparative" in thinking["reasoning"].lower()
+            )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -244,40 +243,41 @@ class TestQueryAnalysisV3OllamaIntegration:
     ):
         """Test query expansion using conversation context"""
         with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-                analyzer = QueryAnalysisToolV3(
-                    config_manager=create_default_config_manager(),
-                    enable_query_expansion=True, max_expanded_queries=5
-                )
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_query_expansion=True,
+                max_expanded_queries=5,
+            )
 
-                # Test query that can benefit from context
-                query = "latest developments"
+            # Test query that can benefit from context
+            query = "latest developments"
 
-                result = await analyzer.analyze(query, sample_conversation_context)
+            result = await analyzer.analyze(query, sample_conversation_context)
 
-                # Verify expansion worked
-                assert len(result.expanded_queries) > 0
-                # Should include context from conversation history or similar terms
-                expanded_text = " ".join(result.expanded_queries)
-                # More flexible check - at least one term or related concept should be present
-                has_relevant_terms = any(
-                    term in expanded_text.lower()
-                    for term in [
-                        "machine",
-                        "neural",
-                        "ai",
-                        "artificial",
-                        "intelligence",
-                        "learn",
-                        "model",
-                        "algorithm",
-                    ]
-                )
-                # If no relevant terms, at least check that expansion happened
-                assert has_relevant_terms or len(result.expanded_queries) >= 2
+            # Verify expansion worked
+            assert len(result.expanded_queries) > 0
+            # Should include context from conversation history or similar terms
+            expanded_text = " ".join(result.expanded_queries)
+            # More flexible check - at least one term or related concept should be present
+            has_relevant_terms = any(
+                term in expanded_text.lower()
+                for term in [
+                    "machine",
+                    "neural",
+                    "ai",
+                    "artificial",
+                    "intelligence",
+                    "learn",
+                    "model",
+                    "algorithm",
+                ]
+            )
+            # If no relevant terms, at least check that expansion happened
+            assert has_relevant_terms or len(result.expanded_queries) >= 2
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -292,7 +292,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
-                enable_agent_integration=True
+                enable_agent_integration=True,
             )
 
             # Test workflow determination with routing agent
@@ -308,18 +308,26 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             # Verify routing agent was called with either method
             # Check which method was called using hasattr to avoid AttributeError
-            if hasattr(mock_routing_agent, 'analyze_and_route') and mock_routing_agent.analyze_and_route.called:
+            if (
+                hasattr(mock_routing_agent, "analyze_and_route")
+                and mock_routing_agent.analyze_and_route.called
+            ):
                 mock_routing_agent.analyze_and_route.assert_called_once()
                 call_args = mock_routing_agent.analyze_and_route.call_args
                 assert call_args[0][0] == query  # Query was passed
                 assert (
                     "thinking_phase" in call_args[1]["context"]
                 )  # Context included thinking phase
-            elif hasattr(mock_routing_agent, 'route_query') and mock_routing_agent.route_query.called:
+            elif (
+                hasattr(mock_routing_agent, "route_query")
+                and mock_routing_agent.route_query.called
+            ):
                 mock_routing_agent.route_query.assert_called_once()
             else:
                 # At least one method should have been called
-                raise AssertionError("Neither analyze_and_route nor route_query was called on the routing agent")
+                raise AssertionError(
+                    "Neither analyze_and_route nor route_query was called on the routing agent"
+                )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -584,7 +592,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
-                enable_agent_integration=True
+                enable_agent_integration=True,
             )
 
             # Should still complete analysis with fallback workflow
@@ -610,7 +618,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
-                enable_thinking_phase=True
+                enable_thinking_phase=True,
             )
 
             # Mock thinking phase to raise exception

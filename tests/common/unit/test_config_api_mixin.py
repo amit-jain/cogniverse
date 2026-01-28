@@ -6,6 +6,9 @@ from unittest.mock import patch
 
 import dspy
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -15,8 +18,6 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerType,
 )
 from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 
 class TestSignature(dspy.Signature):
@@ -29,7 +30,13 @@ class TestSignature(dspy.Signature):
 class TestAgent(DynamicDSPyMixin, ConfigAPIMixin):
     """Test agent class using both mixins"""
 
-    def __init__(self, config: AgentConfig, app: FastAPI, config_manager, tenant_id: str = "default"):
+    def __init__(
+        self,
+        config: AgentConfig,
+        app: FastAPI,
+        config_manager,
+        tenant_id: str = "default",
+    ):
         self.initialize_dynamic_dspy(config)
         self.setup_config_endpoints(app, config_manager, tenant_id)
 
@@ -148,7 +155,9 @@ class TestConfigAPIMixin:
         assert response.status_code == 400
         assert "Invalid module type" in response.json()["detail"]
 
-    def test_get_optimizer_config_endpoint(self, agent_config_with_optimizer, app, config_manager):
+    def test_get_optimizer_config_endpoint(
+        self, agent_config_with_optimizer, app, config_manager
+    ):
         """Test GET /config/optimizer endpoint returns optimizer info"""
         with patch("dspy.LM"):
             agent = TestAgent(agent_config_with_optimizer, app, config_manager)
@@ -302,7 +311,9 @@ class TestConfigAPIMixin:
         # Verify cache was cleared
         assert len(agent._dynamic_modules) == 0
 
-    def test_post_optimizer_config_clears_optimizer(self, agent_config, app, config_manager):
+    def test_post_optimizer_config_clears_optimizer(
+        self, agent_config, app, config_manager
+    ):
         """Test updating optimizer config clears cached optimizer"""
         with patch("dspy.LM"):
             agent = TestAgent(agent_config, app, config_manager)

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 class MockSchema(BaseModel):
     """Mock schema for testing"""
+
     value: str
 
 
@@ -18,10 +19,7 @@ class ConcreteGenerator(BaseGenerator):
     """Concrete implementation of BaseGenerator for testing"""
 
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """Simple implementation that returns mock data"""
         self.validate_inputs(sampled_content, target_count)
@@ -44,8 +42,7 @@ class TestBaseGenerator:
         mock_inferrer = object()
 
         generator = ConcreteGenerator(
-            pattern_extractor=mock_extractor,
-            agent_inferrer=mock_inferrer
+            pattern_extractor=mock_extractor, agent_inferrer=mock_inferrer
         )
 
         assert generator.pattern_extractor is mock_extractor
@@ -69,10 +66,7 @@ class TestBaseGenerator:
         generator = ConcreteGenerator()
 
         # Should not raise exception
-        generator.validate_inputs(
-            sampled_content=[{"test": "data"}],
-            target_count=10
-        )
+        generator.validate_inputs(sampled_content=[{"test": "data"}], target_count=10)
 
     def test_validate_inputs_invalid_count(self):
         """Test validate_inputs with invalid count"""
@@ -80,16 +74,14 @@ class TestBaseGenerator:
 
         with pytest.raises(ValueError) as exc_info:
             generator.validate_inputs(
-                sampled_content=[{"test": "data"}],
-                target_count=0
+                sampled_content=[{"test": "data"}], target_count=0
             )
 
         assert "must be positive" in str(exc_info.value)
 
         with pytest.raises(ValueError):
             generator.validate_inputs(
-                sampled_content=[{"test": "data"}],
-                target_count=-1
+                sampled_content=[{"test": "data"}], target_count=-1
             )
 
     def test_validate_inputs_empty_content(self):
@@ -97,10 +89,7 @@ class TestBaseGenerator:
         generator = ConcreteGenerator()
 
         # Should log warning but not raise exception
-        generator.validate_inputs(
-            sampled_content=[],
-            target_count=10
-        )
+        generator.validate_inputs(sampled_content=[], target_count=10)
 
     def test_get_generator_info(self):
         """Test get_generator_info method"""
@@ -119,8 +108,7 @@ class TestBaseGenerator:
     def test_get_generator_info_with_utilities(self):
         """Test get_generator_info with utilities"""
         generator = ConcreteGenerator(
-            pattern_extractor=object(),
-            agent_inferrer=object()
+            pattern_extractor=object(), agent_inferrer=object()
         )
 
         info = generator.get_generator_info()
@@ -142,7 +130,7 @@ class TestBaseGenerator:
             sampled_content=[{"test": "data"}],
             target_count=3,
             custom_param="value",
-            another_param=123
+            another_param=123,
         )
 
         assert len(result) == 3
@@ -150,6 +138,7 @@ class TestBaseGenerator:
 
 class IncompleteGenerator(BaseGenerator):
     """Generator that doesn't implement generate() - should fail"""
+
     pass
 
 

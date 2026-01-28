@@ -9,13 +9,7 @@ Configuration-driven architecture for backend-agnostic operation.
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_foundation.config.unified_config import (
-    BackendConfig,
-    SyntheticGeneratorConfig,
-)
 from cogniverse_sdk.interfaces.backend import Backend
-from pydantic import BaseModel
-
 from cogniverse_synthetic.backend_querier import BackendQuerier
 from cogniverse_synthetic.generators import (
     CrossModalGenerator,
@@ -31,6 +25,12 @@ from cogniverse_synthetic.registry import (
 )
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
+from pydantic import BaseModel
+
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    SyntheticGeneratorConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +91,13 @@ class SyntheticDataService:
 
         # Initialize components with configuration
         self.profile_selector = ProfileSelector(
-            llm_client=llm_client,
-            generator_config=self.generator_config
+            llm_client=llm_client, generator_config=self.generator_config
         )
 
         self.backend_querier = BackendQuerier(
             backend=self.backend,
             backend_config=self.backend_config,
-            field_mappings=field_mappings
+            field_mappings=field_mappings,
         )
 
         self.pattern_extractor = PatternExtractor(field_mappings=field_mappings)
@@ -142,7 +141,7 @@ class SyntheticDataService:
             generator = ModalityGenerator(
                 pattern_extractor=self.pattern_extractor,
                 agent_inferrer=self.agent_inferrer,
-                optimizer_config=modality_config
+                optimizer_config=modality_config,
             )
         elif optimizer_name == "routing":
             routing_config = self.generator_config.get_optimizer_config("routing")
@@ -154,7 +153,7 @@ class SyntheticDataService:
             generator = RoutingGenerator(
                 pattern_extractor=self.pattern_extractor,
                 agent_inferrer=self.agent_inferrer,
-                optimizer_config=routing_config
+                optimizer_config=routing_config,
             )
         elif optimizer_name == "cross_modal":
             generator = CrossModalGenerator()
@@ -168,10 +167,7 @@ class SyntheticDataService:
         logger.info(f"Initialized {generator_class_name} (lazy)")
         return generator
 
-    async def generate(
-        self,
-        request: SyntheticDataRequest
-    ) -> SyntheticDataResponse:
+    async def generate(self, request: SyntheticDataRequest) -> SyntheticDataResponse:
         """
         Generate synthetic data based on request
 
@@ -188,14 +184,11 @@ class SyntheticDataService:
         if not validate_optimizer_exists(request.optimizer):
             available = ", ".join(OPTIMIZER_REGISTRY.keys())
             raise ValueError(
-                f"Unknown optimizer: '{request.optimizer}'. "
-                f"Available: {available}"
+                f"Unknown optimizer: '{request.optimizer}'. " f"Available: {available}"
             )
 
         config = get_optimizer_config(request.optimizer)
-        logger.info(
-            f"Generating {request.count} examples for {request.optimizer}"
-        )
+        logger.info(f"Generating {request.count} examples for {request.optimizer}")
 
         # Step 1: Profile Selection
         profiles, reasoning = await self._select_profiles(request, config)
@@ -222,23 +215,21 @@ class SyntheticDataService:
                 "sampled_content_count": len(sampled_content),
                 "target_count": request.count,
                 "vespa_sample_size": request.vespa_sample_size,
-            }
+            },
         )
 
         logger.info(f"Successfully generated {len(examples)} examples")
         return response
 
     async def _select_profiles(
-        self,
-        request: SyntheticDataRequest,
-        config: Any
+        self, request: SyntheticDataRequest, config: Any
     ) -> tuple[List[str], str]:
         """Select appropriate backend profiles for the optimizer"""
         # Use ProfileSelector with backend config profiles
         if self.backend_config.profiles:
             # Convert BackendProfileConfig to dict format expected by ProfileSelector
             available_profiles = {
-                name: profile.to_dict() if hasattr(profile, 'to_dict') else {}
+                name: profile.to_dict() if hasattr(profile, "to_dict") else {}
                 for name, profile in self.backend_config.profiles.items()
             }
         else:
@@ -253,16 +244,13 @@ class SyntheticDataService:
             optimizer_name=request.optimizer,
             optimizer_task=config.description,
             available_profiles=available_profiles,
-            max_profiles=request.max_profiles
+            max_profiles=request.max_profiles,
         )
 
         return selected_profiles, reasoning
 
     async def _sample_content(
-        self,
-        request: SyntheticDataRequest,
-        config: Any,
-        profiles: List[str]
+        self, request: SyntheticDataRequest, config: Any, profiles: List[str]
     ) -> List[Dict[str, Any]]:
         """Sample content from backend using selected profiles"""
         sample_size = request.vespa_sample_size
@@ -274,7 +262,9 @@ class SyntheticDataService:
         for profile_name in profiles:
             if profile_name in self.backend_config.profiles:
                 profile = self.backend_config.profiles[profile_name]
-                profile_config = profile.to_dict() if hasattr(profile, 'to_dict') else {}
+                profile_config = (
+                    profile.to_dict() if hasattr(profile, "to_dict") else {}
+                )
                 profile_config["profile_name"] = profile_name
             else:
                 profile_config = {"profile_name": profile_name}
@@ -284,9 +274,7 @@ class SyntheticDataService:
         strategy = request.strategies[0] if request.strategies else "diverse"
 
         sampled_content = await self.backend_querier.query_profiles(
-            profile_configs=profile_configs,
-            sample_size=sample_size,
-            strategy=strategy
+            profile_configs=profile_configs, sample_size=sample_size, strategy=strategy
         )
 
         return sampled_content
@@ -295,7 +283,7 @@ class SyntheticDataService:
         self,
         request: SyntheticDataRequest,
         config: Any,
-        sampled_content: List[Dict[str, Any]]
+        sampled_content: List[Dict[str, Any]],
     ) -> List[BaseModel]:
         """Generate synthetic examples using appropriate generator"""
         # Get generator lazily (creates on first use)
@@ -309,7 +297,7 @@ class SyntheticDataService:
         examples = await generator.generate(
             sampled_content=sampled_content,
             target_count=request.count,
-            **generation_kwargs
+            **generation_kwargs,
         )
 
         return examples
@@ -338,7 +326,7 @@ class SyntheticDataService:
             "defaults": {
                 "sample_size": config.default_sample_size,
                 "generation_count": config.default_generation_count,
-            }
+            },
         }
 
         if generator:
@@ -354,6 +342,5 @@ class SyntheticDataService:
             Dictionary mapping optimizer names to their info
         """
         return {
-            name: self.get_optimizer_info(name)
-            for name in OPTIMIZER_REGISTRY.keys()
+            name: self.get_optimizer_info(name) for name in OPTIMIZER_REGISTRY.keys()
         }

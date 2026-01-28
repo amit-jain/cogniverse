@@ -23,12 +23,8 @@ class BackendConfig(BaseModel):
     backend_client: Any = Field(
         ..., description="Pre-configured backend client instance"
     )
-    embedding_model_dims: int = Field(
-        768, description="Embedding vector dimensions"
-    )
-    tenant_id: str = Field(
-        ..., description="Tenant ID for multi-tenant isolation"
-    )
+    embedding_model_dims: int = Field(768, description="Embedding vector dimensions")
+    tenant_id: str = Field(..., description="Tenant ID for multi-tenant isolation")
     profile: str = Field(
         ..., description="Base schema/profile name (without tenant suffix)"
     )

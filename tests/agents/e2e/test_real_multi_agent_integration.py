@@ -58,6 +58,8 @@ class TestOllamaAvailability:
             )
         except Exception:
             pass
+
+
 class TestRealQueryAnalysisIntegration:
     """Real integration tests for QueryAnalysisToolV3 with actual LLM."""
 
@@ -68,6 +70,7 @@ class TestRealQueryAnalysisIntegration:
 
         # Initialize query analyzer with real LLM
         from cogniverse_foundation.config.utils import create_default_config_manager
+
         analyzer = QueryAnalysisToolV3(
             openai_api_key=TEST_CONFIG["openai_api_key"],
             openai_base_url=TEST_CONFIG["ollama_base_url"],
@@ -100,7 +103,7 @@ class TestRealQueryAnalysisIntegration:
             result = await analyzer.analyze(test_case["query"])
 
             # Convert to dict for compatibility with test assertions
-            result_dict = result.to_dict() if hasattr(result, 'to_dict') else result
+            result_dict = result.to_dict() if hasattr(result, "to_dict") else result
 
             # Verify analysis structure
             assert isinstance(result_dict, dict)
@@ -120,20 +123,26 @@ class TestRealQueryAnalysisIntegration:
                 expected_words = set(expected.split())
                 actual_words = set(actual.split())
                 matches = any(
-                    exp_word in actual or actual_word.startswith(exp_word[:4])  # Match first 4 chars
+                    exp_word in actual
+                    or actual_word.startswith(exp_word[:4])  # Match first 4 chars
                     for exp_word in expected_words
                     for actual_word in actual_words
                 )
-                assert matches or expected in actual or actual in expected, \
-                    f"Expected '{expected}' to match '{actual}'"
+                assert (
+                    matches or expected in actual or actual in expected
+                ), f"Expected '{expected}' to match '{actual}'"
 
             if "expected_video_search" in test_case:
                 assert (
-                    result_dict["needs_video_search"] == test_case["expected_video_search"]
+                    result_dict["needs_video_search"]
+                    == test_case["expected_video_search"]
                 )
 
             if "expected_text_search" in test_case:
-                assert result_dict["needs_text_search"] == test_case["expected_text_search"]
+                assert (
+                    result_dict["needs_text_search"]
+                    == test_case["expected_text_search"]
+                )
 
             # Verify reasoning is provided
             reasoning = result_dict["thinking_phase"]["reasoning"]
@@ -157,12 +166,16 @@ class TestRealAgentRoutingIntegration:
         mock_lm = MagicMock()
         mock_lm.model = "test-model"
 
-        with dspy.context(lm=mock_lm), \
-             patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
-             patch("cogniverse_core.agents.a2a_agent.A2AClient"):
+        with (
+            dspy.context(lm=mock_lm),
+            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
+            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
+        ):
             telemetry_config = TelemetryConfig(enabled=False)
-            deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+            deps = RoutingDeps(
+                tenant_id="test_tenant", telemetry_config=telemetry_config
+            )
             routing_agent = RoutingAgent(deps=deps, port=8001)
 
         # Test routing decisions for different query types
@@ -209,7 +222,9 @@ class TestRealAgentRoutingIntegration:
                 len(routing_decision.reasoning) > 10
             ), "Reasoning should be substantive"
 
-            logger.info(f"✅ Routing decision: {routing_decision.recommended_agent} (confidence: {confidence})")
+            logger.info(
+                f"✅ Routing decision: {routing_decision.recommended_agent} (confidence: {confidence})"
+            )
 
 
 class TestRealAgentSpecializationIntegration:
@@ -222,15 +237,18 @@ class TestRealAgentSpecializationIntegration:
         from unittest.mock import patch
 
         import dspy
+
         from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # E2E test - requires real Ollama, works in production
         # Configure DSPy with correct model before creating agent
         test_lm = dspy.LM(model="ollama/gemma3:4b", api_base="http://localhost:11434")
 
-        with dspy.context(lm=test_lm), \
-             patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
-             patch("cogniverse_core.agents.a2a_agent.A2AClient"):
+        with (
+            dspy.context(lm=test_lm),
+            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
+            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
+        ):
             deps = SummarizerDeps(tenant_id="test_tenant")
             summarizer = SummarizerAgent(deps=deps)
 
@@ -287,8 +305,10 @@ class TestRealAgentSpecializationIntegration:
         from cogniverse_agents.detailed_report_agent import ReportRequest
 
         # E2E test - requires real Ollama, works in production
-        with patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
-             patch("cogniverse_core.agents.a2a_agent.A2AClient"):
+        with (
+            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
+            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
+        ):
             deps = DetailedReportDeps(tenant_id="test_tenant")
             report_agent = DetailedReportAgent(deps=deps)
 
@@ -338,7 +358,9 @@ class TestRealAgentSpecializationIntegration:
             confidence = float(report_result.confidence_score)
             assert 0.0 <= confidence <= 1.0
 
-            logger.info(f"✅ Report executive summary: {report_result.executive_summary[:100]}...")
+            logger.info(
+                f"✅ Report executive summary: {report_result.executive_summary[:100]}..."
+            )
 
 
 class TestRealDSPyOptimizationIntegration:
@@ -461,11 +483,15 @@ class TestRealEndToEndWorkflow:
         )
 
         # E2E test - requires real Ollama, works in production
-        with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
-             patch("cogniverse_core.agents.a2a_agent.A2AClient"):
+        with (
+            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
+            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
+        ):
             telemetry_config = TelemetryConfig(enabled=False)
-            routing_deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+            routing_deps = RoutingDeps(
+                tenant_id="test_tenant", telemetry_config=telemetry_config
+            )
             routing_agent = RoutingAgent(deps=routing_deps, port=8001)
             summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
             summarizer = SummarizerAgent(deps=summarizer_deps)
@@ -519,16 +545,22 @@ class TestRealEndToEndWorkflow:
 
                 # Verify complete workflow
                 # Convert to dict if needed
-                if hasattr(analysis_result, 'to_dict'):
+                if hasattr(analysis_result, "to_dict"):
                     analysis_dict = analysis_result.to_dict()
-                elif hasattr(analysis_result, '__dict__'):
+                elif hasattr(analysis_result, "__dict__"):
                     analysis_dict = analysis_result.__dict__
                 else:
                     analysis_dict = analysis_result
 
-                primary_intent = analysis_dict.get("primary_intent", "") if isinstance(analysis_dict, dict) else getattr(analysis_result, "primary_intent", "")
-                assert "summary" in str(primary_intent).lower() or \
-                       "summarization" in str(primary_intent).lower()
+                primary_intent = (
+                    analysis_dict.get("primary_intent", "")
+                    if isinstance(analysis_dict, dict)
+                    else getattr(analysis_result, "primary_intent", "")
+                )
+                assert (
+                    "summary" in str(primary_intent).lower()
+                    or "summarization" in str(primary_intent).lower()
+                )
                 assert "summarizer" in routing_decision.recommended_agent.lower()
                 assert len(summary_result.summary) > 20
 
@@ -592,16 +624,18 @@ class TestRealPerformanceComparison:
 
             # Extract reasoning from result (object or dict)
             def get_reasoning(result):
-                if hasattr(result, 'to_dict'):
+                if hasattr(result, "to_dict"):
                     result_dict = result.to_dict()
-                elif hasattr(result, '__dict__'):
+                elif hasattr(result, "__dict__"):
                     result_dict = result.__dict__
                 else:
                     result_dict = result
 
                 if isinstance(result_dict, dict):
                     # Check for reasoning in thinking_phase
-                    if "thinking_phase" in result_dict and isinstance(result_dict["thinking_phase"], dict):
+                    if "thinking_phase" in result_dict and isinstance(
+                        result_dict["thinking_phase"], dict
+                    ):
                         return result_dict["thinking_phase"].get("reasoning", "")
                     return result_dict.get("reasoning", "")
                 return getattr(result, "reasoning", "")

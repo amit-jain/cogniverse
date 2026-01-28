@@ -30,14 +30,6 @@ if TYPE_CHECKING:
 
 # DSPy 3.0 imports
 import dspy
-
-# Type-safe agent base
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-
-# Production features from RoutingAgent
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from dspy import LM
 
 # Phase 6: Advanced optimization
@@ -69,6 +61,14 @@ from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
 )
+
+# Type-safe agent base
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+
+# Production features from RoutingAgent
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 
 # A2A protocol imports
 
@@ -151,9 +151,7 @@ class RoutingDeps(AgentDeps):
 
     # DSPy LM Configuration (defaults to local SmolLM 3B)
     model_name: str = Field("smollm3:3b", description="DSPy model name")
-    base_url: str = Field(
-        "http://localhost:11434/v1", description="Model API base URL"
-    )
+    base_url: str = Field("http://localhost:11434/v1", description="Model API base URL")
     api_key: str = Field("dummy", description="API key (not needed for local Ollama)")
 
     # Routing thresholds
@@ -433,15 +431,15 @@ class RoutingAgent(
         """Initialize Phase 6: Advanced optimization"""
         try:
             if deps.enable_advanced_optimization:
-                optimizer_config = (
-                    deps.optimizer_config or AdvancedOptimizerConfig()
-                )
+                optimizer_config = deps.optimizer_config or AdvancedOptimizerConfig()
                 self.grpo_optimizer = AdvancedRoutingOptimizer(
                     tenant_id=deps.tenant_id,
                     config=optimizer_config,
                     base_storage_dir=deps.optimization_storage_dir,
                 )
-                self.logger.info(f"Advanced routing optimizer initialized for tenant: {deps.tenant_id}")
+                self.logger.info(
+                    f"Advanced routing optimizer initialized for tenant: {deps.tenant_id}"
+                )
             else:
                 self.grpo_optimizer = None
                 self.logger.info("Advanced optimization disabled")
@@ -489,6 +487,7 @@ class RoutingAgent(
             # Initialize telemetry manager
             if self.telemetry_config.enabled:
                 from cogniverse_foundation.telemetry.manager import TelemetryManager
+
                 self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
                 self.logger.info("Telemetry manager initialized")
             else:
@@ -520,7 +519,9 @@ class RoutingAgent(
                         agent_name="routing_agent",
                         tenant_id=deps.tenant_id,
                     )
-                    self.logger.info(f"Memory system initialized for tenant: {deps.tenant_id}")
+                    self.logger.info(
+                        f"Memory system initialized for tenant: {deps.tenant_id}"
+                    )
                 except Exception as e:
                     self.logger.warning(f"Failed to initialize memory: {e}")
 
@@ -529,7 +530,7 @@ class RoutingAgent(
                 self.contextual_analyzer = ContextualAnalyzer(
                     max_history_size=50,
                     context_window_minutes=30,
-                    min_preference_count=3
+                    min_preference_count=3,
                 )
                 self.logger.info("Contextual analyzer initialized")
             else:
@@ -551,7 +552,9 @@ class RoutingAgent(
 
             # Initialize cross-modal optimization
             if deps.enable_cross_modal_optimization:
-                self.cross_modal_optimizer = CrossModalOptimizer(tenant_id=deps.tenant_id)
+                self.cross_modal_optimizer = CrossModalOptimizer(
+                    tenant_id=deps.tenant_id
+                )
                 self.logger.info("Cross-modal optimizer initialized")
             else:
                 self.cross_modal_optimizer = None
@@ -667,29 +670,30 @@ class RoutingAgent(
 
         # Create telemetry span context manager if available
         span_context = None
-        if hasattr(self, 'telemetry_manager') and self.telemetry_manager:
+        if hasattr(self, "telemetry_manager") and self.telemetry_manager:
             self.logger.info(f"Creating telemetry span for tenant: {tenant_id}")
             span_context = self.telemetry_manager.span(
-                "cogniverse.routing",
-                tenant_id=tenant_id
+                "cogniverse.routing", tenant_id=tenant_id
             )
         else:
             self.logger.debug("No telemetry manager available, using nullcontext")
             # Create a dummy context manager that does nothing
             from contextlib import nullcontext
+
             span_context = nullcontext()
 
         with span_context as span:
             if span:
                 self.logger.info(f"Telemetry span created successfully: {span}")
             else:
-                self.logger.warning("Span context returned None - no telemetry span created")
+                self.logger.warning(
+                    "Span context returned None - no telemetry span created"
+                )
             try:
                 # Check cache first by searching all modality buckets (if enabled)
                 if self.cache_manager:
                     cached_decision = self.cache_manager.get_cached_result_any_modality(
-                        query=query,
-                        ttl_seconds=self.deps.cache_ttl_seconds
+                        query=query, ttl_seconds=self.deps.cache_ttl_seconds
                     )
                     if cached_decision:
                         self.logger.info(f"Cache hit for query: {query[:50]}...")
@@ -729,7 +733,9 @@ class RoutingAgent(
                 )
 
                 # Use optimized result if available, otherwise baseline
-                final_routing_result = optimized_routing_result or baseline_routing_result
+                final_routing_result = (
+                    optimized_routing_result or baseline_routing_result
+                )
 
                 # Determine if orchestration is needed
                 needs_orchestration = self._assess_orchestration_need(
@@ -758,7 +764,9 @@ class RoutingAgent(
                     relationships=relationships,
                     metadata={
                         **enhancement_metadata,
-                        "processing_time_ms": (datetime.now() - start_time).total_seconds()
+                        "processing_time_ms": (
+                            datetime.now() - start_time
+                        ).total_seconds()
                         * 1000,
                         "baseline_routing_result": baseline_routing_result,
                         "optimized_routing_result": optimized_routing_result,
@@ -780,9 +788,7 @@ class RoutingAgent(
                 # Cache the decision (if enabled)
                 if self.cache_manager:
                     self.cache_manager.cache_result(
-                        query=query,
-                        modality=agent_modality,
-                        result=decision
+                        query=query, modality=agent_modality, result=decision
                     )
 
                 # Track metrics (if enabled)
@@ -790,7 +796,7 @@ class RoutingAgent(
                     self.metrics_tracker.record_modality_execution(
                         modality=agent_modality,
                         latency_ms=(datetime.now() - start_time).total_seconds() * 1000,
-                        success=True
+                        success=True,
                     )
 
                 # Update contextual analyzer (if enabled)
@@ -799,7 +805,7 @@ class RoutingAgent(
                         query=query,
                         detected_modalities=[decision.recommended_agent],
                         result=decision,
-                        result_count=1 if decision.confidence > 0.5 else 0
+                        result_count=1 if decision.confidence > 0.5 else 0,
                     )
 
                 # Log successful routing
@@ -811,19 +817,30 @@ class RoutingAgent(
                 )
 
                 # Update telemetry span with final attributes
-                if span and hasattr(span, 'set_attribute'):
+                if span and hasattr(span, "set_attribute"):
                     self.logger.info("Setting telemetry span attributes")
                     span.set_attribute("routing.query", query)
-                    span.set_attribute("routing.chosen_agent", decision.recommended_agent)
+                    span.set_attribute(
+                        "routing.chosen_agent", decision.recommended_agent
+                    )
                     span.set_attribute("routing.confidence", decision.confidence)
-                    span.set_attribute("routing.processing_time", (datetime.now() - start_time).total_seconds() * 1000)
+                    span.set_attribute(
+                        "routing.processing_time",
+                        (datetime.now() - start_time).total_seconds() * 1000,
+                    )
                     span.set_attribute("routing.reasoning", decision.reasoning)
                     span.set_attribute("routing.entities_count", len(entities))
-                    span.set_attribute("routing.relationships_count", len(relationships))
+                    span.set_attribute(
+                        "routing.relationships_count", len(relationships)
+                    )
                     span.set_attribute("routing.enhanced", enhanced_query != query)
-                    self.logger.info(f"Telemetry span attributes set for query: {query[:50]}...")
+                    self.logger.info(
+                        f"Telemetry span attributes set for query: {query[:50]}..."
+                    )
                 else:
-                    self.logger.warning(f"Cannot set span attributes - span={span}, has_set_attribute={hasattr(span, 'set_attribute') if span else False}")
+                    self.logger.warning(
+                        f"Cannot set span attributes - span={span}, has_set_attribute={hasattr(span, 'set_attribute') if span else False}"
+                    )
 
                 return decision
 
@@ -1560,9 +1577,7 @@ def create_routing_agent(
     return RoutingAgent(deps=deps, port=port)
 
 
-def create_default_routing_deps(
-    tenant_id: str, telemetry_config: Any
-) -> RoutingDeps:
+def create_default_routing_deps(tenant_id: str, telemetry_config: Any) -> RoutingDeps:
     """Create default routing dependencies"""
     return RoutingDeps(tenant_id=tenant_id, telemetry_config=telemetry_config)
 

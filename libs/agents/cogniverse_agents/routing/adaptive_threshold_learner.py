@@ -25,8 +25,9 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from cogniverse_core.common.tenant_utils import get_tenant_storage_path
 from scipy import stats
+
+from cogniverse_core.common.tenant_utils import get_tenant_storage_path
 
 logger = logging.getLogger(__name__)
 

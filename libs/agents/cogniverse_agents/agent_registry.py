@@ -10,10 +10,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
-from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_agents.tools.a2a_utils import A2AClient
+from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -36,7 +36,9 @@ class AgentRegistry:
     Registry for managing available agents with health monitoring and load balancing.
     """
 
-    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+    ):
         """Initialize agent registry
 
         Args:
@@ -73,44 +75,62 @@ class AgentRegistry:
 
         logger.info(f"Initialized {len(self.agents)} agents from configuration")
 
-    def _register_from_structured_config(self, agents_config: Dict[str, Dict[str, Any]]):
+    def _register_from_structured_config(
+        self, agents_config: Dict[str, Dict[str, Any]]
+    ):
         """Register agents from structured config with default ports and capabilities"""
         # Default agent configurations matching Phase 5 requirements
         default_agents = {
             "orchestrator": {
                 "url": "http://localhost:8000",
                 "enabled": True,
-                "capabilities": ["orchestration", "workflow_planning", "agent_coordination"]
+                "capabilities": [
+                    "orchestration",
+                    "workflow_planning",
+                    "agent_coordination",
+                ],
             },
             "entity_extraction": {
                 "url": "http://localhost:8010",
                 "enabled": True,
-                "capabilities": ["entity_extraction", "relationship_extraction", "semantic_analysis"]
+                "capabilities": [
+                    "entity_extraction",
+                    "relationship_extraction",
+                    "semantic_analysis",
+                ],
             },
             "profile_selection": {
                 "url": "http://localhost:8011",
                 "enabled": True,
-                "capabilities": ["profile_selection", "ensemble_composition", "llm_reasoning"]
+                "capabilities": [
+                    "profile_selection",
+                    "ensemble_composition",
+                    "llm_reasoning",
+                ],
             },
             "query_enhancement": {
                 "url": "http://localhost:8012",
                 "enabled": True,
-                "capabilities": ["query_enhancement", "query_expansion", "synonym_generation"]
+                "capabilities": [
+                    "query_enhancement",
+                    "query_expansion",
+                    "synonym_generation",
+                ],
             },
             "search": {
                 "url": "http://localhost:8002",
                 "enabled": True,
-                "capabilities": ["search", "ensemble_search", "multimodal_search"]
+                "capabilities": ["search", "ensemble_search", "multimodal_search"],
             },
             "summarizer": {
                 "url": "http://localhost:8003",
                 "enabled": True,
-                "capabilities": ["summarization", "content_condensation"]
+                "capabilities": ["summarization", "content_condensation"],
             },
             "detailed_report": {
                 "url": "http://localhost:8004",
                 "enabled": True,
-                "capabilities": ["detailed_reporting", "comprehensive_analysis"]
+                "capabilities": ["detailed_reporting", "comprehensive_analysis"],
             },
         }
 
@@ -121,7 +141,9 @@ class AgentRegistry:
 
             # Check if agent is enabled (default to True if not specified)
             if not agent_config.get("enabled", True):
-                logger.debug(f"Agent {agent_name} is disabled in config, skipping registration")
+                logger.debug(
+                    f"Agent {agent_name} is disabled in config, skipping registration"
+                )
                 continue
 
             # Register agent
@@ -129,7 +151,9 @@ class AgentRegistry:
                 AgentEndpoint(
                     name=agent_name,
                     url=agent_config.get("url", default_config["url"]),
-                    capabilities=agent_config.get("capabilities", default_config["capabilities"]),
+                    capabilities=agent_config.get(
+                        "capabilities", default_config["capabilities"]
+                    ),
                 )
             )
 

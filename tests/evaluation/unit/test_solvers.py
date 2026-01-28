@@ -20,7 +20,8 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_basic(self, mock_search_service):
         """Test basic retrieval solver functionality."""
         with patch(
-            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService",
+            return_value=mock_search_service,
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",
@@ -50,7 +51,8 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_multiple_configs(self, mock_search_service):
         """Test retrieval solver with multiple profiles and strategies."""
         with patch(
-            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService",
+            return_value=mock_search_service,
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",
@@ -89,7 +91,8 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_with_tracing_config(self, mock_search_service):
         """Test retrieval solver with tracing config (tracing not actually implemented)."""
         with patch(
-            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService",
+            return_value=mock_search_service,
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",

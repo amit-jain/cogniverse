@@ -500,7 +500,9 @@ class TelemetryManager:
 
             # Get telemetry provider (auto-discovered via registry)
             # Pass project_suffix to get project-specific endpoint overrides
-            provider = self.get_provider(tenant_id=tenant_id, project_name=project_suffix)
+            provider = self.get_provider(
+                tenant_id=tenant_id, project_name=project_suffix
+            )
 
             # Use provider to configure span export (backend-agnostic)
             use_batch_export = not use_sync_export

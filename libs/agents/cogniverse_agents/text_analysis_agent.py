@@ -8,6 +8,8 @@ from typing import Any, Dict
 
 import dspy
 import uvicorn
+from fastapi import FastAPI
+
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
@@ -20,7 +22,6 @@ from cogniverse_foundation.config.agent_config import (
 from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,11 @@ class TextAnalysisSignature(dspy.Signature):
 
 
 class TextAnalysisAgent(
-    DynamicDSPyMixin, ConfigAPIMixin, A2AEndpointsMixin, HealthCheckMixin, TenantAwareAgentMixin
+    DynamicDSPyMixin,
+    ConfigAPIMixin,
+    A2AEndpointsMixin,
+    HealthCheckMixin,
+    TenantAwareAgentMixin,
 ):
     """
     Text analysis agent with runtime-configurable DSPy modules.
@@ -62,7 +67,9 @@ class TextAnalysisAgent(
 
         logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
         self.config_manager = config_manager
-        self.system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        self.system_config = get_config(
+            tenant_id=tenant_id, config_manager=config_manager
+        )
 
         # Try to load persisted agent config from ConfigManager
         self.config = config_manager.get_agent_config(
@@ -240,7 +247,9 @@ async def analyze_text_endpoint(
 
 
 if __name__ == "__main__":
-    config = get_config(tenant_id="default", config_manager=create_default_config_manager())
+    config = get_config(
+        tenant_id="default", config_manager=create_default_config_manager()
+    )
     port = config.get("text_analysis_port", 8005)
 
     logger.info(f"Starting Text Analysis Agent on port {port}")

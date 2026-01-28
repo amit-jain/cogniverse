@@ -5,6 +5,7 @@ Unit tests for MemoryAwareMixin
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 

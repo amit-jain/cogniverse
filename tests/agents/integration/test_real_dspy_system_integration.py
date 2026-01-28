@@ -8,6 +8,7 @@ WITHOUT extensive mocking. This validates real functionality.
 import asyncio
 
 import pytest
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -151,7 +152,10 @@ class TestDSPySystemIntegration:
 
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
@@ -203,6 +207,7 @@ class TestDSPySystemIntegration:
             assert hasattr(components["learner"], "record_performance_sample")
         except Exception:
             pass
+
 
 @pytest.mark.integration
 class TestMultiAgentSystem:

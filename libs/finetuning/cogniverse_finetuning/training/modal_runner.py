@@ -209,9 +209,7 @@ class ModalTrainingRunner:
         2. Modal trains and returns adapter as bytes
         3. Extract adapter bytes to local directory
         """
-        logger.info(
-            f"Launching embedding training on Modal ({self.config.gpu})..."
-        )
+        logger.info(f"Launching embedding training on Modal ({self.config.gpu})...")
         logger.info(f"Dataset: {len(dataset)} triplets")
 
         # 1. Get Modal function

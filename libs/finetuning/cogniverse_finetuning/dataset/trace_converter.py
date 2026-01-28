@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
+
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,17 @@ class InstructionDataset:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert to pandas DataFrame."""
-        return pd.DataFrame([
-            {
-                "instruction": ex.instruction,
-                "input": ex.input,
-                "output": ex.output,
-                **ex.metadata
-            }
-            for ex in self.examples
-        ])
+        return pd.DataFrame(
+            [
+                {
+                    "instruction": ex.instruction,
+                    "input": ex.input,
+                    "output": ex.output,
+                    **ex.metadata,
+                }
+                for ex in self.examples
+            ]
+        )
 
     def save(self, path: str, format: Literal["jsonl", "parquet"] = "jsonl") -> None:
         """
@@ -104,13 +107,13 @@ class ConversationTrajectory:
                     "response": turn.response,
                     "timestamp": turn.timestamp.isoformat() if turn.timestamp else None,
                     "span_id": turn.span_id,
-                    **turn.metadata
+                    **turn.metadata,
                 }
                 for turn in self.turns
             ],
             "session_outcome": self.session_outcome,
             "session_score": self.session_score,
-            **(self.metadata or {})
+            **(self.metadata or {}),
         }
 
 
@@ -248,7 +251,7 @@ class TraceToInstructionConverter:
                 "total_annotations": len(annotations_df),
                 "approved_annotations": len(approved_annotations),
                 "created_at": datetime.utcnow().isoformat(),
-            }
+            },
         )
 
     def _filter_agent_spans(
@@ -349,20 +352,23 @@ class TraceToInstructionConverter:
             # Extract input/output from span attributes
             # Convention: input in attributes.input.*, output in attributes.output.*
             attributes = {
-                k: v for k, v in span_row.items()
-                if k.startswith("attributes.")
+                k: v for k, v in span_row.items() if k.startswith("attributes.")
             }
 
             # Get input (query, request, etc.)
             input_text = self._extract_input(attributes, agent_type)
             if not input_text:
-                logger.warning(f"No input found in span {span_row.get('context.span_id')}")
+                logger.warning(
+                    f"No input found in span {span_row.get('context.span_id')}"
+                )
                 return None
 
             # Get output (response, decision, etc.)
             output_text = self._extract_output(attributes, agent_type)
             if not output_text:
-                logger.warning(f"No output found in span {span_row.get('context.span_id')}")
+                logger.warning(
+                    f"No output found in span {span_row.get('context.span_id')}"
+                )
                 return None
 
             # Get instruction template for agent type
@@ -377,7 +383,7 @@ class TraceToInstructionConverter:
                     "agent_type": agent_type,
                     "start_time": span_row.get("start_time"),
                     "end_time": span_row.get("end_time"),
-                }
+                },
             )
 
         except Exception as e:
@@ -418,6 +424,7 @@ class TraceToInstructionConverter:
                 # Handle dict/list outputs
                 if isinstance(value, (dict, list)):
                     import json
+
                     return json.dumps(value)
                 return str(value)
 
@@ -477,19 +484,14 @@ class TraceToTrajectoryConverter:
         Raises:
             ValueError: If no spans found with session_id
         """
-        logger.info(
-            f"Extracting trajectories for {agent_type} from {project}"
-        )
+        logger.info(f"Extracting trajectories for {agent_type} from {project}")
 
         # Get trace store from provider
         trace_store = self.provider.traces
 
         # Query spans
         spans_df = await trace_store.get_spans(
-            project=project,
-            start_time=start_time,
-            end_time=end_time,
-            limit=10000
+            project=project, start_time=start_time, end_time=end_time, limit=10000
         )
 
         if spans_df.empty:
@@ -552,7 +554,7 @@ class TraceToTrajectoryConverter:
                 annotations_df = await annotation_store.get_annotations(
                     spans_df=session_spans_df,
                     project=project,
-                    annotation_names=["session_evaluation"]
+                    annotation_names=["session_evaluation"],
                 )
 
                 if annotations_df.empty:
@@ -586,7 +588,7 @@ class TraceToTrajectoryConverter:
                     "project": project,
                     "agent_type": agent_type,
                     "extracted_at": datetime.utcnow().isoformat(),
-                }
+                },
             )
             trajectories.append(trajectory)
 
@@ -604,7 +606,7 @@ class TraceToTrajectoryConverter:
                 "total_sessions": len(trajectories),
                 "total_turns": total_turns,
                 "extracted_at": datetime.utcnow().isoformat(),
-            }
+            },
         )
 
     def _filter_agent_spans(
@@ -639,10 +641,7 @@ class TraceToTrajectoryConverter:
         """
         try:
             # Extract query/response from span attributes
-            attributes = {
-                k: v for k, v in span.items()
-                if k.startswith("attributes.")
-            }
+            attributes = {k: v for k, v in span.items() if k.startswith("attributes.")}
 
             # Get query (input)
             query = self._extract_query(attributes)
@@ -670,7 +669,7 @@ class TraceToTrajectoryConverter:
                 metadata={
                     "agent_type": agent_type,
                     "latency_ms": span.get("attributes.latency_ms"),
-                }
+                },
             )
 
         except Exception as e:

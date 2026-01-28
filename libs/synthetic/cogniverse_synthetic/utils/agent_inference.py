@@ -135,7 +135,9 @@ class AgentInferrer:
             return "audio_search_agent"
 
         # Check description for content type hints
-        description = content.get("segment_description", content.get("description", "")).lower()
+        description = content.get(
+            "segment_description", content.get("description", "")
+        ).lower()
         for content_type, agent in self.CONTENT_TYPE_TO_AGENT.items():
             if content_type in description:
                 logger.debug(
@@ -198,8 +200,7 @@ class AgentInferrer:
 
         # Check for summarization keywords
         if any(
-            word in task_lower
-            for word in ["summarize", "summary", "condense", "brief"]
+            word in task_lower for word in ["summarize", "summary", "condense", "brief"]
         ):
             return "summarizer"
 
@@ -215,9 +216,7 @@ class AgentInferrer:
             # Determine modality from keywords
             if any(word in task_lower for word in ["video", "tutorial", "demo"]):
                 return "video_search_agent"
-            elif any(
-                word in task_lower for word in ["document", "paper", "article"]
-            ):
+            elif any(word in task_lower for word in ["document", "paper", "article"]):
                 return "document_agent"
             elif any(word in task_lower for word in ["image", "diagram", "chart"]):
                 return "image_search_agent"
@@ -281,9 +280,7 @@ class AgentInferrer:
         has_search = any(a in search_agents for a in agent_sequence)
 
         if has_secondary and not has_search:
-            logger.warning(
-                "Invalid sequence: secondary agents without search agent"
-            )
+            logger.warning("Invalid sequence: secondary agents without search agent")
             return False
 
         return True

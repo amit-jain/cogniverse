@@ -31,10 +31,10 @@ class TestTenantManagerAPI:
 
         # Start Vespa WITHOUT deploying schemas - let SchemaRegistry handle it
         from tests.utils.vespa_docker import VespaDockerManager
+
         docker_mgr = VespaDockerManager()
         container_info = docker_mgr.start_container(
-            module_name="tenant_manager_tests",
-            use_module_ports=False
+            module_name="tenant_manager_tests", use_module_ports=False
         )
         manager.container_name = container_info["container_name"]
         manager.http_port = container_info["http_port"]
@@ -58,11 +58,12 @@ class TestTenantManagerAPI:
     @pytest.fixture(scope="module")
     def config_manager(self, vespa_backend, shared_test_db):
         """Create class-scoped ConfigManager"""
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_vespa.config.config_store import VespaConfigStore
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
@@ -76,7 +77,9 @@ class TestTenantManagerAPI:
         # FIRST: Deploy metadata schemas via backend initialization
         # This must happen BEFORE set_system_config() which writes to config_metadata schema
         schema_loader = FilesystemSchemaLoader(vespa_backend.test_schemas_resource_dir)
-        logger.info(f"Creating backend for system tenant on port {vespa_backend.http_port}")
+        logger.info(
+            f"Creating backend for system tenant on port {vespa_backend.http_port}"
+        )
         BackendRegistry.get_instance().get_ingestion_backend(
             name="vespa",
             tenant_id="system",
@@ -94,13 +97,16 @@ class TestTenantManagerAPI:
 
         # Wait for Vespa to be ready and for schemas to be fully activated
         from tests.utils.vespa_health import wait_for_vespa_ready
+
         wait_for_vespa_ready(port=vespa_backend.http_port, max_timeout=30)
 
         # Additional wait for metadata schema activation
         wait_for_vespa_indexing(delay=3, description="metadata schema activation")
 
         # NOW set system config (schemas are deployed, config_metadata exists)
-        logger.info(f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})")
+        logger.info(
+            f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})"
+        )
         system_config = SystemConfig(
             tenant_id="system",
             backend_url="http://localhost",
@@ -119,7 +125,9 @@ class TestTenantManagerAPI:
         from cogniverse_runtime.admin import tenant_manager
 
         # DO NOT clear BackendRegistry cache - reuse backend with deployed metadata schemas
-        logger.info("Reusing backend from config_manager fixture (with metadata schemas)")
+        logger.info(
+            "Reusing backend from config_manager fixture (with metadata schemas)"
+        )
 
         schema_loader = FilesystemSchemaLoader(vespa_backend.test_schemas_resource_dir)
 
@@ -191,7 +199,9 @@ class TestTenantManagerAPI:
                 "created_by": "test",
             },
         )
-        assert response1.status_code == 200, f"First org creation failed: {response1.status_code} - {response1.text}"
+        assert (
+            response1.status_code == 200
+        ), f"First org creation failed: {response1.status_code} - {response1.text}"
 
         # Wait for Vespa to index the document
         wait_for_vespa_indexing(delay=6, description="organization indexing")

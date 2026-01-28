@@ -17,9 +17,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from vespa.package import Schema
-
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+from vespa.package import Schema
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,9 @@ def get_schemas_dir() -> Path:
     # Try to find configs/schemas relative to common locations
     possible_paths = [
         Path("configs/schemas"),  # Current directory
-        Path(__file__).parent.parent.parent.parent.parent / "configs" / "schemas",  # From libs/vespa/cogniverse_vespa/
+        Path(__file__).parent.parent.parent.parent.parent
+        / "configs"
+        / "schemas",  # From libs/vespa/cogniverse_vespa/
     ]
 
     for path in possible_paths:

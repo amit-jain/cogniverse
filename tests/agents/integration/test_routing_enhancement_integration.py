@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from cogniverse_agents.result_aggregator import (
     AggregatedResult,
@@ -32,7 +33,9 @@ class TestRoutingToEnhancedSearchIntegration:
         yield
 
     @pytest.mark.asyncio
-    async def test_routing_with_query_enhancement_integration(self, mock_dependencies, telemetry_manager_without_phoenix):
+    async def test_routing_with_query_enhancement_integration(
+        self, mock_dependencies, telemetry_manager_without_phoenix
+    ):
         """Test routing with query enhancement flowing to search"""
         # Mock relationship extraction and query enhancement
         with patch(
@@ -140,7 +143,9 @@ class TestRoutingToEnhancedSearchIntegration:
                     enhancement_indicators
                 ), f"No enhancement indicators found. Metadata: {routing_decision.metadata}"
 
-    def test_orchestration_need_assessment_integration(self, mock_dependencies, telemetry_manager_without_phoenix):
+    def test_orchestration_need_assessment_integration(
+        self, mock_dependencies, telemetry_manager_without_phoenix
+    ):
         """Test orchestration need assessment between routing and orchestrator"""
 
         # Create components
@@ -149,7 +154,11 @@ class TestRoutingToEnhancedSearchIntegration:
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         routing_agent = RoutingAgent(deps=deps)
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, routing_agent=routing_agent)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            routing_agent=routing_agent,
+        )
 
         # Test complex query that should trigger orchestration
         complex_routing_decision = RoutingDecision(
@@ -220,12 +229,8 @@ class TestEnhancedAgentComponentIntegration:
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
         with patch("cogniverse_agents.result_enhancement_engine.logger"):
-            with patch(
-                "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
-            ):
-                with patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent"
-                ):
+            with patch("cogniverse_agents.result_aggregator.ResultEnhancementEngine"):
+                with patch("cogniverse_agents.routing_agent.RoutingAgent"):
                     # Mock the actual imports that exist
                     yield
 
@@ -354,7 +359,9 @@ class TestEnhancedAgentComponentIntegration:
             assert len(routing_data["relationships"]) == 2
 
     @pytest.mark.asyncio
-    async def test_orchestrator_complete_pipeline_integration(self, mock_dependencies, telemetry_manager_without_phoenix):
+    async def test_orchestrator_complete_pipeline_integration(
+        self, mock_dependencies, telemetry_manager_without_phoenix
+    ):
         """Test complete pipeline through Multi-Agent Orchestrator"""
 
         # Mock workflow planner and result aggregator
@@ -364,38 +371,43 @@ class TestEnhancedAgentComponentIntegration:
 
             # Mock DSPy workflow planner
             mock_workflow_planner = Mock()
-            mock_workflow_planner.forward = Mock(return_value=Mock(
-                workflow_tasks=[
-                    {
-                        "task_id": "search",
-                        "agent": "video_search_agent",
-                        "query": "robots playing soccer",
-                        "dependencies": []
-                    },
-                    {
-                        "task_id": "summarize",
-                        "agent": "summarizer_agent",
-                        "query": "Summarize results for: robots playing soccer",
-                        "dependencies": ["search"]
-                    }
-                ],
-                execution_strategy="sequential",
-                expected_outcome="Search results followed by summary",
-                reasoning="Workflow for sports technology query"
-            ))
+            mock_workflow_planner.forward = Mock(
+                return_value=Mock(
+                    workflow_tasks=[
+                        {
+                            "task_id": "search",
+                            "agent": "video_search_agent",
+                            "query": "robots playing soccer",
+                            "dependencies": [],
+                        },
+                        {
+                            "task_id": "summarize",
+                            "agent": "summarizer_agent",
+                            "query": "Summarize results for: robots playing soccer",
+                            "dependencies": ["search"],
+                        },
+                    ],
+                    execution_strategy="sequential",
+                    expected_outcome="Search results followed by summary",
+                    reasoning="Workflow for sports technology query",
+                )
+            )
 
             # Mock DSPy result aggregator
             mock_result_aggregator = Mock()
-            mock_result_aggregator.forward = Mock(return_value=Mock(
-                aggregated_result="Combined results for query: robots playing soccer",
-                confidence_score=0.85,
-                fusion_quality="high",
-                cross_modal_consistency="consistent"
-            ))
+            mock_result_aggregator.forward = Mock(
+                return_value=Mock(
+                    aggregated_result="Combined results for query: robots playing soccer",
+                    confidence_score=0.85,
+                    fusion_quality="high",
+                    cross_modal_consistency="consistent",
+                )
+            )
 
             # Configure mock to return our mocked modules
             # Provide a callable that cycles through the mocks to handle multiple ChainOfThought calls
             from itertools import cycle
+
             mock_cycle = cycle([mock_workflow_planner, mock_result_aggregator])
             mock_dspy_cot.side_effect = lambda *args, **kwargs: next(mock_cycle)
 
@@ -404,34 +416,40 @@ class TestEnhancedAgentComponentIntegration:
                 "cogniverse_agents.multi_agent_orchestrator.A2AClient"
             ) as mock_a2a_client_class:
                 mock_a2a_client = Mock()
-                mock_a2a_client.send_message = AsyncMock(side_effect=[
-                    # First task (search) result
-                    {
-                        "results": [
-                            {"id": 1, "title": "Robot soccer championship", "score": 0.8},
-                            {"id": 2, "title": "AI in sports", "score": 0.7}
-                        ],
-                        "confidence": 0.9
-                    },
-                    # Second task (summarize) result
-                    {
-                        "summary": "Enhanced summary of robot soccer content",
-                        "confidence": 0.85
-                    }
-                ])
+                mock_a2a_client.send_message = AsyncMock(
+                    side_effect=[
+                        # First task (search) result
+                        {
+                            "results": [
+                                {
+                                    "id": 1,
+                                    "title": "Robot soccer championship",
+                                    "score": 0.8,
+                                },
+                                {"id": 2, "title": "AI in sports", "score": 0.7},
+                            ],
+                            "confidence": 0.9,
+                        },
+                        # Second task (summarize) result
+                        {
+                            "summary": "Enhanced summary of robot soccer content",
+                            "confidence": 0.85,
+                        },
+                    ]
+                )
                 mock_a2a_client_class.return_value = mock_a2a_client
 
                 # Create orchestrator
                 orchestrator = MultiAgentOrchestrator(
                     tenant_id="test_tenant",
-                    telemetry_config=telemetry_manager_without_phoenix.config
+                    telemetry_config=telemetry_manager_without_phoenix.config,
                 )
 
                 # Test complete pipeline
                 result = await orchestrator.process_complex_query(
                     query="robots playing soccer",
                     context="Research project on robotic athletics",
-                    user_id="test_user"
+                    user_id="test_user",
                 )
 
                 # Verify result structure
@@ -440,7 +458,9 @@ class TestEnhancedAgentComponentIntegration:
                 assert "execution_summary" in result
                 assert result["execution_summary"]["total_tasks"] == 2
                 assert result["execution_summary"]["completed_tasks"] == 2
-                assert "video_search_agent" in result["execution_summary"]["agents_used"]
+                assert (
+                    "video_search_agent" in result["execution_summary"]["agents_used"]
+                )
                 assert "summarizer_agent" in result["execution_summary"]["agents_used"]
 
                 # Verify aggregated result
@@ -552,7 +572,9 @@ class TestRoutingEnhancementErrorHandlingIntegration:
         # No patches needed for error testing - just yield
         yield
 
-    def test_routing_failure_to_enhancement_fallback(self, mock_dependencies, telemetry_manager_without_phoenix):
+    def test_routing_failure_to_enhancement_fallback(
+        self, mock_dependencies, telemetry_manager_without_phoenix
+    ):
         """Test fallback when routing fails but enhancement can still proceed"""
 
         # Mock failed routing but successful enhancement

@@ -13,6 +13,7 @@ import asyncio
 import os
 
 import pytest
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -44,7 +45,10 @@ class TestCompleteMultiAgentOrchestration:
         # Initialize routing agent
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
@@ -63,9 +67,7 @@ class TestCompleteMultiAgentOrchestration:
             # Step 2: Skip video search agent to avoid Vespa connection hang
             try:
                 # Skip actual video agent initialization to avoid Vespa timeout
-                print(
-                    "✅ Complete routing workflow functional (video search skipped)"
-                )
+                print("✅ Complete routing workflow functional (video search skipped)")
 
             except Exception as video_error:
                 # Expected if Vespa not available
@@ -173,9 +175,7 @@ class TestCompleteMultiAgentOrchestration:
 
         # Initialize all core agents with mocked routing agent
         with (
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-            ),
+            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
             patch(
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
             ),
@@ -241,9 +241,7 @@ class TestCompleteMultiAgentOrchestration:
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         with (
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-            ),
+            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
             patch(
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
             ),
@@ -316,9 +314,7 @@ class TestCompleteMultiAgentOrchestration:
 
             # Create multiple agents simultaneously with mocked routing agent
             with (
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-                ),
+                patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
                 patch(
                     "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
@@ -397,9 +393,7 @@ class TestSystemScalability:
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         with (
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-            ),
+            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
             patch(
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
             ),
@@ -475,9 +469,7 @@ class TestSystemScalability:
                 assert reporter is not None
 
             except Exception as e:
-                print(
-                    f"Memory stability test iteration {i} handled gracefully: {e}"
-                )
+                print(f"Memory stability test iteration {i} handled gracefully: {e}")
 
         print("✅ Memory usage stability validated")
 

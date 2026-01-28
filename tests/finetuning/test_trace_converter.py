@@ -53,13 +53,13 @@ class TestInstructionDataset:
                 instruction="Route this query",
                 input="Find videos about cats",
                 output="video_search",
-                metadata={"agent": "routing"}
+                metadata={"agent": "routing"},
             ),
             InstructionExample(
                 instruction="Route this query",
                 input="Show me images of dogs",
                 output="image_search",
-                metadata={"agent": "routing"}
+                metadata={"agent": "routing"},
             ),
         ]
 
@@ -80,7 +80,7 @@ class TestInstructionDataset:
                 instruction="Route this query",
                 input="Find videos",
                 output="video_search",
-                metadata={}
+                metadata={},
             ),
         ]
 
@@ -97,7 +97,7 @@ class TestInstructionDataset:
                 instruction="Route this query",
                 input="Find videos",
                 output="video_search",
-                metadata={}
+                metadata={},
             ),
         ]
 
@@ -114,7 +114,7 @@ class TestInstructionDataset:
                 instruction="Route this query",
                 input="Find videos",
                 output="video_search",
-                metadata={}
+                metadata={},
             ),
         ]
 
@@ -137,11 +137,13 @@ class TestAgentFiltering:
         converter = TraceToInstructionConverter(provider=mock_provider)
 
         # Create test data
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2", "span3"],
-            "name": ["routing_agent", "search_agent", "routing_agent"],
-            "attributes.agent_type": ["routing", "search", "routing"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2", "span3"],
+                "name": ["routing_agent", "search_agent", "routing_agent"],
+                "attributes.agent_type": ["routing", "search", "routing"],
+            }
+        )
 
         filtered = converter._filter_agent_spans(spans_df, "routing")
 
@@ -156,11 +158,13 @@ class TestAgentFiltering:
 
         converter = TraceToInstructionConverter(provider=mock_provider)
 
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2"],
-            "name": ["profile_selection_agent", "routing_agent"],
-            "attributes.agent_type": ["profile_selection", "routing"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2"],
+                "name": ["profile_selection_agent", "routing_agent"],
+                "attributes.agent_type": ["profile_selection", "routing"],
+            }
+        )
 
         filtered = converter._filter_agent_spans(spans_df, "profile_selection")
 
@@ -175,11 +179,13 @@ class TestAgentFiltering:
 
         converter = TraceToInstructionConverter(provider=mock_provider)
 
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2"],
-            "name": ["entity_extraction_agent", "routing_agent"],
-            "attributes.agent_type": ["entity_extraction", "routing"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2"],
+                "name": ["entity_extraction_agent", "routing_agent"],
+                "attributes.agent_type": ["entity_extraction", "routing"],
+            }
+        )
 
         filtered = converter._filter_agent_spans(spans_df, "entity_extraction")
 
@@ -204,7 +210,7 @@ class TestConversationTurn:
             response="Here are basketball videos...",
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
             span_id="span123",
-            metadata={"agent_type": "routing"}
+            metadata={"agent_type": "routing"},
         )
 
         assert turn.turn_id == 1
@@ -254,7 +260,7 @@ class TestConversationTrajectory:
             turns=turns,
             session_outcome="success",
             session_score=0.9,
-            metadata={"project": "test"}
+            metadata={"project": "test"},
         )
 
         assert trajectory.session_id == "session123"
@@ -414,10 +420,12 @@ class TestTraceToTrajectoryConverter:
 
         converter = TraceToTrajectoryConverter(provider=mock_provider)
 
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2", "span3"],
-            "name": ["routing_agent", "search_agent", "routing_agent"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2", "span3"],
+                "name": ["routing_agent", "search_agent", "routing_agent"],
+            }
+        )
 
         filtered = converter._filter_agent_spans(spans_df, "routing")
 
@@ -458,12 +466,14 @@ class TestTraceToTrajectoryConverter:
         mock_provider = Mock()
         converter = TraceToTrajectoryConverter(provider=mock_provider)
 
-        span = pd.Series({
-            "context.span_id": "span123",
-            "start_time": datetime(2025, 1, 1, 12, 0, 0),
-            "attributes.input.value": "Test query",
-            "attributes.output.value": "Test response",
-        })
+        span = pd.Series(
+            {
+                "context.span_id": "span123",
+                "start_time": datetime(2025, 1, 1, 12, 0, 0),
+                "attributes.input.value": "Test query",
+                "attributes.output.value": "Test response",
+            }
+        )
 
         turn = converter._create_turn_from_span(span, turn_idx=1, agent_type="routing")
 
@@ -499,11 +509,15 @@ class TestTraceToTrajectoryConverterAsync:
         mock_provider = Mock()
         mock_traces = AsyncMock()
         # Return spans but none matching agent type
-        mock_traces.get_spans = AsyncMock(return_value=pd.DataFrame({
-            "context.span_id": ["span1"],
-            "name": ["other_agent"],
-            "attributes.session_id": ["session1"],
-        }))
+        mock_traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                {
+                    "context.span_id": ["span1"],
+                    "name": ["other_agent"],
+                    "attributes.session_id": ["session1"],
+                }
+            )
+        )
         mock_provider.traces = mock_traces
 
         converter = TraceToTrajectoryConverter(provider=mock_provider)
@@ -519,11 +533,15 @@ class TestTraceToTrajectoryConverterAsync:
         mock_provider = Mock()
         mock_traces = AsyncMock()
         # Return routing spans but no session_id column
-        mock_traces.get_spans = AsyncMock(return_value=pd.DataFrame({
-            "context.span_id": ["span1"],
-            "name": ["routing_agent"],
-            # No session_id column
-        }))
+        mock_traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                {
+                    "context.span_id": ["span1"],
+                    "name": ["routing_agent"],
+                    # No session_id column
+                }
+            )
+        )
         mock_provider.traces = mock_traces
 
         converter = TraceToTrajectoryConverter(provider=mock_provider)
@@ -541,19 +559,31 @@ class TestTraceToTrajectoryConverterAsync:
         mock_annotations = AsyncMock()
 
         # Create spans from two sessions
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2", "span3", "span4"],
-            "name": ["routing_agent", "routing_agent", "routing_agent", "routing_agent"],
-            "attributes.session_id": ["session1", "session1", "session2", "session2"],
-            "start_time": [
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 1, 0),
-                datetime(2025, 1, 1, 12, 2, 0),
-                datetime(2025, 1, 1, 12, 3, 0),
-            ],
-            "attributes.input.value": ["q1", "q2", "q3", "q4"],
-            "attributes.output.value": ["r1", "r2", "r3", "r4"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2", "span3", "span4"],
+                "name": [
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                ],
+                "attributes.session_id": [
+                    "session1",
+                    "session1",
+                    "session2",
+                    "session2",
+                ],
+                "start_time": [
+                    datetime(2025, 1, 1, 12, 0, 0),
+                    datetime(2025, 1, 1, 12, 1, 0),
+                    datetime(2025, 1, 1, 12, 2, 0),
+                    datetime(2025, 1, 1, 12, 3, 0),
+                ],
+                "attributes.input.value": ["q1", "q2", "q3", "q4"],
+                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+            }
+        )
 
         mock_traces.get_spans = AsyncMock(return_value=spans_df)
         mock_provider.traces = mock_traces
@@ -580,19 +610,31 @@ class TestTraceToTrajectoryConverterAsync:
         mock_annotations = AsyncMock()
 
         # Create spans: session1 has 3 turns, session2 has 1 turn
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2", "span3", "span4"],
-            "name": ["routing_agent", "routing_agent", "routing_agent", "routing_agent"],
-            "attributes.session_id": ["session1", "session1", "session1", "session2"],
-            "start_time": [
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 1, 0),
-                datetime(2025, 1, 1, 12, 2, 0),
-                datetime(2025, 1, 1, 12, 3, 0),
-            ],
-            "attributes.input.value": ["q1", "q2", "q3", "q4"],
-            "attributes.output.value": ["r1", "r2", "r3", "r4"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2", "span3", "span4"],
+                "name": [
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                ],
+                "attributes.session_id": [
+                    "session1",
+                    "session1",
+                    "session1",
+                    "session2",
+                ],
+                "start_time": [
+                    datetime(2025, 1, 1, 12, 0, 0),
+                    datetime(2025, 1, 1, 12, 1, 0),
+                    datetime(2025, 1, 1, 12, 2, 0),
+                    datetime(2025, 1, 1, 12, 3, 0),
+                ],
+                "attributes.input.value": ["q1", "q2", "q3", "q4"],
+                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+            }
+        )
 
         mock_traces.get_spans = AsyncMock(return_value=spans_df)
         mock_provider.traces = mock_traces
@@ -618,24 +660,28 @@ class TestTraceToTrajectoryConverterAsync:
         mock_annotations = AsyncMock()
 
         # Create spans for one session
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2"],
-            "name": ["routing_agent", "routing_agent"],
-            "attributes.session_id": ["session1", "session1"],
-            "start_time": [
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 1, 0),
-            ],
-            "attributes.input.value": ["q1", "q2"],
-            "attributes.output.value": ["r1", "r2"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2"],
+                "name": ["routing_agent", "routing_agent"],
+                "attributes.session_id": ["session1", "session1"],
+                "start_time": [
+                    datetime(2025, 1, 1, 12, 0, 0),
+                    datetime(2025, 1, 1, 12, 1, 0),
+                ],
+                "attributes.input.value": ["q1", "q2"],
+                "attributes.output.value": ["r1", "r2"],
+            }
+        )
 
         # Create annotation data
-        annotations_df = pd.DataFrame({
-            "span_id": ["span1"],
-            "result.label": ["success"],
-            "result.score": [0.9],
-        })
+        annotations_df = pd.DataFrame(
+            {
+                "span_id": ["span1"],
+                "result.label": ["success"],
+                "result.score": [0.9],
+            }
+        )
 
         mock_traces.get_spans = AsyncMock(return_value=spans_df)
         mock_annotations.get_annotations = AsyncMock(return_value=annotations_df)
@@ -663,29 +709,43 @@ class TestTraceToTrajectoryConverterAsync:
         mock_annotations = AsyncMock()
 
         # Create spans for two sessions
-        spans_df = pd.DataFrame({
-            "context.span_id": ["span1", "span2", "span3", "span4"],
-            "name": ["routing_agent", "routing_agent", "routing_agent", "routing_agent"],
-            "attributes.session_id": ["session1", "session1", "session2", "session2"],
-            "start_time": [
-                datetime(2025, 1, 1, 12, 0, 0),
-                datetime(2025, 1, 1, 12, 1, 0),
-                datetime(2025, 1, 1, 12, 2, 0),
-                datetime(2025, 1, 1, 12, 3, 0),
-            ],
-            "attributes.input.value": ["q1", "q2", "q3", "q4"],
-            "attributes.output.value": ["r1", "r2", "r3", "r4"],
-        })
+        spans_df = pd.DataFrame(
+            {
+                "context.span_id": ["span1", "span2", "span3", "span4"],
+                "name": [
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                    "routing_agent",
+                ],
+                "attributes.session_id": [
+                    "session1",
+                    "session1",
+                    "session2",
+                    "session2",
+                ],
+                "start_time": [
+                    datetime(2025, 1, 1, 12, 0, 0),
+                    datetime(2025, 1, 1, 12, 1, 0),
+                    datetime(2025, 1, 1, 12, 2, 0),
+                    datetime(2025, 1, 1, 12, 3, 0),
+                ],
+                "attributes.input.value": ["q1", "q2", "q3", "q4"],
+                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+            }
+        )
 
         # Only session1 is annotated (session2 returns empty)
         async def mock_get_annotations(spans_df, project, annotation_names):
             session_ids = set(spans_df["attributes.session_id"].unique())
             if "session1" in session_ids:
-                return pd.DataFrame({
-                    "span_id": ["span1"],
-                    "result.label": ["success"],
-                    "result.score": [0.9],
-                })
+                return pd.DataFrame(
+                    {
+                        "span_id": ["span1"],
+                        "result.label": ["success"],
+                        "result.score": [0.9],
+                    }
+                )
             return pd.DataFrame()
 
         mock_traces.get_spans = AsyncMock(return_value=spans_df)

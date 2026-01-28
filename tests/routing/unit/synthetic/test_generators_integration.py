@@ -2,13 +2,7 @@
 Integration tests for all synthetic data generators
 """
 
-
 import pytest
-from cogniverse_foundation.config.unified_config import (
-    AgentMappingRule,
-    DSPyModuleConfig,
-    OptimizerGenerationConfig,
-)
 from cogniverse_synthetic.generators import (
     CrossModalGenerator,
     ModalityGenerator,
@@ -22,6 +16,12 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
+
+from cogniverse_foundation.config.unified_config import (
+    AgentMappingRule,
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+)
 
 
 # Test configuration fixtures
@@ -67,7 +67,7 @@ class TestModalityGeneratorIntegration:
         generator = ModalityGenerator(
             pattern_extractor=pattern_extractor,
             agent_inferrer=agent_inferrer,
-            optimizer_config=create_modality_config()
+            optimizer_config=create_modality_config(),
         )
 
         # Mock content
@@ -75,15 +75,13 @@ class TestModalityGeneratorIntegration:
             {
                 "video_title": "Machine Learning Tutorial",
                 "segment_description": "Learn about neural networks and deep learning",
-                "schema_name": "video_content"
+                "schema_name": "video_content",
             }
         ]
 
         # Generate examples
         examples = await generator.generate(
-            sampled_content=mock_content,
-            target_count=10,
-            modality="VIDEO"
+            sampled_content=mock_content, target_count=10, modality="VIDEO"
         )
 
         assert len(examples) == 10
@@ -98,9 +96,7 @@ class TestModalityGeneratorIntegration:
         generator = ModalityGenerator(optimizer_config=create_modality_config())
 
         examples = await generator.generate(
-            sampled_content=[],
-            target_count=5,
-            modality="DOCUMENT"
+            sampled_content=[], target_count=5, modality="DOCUMENT"
         )
 
         assert len(examples) == 5
@@ -121,8 +117,7 @@ class TestCrossModalGeneratorIntegration:
         ]
 
         examples = await generator.generate(
-            sampled_content=mock_content,
-            target_count=10
+            sampled_content=mock_content, target_count=10
         )
 
         assert len(examples) == 10
@@ -144,20 +139,19 @@ class TestRoutingGeneratorIntegration:
         generator = RoutingGenerator(
             pattern_extractor=pattern_extractor,
             agent_inferrer=agent_inferrer,
-            optimizer_config=create_routing_config()
+            optimizer_config=create_routing_config(),
         )
 
         mock_content = [
             {
                 "video_title": "TensorFlow Neural Networks Tutorial",
                 "segment_description": "Learn TensorFlow for deep learning",
-                "schema_name": "video_content"
+                "schema_name": "video_content",
             }
         ]
 
         examples = await generator.generate(
-            sampled_content=mock_content,
-            target_count=10
+            sampled_content=mock_content, target_count=10
         )
 
         assert len(examples) == 10
@@ -165,7 +159,9 @@ class TestRoutingGeneratorIntegration:
         assert all(len(ex.entities) >= 1 for ex in examples)
         assert all(0.0 <= ex.routing_confidence <= 1.0 for ex in examples)
         assert all(0.0 <= ex.search_quality <= 1.0 for ex in examples)
-        assert all(ex.enhanced_query != ex.query for ex in examples)  # Should have annotations
+        assert all(
+            ex.enhanced_query != ex.query for ex in examples
+        )  # Should have annotations
 
 
 class TestWorkflowGeneratorIntegration:
@@ -181,8 +177,7 @@ class TestWorkflowGeneratorIntegration:
         ]
 
         examples = await generator.generate(
-            sampled_content=mock_content,
-            target_count=15
+            sampled_content=mock_content, target_count=15
         )
 
         assert len(examples) == 15
@@ -198,10 +193,7 @@ class TestWorkflowGeneratorIntegration:
         """Test WorkflowGenerator uses different workflow patterns"""
         generator = WorkflowGenerator()
 
-        examples = await generator.generate(
-            sampled_content=[],
-            target_count=30
-        )
+        examples = await generator.generate(sampled_content=[], target_count=30)
 
         # Check we get different workflow lengths (simple, moderate, complex)
         lengths = [len(ex.agent_sequence) for ex in examples]
@@ -223,30 +215,55 @@ class TestAllGeneratorsTogether:
                 "video_title": "Deep Learning with TensorFlow",
                 "segment_description": "Tutorial on neural networks",
                 "schema_name": "video_content",
-                "embedding_type": "video"
+                "embedding_type": "video",
             }
         ]
 
         # Test each generator
         generators = [
-            (ModalityGenerator(pattern_extractor, agent_inferrer, create_modality_config()), {"modality": "VIDEO"}),
+            (
+                ModalityGenerator(
+                    pattern_extractor, agent_inferrer, create_modality_config()
+                ),
+                {"modality": "VIDEO"},
+            ),
             (CrossModalGenerator(), {}),
-            (RoutingGenerator(pattern_extractor, agent_inferrer, create_routing_config()), {}),
+            (
+                RoutingGenerator(
+                    pattern_extractor, agent_inferrer, create_routing_config()
+                ),
+                {},
+            ),
             (WorkflowGenerator(), {}),
         ]
 
         for generator, kwargs in generators:
             examples = await generator.generate(
-                sampled_content=mock_content,
-                target_count=5,
-                **kwargs
+                sampled_content=mock_content, target_count=5, **kwargs
             )
 
             assert len(examples) == 5
-            assert all(isinstance(ex, generator.__class__.__bases__[0].__orig_bases__[0].__args__[0] if hasattr(generator.__class__.__bases__[0], '__orig_bases__') else object) for ex in examples) or True  # Just check they're BaseModel instances
+            assert (
+                all(
+                    isinstance(
+                        ex,
+                        (
+                            generator.__class__.__bases__[0]
+                            .__orig_bases__[0]
+                            .__args__[0]
+                            if hasattr(
+                                generator.__class__.__bases__[0], "__orig_bases__"
+                            )
+                            else object
+                        ),
+                    )
+                    for ex in examples
+                )
+                or True
+            )  # Just check they're BaseModel instances
 
             # All should return Pydantic models
-            assert all(hasattr(ex, 'model_dump') for ex in examples)
+            assert all(hasattr(ex, "model_dump") for ex in examples)
 
 
 if __name__ == "__main__":

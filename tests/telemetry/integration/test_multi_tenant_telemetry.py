@@ -12,13 +12,13 @@ These tests validate:
 import time
 
 import pytest
+
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
     TelemetryLevel,
 )
 from cogniverse_foundation.telemetry.manager import NoOpSpan, TelemetryManager
-
 from tests.utils.async_polling import wait_for_phoenix_processing
 
 
@@ -32,8 +32,11 @@ class TestMultiTenantTelemetryIntegration:
         """Create config for SYNC export mode (for testing)."""
         return TelemetryConfig(
             enabled=True,
-            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
-            
+            otlp_endpoint="http://localhost:4317",
+            provider_config={
+                "http_endpoint": "http://localhost:6006",
+                "grpc_endpoint": "http://localhost:4317",
+            },
             service_name="test-service",
             environment="test",
             level=TelemetryLevel.DETAILED,
@@ -48,8 +51,11 @@ class TestMultiTenantTelemetryIntegration:
         """Create config for BATCH export mode (production mode)."""
         return TelemetryConfig(
             enabled=True,
-            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
-            
+            otlp_endpoint="http://localhost:4317",
+            provider_config={
+                "http_endpoint": "http://localhost:6006",
+                "grpc_endpoint": "http://localhost:4317",
+            },
             service_name="test-service",
             environment="test",
             level=TelemetryLevel.DETAILED,
@@ -99,7 +105,9 @@ class TestMultiTenantTelemetryIntegration:
                 # Verify span is not NoOp
                 assert not isinstance(span, NoOpSpan)
                 tenant_a_spans.append(span)
-                wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")  # Small delay
+                wait_for_phoenix_processing(
+                    delay=0.01, description="Phoenix processing"
+                )  # Small delay
 
         # Create spans for tenant-b
         tenant_b_spans = []
@@ -111,7 +119,9 @@ class TestMultiTenantTelemetryIntegration:
             ) as span:
                 assert not isinstance(span, NoOpSpan)
                 tenant_b_spans.append(span)
-                wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")
+                wait_for_phoenix_processing(
+                    delay=0.01, description="Phoenix processing"
+                )
 
         # Verify different tracers for different tenants
         tracer_a = manager.get_tracer("tenant-a")
@@ -156,7 +166,9 @@ class TestMultiTenantTelemetryIntegration:
                 ) as span:
                     assert not isinstance(span, NoOpSpan)
                     # In batch mode, spans are buffered
-                    wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")
+                    wait_for_phoenix_processing(
+                        delay=0.01, description="Phoenix processing"
+                    )
 
         # Verify tracers created for all tenants
         assert len(manager._tenant_providers) >= 3
@@ -207,8 +219,11 @@ class TestMultiTenantTelemetryIntegration:
         # Config with small cache size for testing
         config = TelemetryConfig(
             enabled=True,
-            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
-            
+            otlp_endpoint="http://localhost:4317",
+            provider_config={
+                "http_endpoint": "http://localhost:6006",
+                "grpc_endpoint": "http://localhost:4317",
+            },
             service_name="test-service",
             max_cached_tenants=3,  # Small cache for testing
             batch_config=BatchExportConfig(use_sync_export=True),
@@ -272,9 +287,7 @@ class TestMultiTenantTelemetryIntegration:
 
         manager = TelemetryManager(config)
 
-        with manager.span(
-            name="test_operation", tenant_id="test-tenant"
-        ) as span:
+        with manager.span(name="test_operation", tenant_id="test-tenant") as span:
             assert isinstance(span, NoOpSpan)
 
         # Cleanup
@@ -347,9 +360,7 @@ class TestMultiTenantTelemetryIntegration:
 
         # Create some spans
         for i in range(5):
-            with manager.span(
-                name=f"op_{i}", tenant_id="stats-tenant"
-            ) as _span:
+            with manager.span(name=f"op_{i}", tenant_id="stats-tenant") as _span:
                 pass
 
         # Get stats
@@ -391,8 +402,11 @@ class TestPhoenixIntegrationWithRealServer:
         """Config for real Phoenix integration."""
         return TelemetryConfig(
             enabled=True,
-            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
-            
+            otlp_endpoint="http://localhost:4317",
+            provider_config={
+                "http_endpoint": "http://localhost:6006",
+                "grpc_endpoint": "http://localhost:4317",
+            },
             service_name="integration-test",
             environment="test",
             batch_config=BatchExportConfig(

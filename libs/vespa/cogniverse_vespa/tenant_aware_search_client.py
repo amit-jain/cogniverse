@@ -36,11 +36,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from cogniverse_core.registries.backend_registry import BackendRegistry
-
 from cogniverse_vespa.vespa_search_client import (
     VespaVideoSearchClient,
 )
+
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,7 @@ class TenantAwareVespaSearchClient:
 
         # Get backend via BackendRegistry for schema deployment
         from cogniverse_vespa.config_utils import calculate_config_port
+
         config_port = calculate_config_port(backend_port)
 
         registry = BackendRegistry.get_instance()
@@ -127,7 +128,7 @@ class TenantAwareVespaSearchClient:
             tenant_id=tenant_id,
             config=config,
             config_manager=config_manager,
-            schema_loader=schema_loader
+            schema_loader=schema_loader,
         )
 
         # Resolve tenant-specific schema name
@@ -141,7 +142,9 @@ class TenantAwareVespaSearchClient:
             backend.schema_registry.deploy_schema(tenant_id, base_schema_name)
 
         # Initialize underlying search client
-        self.client = VespaVideoSearchClient(vespa_url=backend_url, vespa_port=backend_port)
+        self.client = VespaVideoSearchClient(
+            vespa_url=backend_url, vespa_port=backend_port
+        )
 
         logger.info(
             f"✅ TenantAwareVespaSearchClient initialized: "
@@ -200,7 +203,9 @@ class TenantAwareVespaSearchClient:
 
         # Delegate to underlying client with tenant schema
         logger.info(f"🔍 [SEARCH] Schema name for search: '{self.tenant_schema_name}'")
-        logger.info(f"🔍 [SEARCH] Query params: query='{query_text[:50]}', strategy={strategy}")
+        logger.info(
+            f"🔍 [SEARCH] Query params: query='{query_text[:50]}', strategy={strategy}"
+        )
         return self.client.search(
             query_params=query_params,
             embeddings=embeddings,
@@ -337,7 +342,10 @@ class TenantAwareVespaSearchClient:
         return self.client.get_video_summary(results)
 
     def recommend_strategy(
-        self, query_text: str, has_embeddings: bool = True, latency_sensitive: bool = False
+        self,
+        query_text: str,
+        has_embeddings: bool = True,
+        latency_sensitive: bool = False,
     ) -> str:
         """
         Recommend best ranking strategy based on query characteristics.
@@ -354,7 +362,9 @@ class TenantAwareVespaSearchClient:
             >>> strategy = client.recommend_strategy("robots", has_embeddings=True)
             >>> results = client.search("robots", strategy=strategy)
         """
-        return self.client.recommend_strategy(query_text, has_embeddings, latency_sensitive)
+        return self.client.recommend_strategy(
+            query_text, has_embeddings, latency_sensitive
+        )
 
     def __repr__(self) -> str:
         """String representation"""

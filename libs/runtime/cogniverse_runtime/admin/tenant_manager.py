@@ -32,12 +32,12 @@ import time
 from typing import Dict, List, Optional
 
 import uvicorn
-from cogniverse_core.common.tenant_utils import parse_tenant_id
-from cogniverse_foundation.config.utils import get_config
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import FastAPI, HTTPException
 
+from cogniverse_core.common.tenant_utils import parse_tenant_id
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
     CreateTenantRequest,
@@ -86,12 +86,18 @@ def get_backend() -> Backend:
     if backend is None:
         # Use injected ConfigManager (from tests) or create new one
         from cogniverse_foundation.config.utils import create_default_config_manager
-        config_manager = _config_manager if _config_manager is not None else create_default_config_manager()
+
+        config_manager = (
+            _config_manager
+            if _config_manager is not None
+            else create_default_config_manager()
+        )
 
         config = get_config(tenant_id="system", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
+
         registry = BackendRegistry.get_instance()
 
         # Get backend instance with configuration
@@ -111,7 +117,11 @@ def get_backend() -> Backend:
             schema_loader = _schema_loader
 
             backend = registry.get_ingestion_backend(
-                backend_type, tenant_id="system", config=backend_config, config_manager=config_manager, schema_loader=schema_loader
+                backend_type,
+                tenant_id="system",
+                config=backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
             )
         except Exception as e:
             logger.error(f"Failed to get backend: {e}")
@@ -213,7 +223,7 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
         if not success:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create organization {org.org_id} in backend"
+                detail=f"Failed to create organization {org.org_id} in backend",
             )
 
         logger.info(f"Created organization: {org.org_id}")
@@ -436,7 +446,9 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         org_created = False
         org = await get_organization_internal(org_id)
         if not org:
-            logger.info(f"Auto-creating organization {org_id} for tenant {tenant_full_id}")
+            logger.info(
+                f"Auto-creating organization {org_id} for tenant {tenant_full_id}"
+            )
             org = Organization(
                 org_id=org_id,
                 org_name=org_id.title(),  # Use org_id as name
@@ -461,7 +473,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
             if not success:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Failed to auto-create organization {org.org_id} in backend"
+                    detail=f"Failed to auto-create organization {org.org_id} in backend",
                 )
             org_created = True
 
@@ -474,12 +486,13 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         for base_schema in base_schemas:
             try:
                 backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_full_id,
-                    base_schema_name=base_schema
+                    tenant_id=tenant_full_id, base_schema_name=base_schema
                 )
                 deployed_schemas.append(base_schema)
             except Exception as e:
-                logger.error(f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}")
+                logger.error(
+                    f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}"
+                )
 
         # Create tenant
         tenant = Tenant(
@@ -510,7 +523,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         if not success:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create tenant {tenant_full_id} in backend"
+                detail=f"Failed to create tenant {tenant_full_id} in backend",
             )
 
         logger.info(
@@ -528,9 +541,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get(
-    "/admin/organizations/{org_id}/tenants", response_model=TenantListResponse
-)
+@app.get("/admin/organizations/{org_id}/tenants", response_model=TenantListResponse)
 async def list_tenants_for_org(org_id: str) -> TenantListResponse:
     """
     List all tenants for an organization.
@@ -576,9 +587,9 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
 
         # Query tenants for this org using term matching in userQuery
         documents = backend.query_metadata_documents(
-            schema='tenant_metadata',
-            yql='select * from tenant_metadata where userQuery()',
-            query=f'org_id:{org_id}',
+            schema="tenant_metadata",
+            yql="select * from tenant_metadata where userQuery()",
+            query=f"org_id:{org_id}",
             hits=400,
         )
 
@@ -733,6 +744,7 @@ async def health_check():
 
 if __name__ == "__main__":
     from cogniverse_foundation.config.utils import create_default_config_manager
+
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     port = config.get("tenant_manager_port", 9000)

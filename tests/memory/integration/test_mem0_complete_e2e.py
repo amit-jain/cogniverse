@@ -7,11 +7,10 @@ Tests full memory functionality with proper document cleanup.
 Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 """
 
-
 import pytest
+
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.manager import Mem0MemoryManager
-
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 
@@ -41,7 +40,7 @@ def memory_manager(shared_memory_vespa):
         base_schema_name="agent_memories",
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     yield manager

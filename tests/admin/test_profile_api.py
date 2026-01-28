@@ -72,8 +72,10 @@ class TestProfileAPICRUD:
             create_default_config_manager,
         )
         from cogniverse_runtime.routers import admin
+
         BackendRegistry._instance = None
         from cogniverse_core.registries.schema_registry import SchemaRegistry
+
         SchemaRegistry._instance = None
 
         # Create ConfigManager with backend store
@@ -81,6 +83,7 @@ class TestProfileAPICRUD:
 
         # Set up system config with non-existent Vespa (so schema checks fail)
         from cogniverse_foundation.config.unified_config import SystemConfig
+
         system_config = SystemConfig(
             tenant_id="test_tenant",
             backend_url="http://nonexistent",
@@ -90,6 +93,7 @@ class TestProfileAPICRUD:
 
         # Set ConfigManager and schema directory for admin router using new DI API
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         schema_loader = FilesystemSchemaLoader(temp_schema_dir)
 
         admin.set_config_manager(config_manager)
@@ -310,10 +314,14 @@ class TestProfileAPICRUD:
         assert data["schema_name"] == "video_test"
         assert data["embedding_model"] == "vidore/colsmol-500m"
         assert data["pipeline_config"] == {"keyframe_fps": 30.0}
-        assert data["strategies"] == {"segmentation": {"class": "FrameSegmentationStrategy"}}
+        assert data["strategies"] == {
+            "segmentation": {"class": "FrameSegmentationStrategy"}
+        }
         assert data["embedding_type"] == "frame_based"
         assert data["schema_config"] == {"embedding_dim": 128}
-        assert data["schema_deployed"] is False, f"Expected schema_deployed=False but got {data['schema_deployed']}"
+        assert (
+            data["schema_deployed"] is False
+        ), f"Expected schema_deployed=False but got {data['schema_deployed']}"
 
     def test_get_nonexistent_profile(self, test_client: TestClient):
         """Test getting a profile that doesn't exist."""
@@ -355,10 +363,15 @@ class TestProfileAPICRUD:
         assert data["version"] == 2
 
         # Verify update by getting profile
-        get_response = test_client.get("/admin/profiles/test_update?tenant_id=test_tenant")
+        get_response = test_client.get(
+            "/admin/profiles/test_update?tenant_id=test_tenant"
+        )
         get_data = get_response.json()
         assert get_data["description"] == "Updated description"
-        assert get_data["pipeline_config"] == {"keyframe_fps": 60.0, "transcribe_audio": True}
+        assert get_data["pipeline_config"] == {
+            "keyframe_fps": 60.0,
+            "transcribe_audio": True,
+        }
 
     def test_update_immutable_fields(self, test_client: TestClient):
         """
@@ -413,7 +426,9 @@ class TestProfileAPICRUD:
         assert create_response.status_code == 201
 
         # Delete profile
-        response = test_client.delete("/admin/profiles/test_delete?tenant_id=test_tenant")
+        response = test_client.delete(
+            "/admin/profiles/test_delete?tenant_id=test_tenant"
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -423,12 +438,16 @@ class TestProfileAPICRUD:
         assert "deleted_at" in data
 
         # Verify deletion
-        get_response = test_client.get("/admin/profiles/test_delete?tenant_id=test_tenant")
+        get_response = test_client.get(
+            "/admin/profiles/test_delete?tenant_id=test_tenant"
+        )
         assert get_response.status_code == 404
 
     def test_delete_nonexistent_profile(self, test_client: TestClient):
         """Test deleting a profile that doesn't exist."""
-        response = test_client.delete("/admin/profiles/nonexistent?tenant_id=test_tenant")
+        response = test_client.delete(
+            "/admin/profiles/nonexistent?tenant_id=test_tenant"
+        )
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
@@ -497,10 +516,11 @@ class TestProfileAPISchemaDeployment:
         # Let tests deploy schemas through SchemaRegistry to avoid registration issues
         # Call lower-level method that skips schema deployment
         from tests.utils.vespa_docker import VespaDockerManager
+
         docker_mgr = VespaDockerManager()
         container_info = docker_mgr.start_container(
             module_name="profile_api_tests",
-            use_module_ports=False  # Use default port 8081
+            use_module_ports=False,  # Use default port 8081
         )
         manager.container_name = container_info["container_name"]
         manager.http_port = container_info["http_port"]
@@ -518,6 +538,7 @@ class TestProfileAPISchemaDeployment:
     def schema_loader(self):
         """Provide FilesystemSchemaLoader for tests."""
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         return FilesystemSchemaLoader(Path("configs/schemas"))
 
     @pytest.fixture(scope="class")
@@ -550,13 +571,21 @@ class TestProfileAPISchemaDeployment:
             "name": "video_deploy_test",
             "document": {
                 "fields": [
-                    {"name": "video_id", "type": "string", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "video_id",
+                        "type": "string",
+                        "indexing": ["summary", "attribute"],
+                    },
                     {
                         "name": "embedding",
                         "type": "tensor<float>(v[128])",
                         "indexing": ["attribute"],
                     },
-                    {"name": "creation_timestamp", "type": "long", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "creation_timestamp",
+                        "type": "long",
+                        "indexing": ["summary", "attribute"],
+                    },
                 ]
             },
         }
@@ -570,13 +599,21 @@ class TestProfileAPISchemaDeployment:
             "name": "video_deploy_test2",
             "document": {
                 "fields": [
-                    {"name": "video_id", "type": "string", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "video_id",
+                        "type": "string",
+                        "indexing": ["summary", "attribute"],
+                    },
                     {
                         "name": "embedding",
                         "type": "tensor<float>(v[128])",
                         "indexing": ["attribute"],
                     },
-                    {"name": "creation_timestamp", "type": "long", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "creation_timestamp",
+                        "type": "long",
+                        "indexing": ["summary", "attribute"],
+                    },
                 ]
             },
         }
@@ -589,13 +626,21 @@ class TestProfileAPISchemaDeployment:
             "name": "video_deploy_test3",
             "document": {
                 "fields": [
-                    {"name": "video_id", "type": "string", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "video_id",
+                        "type": "string",
+                        "indexing": ["summary", "attribute"],
+                    },
                     {
                         "name": "embedding",
                         "type": "tensor<float>(v[128])",
                         "indexing": ["attribute"],
                     },
-                    {"name": "creation_timestamp", "type": "long", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "creation_timestamp",
+                        "type": "long",
+                        "indexing": ["summary", "attribute"],
+                    },
                 ]
             },
         }
@@ -610,6 +655,7 @@ class TestProfileAPISchemaDeployment:
         # Reset SchemaRegistry singleton AND module-level global
         from cogniverse_core.registries import schema_registry as schema_registry_module
         from cogniverse_core.registries.schema_registry import SchemaRegistry
+
         SchemaRegistry._instance = None
         schema_registry_module._registry_instance = None
 
@@ -715,15 +761,21 @@ class TestProfileAPISchemaDeployment:
         # Deploy schema
         deploy_data = {"tenant_id": "deploy_tenant", "force": False}
 
-        response = test_client.post("/admin/profiles/test_deploy_later/deploy", json=deploy_data)
+        response = test_client.post(
+            "/admin/profiles/test_deploy_later/deploy", json=deploy_data
+        )
         assert response.status_code == 200
 
         data = response.json()
         print("\n=== DEBUG test_deploy_schema_for_existing_profile ===")
         print(f"Deploy response: {data}")
-        print(f"Expected: deployment_status='success', Got: deployment_status='{data['deployment_status']}'")
+        print(
+            f"Expected: deployment_status='success', Got: deployment_status='{data['deployment_status']}'"
+        )
 
-        assert data["deployment_status"] == "success", f"Got '{data['deployment_status']}' instead of 'success'"
+        assert (
+            data["deployment_status"] == "success"
+        ), f"Got '{data['deployment_status']}' instead of 'success'"
         assert data["schema_name"] == "video_deploy_test3"
         assert "deploy_tenant" in data["tenant_schema_name"]
 
@@ -753,7 +805,9 @@ class TestProfileAPISchemaDeployment:
         # Try to deploy again without force - should return "already_deployed"
         deploy_data = {"tenant_id": tenant_id, "force": False}
 
-        response = test_client.post("/admin/profiles/test_already_deployed/deploy", json=deploy_data)
+        response = test_client.post(
+            "/admin/profiles/test_already_deployed/deploy", json=deploy_data
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -778,13 +832,17 @@ class TestProfileAPISchemaDeployment:
         # Force redeploy
         deploy_data = {"tenant_id": "deploy_tenant", "force": True}
 
-        response = test_client.post("/admin/profiles/test_force_redeploy/deploy", json=deploy_data)
+        response = test_client.post(
+            "/admin/profiles/test_force_redeploy/deploy", json=deploy_data
+        )
         assert response.status_code == 200
 
         data = response.json()
         assert data["deployment_status"] == "success"
 
-    def test_end_to_end_schema_deployment_and_ingestion(self, test_client: TestClient, vespa_backend, schema_loader):
+    def test_end_to_end_schema_deployment_and_ingestion(
+        self, test_client: TestClient, vespa_backend, schema_loader
+    ):
         """
         Comprehensive end-to-end test:
         1. Create profile and deploy schema via API
@@ -827,7 +885,12 @@ class TestProfileAPISchemaDeployment:
 
         # Use BackendRegistry singleton (don't instantiate with config_manager)
         backend_registry = BackendRegistry.get_instance()
-        vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
+        vespa_backend_obj = backend_registry.get_ingestion_backend(
+            "vespa",
+            tenant_id=tenant_id,
+            config_manager=admin._config_manager,
+            schema_loader=schema_loader,
+        )
         assert vespa_backend_obj is not None
 
         schema_exists = vespa_backend_obj.schema_exists(
@@ -846,9 +909,13 @@ class TestProfileAPISchemaDeployment:
         # First wait for application endpoint to become ready (crucial after 5th schema deployment)
         try:
             import requests
+
             for i in range(30):
                 try:
-                    resp = requests.get(f"http://localhost:{vespa_backend.http_port}/ApplicationStatus", timeout=2)
+                    resp = requests.get(
+                        f"http://localhost:{vespa_backend.http_port}/ApplicationStatus",
+                        timeout=2,
+                    )
                     if resp.status_code == 200:
                         print(f"Application endpoint ready after {i+1} seconds")
                         break
@@ -861,7 +928,9 @@ class TestProfileAPISchemaDeployment:
             print(f"WARNING: Could not verify application status: {e}")
 
         # Additional wait for document feed API
-        wait_for_vespa_indexing(delay=5, description="Document feed API readiness after application ready")
+        wait_for_vespa_indexing(
+            delay=5, description="Document feed API readiness after application ready"
+        )
 
         # Step 3: Ingest a test document using production ingestion path
         # VespaPyClient requires schema file in configs/schemas/ (hardcoded path issue)
@@ -869,6 +938,7 @@ class TestProfileAPISchemaDeployment:
         import shutil
 
         import numpy as np
+
         from cogniverse_core.common.document import Document
 
         prod_schema_dir = Path("configs/schemas")
@@ -886,18 +956,26 @@ class TestProfileAPISchemaDeployment:
             "name": "video_deploy_test",
             "document": {
                 "fields": [
-                    {"name": "video_id", "type": "string", "indexing": ["summary", "attribute"]},
-                    {"name": "embedding", "type": "tensor<float>(v[128])", "indexing": ["attribute"]},
-                    {"name": "creation_timestamp", "type": "long", "indexing": ["summary", "attribute"]},
+                    {
+                        "name": "video_id",
+                        "type": "string",
+                        "indexing": ["summary", "attribute"],
+                    },
+                    {
+                        "name": "embedding",
+                        "type": "tensor<float>(v[128])",
+                        "indexing": ["attribute"],
+                    },
+                    {
+                        "name": "creation_timestamp",
+                        "type": "long",
+                        "indexing": ["summary", "attribute"],
+                    },
                 ]
             },
             "rank-profiles": {
-                "default": {
-                    "first-phase": {
-                        "expression": "nativeRank(video_id)"
-                    }
-                }
-            }
+                "default": {"first-phase": {"expression": "nativeRank(video_id)"}}
+            },
         }
         with open(test_schema_path, "w") as f:
             json.dump(test_schema, f)
@@ -914,7 +992,7 @@ class TestProfileAPISchemaDeployment:
                 "default": {
                     "name": "default",
                     "description": "Test ranking strategy",
-                    "embeddings_required": ["embedding"]
+                    "embeddings_required": ["embedding"],
                 }
             }
         }
@@ -923,29 +1001,33 @@ class TestProfileAPISchemaDeployment:
 
         try:
             # Get VespaBackend instance for this tenant
-            backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
+            backend = BackendRegistry.get_ingestion_backend(
+                "vespa",
+                tenant_id,
+                config_manager=admin._config_manager,
+                schema_loader=schema_loader,
+            )
 
             # Create test document with embedding
             test_doc = Document(
                 id="test_video_001",
                 embeddings={
-                    "embedding": {
-                        "data": np.random.rand(128).astype(np.float32)
-                    }
+                    "embedding": {"data": np.random.rand(128).astype(np.float32)}
                 },
                 metadata={
                     "video_id": "test_video_001",
-                }
+                },
             )
 
             # Ingest document using production backend API
             ingest_results = backend.ingest_documents(
-                documents=[test_doc],
-                schema_name="video_deploy_test"
+                documents=[test_doc], schema_name="video_deploy_test"
             )
 
             # Verify ingestion succeeded
-            assert ingest_results["success_count"] == 1, f"Ingestion failed: {ingest_results}"
+            assert (
+                ingest_results["success_count"] == 1
+            ), f"Ingestion failed: {ingest_results}"
 
             # Step 4: Query for the ingested document
             # TODO: Once config refactoring is complete (see docs/plan/config-management-issues.md),
@@ -956,27 +1038,31 @@ class TestProfileAPISchemaDeployment:
             yql_query = f"select * from sources {tenant_schema_name} where video_id contains 'test_video_001'"
             query_url = f"http://localhost:{vespa_backend.http_port}/search/"
             query_response = requests.get(
-                query_url,
-                params={"yql": yql_query},
-                timeout=10
+                query_url, params={"yql": yql_query}, timeout=10
             )
 
             # Verify query succeeded
-            assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+            assert (
+                query_response.status_code == 200
+            ), f"Query failed: {query_response.text}"
             query_json = query_response.json()
 
             # Verify document was found
             assert "root" in query_json
             assert "children" in query_json["root"]
             children = query_json["root"]["children"]
-            assert len(children) >= 1, f"Document not found. Query response: {query_json}"
+            assert (
+                len(children) >= 1
+            ), f"Document not found. Query response: {query_json}"
 
             # Verify document content
             found_doc = children[0]
             assert found_doc["fields"]["video_id"] == "test_video_001"
 
             # Step 5: Verify the profile GET endpoint reflects deployed status
-            get_response = test_client.get(f"/admin/profiles/{profile_name}?tenant_id={tenant_id}")
+            get_response = test_client.get(
+                f"/admin/profiles/{profile_name}?tenant_id={tenant_id}"
+            )
             assert get_response.status_code == 200
             get_data = get_response.json()
             assert get_data["schema_deployed"] is True

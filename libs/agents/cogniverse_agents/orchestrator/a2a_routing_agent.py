@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 import httpx
+
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_core.common.a2a_utils import (
     DataPart,
     Task,
@@ -21,8 +23,6 @@ from cogniverse_core.common.a2a_utils import (
 )
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_foundation.config.utils import get_config
-
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,12 @@ class A2ARoutingAgent:
     Provides standardized A2A communication and response aggregation.
     """
 
-    def __init__(self, tenant_id: str = "default", routing_agent: Optional[RoutingAgent] = None, config_manager: "ConfigManager" = None):
+    def __init__(
+        self,
+        tenant_id: str = "default",
+        routing_agent: Optional[RoutingAgent] = None,
+        config_manager: "ConfigManager" = None,
+    ):
         """
         Initialize A2A routing agent.
 
@@ -64,7 +69,6 @@ class A2ARoutingAgent:
                 "Pass create_default_config_manager() explicitly."
             )
 
-
         self.tenant_id = tenant_id
         self.config_manager = config_manager
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
@@ -78,7 +82,9 @@ class A2ARoutingAgent:
         # Initialize agent registry
         from cogniverse_agents.agent_registry import AgentRegistry
 
-        self.agent_registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
+        self.agent_registry = AgentRegistry(
+            tenant_id=tenant_id, config_manager=config_manager
+        )
 
         logger.info("A2ARoutingAgent initialized successfully")
 
@@ -186,7 +192,7 @@ class A2ARoutingAgent:
         """
         agent_responses = {}
         # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, 'metadata'):
+        if hasattr(routing_analysis, "metadata"):
             execution_plan = routing_analysis.metadata.get("execution_plan", [])
         else:
             execution_plan = routing_analysis.get("execution_plan", [])
@@ -284,8 +290,10 @@ class A2ARoutingAgent:
             Aggregated final result
         """
         # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, 'metadata'):
-            workflow_type = routing_analysis.metadata.get("workflow_type", "raw_results")
+        if hasattr(routing_analysis, "metadata"):
+            workflow_type = routing_analysis.metadata.get(
+                "workflow_type", "raw_results"
+            )
         else:
             workflow_type = routing_analysis.get("workflow_type", "raw_results")
 
@@ -297,7 +305,7 @@ class A2ARoutingAgent:
 
         # Base result structure
         # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, 'query'):
+        if hasattr(routing_analysis, "query"):
             query = routing_analysis.query
             routing_decision = routing_analysis.recommended_agent
         else:

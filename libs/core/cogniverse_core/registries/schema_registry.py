@@ -61,7 +61,9 @@ class SchemaRegistry:
         exists = registry.schema_exists("test_tenant", "video_colpali_smol500_mv_frame")
     """
 
-    def __init__(self, config_manager, backend, schema_loader, strict_mode: bool = True):
+    def __init__(
+        self, config_manager, backend, schema_loader, strict_mode: bool = True
+    ):
         """
         Initialize SchemaRegistry with required dependencies.
 
@@ -248,7 +250,8 @@ class SchemaRegistry:
 
         # Validate character set (alphanumeric, underscore, colon only)
         import re
-        if not re.match(r'^[a-zA-Z0-9_:]+$', tenant_id):
+
+        if not re.match(r"^[a-zA-Z0-9_:]+$", tenant_id):
             raise ValueError(
                 f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
             )
@@ -270,9 +273,7 @@ class SchemaRegistry:
             raise TypeError(f"schema_name must be string, got {type(schema_name)}")
 
     def _rollback_deployment(
-        self,
-        previous_schemas: List[Dict[str, Any]],
-        failed_schema_name: str
+        self, previous_schemas: List[Dict[str, Any]], failed_schema_name: str
     ) -> None:
         """
         Rollback failed schema deployment by re-deploying previous schema set.
@@ -373,7 +374,9 @@ class SchemaRegistry:
 
         # Check if already deployed (unless force=True)
         if not force and self.schema_exists(tenant_id, base_schema_name):
-            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'")
+            logger.debug(
+                f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'"
+            )
             return tenant_schema_name
 
         # Load base schema from schema loader
@@ -383,7 +386,7 @@ class SchemaRegistry:
             raise Exception(f"Failed to load base schema '{base_schema_name}': {e}")
 
         # Transform schema name to tenant-specific
-        base_schema_json['name'] = tenant_schema_name
+        base_schema_json["name"] = tenant_schema_name
 
         # Collect ALL existing schemas (including from other tenants)
         # This is critical for backends that require all schemas in each deployment
@@ -393,21 +396,25 @@ class SchemaRegistry:
         existing_schemas = self._get_all_schemas()  # Private method
         previous_schemas = []
         for schema_info in existing_schemas:
-            previous_schemas.append({
-                "name": schema_info.full_schema_name,
-                "definition": schema_info.schema_definition,
-                "tenant_id": schema_info.tenant_id,
-                "base_schema_name": schema_info.base_schema_name,
-            })
+            previous_schemas.append(
+                {
+                    "name": schema_info.full_schema_name,
+                    "definition": schema_info.schema_definition,
+                    "tenant_id": schema_info.tenant_id,
+                    "base_schema_name": schema_info.base_schema_name,
+                }
+            )
 
         # Build new schema list (existing + new)
         all_schemas = list(previous_schemas)  # Copy for deployment
-        all_schemas.append({
-            "name": tenant_schema_name,
-            "definition": json.dumps(base_schema_json),
-            "tenant_id": tenant_id,
-            "base_schema_name": base_schema_name,
-        })
+        all_schemas.append(
+            {
+                "name": tenant_schema_name,
+                "definition": json.dumps(base_schema_json),
+                "tenant_id": tenant_id,
+                "base_schema_name": base_schema_name,
+            }
+        )
 
         # TRANSACTION PHASE 1: Deploy to backend (atomic operation)
         try:

@@ -31,7 +31,9 @@ class ConfigUtils:
             config_manager: ConfigManager instance (REQUIRED)
         """
         if config_manager is None:
-            raise ValueError("config_manager is required for ConfigUtils initialization")
+            raise ValueError(
+                "config_manager is required for ConfigUtils initialization"
+            )
         self.tenant_id = tenant_id
         self._config_manager = config_manager
         self._system_config = None
@@ -74,7 +76,7 @@ class ConfigUtils:
             Path to config.json if found, None otherwise
         """
         # Check COGNIVERSE_CONFIG env var first (backward compatibility)
-        env_path = os.environ.get('COGNIVERSE_CONFIG')
+        env_path = os.environ.get("COGNIVERSE_CONFIG")
         if env_path:
             path = Path(env_path)
             if path.exists():
@@ -107,7 +109,7 @@ class ConfigUtils:
             return
 
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 self._json_config = json.load(f)
             logger.debug(f"Loaded system config from {config_path}")
         except Exception as e:
@@ -141,7 +143,9 @@ class ConfigUtils:
             system_backend_config = BackendConfig.from_dict(system_backend_data)
 
             # Deep merge tenant overrides into system base
-            merged_profiles = dict(system_backend_config.profiles)  # Start with system profiles
+            merged_profiles = dict(
+                system_backend_config.profiles
+            )  # Start with system profiles
 
             # Add/override with tenant-specific profiles
             for profile_name, tenant_profile in tenant_backend_config.profiles.items():
@@ -165,7 +169,10 @@ class ConfigUtils:
                     else system_backend_config.port
                 ),
                 profiles=merged_profiles,
-                metadata={**system_backend_config.metadata, **tenant_backend_config.metadata},
+                metadata={
+                    **system_backend_config.metadata,
+                    **tenant_backend_config.metadata,
+                },
             )
         else:
             # No system config, just use tenant config
@@ -271,16 +278,34 @@ class ConfigUtils:
         all_keys = set()
 
         # Add system keys
-        all_keys.update([
-            "backend",
-            "routing_agent_url", "video_agent_url", "text_agent_url",
-            "summarizer_agent_url", "text_analysis_agent_url", "detailed_report_agent_url",
-            "composing_agent_port", "routing_agent_port", "text_analysis_port",
-            "search_backend", "backend_url", "backend_port", "url", "port",
-            "elasticsearch_url", "llm_model", "local_llm_model",
-            "base_url", "llm_api_key", "phoenix_url", "phoenix_collector_endpoint",
-            "environment", "llm"
-        ])
+        all_keys.update(
+            [
+                "backend",
+                "routing_agent_url",
+                "video_agent_url",
+                "text_agent_url",
+                "summarizer_agent_url",
+                "text_analysis_agent_url",
+                "detailed_report_agent_url",
+                "composing_agent_port",
+                "routing_agent_port",
+                "text_analysis_port",
+                "search_backend",
+                "backend_url",
+                "backend_port",
+                "url",
+                "port",
+                "elasticsearch_url",
+                "llm_model",
+                "local_llm_model",
+                "base_url",
+                "llm_api_key",
+                "phoenix_url",
+                "phoenix_collector_endpoint",
+                "environment",
+                "llm",
+            ]
+        )
 
         # Add routing keys
         all_keys.update(["routing_mode", "enable_caching", "cache_ttl_seconds"])
@@ -298,9 +323,7 @@ class ConfigUtils:
         return key in self.keys()
 
 
-def get_config(
-    tenant_id: str, config_manager: ConfigManager
-) -> ConfigUtils:
+def get_config(tenant_id: str, config_manager: ConfigManager) -> ConfigUtils:
     """
     Get config utility wrapper for dict-like access.
 
@@ -314,7 +337,12 @@ def get_config(
     return ConfigUtils(tenant_id, config_manager=config_manager)
 
 
-def get_config_value(key: str, default: Any = None, tenant_id: str = "default", config_manager: "ConfigManager" = None) -> Any:
+def get_config_value(
+    key: str,
+    default: Any = None,
+    tenant_id: str = "default",
+    config_manager: "ConfigManager" = None,
+) -> Any:
     """
     Get single config value by key.
 

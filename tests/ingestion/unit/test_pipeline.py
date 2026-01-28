@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_runtime.ingestion.pipeline import (
     PipelineConfig,
     PipelineStep,
@@ -86,7 +87,9 @@ class TestPipelineConfig:
         # Mock config_manager
         mock_config_manager = Mock()
 
-        config = PipelineConfig.from_config(tenant_id="test_tenant", config_manager=mock_config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="test_tenant", config_manager=mock_config_manager
+        )
 
         assert config.extract_keyframes is False
         assert config.transcribe_audio is True

@@ -203,9 +203,7 @@ class ProfileSelector:
             f"Selected {len(selected_names)} profiles: {'; '.join(reasoning_parts)}"
         )
 
-        logger.info(
-            f"Rule-based selection for {optimizer_name}: {selected_names}"
-        )
+        logger.info(f"Rule-based selection for {optimizer_name}: {selected_names}")
         return selected_names, reasoning
 
     def _score_profile(
@@ -228,7 +226,9 @@ class ProfileSelector:
 
         # Try using configured scoring rules first
         if self.generator_config:
-            optimizer_config = self.generator_config.get_optimizer_config(optimizer_name)
+            optimizer_config = self.generator_config.get_optimizer_config(
+                optimizer_name
+            )
             if optimizer_config and optimizer_config.profile_scoring_rules:
                 logger.debug(f"Using configured scoring rules for {optimizer_name}")
                 return self._score_with_configured_rules(
@@ -348,7 +348,10 @@ class ProfileSelector:
                 reasons.append("single-vector efficiency")
 
         elif optimizer_name == "cross_modal":
-            if "multi_vector" in profile_config.get("embedding_type", "") or "mv" in profile_name:
+            if (
+                "multi_vector" in profile_config.get("embedding_type", "")
+                or "mv" in profile_name
+            ):
                 score += 2.0
                 reasons.append("multi-vector fusion capability")
             if profile_config.get("pipeline_config", {}).get("transcribe_audio"):
@@ -450,7 +453,7 @@ class ProfileSelector:
         for name, config in available_profiles.items():
             desc = self.PROFILE_DESCRIPTIONS.get(
                 name,
-                f"Profile {name}: {config.get('embedding_model', 'unknown model')}"
+                f"Profile {name}: {config.get('embedding_model', 'unknown model')}",
             )
             embedding_type = config.get("embedding_type", "unknown")
             schema = config.get("schema_name", "unknown")

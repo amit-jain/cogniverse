@@ -26,9 +26,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Uni
 # DSPy 3.0 imports
 import dspy
 
-# A2A protocol imports
-from cogniverse_core.common.a2a_utils import A2AClient
-
 # Checkpoint types for durable execution
 from cogniverse_agents.orchestrator.checkpoint_types import (
     CheckpointConfig,
@@ -50,6 +47,20 @@ from cogniverse_agents.workflow.types import (
     WorkflowPlan,
     WorkflowStatus,
     WorkflowTask,
+)
+
+# A2A protocol imports
+from cogniverse_core.common.a2a_utils import A2AClient
+
+# Event queue for real-time notifications
+from cogniverse_core.events import (
+    EventQueue,
+    TaskState,
+    create_artifact_event,
+    create_complete_event,
+    create_error_event,
+    create_progress_event,
+    create_status_event,
 )
 
 if TYPE_CHECKING:
@@ -140,6 +151,7 @@ class MultiAgentOrchestrator:
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
         checkpoint_config: Optional[CheckpointConfig] = None,
         checkpoint_storage: Optional["WorkflowCheckpointStorage"] = None,
+        event_queue: Optional[EventQueue] = None,
     ):
         """
         Initialize Multi-Agent Orchestrator
@@ -154,6 +166,7 @@ class MultiAgentOrchestrator:
             optimization_strategy: Optimization strategy
             checkpoint_config: Configuration for durable execution checkpoints
             checkpoint_storage: Storage backend for checkpoints (Phoenix-based)
+            event_queue: Optional EventQueue for real-time notifications
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -163,6 +176,9 @@ class MultiAgentOrchestrator:
 
         self.tenant_id = tenant_id
         self.logger = logging.getLogger(__name__)
+
+        # Event queue for real-time notifications
+        self.event_queue = event_queue
 
         # Durable execution configuration
         self.checkpoint_config = checkpoint_config or CheckpointConfig(enabled=False)
@@ -397,6 +413,11 @@ class MultiAgentOrchestrator:
                 "fallback_result": await self._generate_fallback_result(query, context),
             }
 
+    async def _emit_event(self, event) -> None:
+        """Emit event to EventQueue if configured."""
+        if self.event_queue is not None:
+            await self.event_queue.enqueue(event)
+
     async def _process_complex_query_stream(
         self,
         query: str,
@@ -412,6 +433,15 @@ class MultiAgentOrchestrator:
         try:
             # Phase 1: Planning
             yield {"type": "status", "workflow_id": workflow_id, "phase": "planning"}
+            await self._emit_event(
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    state=TaskState.WORKING,
+                    phase="planning",
+                    message="Planning workflow execution",
+                )
+            )
 
             workflow_plan = await self._plan_workflow(
                 workflow_id, query, context, user_id, preferences
@@ -423,6 +453,19 @@ class MultiAgentOrchestrator:
                 "tasks_planned": len(workflow_plan.tasks),
                 "execution_strategy": workflow_plan.execution_strategy,
             }
+            await self._emit_event(
+                create_progress_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    current=0,
+                    total=len(workflow_plan.tasks),
+                    step="planning_complete",
+                    details={
+                        "tasks_planned": len(workflow_plan.tasks),
+                        "execution_strategy": workflow_plan.execution_strategy,
+                    },
+                )
+            )
 
             # Phase 2: Execution
             for task in workflow_plan.tasks:
@@ -434,9 +477,22 @@ class MultiAgentOrchestrator:
                     "task_id": task.task_id,
                 }
 
+            await self._emit_event(
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    state=TaskState.WORKING,
+                    phase="executing",
+                    message=f"Executing {len(workflow_plan.tasks)} tasks",
+                )
+            )
+
             await self._execute_workflow(workflow_plan)
 
+            completed_count = 0
             for task in workflow_plan.tasks:
+                if task.status == TaskStatus.COMPLETED:
+                    completed_count += 1
                 yield {
                     "type": "task_complete",
                     "workflow_id": workflow_id,
@@ -444,9 +500,30 @@ class MultiAgentOrchestrator:
                     "task_id": task.task_id,
                     "status": task.status.value if task.status else "unknown",
                 }
+                await self._emit_event(
+                    create_artifact_event(
+                        task_id=workflow_id,
+                        tenant_id=self.tenant_id,
+                        artifact_type="task_result",
+                        data={
+                            "task_id": task.task_id,
+                            "agent": task.agent_name,
+                            "status": task.status.value if task.status else "unknown",
+                        },
+                    )
+                )
 
             # Phase 3: Aggregation
             yield {"type": "status", "workflow_id": workflow_id, "phase": "aggregating"}
+            await self._emit_event(
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    state=TaskState.WORKING,
+                    phase="aggregating",
+                    message="Aggregating results",
+                )
+            )
 
             final_result = await self._aggregate_results(workflow_plan)
             self._update_orchestration_stats(workflow_plan, success=True)
@@ -460,12 +537,35 @@ class MultiAgentOrchestrator:
                     "execution_summary": {
                         "total_tasks": len(workflow_plan.tasks),
                         "completed_tasks": len(
-                            [t for t in workflow_plan.tasks if t.status == TaskStatus.COMPLETED]
+                            [
+                                t
+                                for t in workflow_plan.tasks
+                                if t.status == TaskStatus.COMPLETED
+                            ]
                         ),
-                        "agents_used": list(set(t.agent_name for t in workflow_plan.tasks)),
+                        "agents_used": list(
+                            set(t.agent_name for t in workflow_plan.tasks)
+                        ),
                     },
                 },
             }
+
+            # Emit completion event
+            execution_time = None
+            if workflow_plan.start_time and workflow_plan.end_time:
+                execution_time = (
+                    workflow_plan.end_time - workflow_plan.start_time
+                ).total_seconds()
+
+            await self._emit_event(
+                create_complete_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    result=final_result,
+                    summary=f"Workflow completed with {completed_count}/{len(workflow_plan.tasks)} tasks",
+                    execution_time_seconds=execution_time,
+                )
+            )
 
         except Exception as e:
             self.logger.error(f"Orchestration failed for query '{query}': {e}")
@@ -476,6 +576,17 @@ class MultiAgentOrchestrator:
                 "workflow_id": workflow_id,
                 "error": str(e),
             }
+
+            # Emit error event
+            await self._emit_event(
+                create_error_event(
+                    task_id=workflow_id,
+                    tenant_id=self.tenant_id,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    recoverable=False,
+                )
+            )
 
     async def _plan_workflow(
         self,
@@ -643,15 +754,48 @@ class MultiAgentOrchestrator:
             for phase_num, task_ids in enumerate(
                 workflow_plan.execution_order[start_phase:], start=start_phase
             ):
+                # Check for cancellation before each phase
+                if (
+                    self.event_queue is not None
+                    and self.event_queue.cancellation_token.is_cancelled
+                ):
+                    self.logger.info(
+                        f"Workflow {workflow_plan.workflow_id} cancelled at phase {phase_num + 1}"
+                    )
+                    workflow_plan.status = WorkflowStatus.CANCELLED
+                    workflow_plan.end_time = datetime.now()
+                    await self._emit_event(
+                        create_status_event(
+                            task_id=workflow_plan.workflow_id,
+                            tenant_id=self.tenant_id,
+                            state=TaskState.CANCELLED,
+                            phase=f"phase_{phase_num + 1}",
+                            message=self.event_queue.cancellation_token.reason
+                            or "Cancelled by user",
+                        )
+                    )
+                    return False
+
                 self.logger.debug(f"Executing phase {phase_num + 1}: {task_ids}")
+
+                # Emit phase progress event
+                await self._emit_event(
+                    create_progress_event(
+                        task_id=workflow_plan.workflow_id,
+                        tenant_id=self.tenant_id,
+                        current=phase_num,
+                        total=len(workflow_plan.execution_order),
+                        step=f"phase_{phase_num + 1}",
+                        details={"tasks": task_ids},
+                    )
+                )
 
                 # Run tasks in parallel within this phase
                 # Skip tasks that are already completed (for resume)
                 phase_tasks = [
                     task
                     for task in workflow_plan.tasks
-                    if task.task_id in task_ids
-                    and task.status != TaskStatus.COMPLETED
+                    if task.task_id in task_ids and task.status != TaskStatus.COMPLETED
                 ]
 
                 if not phase_tasks:
@@ -984,7 +1128,9 @@ class MultiAgentOrchestrator:
 
         try:
             # Get latest checkpoint
-            checkpoint = await self.checkpoint_storage.get_latest_checkpoint(workflow_id)
+            checkpoint = await self.checkpoint_storage.get_latest_checkpoint(
+                workflow_id
+            )
 
             if checkpoint is None:
                 return {
@@ -1015,30 +1161,43 @@ class MultiAgentOrchestrator:
             self.orchestration_stats["total_workflows"] += 1
 
             # Execute from checkpoint phase
-            await self._execute_workflow(workflow_plan, start_phase=checkpoint.current_phase)
+            await self._execute_workflow(
+                workflow_plan, start_phase=checkpoint.current_phase
+            )
 
             # Aggregate results
             final_result = await self._aggregate_results(workflow_plan)
 
             # Update stats
             self._update_orchestration_stats(
-                workflow_plan, success=(workflow_plan.status == WorkflowStatus.COMPLETED)
+                workflow_plan,
+                success=(workflow_plan.status == WorkflowStatus.COMPLETED),
             )
 
             return {
                 "workflow_id": workflow_id,
-                "status": "completed" if workflow_plan.status == WorkflowStatus.COMPLETED else "failed",
+                "status": (
+                    "completed"
+                    if workflow_plan.status == WorkflowStatus.COMPLETED
+                    else "failed"
+                ),
                 "result": final_result,
                 "resumed_from": checkpoint.checkpoint_id,
                 "resume_count": checkpoint.resume_count + 1,
                 "execution_summary": {
                     "total_tasks": len(workflow_plan.tasks),
                     "completed_tasks": len(
-                        [t for t in workflow_plan.tasks if t.status == TaskStatus.COMPLETED]
+                        [
+                            t
+                            for t in workflow_plan.tasks
+                            if t.status == TaskStatus.COMPLETED
+                        ]
                     ),
                     "skipped_phases": checkpoint.current_phase,
                     "execution_time": (
-                        (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                        (
+                            workflow_plan.end_time - workflow_plan.start_time
+                        ).total_seconds()
                         if workflow_plan.end_time and workflow_plan.start_time
                         else 0
                     ),
@@ -1057,7 +1216,9 @@ class MultiAgentOrchestrator:
                 "error": str(e),
             }
 
-    def _reconstruct_workflow_plan(self, checkpoint: WorkflowCheckpoint) -> WorkflowPlan:
+    def _reconstruct_workflow_plan(
+        self, checkpoint: WorkflowCheckpoint
+    ) -> WorkflowPlan:
         """
         Reconstruct a WorkflowPlan from a checkpoint
 

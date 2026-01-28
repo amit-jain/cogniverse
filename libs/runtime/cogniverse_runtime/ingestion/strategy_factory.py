@@ -72,7 +72,9 @@ class StrategyFactory:
         """
         try:
             # Import the strategies module
-            strategies_module = importlib.import_module("cogniverse_runtime.ingestion.strategies")
+            strategies_module = importlib.import_module(
+                "cogniverse_runtime.ingestion.strategies"
+            )
 
             # Get the class
             strategy_class = getattr(strategies_module, class_name)

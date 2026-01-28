@@ -181,6 +181,7 @@ class GLiNEROptimizer:
             create_default_config_manager,
             get_config,
         )
+
         config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.analyzer = QueryAnalyzer()

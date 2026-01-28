@@ -8,6 +8,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.agent_config import (
@@ -21,9 +24,6 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
-from cogniverse_sdk.interfaces.config_store import ConfigScope
-from cogniverse_vespa.config.config_store import VespaConfigStore
-
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
@@ -168,28 +168,24 @@ class TestConfigPersistence:
 
         assert loaded_config.agent_name == "test_agent"
         assert loaded_config.agent_version == "2.0.0"
-        assert loaded_config.module_config.module_type == DSPyModuleType.CHAIN_OF_THOUGHT
+        assert (
+            loaded_config.module_config.module_type == DSPyModuleType.CHAIN_OF_THOUGHT
+        )
         assert loaded_config.module_config.max_retries == 5
         assert loaded_config.llm_model == "test-llm"
 
     def test_config_versioning(self, config_manager):
         """Test configuration version tracking"""
         # Create initial config
-        system_config_v1 = SystemConfig(
-            tenant_id="test_tenant", llm_model="model-v1"
-        )
+        system_config_v1 = SystemConfig(tenant_id="test_tenant", llm_model="model-v1")
         config_manager.set_system_config(system_config_v1)
 
         # Update config
-        system_config_v2 = SystemConfig(
-            tenant_id="test_tenant", llm_model="model-v2"
-        )
+        system_config_v2 = SystemConfig(tenant_id="test_tenant", llm_model="model-v2")
         config_manager.set_system_config(system_config_v2)
 
         # Update again
-        system_config_v3 = SystemConfig(
-            tenant_id="test_tenant", llm_model="model-v3"
-        )
+        system_config_v3 = SystemConfig(tenant_id="test_tenant", llm_model="model-v3")
         config_manager.set_system_config(system_config_v3)
 
         # Check current version
@@ -210,15 +206,11 @@ class TestConfigPersistence:
     def test_multi_tenant_isolation(self, config_manager):
         """Test tenant isolation in configuration storage"""
         # Create configs for tenant1
-        config_tenant1 = SystemConfig(
-            tenant_id="tenant1", llm_model="tenant1-model"
-        )
+        config_tenant1 = SystemConfig(tenant_id="tenant1", llm_model="tenant1-model")
         config_manager.set_system_config(config_tenant1)
 
         # Create configs for tenant2
-        config_tenant2 = SystemConfig(
-            tenant_id="tenant2", llm_model="tenant2-model"
-        )
+        config_tenant2 = SystemConfig(tenant_id="tenant2", llm_model="tenant2-model")
         config_manager.set_system_config(config_tenant2)
 
         # Verify isolation

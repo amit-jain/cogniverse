@@ -29,14 +29,15 @@ def multi_profile_vespa():
     """
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
-
     from tests.system.vespa_test_manager import VespaTestManager
     from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
     ensemble_http_port, ensemble_config_port = generate_unique_ports("ensemble_test")
 
-    logger.info(f"Ensemble tests using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)")
+    logger.info(
+        f"Ensemble tests using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)"
+    )
 
     # Clear singletons
     registry = get_backend_registry()
@@ -46,7 +47,9 @@ def multi_profile_vespa():
         ConfigManager._instance = None
 
     # Create manager
-    manager = VespaTestManager(http_port=ensemble_http_port, config_port=ensemble_config_port)
+    manager = VespaTestManager(
+        http_port=ensemble_http_port, config_port=ensemble_config_port
+    )
 
     try:
         # Setup Vespa with default schema
@@ -58,9 +61,9 @@ def multi_profile_vespa():
 
         # Use 3 REAL different profiles for comprehensive ensemble testing
         real_profiles = [
-            "video_colpali_smol500_mv_frame",      # ColPali 128-dim
+            "video_colpali_smol500_mv_frame",  # ColPali 128-dim
             "video_videoprism_base_mv_chunk_30s",  # VideoPrism 768-dim
-            "video_colqwen_omni_mv_chunk_30s",     # ColQwen 128-dim
+            "video_colqwen_omni_mv_chunk_30s",  # ColQwen 128-dim
         ]
 
         yield {
@@ -164,7 +167,9 @@ class TestSearchAgentEnsembleReal:
     """REAL comprehensive integration tests for ensemble search"""
 
     @pytest.mark.asyncio
-    async def test_ensemble_search_with_real_vespa_profiles(self, search_agent_ensemble):
+    async def test_ensemble_search_with_real_vespa_profiles(
+        self, search_agent_ensemble
+    ):
         """
         REAL TEST: Execute ensemble search with REAL encoders and REAL Vespa.
 
@@ -179,14 +184,18 @@ class TestSearchAgentEnsembleReal:
         agent, profiles = search_agent_ensemble
 
         # NO PATCHING - QueryEncoderFactory loads real encoders for each profile
-        logger.info("🔄 Loading REAL query encoders for all 3 profiles (ColPali, VideoPrism, ColQwen)")
+        logger.info(
+            "🔄 Loading REAL query encoders for all 3 profiles (ColPali, VideoPrism, ColQwen)"
+        )
 
-        result = await agent._process_impl({
-            "query": "robot playing soccer",
-            "profiles": profiles,  # List of 3 different profile names
-            "top_k": 5,
-            "rrf_k": 60
-        })
+        result = await agent._process_impl(
+            {
+                "query": "robot playing soccer",
+                "profiles": profiles,  # List of 3 different profile names
+                "top_k": 5,
+                "rrf_k": 60,
+            }
+        )
 
         # VALIDATE: Ensemble mode detected
         assert result.search_mode == "ensemble"
@@ -197,7 +206,9 @@ class TestSearchAgentEnsembleReal:
         assert result.total_results is not None
         assert isinstance(result.results, list)
 
-        logger.info(f"✅ Ensemble search executed with 3 REAL encoders: {result.total_results} results")
+        logger.info(
+            f"✅ Ensemble search executed with 3 REAL encoders: {result.total_results} results"
+        )
 
     @pytest.mark.asyncio
     async def test_ensemble_search_latency(self, search_agent_ensemble):
@@ -211,18 +222,22 @@ class TestSearchAgentEnsembleReal:
         # Measure latency with real encoder loading for all 3 profiles
         start_time = time.time()
 
-        _result = await agent._process_impl({
-            "query": "test query for latency",
-            "profiles": profiles,
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        _result = await agent._process_impl(
+            {
+                "query": "test query for latency",
+                "profiles": profiles,
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
         assert _result is not None  # Verify execution completed
 
         elapsed_ms = (time.time() - start_time) * 1000
 
         # VALIDATE: Latency target met
-        logger.info(f"Ensemble search latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles with REAL encoders")
+        logger.info(
+            f"Ensemble search latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles with REAL encoders"
+        )
 
         # Target accounts for real model encoding + retries
         assert elapsed_ms < 60000, f"Ensemble search took {elapsed_ms:.2f}ms (too slow)"
@@ -238,23 +253,33 @@ class TestSearchAgentEnsembleReal:
 
         # Use real invalid profile to trigger natural failure
         # Create profiles list with one invalid profile mixed in with valid ones
-        profiles_with_invalid = [profiles[0], "invalid_nonexistent_profile_xyz", profiles[1]]
+        profiles_with_invalid = [
+            profiles[0],
+            "invalid_nonexistent_profile_xyz",
+            profiles[1],
+        ]
 
-        result = await agent._process_impl({
-            "query": "test query with failure",
-            "profiles": profiles_with_invalid,
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        result = await agent._process_impl(
+            {
+                "query": "test query with failure",
+                "profiles": profiles_with_invalid,
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
 
         # VALIDATE: Ensemble still returned results (graceful degradation)
         assert result.search_mode == "ensemble"
 
         # Should have results from valid profiles only (invalid profile fails naturally)
-        logger.info(f"✅ Ensemble degraded gracefully: {result.total_results} results despite invalid profile")
+        logger.info(
+            f"✅ Ensemble degraded gracefully: {result.total_results} results despite invalid profile"
+        )
 
     @pytest.mark.asyncio
-    async def test_ensemble_parallel_execution_verification(self, search_agent_ensemble):
+    async def test_ensemble_parallel_execution_verification(
+        self, search_agent_ensemble
+    ):
         """
         REAL TEST: Verify that profiles are actually searched in parallel
 
@@ -264,28 +289,38 @@ class TestSearchAgentEnsembleReal:
 
         start_time = time.time()
 
-        _result = await agent._process_impl({
-            "query": "test parallel execution",
-            "profiles": profiles,
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        _result = await agent._process_impl(
+            {
+                "query": "test parallel execution",
+                "profiles": profiles,
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
         assert _result is not None  # Verify execution completed
 
         total_time = time.time() - start_time
 
         # VALIDATE: Ensemble completes in reasonable time with REAL Vespa searches
         # Parallel execution should complete faster than fully sequential
-        logger.info(f"Total ensemble time: {total_time:.3f}s for {len(profiles)} profiles with REAL Vespa")
+        logger.info(
+            f"Total ensemble time: {total_time:.3f}s for {len(profiles)} profiles with REAL Vespa"
+        )
 
         # With real Vespa and parallel execution, should complete reasonably fast
         # Allow generous threshold for CI environment
-        assert total_time < 60.0, f"Ensemble took {total_time:.3f}s (too slow even for parallel execution)"
+        assert (
+            total_time < 60.0
+        ), f"Ensemble took {total_time:.3f}s (too slow even for parallel execution)"
 
-        logger.info(f"✅ Parallel execution validated: {len(profiles)} profiles searched in {total_time:.3f}s")
+        logger.info(
+            f"✅ Parallel execution validated: {len(profiles)} profiles searched in {total_time:.3f}s"
+        )
 
     @pytest.mark.asyncio
-    async def test_ensemble_rrf_with_real_overlapping_results(self, search_agent_ensemble):
+    async def test_ensemble_rrf_with_real_overlapping_results(
+        self, search_agent_ensemble
+    ):
         """
         REAL TEST: Validate RRF fusion metadata with real Vespa search results
 
@@ -293,12 +328,14 @@ class TestSearchAgentEnsembleReal:
         """
         agent, profiles = search_agent_ensemble
 
-        result = await agent._process_impl({
-            "query": "robot playing soccer",
-            "profiles": profiles,
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        result = await agent._process_impl(
+            {
+                "query": "robot playing soccer",
+                "profiles": profiles,
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
 
         # VALIDATE: RRF fusion metadata on REAL search results
         assert result.search_mode == "ensemble"
@@ -307,12 +344,20 @@ class TestSearchAgentEnsembleReal:
         # Validate RRF metadata structure on all results
         for doc in results:
             assert "rrf_score" in doc, f"Missing rrf_score in doc {doc.get('id')}"
-            assert "profile_ranks" in doc, f"Missing profile_ranks in doc {doc.get('id')}"
+            assert (
+                "profile_ranks" in doc
+            ), f"Missing profile_ranks in doc {doc.get('id')}"
             assert "num_profiles" in doc, f"Missing num_profiles in doc {doc.get('id')}"
-            assert doc["rrf_score"] > 0, f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
-            assert doc["num_profiles"] >= 1, f"Invalid num_profiles {doc['num_profiles']} in doc {doc.get('id')}"
+            assert (
+                doc["rrf_score"] > 0
+            ), f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
+            assert (
+                doc["num_profiles"] >= 1
+            ), f"Invalid num_profiles {doc['num_profiles']} in doc {doc.get('id')}"
 
-        logger.info(f"✅ RRF fusion validated on {len(results)} real results with proper metadata")
+        logger.info(
+            f"✅ RRF fusion validated on {len(results)} real results with proper metadata"
+        )
 
     @pytest.mark.asyncio
     async def test_ensemble_with_empty_profile_results(self, search_agent_ensemble):
@@ -324,16 +369,20 @@ class TestSearchAgentEnsembleReal:
         agent, profiles = search_agent_ensemble
 
         # Use nonsensical query that likely returns no results
-        result = await agent._process_impl({
-            "query": "xyzabc123nonexistent query that returns nothing",
-            "profiles": profiles,
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        result = await agent._process_impl(
+            {
+                "query": "xyzabc123nonexistent query that returns nothing",
+                "profiles": profiles,
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
 
         # VALIDATE: Ensemble executes without error even with sparse/empty results
         assert result.search_mode == "ensemble"
         assert result.results is not None
         assert isinstance(result.results, list)
 
-        logger.info(f"✅ Handled sparse/empty results gracefully: {len(result.results)} results")
+        logger.info(
+            f"✅ Handled sparse/empty results gracefully: {len(result.results)} results"
+        )

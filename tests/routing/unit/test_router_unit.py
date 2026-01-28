@@ -43,8 +43,12 @@ class TestTieredRouterUnit:
             "keyword_config": {},
         }
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_keyword:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+            ) as mock_keyword:
                 router = TieredRouter(config)
 
                 assert router.config == config
@@ -76,7 +80,9 @@ class TestTieredRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_strategy:
+        with patch(
+            "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+        ) as mock_strategy:
             mock_instance = Mock()
             mock_instance.route = AsyncMock(return_value=expected_decision)
             mock_strategy.return_value = mock_instance
@@ -118,8 +124,12 @@ class TestTieredRouterUnit:
             routing_method="llm",
         )
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.LLMRoutingStrategy") as mock_llm:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.LLMRoutingStrategy"
+            ) as mock_llm:
                 # Setup mocked strategies
                 mock_gliner_instance = Mock()
                 mock_gliner_instance.route = AsyncMock(return_value=low_confidence)
@@ -162,7 +172,9 @@ class TestTieredRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_strategy:
+        with patch(
+            "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+        ) as mock_strategy:
             with patch("time.time", return_value=1000.0):  # Mock time
                 mock_instance = Mock()
                 mock_instance.route = AsyncMock(return_value=decision)
@@ -200,8 +212,12 @@ class TestTieredRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_keyword:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+            ) as mock_keyword:
                 # Fast path raises exception
                 mock_gliner_instance = Mock()
                 mock_gliner_instance.route = AsyncMock(
@@ -261,7 +277,9 @@ class TestComprehensiveRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_strategy:
+        with patch(
+            "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+        ) as mock_strategy:
             mock_instance = Mock()
             mock_instance.route = AsyncMock(return_value=expected_decision)
             mock_strategy.return_value = mock_instance
@@ -298,14 +316,18 @@ class TestComprehensiveRouterUnit:
             reasoning="Keyword-based routing",
         )
 
-        with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_strategy:
+        with patch(
+            "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+        ) as mock_strategy:
             mock_instance = Mock()
             mock_instance.route = AsyncMock(return_value=expected_decision)
             mock_strategy.return_value = mock_instance
 
             with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy"):
                 with patch("cogniverse_agents.routing.router.LLMRoutingStrategy"):
-                    with patch("cogniverse_agents.routing.router.LangExtractRoutingStrategy"):
+                    with patch(
+                        "cogniverse_agents.routing.router.LangExtractRoutingStrategy"
+                    ):
                         router = ComprehensiveRouter(config)
                         decision = await router.route("test query")
 
@@ -353,8 +375,12 @@ class TestComprehensiveRouterUnit:
             reasoning="Keywords suggest video search",
         )
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_keyword:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+            ) as mock_keyword:
                 mock_gliner_instance = Mock()
                 mock_gliner_instance.route = AsyncMock(return_value=gliner_decision)
                 mock_gliner.return_value = mock_gliner_instance
@@ -408,8 +434,12 @@ class TestComprehensiveRouterUnit:
             reasoning="Fallback to keywords",
         )
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_keyword:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+            ) as mock_keyword:
                 # GLiNER fails
                 mock_gliner_instance = Mock()
                 mock_gliner_instance.route = AsyncMock(
@@ -455,7 +485,9 @@ class TestComprehensiveRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_strategy:
+        with patch(
+            "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+        ) as mock_strategy:
             mock_instance = Mock()
 
             # Simulate slow response that will timeout
@@ -510,8 +542,12 @@ class TestComprehensiveRouterUnit:
             routing_method="keyword",
         )
 
-        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy") as mock_gliner:
-            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy") as mock_keyword:
+        with patch(
+            "cogniverse_agents.routing.router.GLiNERRoutingStrategy"
+        ) as mock_gliner:
+            with patch(
+                "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+            ) as mock_keyword:
                 mock_gliner_instance = Mock()
                 mock_gliner_instance.route = AsyncMock(return_value=gliner_decision)
                 mock_gliner.return_value = mock_gliner_instance

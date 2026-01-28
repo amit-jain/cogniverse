@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import dspy
 import pytest
+
 from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementAgent,
     QueryEnhancementDeps,
@@ -118,7 +119,9 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process_impl(QueryEnhancementInput(query="ML tutorials"))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="ML tutorials")
+        )
 
         assert isinstance(result, QueryEnhancementResult)
         assert result.original_query == "ML tutorials"
@@ -179,7 +182,9 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process_impl(QueryEnhancementInput(query="simple query"))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="simple query")
+        )
 
         assert len(result.expansion_terms) == 0
         assert len(result.synonyms) == 0
@@ -199,7 +204,9 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process_impl(QueryEnhancementInput(query="Python tutorials"))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="Python tutorials")
+        )
 
         assert len(result.context_additions) == 3
         assert "beginner" in result.context_additions

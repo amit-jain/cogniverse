@@ -8,12 +8,13 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
+from PIL import Image
+
 from cogniverse_agents.image_search_agent import (
     ImageResult,
     ImageSearchAgent,
     ImageSearchDeps,
 )
-from PIL import Image
 
 
 class TestImageSearchAgent:
@@ -67,7 +68,7 @@ class TestImageSearchAgent:
 
         # Verify encoder was created
         assert encoder is not None
-        assert hasattr(encoder, 'model')
+        assert hasattr(encoder, "model")
         # Verify the model is set (don't compare full object due to verbose repr)
         assert encoder.model is not None
 

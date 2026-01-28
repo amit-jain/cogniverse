@@ -5,14 +5,15 @@ Tests the main service orchestrator end-to-end.
 """
 
 import pytest
+from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_synthetic.service import SyntheticDataService
+
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_synthetic.service import SyntheticDataService
 
 
 def create_test_generator_config():
@@ -29,7 +30,9 @@ def create_test_generator_config():
                 },
                 agent_mappings=[
                     AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
-                    AgentMappingRule(modality="DOCUMENT", agent_name="document_search_agent"),
+                    AgentMappingRule(
+                        modality="DOCUMENT", agent_name="document_search_agent"
+                    ),
                 ],
             ),
             "routing": OptimizerGenerationConfig(
@@ -62,10 +65,11 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_service_with_backend(self):
         """Test service can be initialized with Backend interface"""
-        mock_backend = type('MockBackend', (), {'query_metadata_documents': lambda *args, **kwargs: []})()
+        mock_backend = type(
+            "MockBackend", (), {"query_metadata_documents": lambda *args, **kwargs: []}
+        )()
         service = SyntheticDataService(
-            backend=mock_backend,
-            generator_config=create_test_generator_config()
+            backend=mock_backend, generator_config=create_test_generator_config()
         )
         assert service.backend == mock_backend
 
@@ -73,10 +77,10 @@ class TestSyntheticDataService:
     async def test_service_with_backend_config(self):
         """Test service with backend configuration"""
         from cogniverse_foundation.config.unified_config import BackendConfig
+
         config = BackendConfig(profiles={})
         service = SyntheticDataService(
-            backend_config=config,
-            generator_config=create_test_generator_config()
+            backend_config=config, generator_config=create_test_generator_config()
         )
         assert service.backend_config == config
 
@@ -85,10 +89,7 @@ class TestSyntheticDataService:
         """Test generating modality examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="modality",
-            count=10
-        )
+        request = SyntheticDataRequest(optimizer="modality", count=10)
 
         response = await service.generate(request)
 
@@ -106,10 +107,7 @@ class TestSyntheticDataService:
         """Test generating cross-modal fusion examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="cross_modal",
-            count=15
-        )
+        request = SyntheticDataRequest(optimizer="cross_modal", count=15)
 
         response = await service.generate(request)
 
@@ -123,10 +121,7 @@ class TestSyntheticDataService:
         """Test generating routing experience examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="routing",
-            count=12
-        )
+        request = SyntheticDataRequest(optimizer="routing", count=12)
 
         response = await service.generate(request)
 
@@ -140,10 +135,7 @@ class TestSyntheticDataService:
         """Test generating workflow execution examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="workflow",
-            count=20
-        )
+        request = SyntheticDataRequest(optimizer="workflow", count=20)
 
         response = await service.generate(request)
 
@@ -158,9 +150,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            optimizer="modality",
-            count=10,
-            vespa_sample_size=50
+            optimizer="modality", count=10, vespa_sample_size=50
         )
 
         response = await service.generate(request)
@@ -173,11 +163,7 @@ class TestSyntheticDataService:
         """Test generation with max profiles setting"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="modality",
-            count=5,
-            max_profiles=1
-        )
+        request = SyntheticDataRequest(optimizer="modality", count=5, max_profiles=1)
 
         response = await service.generate(request)
 
@@ -190,9 +176,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            optimizer="routing",
-            count=8,
-            strategies=["entity_rich"]
+            optimizer="routing", count=8, strategies=["entity_rich"]
         )
 
         response = await service.generate(request)
@@ -204,10 +188,7 @@ class TestSyntheticDataService:
         """Test generation with invalid optimizer name"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="nonexistent_optimizer",
-            count=10
-        )
+        request = SyntheticDataRequest(optimizer="nonexistent_optimizer", count=10)
 
         with pytest.raises(ValueError, match="Unknown optimizer"):
             await service.generate(request)
@@ -267,9 +248,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            optimizer="routing",
-            count=8,
-            vespa_sample_size=20
+            optimizer="routing", count=8, vespa_sample_size=20
         )
 
         response = await service.generate(request)
@@ -300,10 +279,7 @@ class TestServiceErrorHandling:
         """Test error handling for invalid optimizer"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="invalid_name",
-            count=10
-        )
+        request = SyntheticDataRequest(optimizer="invalid_name", count=10)
 
         with pytest.raises(ValueError) as exc_info:
             await service.generate(request)
@@ -329,17 +305,14 @@ class TestServiceWithBackendConfig:
     async def test_service_uses_backend_config_profiles(self):
         """Test that service uses profiles from backend config"""
         from cogniverse_foundation.config.unified_config import BackendConfig
+
         config = BackendConfig(profiles={})
 
         service = SyntheticDataService(
-            backend_config=config,
-            generator_config=create_test_generator_config()
+            backend_config=config, generator_config=create_test_generator_config()
         )
 
-        request = SyntheticDataRequest(
-            optimizer="modality",
-            count=5
-        )
+        request = SyntheticDataRequest(optimizer="modality", count=5)
 
         response = await service.generate(request)
 
@@ -351,10 +324,7 @@ class TestServiceWithBackendConfig:
         """Test service falls back to default profiles when no config"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(
-            optimizer="modality",
-            count=5
-        )
+        request = SyntheticDataRequest(optimizer="modality", count=5)
 
         response = await service.generate(request)
 

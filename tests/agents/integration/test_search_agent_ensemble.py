@@ -57,7 +57,9 @@ class TestSearchAgentEnsembleIntegration:
     """Integration tests for ensemble search with real Vespa backend"""
 
     @pytest.mark.asyncio
-    async def test_rrf_fusion_with_mock_profiles(self, search_agent_with_ensemble_profiles):
+    async def test_rrf_fusion_with_mock_profiles(
+        self, search_agent_with_ensemble_profiles
+    ):
         """
         Test RRF fusion algorithm correctness with known results
 
@@ -88,7 +90,9 @@ class TestSearchAgentEnsembleIntegration:
         fused_results = agent._fuse_results_rrf(profile_results, k=60, top_k=10)
 
         # VALIDATE: Doc2 should rank first (appears in all 3 profiles)
-        assert fused_results[0]["id"] == "doc2", f"Expected doc2 first, got {fused_results[0]['id']}"
+        assert (
+            fused_results[0]["id"] == "doc2"
+        ), f"Expected doc2 first, got {fused_results[0]['id']}"
         assert fused_results[0]["num_profiles"] == 3
 
         # VALIDATE: RRF scores are monotonically decreasing
@@ -105,10 +109,14 @@ class TestSearchAgentEnsembleIntegration:
         expected_score = (1.0 / 61) + (1.0 / 60) + (1.0 / 61)
         assert abs(fused_results[0]["rrf_score"] - expected_score) < 0.001
 
-        logger.info(f"✅ RRF fusion validated: {len(fused_results)} results, doc2 ranked first with score {fused_results[0]['rrf_score']:.4f}")
+        logger.info(
+            f"✅ RRF fusion validated: {len(fused_results)} results, doc2 ranked first with score {fused_results[0]['rrf_score']:.4f}"
+        )
 
     @pytest.mark.asyncio
-    async def test_ensemble_mode_detection_and_routing(self, search_agent_with_ensemble_profiles):
+    async def test_ensemble_mode_detection_and_routing(
+        self, search_agent_with_ensemble_profiles
+    ):
         """
         Test that ensemble mode is correctly detected and routes to ensemble search
 
@@ -119,17 +127,19 @@ class TestSearchAgentEnsembleIntegration:
         agent = search_agent_with_ensemble_profiles
 
         # Mock _search_ensemble to capture call
-        agent._search_ensemble = AsyncMock(return_value=[
-            {"id": "doc1", "rrf_score": 0.5, "num_profiles": 2}
-        ])
+        agent._search_ensemble = AsyncMock(
+            return_value=[{"id": "doc1", "rrf_score": 0.5, "num_profiles": 2}]
+        )
 
         # Call with multiple profiles
-        result = await agent._process_impl({
-            "query": "machine learning videos",
-            "profiles": ["profile1", "profile2"],
-            "top_k": 10,
-            "rrf_k": 60
-        })
+        result = await agent._process_impl(
+            {
+                "query": "machine learning videos",
+                "profiles": ["profile1", "profile2"],
+                "top_k": 10,
+                "rrf_k": 60,
+            }
+        )
 
         # VALIDATE: Ensemble mode detected
         assert result.search_mode == "ensemble"
@@ -157,13 +167,11 @@ class TestSearchAgentEnsembleIntegration:
 
         # Mock search to avoid actual Vespa call
         from unittest.mock import Mock
+
         agent.search_backend.search = Mock(return_value=[])
 
         # Call without profiles parameter
-        result = await agent._process_impl({
-            "query": "test query",
-            "top_k": 10
-        })
+        result = await agent._process_impl({"query": "test query", "top_k": 10})
 
         # VALIDATE: Single profile mode
         assert result.search_mode == "single_profile"
@@ -171,11 +179,9 @@ class TestSearchAgentEnsembleIntegration:
         assert result.profile == agent.active_profile
 
         # Call with single profile in list (should still use single mode)
-        result2 = await agent._process_impl({
-            "query": "test query",
-            "profiles": ["profile1"],
-            "top_k": 10
-        })
+        result2 = await agent._process_impl(
+            {"query": "test query", "profiles": ["profile1"], "top_k": 10}
+        )
 
         # VALIDATE: Still single profile mode (only 1 profile)
         assert result2.search_mode == "single_profile"
@@ -217,10 +223,14 @@ class TestSearchAgentEnsembleIntegration:
         assert abs(score_k20_doc1 - 0.1) < 0.001
         assert abs(score_k60_doc1 - 0.0333) < 0.001
 
-        logger.info(f"✅ RRF k parameter validated: k=20 → {score_k20_doc1:.4f}, k=60 → {score_k60_doc1:.4f}")
+        logger.info(
+            f"✅ RRF k parameter validated: k=20 → {score_k20_doc1:.4f}, k=60 → {score_k60_doc1:.4f}"
+        )
 
     @pytest.mark.asyncio
-    async def test_ensemble_empty_results_handling(self, search_agent_with_ensemble_profiles):
+    async def test_ensemble_empty_results_handling(
+        self, search_agent_with_ensemble_profiles
+    ):
         """
         Test ensemble search when all profiles return empty results
 
@@ -254,8 +264,12 @@ class TestSearchAgentEnsembleIntegration:
 
         # Create many results
         profile_results = {
-            "profile1": [{"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(50)],
-            "profile2": [{"id": f"doc{i+25}", "score": 1.0 - (i * 0.01)} for i in range(50)],
+            "profile1": [
+                {"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(50)
+            ],
+            "profile2": [
+                {"id": f"doc{i+25}", "score": 1.0 - (i * 0.01)} for i in range(50)
+            ],
         }
 
         # Request top 5
@@ -270,7 +284,9 @@ class TestSearchAgentEnsembleIntegration:
         # VALIDATE: Exactly 10 results
         assert len(fused10) == 10
 
-        logger.info(f"✅ Top-k limit validated: requested 5, got {len(fused)}; requested 10, got {len(fused10)}")
+        logger.info(
+            f"✅ Top-k limit validated: requested 5, got {len(fused)}; requested 10, got {len(fused10)}"
+        )
 
     @pytest.mark.asyncio
     async def test_ensemble_partial_overlap(self, search_agent_with_ensemble_profiles):
@@ -322,9 +338,13 @@ class TestSearchAgentEnsembleIntegration:
         # (This is not always strictly true due to rank positions, but generally true)
         doc2_rank = next(i for i, r in enumerate(fused) if r["id"] == "doc2")
         doc5_rank = next(i for i, r in enumerate(fused) if r["id"] == "doc5")
-        logger.info(f"Doc2 (3 profiles) at rank {doc2_rank}, Doc5 (1 profile) at rank {doc5_rank}")
+        logger.info(
+            f"Doc2 (3 profiles) at rank {doc2_rank}, Doc5 (1 profile) at rank {doc5_rank}"
+        )
 
-        logger.info(f"✅ Partial overlap validated: {len(fused)} total docs, doc2 in {doc2_result['num_profiles']} profiles")
+        logger.info(
+            f"✅ Partial overlap validated: {len(fused)} total docs, doc2 in {doc2_result['num_profiles']} profiles"
+        )
 
     @pytest.mark.asyncio
     async def test_rrf_score_metadata(self, search_agent_with_ensemble_profiles):
@@ -380,4 +400,6 @@ class TestSearchAgentEnsembleIntegration:
         assert doc2["profile_scores"]["profile1"] == 0.90
         assert doc2["profile_scores"]["profile2"] == 0.92
 
-        logger.info(f"✅ RRF metadata validated: doc2 ranks={doc2['profile_ranks']}, scores={doc2['profile_scores']}")
+        logger.info(
+            f"✅ RRF metadata validated: doc2 ranks={doc2['profile_ranks']}, scores={doc2['profile_scores']}"
+        )

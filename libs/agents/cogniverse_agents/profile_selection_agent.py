@@ -9,9 +9,10 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
+from pydantic import BaseModel, Field
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +209,9 @@ class ProfileSelectionAgent(
         """Expose available profiles from deps for convenience."""
         return self.deps.available_profiles
 
-    async def _process_impl(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
+    async def _process_impl(
+        self, input: ProfileSelectionInput
+    ) -> ProfileSelectionOutput:
         """
         Process profile selection request with typed input/output.
 
@@ -225,7 +228,9 @@ class ProfileSelectionAgent(
             return ProfileSelectionResult(
                 query="",
                 selected_profile=(
-                    self.deps.available_profiles[0] if self.deps.available_profiles else "default"
+                    self.deps.available_profiles[0]
+                    if self.deps.available_profiles
+                    else "default"
                 ),
                 confidence=0.0,
                 reasoning="Empty query, using default profile",
@@ -328,7 +333,10 @@ class ProfileSelectionAgent(
                     {
                         "input": {
                             "query": "Show me machine learning videos",
-                            "available_profiles": ["video_colpali_base", "text_bge_base"],
+                            "available_profiles": [
+                                "video_colpali_base",
+                                "text_bge_base",
+                            ],
                         },
                         "output": {
                             "selected_profile": "video_colpali_base",

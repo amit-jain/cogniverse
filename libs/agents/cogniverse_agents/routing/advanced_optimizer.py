@@ -25,8 +25,9 @@ from typing import Any, Dict, List, Optional
 # DSPy 3.0 imports
 import dspy
 import numpy as np
-from cogniverse_core.common.tenant_utils import get_tenant_storage_path
 from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
+
+from cogniverse_core.common.tenant_utils import get_tenant_storage_path
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +322,9 @@ class AdvancedRoutingOptimizer:
                             dspy.settings.configure(lm=current_lm)
                         except RuntimeError as re:
                             if "can only be called from the same async task" in str(re):
-                                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                                logger.warning(
+                                    "DSPy already configured in this async context, skipping reconfiguration"
+                                )
                             else:
                                 raise
                 except AttributeError:
@@ -334,7 +337,9 @@ class AdvancedRoutingOptimizer:
                         dspy.settings.configure(lm=current_lm)
                     except RuntimeError as re:
                         if "can only be called from the same async task" in str(re):
-                            logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                            logger.warning(
+                                "DSPy already configured in this async context, skipping reconfiguration"
+                            )
                         else:
                             raise
 
@@ -1086,9 +1091,7 @@ class AdvancedRoutingOptimizer:
         # Occasionally suggest different agent (small probability)
         if np.random.random() < 0.1:
             agents = ["search_agent", "summarizer_agent", "detailed_report_agent"]
-            current_agent = baseline_prediction.get(
-                "recommended_agent", "search_agent"
-            )
+            current_agent = baseline_prediction.get("recommended_agent", "search_agent")
             other_agents = [a for a in agents if a != current_agent]
             if other_agents:
                 exploration["recommended_agent"] = np.random.choice(other_agents)
@@ -1282,7 +1285,7 @@ class AdvancedRoutingOptimizer:
         service = SyntheticDataService(
             backend=backend,
             backend_config=backend_config,
-            generator_config=generator_config
+            generator_config=generator_config,
         )
         request = SyntheticDataRequest(optimizer="routing", count=count)
         response = await service.generate(request)
@@ -1302,7 +1305,7 @@ class AdvancedRoutingOptimizer:
                 user_satisfaction=example_data.get("user_satisfaction"),
                 processing_time=example_data.get("processing_time", 0.0),
                 reward=example_data.get("reward"),
-                metadata=example_data.get("metadata", {})
+                metadata=example_data.get("metadata", {}),
             )
             self.experiences.append(experience)
             self.experience_replay.append(experience)

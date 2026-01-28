@@ -8,6 +8,7 @@ and individual processors in the ingestion pipeline.
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.strategies import (
@@ -109,7 +110,9 @@ class TestPipelineOrchestration:
         requirements = strategy_set.get_all_required_processors()
         assert "keyframe" in requirements
 
-    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor"
+    )
     def test_end_to_end_frame_processing_workflow(
         self,
         mock_keyframe_class,

@@ -6,15 +6,15 @@ import logging
 from typing import Any, Dict, Optional, Type
 
 import dspy
-from cogniverse_foundation.config.agent_config import (
-    AgentConfig,
-    ModuleConfig,
-    OptimizerConfig,
-)
 
 from cogniverse_core.common.dspy_module_registry import (
     DSPyModuleRegistry,
     DSPyOptimizerRegistry,
+)
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig,
+    ModuleConfig,
+    OptimizerConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,9 @@ class DynamicDSPyMixin:
             logger.info(f"Configured DSPy LM: {config.llm_model}")
         except RuntimeError as e:
             if "can only be called from the same async task" in str(e):
-                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                logger.warning(
+                    "DSPy already configured in this async context, skipping reconfiguration"
+                )
             else:
                 raise
 

@@ -60,7 +60,7 @@ class TenantAwareAgentMixin:
         tenant_id: str,
         config: Optional[SystemConfig] = None,
         config_manager: Optional["ConfigManager"] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize tenant-aware agent mixin.
@@ -109,15 +109,20 @@ class TenantAwareAgentMixin:
             self.config_manager = config_manager
         else:
             from cogniverse_foundation.config.utils import create_default_config_manager
+
             self.config_manager = create_default_config_manager()
 
         # Store or load configuration
         self.config = config
         if config is None:
             try:
-                self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
+                self.config = get_config(
+                    tenant_id=tenant_id, config_manager=self.config_manager
+                )
             except Exception as e:
-                logger.warning(f"Failed to load system config for tenant {tenant_id}: {e}")
+                logger.warning(
+                    f"Failed to load system config for tenant {tenant_id}: {e}"
+                )
                 self.config = None
 
         # Initialize tenant-aware flag
@@ -129,7 +134,7 @@ class TenantAwareAgentMixin:
         # This allows other mixins to receive **kwargs
         # However, skip if the next class in MRO requires positional arguments
         # (like DSPyA2AAgentBase) to avoid TypeError
-        if hasattr(super(), '__init__'):
+        if hasattr(super(), "__init__"):
             try:
                 super().__init__(**kwargs)
             except TypeError as e:
@@ -168,19 +173,19 @@ class TenantAwareAgentMixin:
         # Add environment if available from config
         if self.config:
             # Try different ways config might expose environment
-            if hasattr(self.config, 'environment'):
+            if hasattr(self.config, "environment"):
                 context["environment"] = self.config.environment
-            elif hasattr(self.config, 'get') and callable(self.config.get):
-                env = self.config.get('environment')
+            elif hasattr(self.config, "get") and callable(self.config.get):
+                env = self.config.get("environment")
                 if env:
                     context["environment"] = env
 
         # Add agent type if available
-        if hasattr(self, '__class__'):
+        if hasattr(self, "__class__"):
             context["agent_type"] = self.__class__.__name__
 
         # Add agent name if available (from DSPyA2AAgentBase)
-        if hasattr(self, 'agent_name'):
+        if hasattr(self, "agent_name"):
             context["agent_name"] = self.agent_name
 
         return context
@@ -239,7 +244,7 @@ class TenantAwareAgentMixin:
             True if tenant_id is set and validated
         """
         return (
-            hasattr(self, '_tenant_initialized')
+            hasattr(self, "_tenant_initialized")
             and self._tenant_initialized
             and bool(self.tenant_id)
         )
@@ -261,7 +266,7 @@ class TenantAwareAgentMixin:
         self,
         operation: str,
         details: Optional[Dict[str, Any]] = None,
-        level: str = "info"
+        level: str = "info",
     ):
         """
         Log an operation with tenant context.
@@ -281,7 +286,7 @@ class TenantAwareAgentMixin:
         log_func = getattr(logger, level, logger.info)
 
         agent_info = f"[{self.tenant_id}]"
-        if hasattr(self, '__class__'):
+        if hasattr(self, "__class__"):
             agent_info += f" [{self.__class__.__name__}]"
 
         message = f"{agent_info} {operation}"
@@ -292,5 +297,9 @@ class TenantAwareAgentMixin:
 
     def __repr__(self) -> str:
         """String representation including tenant context"""
-        class_name = self.__class__.__name__ if hasattr(self, '__class__') else 'TenantAwareAgent'
+        class_name = (
+            self.__class__.__name__
+            if hasattr(self, "__class__")
+            else "TenantAwareAgent"
+        )
         return f"{class_name}(tenant_id='{self.tenant_id}')"

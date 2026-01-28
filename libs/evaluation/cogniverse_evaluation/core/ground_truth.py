@@ -579,9 +579,12 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
                     asyncio.get_running_loop()
                     # If we're here, loop is running - schedule the coroutine as a task
                     import concurrent.futures
+
                     with concurrent.futures.ThreadPoolExecutor() as pool:
                         dataset_data = pool.submit(
-                            lambda: asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+                            lambda: asyncio.run(
+                                provider.telemetry.datasets.get_dataset(dataset_name)
+                            )
                         ).result()
                 except RuntimeError:
                     # No event loop running, safe to use asyncio.run()

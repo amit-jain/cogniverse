@@ -25,7 +25,9 @@ class TestVideoSearchTool:
     async def test_video_search_tool_execution(self):
         """Test video search tool execution."""
         with (
-            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
+            patch(
+                "cogniverse_runtime.search.service.SearchService"
+            ) as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -75,7 +77,9 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_source_id(self):
         """Test video search tool when source_id is missing."""
         with (
-            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
+            patch(
+                "cogniverse_runtime.search.service.SearchService"
+            ) as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -99,7 +103,9 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_score(self):
         """Test video search tool when score is missing."""
         with (
-            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
+            patch(
+                "cogniverse_runtime.search.service.SearchService"
+            ) as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -131,7 +137,9 @@ class TestVideoSearchTool:
     async def test_video_search_tool_error_handling(self):
         """Test video search tool error handling."""
         with (
-            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
+            patch(
+                "cogniverse_runtime.search.service.SearchService"
+            ) as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -183,7 +191,10 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=mock_provider,
+        ):
             tool_func = phoenix_query_tool()
             results = await tool_func(
                 query_type="traces", filter="name == 'search'", limit=10
@@ -203,13 +214,18 @@ class TestPhoenixQueryTool:
         mock_dataset_data = {
             "name": "test_dataset",
             "num_examples": 5,
-            "examples": [{"input": "test", "output": "result"}] * 5
+            "examples": [{"input": "test", "output": "result"}] * 5,
         }
 
         mock_provider = Mock()
-        mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=mock_dataset_data)
+        mock_provider.telemetry.datasets.get_dataset = AsyncMock(
+            return_value=mock_dataset_data
+        )
 
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=mock_provider,
+        ):
             tool_func = phoenix_query_tool()
             result = await tool_func(query_type="datasets", name="test_dataset")
 
@@ -243,30 +259,34 @@ class TestPhoenixQueryTool:
         mock_df_list = pd.DataFrame(
             {
                 "attributes.metadata.experiment_name": ["exp1", "exp2", "exp3", "exp1"],
-                "other_column": [1, 2, 3, 4]
+                "other_column": [1, 2, 3, 4],
             }
         )
 
         # Test getting specific experiment
         mock_df_specific = pd.DataFrame(
-            {
-                "trace": ["data"] * 5,
-                "attributes.metadata.experiment_name": ["exp1"] * 5
-            }
+            {"trace": ["data"] * 5, "attributes.metadata.experiment_name": ["exp1"] * 5}
         )
 
         mock_provider = Mock()
 
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=mock_provider,
+        ):
             tool_func = phoenix_query_tool()
 
             # Test listing experiments
-            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df_list)
+            mock_provider.telemetry.traces.get_spans = AsyncMock(
+                return_value=mock_df_list
+            )
             result = await tool_func(query_type="experiments")
             assert result == {"experiments": ["exp1", "exp2", "exp3"], "count": 3}
 
             # Test getting specific experiment
-            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df_specific)
+            mock_provider.telemetry.traces.get_spans = AsyncMock(
+                return_value=mock_df_specific
+            )
             result = await tool_func(query_type="experiments", name="exp1")
             assert result == {
                 "experiment_name": "exp1",
@@ -297,9 +317,14 @@ class TestPhoenixQueryTool:
         from unittest.mock import AsyncMock
 
         mock_provider = Mock()
-        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=Exception("Phoenix connection failed"))
+        mock_provider.telemetry.traces.get_spans = AsyncMock(
+            side_effect=Exception("Phoenix connection failed")
+        )
 
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=mock_provider,
+        ):
             tool_func = phoenix_query_tool()
 
             # The function raises RuntimeError wrapping the original exception
@@ -320,7 +345,10 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=mock_provider,
+        ):
             tool_func = phoenix_query_tool()
 
             start_time = datetime.now()

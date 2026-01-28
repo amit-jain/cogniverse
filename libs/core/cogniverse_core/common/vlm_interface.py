@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import dspy
+
 from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
@@ -49,9 +50,13 @@ class DetailedVisualAnalysisSignature(dspy.Signature):
 class VLMInterface:
     """Interface for Vision Language Model operations using DSPy"""
 
-    def __init__(self, config_manager: "ConfigManager" = None, tenant_id: str = "default"):
+    def __init__(
+        self, config_manager: "ConfigManager" = None, tenant_id: str = "default"
+    ):
         if config_manager is None:
-            raise ValueError("config_manager is required for VLMInterface initialization")
+            raise ValueError(
+                "config_manager is required for VLMInterface initialization"
+            )
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self._initialize_vlm_client()
 
@@ -68,7 +73,9 @@ class VLMInterface:
             )
 
         # Ensure model name has provider prefix for litellm (Ollama models)
-        if ("localhost:11434" in base_url or "11434" in base_url) and not model_name.startswith("ollama/"):
+        if (
+            "localhost:11434" in base_url or "11434" in base_url
+        ) and not model_name.startswith("ollama/"):
             model_name = f"ollama/{model_name}"
 
         try:
@@ -81,7 +88,9 @@ class VLMInterface:
             logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
         except RuntimeError as e:
             if "can only be called from the same async task" in str(e):
-                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                logger.warning(
+                    "DSPy already configured in this async context, skipping reconfiguration"
+                )
             else:
                 raise
 

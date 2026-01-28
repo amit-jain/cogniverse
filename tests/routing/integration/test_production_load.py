@@ -9,6 +9,7 @@ import asyncio
 import time
 
 import pytest
+
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
 from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor

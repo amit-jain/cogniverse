@@ -231,7 +231,12 @@ class TestEnsembleWithRealModels:
         # Should still get a decision (fallback to tiered)
         assert decision is not None
         # Might be ensemble if it completed quickly, or tiered if it timed out
-        assert decision.routing_method in ["ensemble", "gliner", "keyword", "langextract"]
+        assert decision.routing_method in [
+            "ensemble",
+            "gliner",
+            "keyword",
+            "langextract",
+        ]
 
 
 class TestEnsembleConfigurationValidation:

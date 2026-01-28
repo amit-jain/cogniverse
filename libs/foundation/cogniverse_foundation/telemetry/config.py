@@ -99,7 +99,9 @@ class TelemetryConfig:
         Management operations: cogniverse-{tenant_id}-{service}
         """
         if service:
-            return self.tenant_service_template.format(tenant_id=tenant_id, service=service)
+            return self.tenant_service_template.format(
+                tenant_id=tenant_id, service=service
+            )
         return self.tenant_project_template.format(tenant_id=tenant_id)
 
     def should_instrument_level(self, component: str) -> bool:

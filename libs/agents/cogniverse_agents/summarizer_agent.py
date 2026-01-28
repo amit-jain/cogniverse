@@ -11,9 +11,6 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.common.vlm_interface import VLMInterface
 from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
@@ -23,6 +20,9 @@ from cogniverse_agents.tools.a2a_utils import (
     DataPart,
     Task,
 )
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,12 @@ class SummarizerInput(AgentInput):
     """Type-safe input for summarization"""
 
     query: str = Field(..., description="Query for summarization")
-    search_results: List[Dict[str, Any]] = Field(default_factory=list, description="Results to summarize")
-    summary_type: str = Field("comprehensive", description="Type: brief, comprehensive, bullet_points")
+    search_results: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Results to summarize"
+    )
+    summary_type: str = Field(
+        "comprehensive", description="Type: brief, comprehensive, bullet_points"
+    )
     include_visual_analysis: bool = Field(True, description="Include visual analysis")
     max_results_to_analyze: int = Field(10, description="Maximum results to analyze")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
@@ -48,10 +52,16 @@ class SummarizerOutput(AgentOutput):
 
     summary: str = Field(..., description="Generated summary")
     key_points: List[str] = Field(default_factory=list, description="Key points")
-    visual_insights: List[str] = Field(default_factory=list, description="Visual insights")
+    visual_insights: List[str] = Field(
+        default_factory=list, description="Visual insights"
+    )
     confidence_score: float = Field(0.0, description="Confidence score")
-    thinking_process: Dict[str, Any] = Field(default_factory=dict, description="Thinking phase details")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    thinking_process: Dict[str, Any] = Field(
+        default_factory=dict, description="Thinking phase details"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class SummarizerDeps(AgentDeps):
@@ -87,7 +97,9 @@ class SummarizationModule(dspy.Module):
     def forward(self, content: str, query: str, summary_type: str = "comprehensive"):
         """Generate summary using DSPy"""
         try:
-            result = self.summarizer(content=content, query=query, summary_type=summary_type)
+            result = self.summarizer(
+                content=content, query=query, summary_type=summary_type
+            )
             return result
         except Exception as e:
             logger.warning(f"DSPy summarization failed: {e}, using fallback")
@@ -95,7 +107,7 @@ class SummarizationModule(dspy.Module):
             return dspy.Prediction(
                 summary=f"Summary of {len(content.split())} words for query: {query}",
                 key_points="Content analysis, Key findings, Summary insights",
-                confidence_score=0.5
+                confidence_score=0.5,
             )
 
 
@@ -199,17 +211,22 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
         )
 
         # Initialize A2A base
-        super().__init__(deps=deps, config=config, dspy_module=self.summarization_module)
+        super().__init__(
+            deps=deps, config=config, dspy_module=self.summarization_module
+        )
 
         # Create config manager for VLM and other services
         from cogniverse_foundation.config.utils import create_default_config_manager
+
         self._config_manager = create_default_config_manager()
 
         # Initialize DSPy components
         self._initialize_vlm_client()
 
         # Initialize VLM for visual analysis
-        self.vlm = VLMInterface(config_manager=self._config_manager, tenant_id=self.deps.tenant_id)
+        self.vlm = VLMInterface(
+            config_manager=self._config_manager, tenant_id=self.deps.tenant_id
+        )
 
         # Configuration from deps
         self.max_summary_length = deps.max_summary_length
@@ -229,19 +246,31 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
 
         # Get system config for LLM settings
         config_manager = create_default_config_manager()
-        system_config = get_config(tenant_id=self.deps.tenant_id, config_manager=config_manager)
+        system_config = get_config(
+            tenant_id=self.deps.tenant_id, config_manager=config_manager
+        )
 
         # Try to get LLM config from system config or environment
-        if system_config and hasattr(system_config, 'get') and callable(system_config.get):
+        if (
+            system_config
+            and hasattr(system_config, "get")
+            and callable(system_config.get)
+        ):
             llm_config = system_config.get("llm", {})
-        elif system_config and hasattr(system_config, 'llm'):
-            llm_config = system_config.llm if isinstance(system_config.llm, dict) else {}
+        elif system_config and hasattr(system_config, "llm"):
+            llm_config = (
+                system_config.llm if isinstance(system_config.llm, dict) else {}
+            )
         else:
             llm_config = {}
 
         # Fall back to environment variables if not in config
-        model_name = llm_config.get("model_name") or os.environ.get("LLM_MODEL_NAME", "gemma3:4b")
-        base_url = llm_config.get("base_url") or os.environ.get("LLM_BASE_URL", "http://localhost:11434")
+        model_name = llm_config.get("model_name") or os.environ.get(
+            "LLM_MODEL_NAME", "gemma3:4b"
+        )
+        base_url = llm_config.get("base_url") or os.environ.get(
+            "LLM_BASE_URL", "http://localhost:11434"
+        )
         api_key = llm_config.get("api_key") or os.environ.get("LLM_API_KEY")
 
         if not all([model_name, base_url]):
@@ -250,7 +279,9 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
             )
 
         # Ensure model name has provider prefix for litellm (Ollama models)
-        if ("localhost:11434" in base_url or "11434" in base_url) and not model_name.startswith("ollama/"):
+        if (
+            "localhost:11434" in base_url or "11434" in base_url
+        ) and not model_name.startswith("ollama/"):
             model_name = f"ollama/{model_name}"
 
         try:
@@ -263,7 +294,9 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
             logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
         except RuntimeError as e:
             if "can only be called from the same async task" in str(e):
-                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                logger.warning(
+                    "DSPy already configured in this async context, skipping reconfiguration"
+                )
             else:
                 raise
 
@@ -805,13 +838,15 @@ and structure summary based on identified themes and content categories.
 
         # Add relationship metadata
         result.enhancement_applied = True
-        result.metadata.update({
-            "original_query": request.original_query,
-            "enhanced_query": request.enhanced_query,
-            "entities_found": len(request.entities),
-            "relationships_found": len(request.relationships),
-            "routing_confidence": request.routing_confidence,
-        })
+        result.metadata.update(
+            {
+                "original_query": request.original_query,
+                "enhanced_query": request.enhanced_query,
+                "entities_found": len(request.entities),
+                "relationships_found": len(request.relationships),
+                "routing_confidence": request.routing_confidence,
+            }
+        )
 
         return result
 
@@ -882,7 +917,9 @@ async def startup_event():
         if not os.getenv("PYTEST_CURRENT_TEST"):
             raise ValueError(error_msg)
         else:
-            logger.warning("PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id")
+            logger.warning(
+                "PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id"
+            )
             tenant_id = "test_tenant"
 
     try:

@@ -98,7 +98,9 @@ DepsT = TypeVar("DepsT", bound=AgentDeps)
 class AgentValidationError(Exception):
     """Raised when agent input or output validation fails."""
 
-    def __init__(self, message: str, validation_error: Optional[ValidationError] = None):
+    def __init__(
+        self, message: str, validation_error: Optional[ValidationError] = None
+    ):
         super().__init__(message)
         self.validation_error = validation_error
 

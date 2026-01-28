@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+
 from cogniverse_agents.search_agent import (
     ContentProcessor,
     ImagePart,
@@ -186,7 +187,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Verify agent initialized with correct dependencies
         assert agent.config is not None
@@ -216,7 +224,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         results = agent._search_by_text("find cats", top_k=5, ranking="binary_binary")
 
@@ -246,7 +261,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock video processor
         agent.content_processor.process_video_file = Mock(
@@ -285,7 +307,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock video processor
         agent.content_processor.process_image_file = Mock(
@@ -324,7 +353,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Create task with text part
         message = A2AMessage(
@@ -360,7 +396,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock video processor
         agent.content_processor.process_video_file = Mock(
@@ -402,7 +445,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock video processor
         agent.content_processor.process_image_file = Mock(
@@ -444,7 +494,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock video processor
         agent.content_processor.process_video_file = Mock(
@@ -492,7 +549,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         task = Task(id="test_task", messages=[])
 
@@ -519,7 +583,14 @@ class TestSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         # Create task with TextPart but no query
         message = A2AMessage(
@@ -541,18 +612,25 @@ class TestSearchAgentEdgeCases:
 
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_vespa_client_initialization_failure(
-        self, mock_get_config, mock_registry
-    ):
+    def test_vespa_client_initialization_failure(self, mock_get_config, mock_registry):
         """Test handling of Vespa client initialization failure"""
         mock_config = Mock()
         mock_config.get_active_profile.return_value = "frame_based_colpali"
         mock_config.get.return_value = {}  # Return empty dict instead of Mock
         mock_get_config.return_value = mock_config
-        mock_registry.return_value.get_search_backend.side_effect = Exception("Vespa connection failed")
+        mock_registry.return_value.get_search_backend.side_effect = Exception(
+            "Vespa connection failed"
+        )
 
         with pytest.raises(Exception, match="Vespa connection failed"):
-            SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+            SearchAgent(
+                deps=SearchAgentDeps(
+                    tenant_id="test_tenant",
+                    backend_url="http://localhost",
+                    backend_port=8080,
+                ),
+                schema_loader=mock_schema_loader,
+            )
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
@@ -574,7 +652,14 @@ class TestSearchAgentEdgeCases:
         )
 
         with pytest.raises(Exception, match="Encoder creation failed"):
-            SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+            SearchAgent(
+                deps=SearchAgentDeps(
+                    tenant_id="test_tenant",
+                    backend_url="http://localhost",
+                    backend_port=8080,
+                ),
+                schema_loader=mock_schema_loader,
+            )
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
@@ -593,7 +678,14 @@ class TestSearchAgentEdgeCases:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
 
         with pytest.raises(Exception, match="Search failed"):
             agent._search_by_text("test query", ranking="binary_binary")
@@ -655,9 +747,7 @@ class TestSearchAgentAdvancedFeatures:
         }
 
         with (
-            patch(
-                "cogniverse_core.config.utils.get_config"
-            ) as mock_get_config,
+            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
             patch(
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
@@ -668,14 +758,20 @@ class TestSearchAgentAdvancedFeatures:
             mock_get_config.return_value = mock_config
             mock_search_backend = Mock()
             mock_search_backend.search.return_value = []  # Empty results for some tests
-            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
 
             mock_query_encoder = Mock()
             mock_query_encoder.encode.return_value = np.random.rand(128)
             mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
             agent = SearchAgent(
-                deps=SearchAgentDeps(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080),
+                deps=SearchAgentDeps(
+                    tenant_id="test_tenant",
+                    backend_url="http://localhost",
+                    backend_port=8080,
+                ),
                 schema_loader=mock_schema_loader,
             )
             return agent
@@ -813,7 +909,10 @@ class TestSearchAgentAdvancedFeatures:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         # Create search agent (just testing structure compatibility)
-        search_agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        search_agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock routing decision with relationships
         routing_decision = RoutingDecision(
@@ -895,7 +994,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_basic(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test basic RRF fusion of results from multiple profiles"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -903,7 +1006,10 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Create mock results from two profiles
         profile_results = {
@@ -936,7 +1042,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_formula(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test RRF formula: score(doc) = Σ (1 / (k + rank))"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -944,7 +1054,10 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Single profile result
         profile_results = {
@@ -963,7 +1076,10 @@ class TestSearchAgentEnsembleSearch:
         # Two profiles, same doc at different ranks
         profile_results = {
             "profile1": [{"id": "doc1", "score": 0.9}],  # rank 0
-            "profile2": [{"id": "other", "score": 1.0}, {"id": "doc1", "score": 0.8}],  # rank 1
+            "profile2": [
+                {"id": "other", "score": 1.0},
+                {"id": "doc1", "score": 0.8},
+            ],  # rank 1
         }
 
         fused = agent._fuse_results_rrf(profile_results, k=k, top_k=10)
@@ -978,7 +1094,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_sorting(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test that RRF fusion sorts by RRF score correctly"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -986,7 +1106,10 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Create results where doc2 appears in both (should rank #1)
         profile_results = {
@@ -1015,7 +1138,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.asyncio
     async def test_process_ensemble_mode_detection(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test that _process() detects ensemble mode with multiple profiles"""
         from unittest.mock import AsyncMock
@@ -1025,10 +1152,15 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Mock _search_ensemble to avoid actual search (must be AsyncMock)
-        agent._search_ensemble = AsyncMock(return_value=[{"id": "doc1", "rrf_score": 0.5}])
+        agent._search_ensemble = AsyncMock(
+            return_value=[{"id": "doc1", "rrf_score": 0.5}]
+        )
 
         # Call with multiple profiles
         result = await agent._process_impl(
@@ -1049,7 +1181,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.asyncio
     async def test_process_single_profile_mode(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test that _process() uses single profile mode when no profiles specified"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -1060,7 +1196,10 @@ class TestSearchAgentEnsembleSearch:
         mock_query_encoder.encode.return_value = np.random.rand(128)
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Call without profiles parameter
         result = await agent._process_impl(
@@ -1079,7 +1218,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_top_k_limit(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test that RRF fusion respects top_k limit"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -1087,12 +1230,19 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Create many results
         profile_results = {
-            "profile1": [{"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(20)],
-            "profile2": [{"id": f"doc{i+10}", "score": 1.0 - (i * 0.01)} for i in range(20)],
+            "profile1": [
+                {"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(20)
+            ],
+            "profile2": [
+                {"id": f"doc{i+10}", "score": 1.0 - (i * 0.01)} for i in range(20)
+            ],
         }
 
         # Request top 5
@@ -1106,7 +1256,11 @@ class TestSearchAgentEnsembleSearch:
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_empty_profiles(
-        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        mock_config_with_profiles,
     ):
         """Test RRF fusion with empty profile results"""
         mock_get_config.return_value = mock_config_with_profiles
@@ -1114,7 +1268,10 @@ class TestSearchAgentEnsembleSearch:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"), schema_loader=mock_schema_loader)
+        agent = SearchAgent(
+            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            schema_loader=mock_schema_loader,
+        )
 
         # Empty results from all profiles
         profile_results = {

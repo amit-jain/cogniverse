@@ -12,13 +12,14 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import numpy as np
+from pydantic import Field as PydanticField
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
-from pydantic import Field as PydanticField
 
 logger = logging.getLogger(__name__)
 
@@ -37,31 +38,43 @@ class AudioResult(AgentOutput):
     transcript: str = PydanticField("", description="Audio transcript")
     duration: float = PydanticField(0.0, description="Duration in seconds")
     relevance_score: float = PydanticField(0.0, description="Relevance score")
-    speaker_labels: List[str] = PydanticField(default_factory=list, description="Speaker labels")
-    detected_events: List[str] = PydanticField(default_factory=list, description="Detected events")
+    speaker_labels: List[str] = PydanticField(
+        default_factory=list, description="Speaker labels"
+    )
+    detected_events: List[str] = PydanticField(
+        default_factory=list, description="Detected events"
+    )
     language: str = PydanticField("unknown", description="Detected language")
-    metadata: Dict[str, Any] = PydanticField(default_factory=dict, description="Additional metadata")
+    metadata: Dict[str, Any] = PydanticField(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class AudioSearchInput(AgentInput):
     """Type-safe input for audio search"""
 
     query: str = PydanticField(..., description="Search query")
-    search_mode: str = PydanticField("hybrid", description="Search mode: transcript, acoustic, hybrid")
+    search_mode: str = PydanticField(
+        "hybrid", description="Search mode: transcript, acoustic, hybrid"
+    )
     limit: int = PydanticField(20, description="Number of results")
 
 
 class AudioSearchOutput(AgentOutput):
     """Type-safe output from audio search"""
 
-    results: List[AudioResult] = PydanticField(default_factory=list, description="Search results")
+    results: List[AudioResult] = PydanticField(
+        default_factory=list, description="Search results"
+    )
     count: int = PydanticField(0, description="Number of results")
 
 
 class AudioAnalysisDeps(AgentDeps):
     """Dependencies for audio analysis agent"""
 
-    vespa_endpoint: str = PydanticField("http://localhost:8080", description="Vespa endpoint")
+    vespa_endpoint: str = PydanticField(
+        "http://localhost:8080", description="Vespa endpoint"
+    )
     whisper_model_size: str = PydanticField("base", description="Whisper model size")
 
 
@@ -106,7 +119,9 @@ class MusicClassification:
     instruments: List[str] = field(default_factory=list)
 
 
-class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnalysisDeps]):
+class AudioAnalysisAgent(
+    A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnalysisDeps]
+):
     """
     Type-safe audio content analysis using Whisper and Vespa.
 
@@ -130,6 +145,7 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
             TypeError: If deps is not AudioAnalysisDeps
             ValidationError: If deps fails Pydantic validation
         """
+
         # Create DSPy module
         class AudioSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Audio search query")
@@ -587,7 +603,9 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
             "agent": self.agent_name,
             "result_type": "audio_search_results",
             "count": result.get("count", len(results)),
-            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+            "results": [
+                r.model_dump() if hasattr(r, "model_dump") else r for r in results
+            ],
         }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -596,14 +614,22 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
             {
                 "name": "search_audio",
                 "description": "Search audio content by transcript or acoustic features",
-                "input_schema": {"query": "string", "search_mode": "string", "limit": "integer"},
+                "input_schema": {
+                    "query": "string",
+                    "search_mode": "string",
+                    "limit": "integer",
+                },
                 "output_schema": {"results": "list", "count": "integer"},
             },
             {
                 "name": "transcribe_audio",
                 "description": "Transcribe audio to text using Whisper",
                 "input_schema": {"audio_url": "string"},
-                "output_schema": {"text": "string", "language": "string", "segments": "list"},
+                "output_schema": {
+                    "text": "string",
+                    "language": "string",
+                    "segments": "list",
+                },
             },
             {
                 "name": "detect_audio_events",
@@ -621,12 +647,20 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
                 "name": "classify_music",
                 "description": "Classify music genre, mood, tempo",
                 "input_schema": {"audio_url": "string"},
-                "output_schema": {"genre": "string", "mood": "string", "tempo": "float"},
+                "output_schema": {
+                    "genre": "string",
+                    "mood": "string",
+                    "tempo": "float",
+                },
             },
             {
                 "name": "find_similar_audio",
                 "description": "Find acoustically or semantically similar audio",
-                "input_schema": {"reference_audio_url": "string", "similarity_type": "string", "limit": "integer"},
+                "input_schema": {
+                    "reference_audio_url": "string",
+                    "similarity_type": "string",
+                    "limit": "integer",
+                },
                 "output_schema": {"results": "list", "count": "integer"},
             },
         ]

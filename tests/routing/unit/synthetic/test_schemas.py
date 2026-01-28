@@ -27,7 +27,7 @@ class TestModalityExampleSchema:
             correct_agent="video_search_agent",
             success=True,
             is_synthetic=True,
-            synthetic_source="backend_query"
+            synthetic_source="backend_query",
         )
 
         assert example.query == "show me videos about machine learning"
@@ -43,10 +43,7 @@ class TestModalityExampleSchema:
             query="test query",
             modality="VIDEO",
             correct_agent="video_search_agent",
-            modality_features={
-                "visual_indicators": 0.9,
-                "temporal_context": True
-            }
+            modality_features={"visual_indicators": 0.9, "temporal_context": True},
         )
 
         assert example.modality_features is not None
@@ -55,9 +52,7 @@ class TestModalityExampleSchema:
     def test_modality_example_defaults(self):
         """Test default values"""
         example = ModalityExampleSchema(
-            query="test",
-            modality="VIDEO",
-            correct_agent="agent"
+            query="test", modality="VIDEO", correct_agent="agent"
         )
 
         assert example.success is True
@@ -68,9 +63,7 @@ class TestModalityExampleSchema:
     def test_modality_example_serialization(self):
         """Test JSON serialization"""
         example = ModalityExampleSchema(
-            query="test",
-            modality="VIDEO",
-            correct_agent="agent"
+            query="test", modality="VIDEO", correct_agent="agent"
         )
 
         data = example.model_dump()
@@ -91,12 +84,9 @@ class TestFusionHistorySchema:
         fusion = FusionHistorySchema(
             primary_modality="VIDEO",
             secondary_modality="DOCUMENT",
-            fusion_context={
-                "modality_agreement": 0.75,
-                "query_ambiguity": 0.3
-            },
+            fusion_context={"modality_agreement": 0.75, "query_ambiguity": 0.3},
             success=True,
-            improvement=0.25
+            improvement=0.25,
         )
 
         assert fusion.primary_modality == "VIDEO"
@@ -112,7 +102,7 @@ class TestFusionHistorySchema:
             secondary_modality="DOCUMENT",
             fusion_context={},
             success=True,
-            improvement=0.0
+            improvement=0.0,
         )
 
         FusionHistorySchema(
@@ -120,7 +110,7 @@ class TestFusionHistorySchema:
             secondary_modality="DOCUMENT",
             fusion_context={},
             success=True,
-            improvement=1.0
+            improvement=1.0,
         )
 
         # Invalid values
@@ -130,7 +120,7 @@ class TestFusionHistorySchema:
                 secondary_modality="DOCUMENT",
                 fusion_context={},
                 success=True,
-                improvement=-0.1
+                improvement=-0.1,
             )
 
         with pytest.raises(ValidationError):
@@ -139,7 +129,7 @@ class TestFusionHistorySchema:
                 secondary_modality="DOCUMENT",
                 fusion_context={},
                 success=True,
-                improvement=1.1
+                improvement=1.1,
             )
 
     def test_fusion_with_query(self):
@@ -150,7 +140,7 @@ class TestFusionHistorySchema:
             fusion_context={},
             success=True,
             improvement=0.5,
-            query="test query"
+            query="test query",
         )
 
         assert fusion.query == "test query"
@@ -162,7 +152,7 @@ class TestFusionHistorySchema:
             secondary_modality="DOCUMENT",
             fusion_context={},
             success=True,
-            improvement=0.5
+            improvement=0.5,
         )
 
         assert isinstance(fusion.timestamp, datetime)
@@ -181,7 +171,7 @@ class TestRoutingExperienceSchema:
             chosen_agent="video_search_agent",
             routing_confidence=0.85,
             search_quality=0.78,
-            agent_success=True
+            agent_success=True,
         )
 
         assert experience.query == "find TensorFlow tutorials"
@@ -199,7 +189,7 @@ class TestRoutingExperienceSchema:
             routing_confidence=0.8,
             search_quality=0.7,
             agent_success=True,
-            user_satisfaction=0.9
+            user_satisfaction=0.9,
         )
 
         assert experience.user_satisfaction == 0.9
@@ -215,7 +205,7 @@ class TestRoutingExperienceSchema:
             chosen_agent="agent",
             routing_confidence=0.0,
             search_quality=0.0,
-            agent_success=False
+            agent_success=False,
         )
 
         RoutingExperienceSchema(
@@ -226,7 +216,7 @@ class TestRoutingExperienceSchema:
             chosen_agent="agent",
             routing_confidence=1.0,
             search_quality=1.0,
-            agent_success=True
+            agent_success=True,
         )
 
         # Invalid values
@@ -239,7 +229,7 @@ class TestRoutingExperienceSchema:
                 chosen_agent="agent",
                 routing_confidence=1.5,
                 search_quality=0.5,
-                agent_success=True
+                agent_success=True,
             )
 
     def test_routing_experience_metadata(self):
@@ -253,7 +243,7 @@ class TestRoutingExperienceSchema:
             routing_confidence=0.8,
             search_quality=0.7,
             agent_success=True,
-            metadata={"source": "synthetic", "version": "1.0"}
+            metadata={"source": "synthetic", "version": "1.0"},
         )
 
         assert experience.metadata["source"] == "synthetic"
@@ -273,7 +263,7 @@ class TestWorkflowExecutionSchema:
             agent_sequence=["video_search_agent", "summarizer", "detailed_report"],
             task_count=3,
             parallel_efficiency=0.85,
-            confidence_score=0.88
+            confidence_score=0.88,
         )
 
         assert workflow.workflow_id == "test_001"
@@ -292,7 +282,7 @@ class TestWorkflowExecutionSchema:
             agent_sequence=["agent"],
             task_count=1,
             parallel_efficiency=1.0,
-            confidence_score=0.9
+            confidence_score=0.9,
         )
 
         # Invalid
@@ -306,7 +296,7 @@ class TestWorkflowExecutionSchema:
                 agent_sequence=["agent"],
                 task_count=1,
                 parallel_efficiency=1.0,
-                confidence_score=0.9
+                confidence_score=0.9,
             )
 
     def test_workflow_task_count_validation(self):
@@ -321,7 +311,7 @@ class TestWorkflowExecutionSchema:
             agent_sequence=["agent"],
             task_count=1,
             parallel_efficiency=1.0,
-            confidence_score=0.9
+            confidence_score=0.9,
         )
 
         # Invalid
@@ -335,7 +325,7 @@ class TestWorkflowExecutionSchema:
                 agent_sequence=["agent"],
                 task_count=0,
                 parallel_efficiency=1.0,
-                confidence_score=0.9
+                confidence_score=0.9,
             )
 
     def test_workflow_with_error(self):
@@ -350,7 +340,7 @@ class TestWorkflowExecutionSchema:
             task_count=1,
             parallel_efficiency=0.0,
             confidence_score=0.5,
-            error_details="Agent timeout"
+            error_details="Agent timeout",
         )
 
         assert workflow.success is False
@@ -367,7 +357,7 @@ class TestSyntheticDataRequest:
             count=100,
             vespa_sample_size=200,
             strategies=["diverse"],
-            max_profiles=3
+            max_profiles=3,
         )
 
         assert request.optimizer == "cross_modal"
@@ -388,10 +378,7 @@ class TestSyntheticDataRequest:
 
     def test_request_defaults(self):
         """Test default values"""
-        request = SyntheticDataRequest(
-            optimizer="modality",
-            count=100
-        )
+        request = SyntheticDataRequest(optimizer="modality", count=100)
 
         assert request.vespa_sample_size == 200
         assert request.strategies == ["diverse"]
@@ -411,10 +398,7 @@ class TestSyntheticDataResponse:
             selected_profiles=["profile1", "profile2"],
             profile_selection_reasoning="Selected for diversity",
             data=[],
-            metadata={
-                "backend_type": "vespa",
-                "generation_time_ms": 1250
-            }
+            metadata={"backend_type": "vespa", "generation_time_ms": 1250},
         )
 
         assert response.optimizer == "cross_modal"

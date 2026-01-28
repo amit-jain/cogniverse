@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 # DSPy imports
 import dspy
 import pytest
+from pydantic import Field
+
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
@@ -49,24 +51,26 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_foundation.config.utils import create_default_config_manager
-from pydantic import Field
 
 
 # Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
 class SimpleInput(AgentInput):
     """Simple input for test agent"""
+
     query: str = Field("", description="Query text")
     context: str = Field("", description="Optional context")
 
 
 class SimpleOutput(AgentOutput):
     """Simple output for test agent"""
+
     result: str = Field("", description="Processing result")
     confidence: float = Field(0.0, description="Confidence score")
 
 
 class SimpleDeps(AgentDeps):
     """Simple deps for test agent"""
+
     pass  # Only needs tenant_id from base
 
 
@@ -286,7 +290,9 @@ class TestDSPyAgentIntegration:
 
     @patch("cogniverse_agents.routing_agent.DSPyAdvancedRoutingModule")
     @patch("cogniverse_agents.routing_agent.AdvancedRoutingOptimizer")
-    def test_routing_agent_dspy_integration(self, mock_optimizer, mock_routing_module, telemetry_manager_without_phoenix):
+    def test_routing_agent_dspy_integration(
+        self, mock_optimizer, mock_routing_module, telemetry_manager_without_phoenix
+    ):
         """Test DSPy integration in RoutingAgent."""
         from cogniverse_agents.routing_agent import RoutingDeps
 
@@ -297,7 +303,7 @@ class TestDSPyAgentIntegration:
 
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
 
@@ -372,7 +378,10 @@ class TestDSPyAgentIntegration:
 
         mock_routing_agent.return_value = Mock()
 
-        tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())
+        tool = QueryAnalysisToolV3(
+            enable_agent_integration=False,
+            config_manager=create_default_config_manager(),
+        )
 
         # Should have DSPy capabilities
         assert hasattr(tool, "dspy_enabled")
@@ -680,7 +689,10 @@ class TestDSPyEndToEndIntegration:
         # Test QueryAnalysisToolV3 with direct prompt setting
 
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())
+            tool = QueryAnalysisToolV3(
+                enable_agent_integration=False,
+                config_manager=create_default_config_manager(),
+            )
 
             # Manually set the optimization data
             tool.dspy_optimized_prompts = mock_prompts["query_analysis"]
@@ -730,7 +742,7 @@ class TestDSPy30A2ABaseIntegration:
                 result = await self.dspy_module.forward(query=input.query)
                 return SimpleOutput(
                     result=getattr(result, "response", str(result)),
-                    confidence=getattr(result, "confidence", 0.0)
+                    confidence=getattr(result, "confidence", 0.0),
                 )
 
         deps = SimpleDeps(tenant_id="test_tenant")
@@ -740,7 +752,9 @@ class TestDSPy30A2ABaseIntegration:
             capabilities=["dspy30_processing", "a2a_protocol"],
             port=8999,
         )
-        agent = TestDSPy30Agent(deps=deps, config=config, dspy_module=mock_dspy30_module)
+        agent = TestDSPy30Agent(
+            deps=deps, config=config, dspy_module=mock_dspy30_module
+        )
 
         assert agent.config.agent_name == "TestDSPy30Agent"
         assert "dspy30_processing" in agent.config.capabilities
@@ -755,9 +769,9 @@ class TestDSPy30A2ABaseIntegration:
         agent = SimpleDSPyA2AAgent(port=8998)
 
         # Test that agent has type-safe input/output
-        assert hasattr(agent, 'process')
-        assert hasattr(agent, 'deps')
-        assert hasattr(agent, 'config')
+        assert hasattr(agent, "process")
+        assert hasattr(agent, "deps")
+        assert hasattr(agent, "config")
 
         # Verify agent configuration
         assert agent.config.agent_name == "simple_test_agent"
@@ -772,8 +786,7 @@ class TestDSPy30A2ABaseIntegration:
 
         # Test async processing via type-safe process() method
         input_data = SimpleInput(
-            query="Test DSPy 3.0 async processing",
-            context="async_test"
+            query="Test DSPy 3.0 async processing", context="async_test"
         )
 
         result = await agent.process(input_data)
@@ -1793,6 +1806,7 @@ class TestDSPyEnhancementPipeline:
             except Exception:
                 pass
 
+
 @pytest.mark.unit
 class TestQueryEnhancementFactory:
     """Test Phase 3 factory functions."""
@@ -2099,9 +2113,7 @@ class TestDSPyComponentsIntegration:
         # Test error handling by mocking the process method to simulate failures
         # The new A2AAgent uses typed `process` method instead of `_process_with_dspy`
 
-        with patch.object(
-            agent, "process", new_callable=AsyncMock
-        ) as mock_process:
+        with patch.object(agent, "process", new_callable=AsyncMock) as mock_process:
             # Mock a failure by raising an exception
             mock_process.side_effect = ValueError("Test DSPy module failure")
 
@@ -2110,9 +2122,7 @@ class TestDSPyComponentsIntegration:
             import asyncio
 
             with pytest.raises(ValueError, match="Test DSPy module failure"):
-                asyncio.run(
-                    agent.process(SimpleInput(query="test"))
-                )
+                asyncio.run(agent.process(SimpleInput(query="test")))
 
     def test_data_structure_consistency_across_phases(self):
         """Test data structures remain consistent as they flow through phases"""
@@ -2316,7 +2326,7 @@ class TestRoutingAgent:
         # Test with default config
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
         assert agent is not None
@@ -2344,7 +2354,7 @@ class TestRoutingAgent:
 
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
 
@@ -2394,7 +2404,7 @@ class TestRoutingAgent:
 
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
 
@@ -2464,23 +2474,28 @@ class TestMultiAgentOrchestrator:
         from cogniverse_agents.workflow_intelligence import OptimizationStrategy
 
         # Test default initialization
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
         assert orchestrator is not None
         assert hasattr(orchestrator, "available_agents")
         assert hasattr(orchestrator, "active_workflows")
         assert hasattr(orchestrator, "orchestration_stats")
 
         # Test with workflow intelligence disabled
-        orchestrator_no_intelligence = MultiAgentOrchestrator(tenant_id="test_tenant",
+        orchestrator_no_intelligence = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
-            enable_workflow_intelligence=False
+            enable_workflow_intelligence=False,
         )
         assert orchestrator_no_intelligence.workflow_intelligence is None
 
         # Test with custom optimization strategy
-        orchestrator_custom = MultiAgentOrchestrator(tenant_id="test_tenant",
+        orchestrator_custom = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
-            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
+            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED,
         )
         assert orchestrator_custom.workflow_intelligence is not None
 
@@ -2526,7 +2541,10 @@ class TestMultiAgentOrchestrator:
             WorkflowTask,
         )
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
 
         # Create tasks with dependencies
         task1 = WorkflowTask(
@@ -2570,7 +2588,10 @@ class TestMultiAgentOrchestrator:
         """Test orchestration statistics tracking"""
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
 
         # Initial stats
         stats = orchestrator.get_orchestration_statistics()
@@ -2600,7 +2621,10 @@ class TestA2AGateway:
         from cogniverse_agents.a2a_gateway import A2AGateway
 
         # Test direct initialization
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
         assert gateway is not None
         assert hasattr(gateway, "app")
         assert hasattr(gateway, "gateway_stats")
@@ -2662,7 +2686,10 @@ class TestA2AGateway:
             A2AQueryRequest,
         )
 
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)  # Test emergency response
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )  # Test emergency response
 
         # Test emergency response for video query
         video_request = A2AQueryRequest(query="show me videos of robots")
@@ -2687,7 +2714,10 @@ class TestA2AGateway:
         """Test response time statistics tracking"""
         from cogniverse_agents.a2a_gateway import A2AGateway
 
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
 
         # Initial stats
         assert gateway.gateway_stats["total_requests"] == 0
@@ -2843,7 +2873,9 @@ class TestWorkflowIntelligence:
         )
 
         # Test general queries
-        assert intelligence._classify_query_type("help me understand") == "multi_step"  # Contains "then" pattern
+        assert (
+            intelligence._classify_query_type("help me understand") == "multi_step"
+        )  # Contains "then" pattern
 
     def test_workflow_template_structure(self):
         """Test workflow template data structure"""
@@ -2933,7 +2965,9 @@ class TestWorkflowIntelligence:
 class TestSystemIntegration:
     """Integration tests for Phase 4 components working together"""
 
-    def test_enhanced_routing_to_orchestration_flow(self, telemetry_manager_without_phoenix):
+    def test_enhanced_routing_to_orchestration_flow(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test flow from enhanced routing to orchestration"""
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.routing_agent import RoutingDeps
@@ -2941,13 +2975,13 @@ class TestSystemIntegration:
         # Create components
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         router = RoutingAgent(deps=deps)
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
             routing_agent=router,
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
 
         # Test routing decision that needs orchestration
@@ -2967,12 +3001,18 @@ class TestSystemIntegration:
         assert mock_decision.metadata["needs_orchestration"] is True
         assert orchestrator is not None
 
-    def test_gateway_to_intelligence_integration(self, telemetry_manager_without_phoenix):
+    def test_gateway_to_intelligence_integration(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test A2A Gateway integration with Workflow Intelligence"""
         from cogniverse_agents.a2a_gateway import A2AGateway
 
         # Create gateway with intelligence enabled
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_orchestration=True)
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_orchestration=True,
+        )
 
         # Verify orchestrator has intelligence
         if hasattr(gateway, "orchestrator") and gateway.orchestrator:
@@ -3009,14 +3049,16 @@ class TestSystemIntegration:
         assert "successful_workflows" in template_fields
         assert "template_name" in template_fields
 
-    def test_phase4_component_initialization_order(self, telemetry_manager_without_phoenix):
+    def test_phase4_component_initialization_order(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test Phase 4 components initialize in correct order without circular dependencies"""
         from cogniverse_agents.routing_agent import RoutingDeps
 
         # Test 1: Enhanced Routing Agent (independent)
         deps = RoutingDeps(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config
+            telemetry_config=telemetry_manager_without_phoenix.config,
         )
         router = RoutingAgent(deps=deps)
         assert router is not None
@@ -3030,14 +3072,22 @@ class TestSystemIntegration:
         # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, routing_agent=router)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            routing_agent=router,
+        )
         assert orchestrator is not None
         assert orchestrator.routing_agent is router
 
         # Test 4: A2A Gateway (depends on router and orchestrator)
         from cogniverse_agents.a2a_gateway import A2AGateway
 
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_orchestration=True)
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_orchestration=True,
+        )
         assert gateway is not None
 
     def test_phase4_error_handling_consistency(self, telemetry_manager_without_phoenix):
@@ -3050,11 +3100,20 @@ class TestSystemIntegration:
         # All components should handle initialization errors gracefully
         try:
             # Test with invalid config that might cause errors
-            deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=telemetry_manager_without_phoenix.config,
+            )
             router = RoutingAgent(deps=deps)
-            orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            orchestrator = MultiAgentOrchestrator(
+                tenant_id="test_tenant",
+                telemetry_config=telemetry_manager_without_phoenix.config,
+            )
             intelligence = WorkflowIntelligence(enable_persistence=False)
-            gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            gateway = A2AGateway(
+                tenant_id="test_tenant",
+                telemetry_config=telemetry_manager_without_phoenix.config,
+            )
 
             # Components should be in valid state even if some features fail
             assert router is not None
@@ -3075,13 +3134,20 @@ class TestSystemIntegration:
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        deps = RoutingDeps(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
         router = RoutingAgent(deps=deps)
         router_stats = router.get_routing_statistics()
         assert isinstance(router_stats, dict)
         assert "total_queries" in router_stats
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_workflow_intelligence=False,
+        )
         orch_stats = orchestrator.get_orchestration_statistics()
         assert isinstance(orch_stats, dict)
         assert "total_workflows" in orch_stats
@@ -3091,7 +3157,10 @@ class TestSystemIntegration:
         assert isinstance(intel_stats, dict)
         assert "total_optimizations" in intel_stats
 
-        gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        gateway = A2AGateway(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
         gateway_stats = gateway.gateway_stats
         assert isinstance(gateway_stats, dict)
         assert "total_requests" in gateway_stats
@@ -3110,7 +3179,9 @@ class TestVideoSearchAgent:
         from cogniverse_agents.search_agent import SearchAgentDeps
 
         # Mock the required dependencies
-        with patch("cogniverse_agents.search_agent.get_backend_registry") as mock_registry:
+        with patch(
+            "cogniverse_agents.search_agent.get_backend_registry"
+        ) as mock_registry:
             with patch(
                 "cogniverse_agents.search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
@@ -3122,12 +3193,14 @@ class TestVideoSearchAgent:
                             "embedding_type": "frame_based",
                         }
                     },
-                    "vespa_url": "http://localhost:8080"
+                    "vespa_url": "http://localhost:8080",
                 }
 
                 # Mock backend registry
                 mock_search_backend = Mock()
-                mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+                mock_registry.return_value.get_search_backend.return_value = (
+                    mock_search_backend
+                )
 
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3217,7 +3290,9 @@ class TestVideoSearchAgent:
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
-            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3226,6 +3301,7 @@ class TestVideoSearchAgent:
             mock_schema_loader = Mock()
 
             from cogniverse_agents.search_agent import SearchAgentDeps as SearchDeps1
+
             deps = SearchDeps1(tenant_id="test_tenant")
             agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
@@ -3278,7 +3354,9 @@ class TestVideoSearchAgent:
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
-            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3309,9 +3387,7 @@ class TestVideoSearchAgent:
                 },  # Not in text
             ]
 
-            matched_entities = agent._find_matching_entities(
-                result_text, entities
-            )
+            matched_entities = agent._find_matching_entities(result_text, entities)
 
             # Should match "robots" and "soccer" but not "basketball"
             assert len(matched_entities) == 2
@@ -3340,7 +3416,9 @@ class TestVideoSearchAgent:
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
-            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3370,9 +3448,7 @@ class TestVideoSearchAgent:
                     "relationship_matches": 0,
                 },
             ]
-            agent._enhance_results_with_context = Mock(
-                return_value=enhanced_results
-            )
+            agent._enhance_results_with_context = Mock(return_value=enhanced_results)
 
             # Test enhancement
             original_results = [
@@ -3380,9 +3456,7 @@ class TestVideoSearchAgent:
                 {"id": 2, "title": "Basketball game highlights", "score": 0.6},
             ]
 
-            entities = [
-                {"text": "robots", "label": "ENTITY", "confidence": 0.9}
-            ]
+            entities = [{"text": "robots", "label": "ENTITY", "confidence": 0.9}]
             relationships = [
                 {"subject": "robots", "relation": "playing", "object": "soccer"}
             ]
@@ -3392,8 +3466,5 @@ class TestVideoSearchAgent:
             )
 
             # First result should have higher score due to entity match
-            assert (
-                enhanced_results[0]["enhanced_score"]
-                > enhanced_results[0]["score"]
-            )
+            assert enhanced_results[0]["enhanced_score"] > enhanced_results[0]["score"]
             assert enhanced_results[0]["entity_matches"] > 0

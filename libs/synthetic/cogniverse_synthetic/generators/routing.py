@@ -9,11 +9,11 @@ import logging
 import random
 from typing import Any, Dict, List, Optional
 
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
-from pydantic import BaseModel
-
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import RoutingExperienceSchema
+from pydantic import BaseModel
+
+from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,7 @@ class RoutingGenerator(BaseGenerator):
         logger.info("Initialized RoutingGenerator with configuration")
 
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """
         Generate RoutingExperience data
@@ -91,7 +88,7 @@ class RoutingGenerator(BaseGenerator):
                 "topics": ["machine learning", "neural networks"],
                 "entities": ["TensorFlow", "Python", "PyTorch"],
                 "temporal": [],
-                "content_types": []
+                "content_types": [],
             }
 
         examples = []
@@ -112,12 +109,14 @@ class RoutingGenerator(BaseGenerator):
                 relationships = self.pattern_extractor.extract_relationships(entities)
             elif len(entities) >= 2:
                 # Simple relationship
-                relationships = [{
-                    "source": entities[0]["text"],
-                    "target": entities[1]["text"],
-                    "type": "RELATED_TO",
-                    "confidence": 0.7
-                }]
+                relationships = [
+                    {
+                        "source": entities[0]["text"],
+                        "target": entities[1]["text"],
+                        "type": "RELATED_TO",
+                        "confidence": 0.7,
+                    }
+                ]
 
             # Generate query from entities using DSPy
             query, generation_metadata = self._generate_entity_query(entities, patterns)
@@ -137,7 +136,9 @@ class RoutingGenerator(BaseGenerator):
             routing_confidence = random.uniform(0.65, 0.95)
             search_quality = random.uniform(0.6, 0.9)
             agent_success = routing_confidence > 0.7
-            user_satisfaction = search_quality * random.uniform(0.9, 1.1) if agent_success else None
+            user_satisfaction = (
+                search_quality * random.uniform(0.9, 1.1) if agent_success else None
+            )
             if user_satisfaction:
                 user_satisfaction = min(1.0, user_satisfaction)
 
@@ -151,15 +152,19 @@ class RoutingGenerator(BaseGenerator):
                 routing_confidence=round(routing_confidence, 2),
                 search_quality=round(search_quality, 2),
                 agent_success=agent_success,
-                user_satisfaction=round(user_satisfaction, 2) if user_satisfaction else None,
-                metadata=generation_metadata
+                user_satisfaction=(
+                    round(user_satisfaction, 2) if user_satisfaction else None
+                ),
+                metadata=generation_metadata,
             )
             examples.append(example)
 
         logger.info(f"Generated {len(examples)} RoutingExperience examples")
         return examples
 
-    def _generate_entities(self, patterns: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    def _generate_entities(
+        self, patterns: Dict[str, List[str]]
+    ) -> List[Dict[str, Any]]:
         """Generate entity list from patterns"""
         entities = []
 
@@ -174,18 +179,22 @@ class RoutingGenerator(BaseGenerator):
                 entity_text = "Python"
                 entity_type = "TECHNOLOGY"
 
-            entities.append({
-                "text": entity_text,
-                "type": entity_type,
-                "confidence": round(random.uniform(0.7, 0.95), 2)
-            })
+            entities.append(
+                {
+                    "text": entity_text,
+                    "type": entity_type,
+                    "confidence": round(random.uniform(0.7, 0.95), 2),
+                }
+            )
 
         return entities
 
     def _infer_entity_type(self, entity_text: str) -> str:
         """Infer entity type from text"""
         # Simple heuristic-based typing
-        if any(tech in entity_text for tech in ["Flow", "Torch", "Python", "Java", "Go"]):
+        if any(
+            tech in entity_text for tech in ["Flow", "Torch", "Python", "Java", "Go"]
+        ):
             return "TECHNOLOGY"
         elif any(topic in entity_text for topic in ["Network", "Learning", "Model"]):
             return "TOPIC"
@@ -194,7 +203,9 @@ class RoutingGenerator(BaseGenerator):
         else:
             return "CONCEPT"
 
-    def _generate_entity_query(self, entities: List[Dict], patterns: Dict) -> tuple[str, Dict[str, Any]]:
+    def _generate_entity_query(
+        self, entities: List[Dict], patterns: Dict
+    ) -> tuple[str, Dict[str, Any]]:
         """
         Generate query mentioning entities using validated DSPy module.
 
@@ -209,7 +220,7 @@ class RoutingGenerator(BaseGenerator):
                 "_generation_metadata": {
                     "retry_count": 0,
                     "max_retries": 0,
-                    "fallback_used": True
+                    "fallback_used": True,
                 }
             }
 
@@ -217,16 +228,18 @@ class RoutingGenerator(BaseGenerator):
         query_generator = self._get_query_generator()
 
         # Prepare inputs
-        topics_str = ", ".join(patterns["topics"][:3]) if patterns["topics"] else "machine learning"
+        topics_str = (
+            ", ".join(patterns["topics"][:3])
+            if patterns["topics"]
+            else "machine learning"
+        )
         entities_str = ", ".join([e["text"] for e in entities])
         entity_types_str = ", ".join([e["type"] for e in entities])
 
         # Generate validated query using DSPy (with retry logic built-in)
         try:
             result = query_generator(
-                topics=topics_str,
-                entities=entities_str,
-                entity_types=entity_types_str
+                topics=topics_str, entities=entities_str, entity_types=entity_types_str
             )
 
             # Extract generation metadata from DSPy result
@@ -235,7 +248,7 @@ class RoutingGenerator(BaseGenerator):
                     "retry_count": getattr(result, "_retry_count", 0),
                     "max_retries": getattr(result, "_max_retries", 3),
                     "fallback_used": False,
-                    "reasoning": getattr(result, "reasoning", "")
+                    "reasoning": getattr(result, "reasoning", ""),
                 }
             }
 
@@ -254,7 +267,7 @@ class RoutingGenerator(BaseGenerator):
                     "retry_count": query_generator.max_retries,
                     "max_retries": query_generator.max_retries,
                     "fallback_used": True,
-                    "error": str(e)
+                    "error": str(e),
                 }
             }
 
@@ -283,9 +296,9 @@ class RoutingGenerator(BaseGenerator):
 
                 # Replace with annotated version
                 enhanced = (
-                    enhanced[:start_idx] +
-                    f"{actual_text}({entity_type})" +
-                    enhanced[end_idx:]
+                    enhanced[:start_idx]
+                    + f"{actual_text}({entity_type})"
+                    + enhanced[end_idx:]
                 )
 
                 # Update lower_query for next iteration
@@ -327,7 +340,9 @@ class RoutingGenerator(BaseGenerator):
             try:
                 self.query_generator = ValidatedEntityQueryGenerator()
                 # TODO: Load compiled version if available
-                logger.info("Using ValidatedEntityQueryGenerator (compiled version not yet supported)")
+                logger.info(
+                    "Using ValidatedEntityQueryGenerator (compiled version not yet supported)"
+                )
             except Exception as e:
                 logger.warning(f"Failed to load compiled module: {e}, using uncompiled")
                 self.query_generator = None
@@ -335,6 +350,8 @@ class RoutingGenerator(BaseGenerator):
         # Initialize uncompiled module if needed
         if self.query_generator is None:
             self.query_generator = ValidatedEntityQueryGenerator(max_retries=3)
-            logger.info("Initialized ValidatedEntityQueryGenerator with retry validation")
+            logger.info(
+                "Initialized ValidatedEntityQueryGenerator with retry validation"
+            )
 
         return self.query_generator

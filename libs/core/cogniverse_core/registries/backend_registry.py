@@ -84,7 +84,12 @@ class BackendRegistry:
 
     @classmethod
     def get_ingestion_backend(
-        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None, schema_loader=None
+        cls,
+        name: str,
+        tenant_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        config_manager=None,
+        schema_loader=None,
     ) -> IngestionBackend:
         """
         Get a tenant-specific ingestion backend instance.
@@ -138,9 +143,8 @@ class BackendRegistry:
             )
 
         # Create BackendConfig from config_manager
-        from cogniverse_foundation.config.unified_config import BackendConfig
-
         from cogniverse_core.factories.backend_factory import BackendFactory
+        from cogniverse_foundation.config.unified_config import BackendConfig
 
         # Get system config for defaults
         system_config = config_manager.get_system_config(tenant_id)
@@ -201,7 +205,12 @@ class BackendRegistry:
 
     @classmethod
     def get_search_backend(
-        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None, schema_loader=None
+        cls,
+        name: str,
+        tenant_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        config_manager=None,
+        schema_loader=None,
     ) -> SearchBackend:
         """
         Get a tenant-specific search backend instance.
@@ -256,9 +265,8 @@ class BackendRegistry:
             )
 
         # Create BackendConfig from config_manager
-        from cogniverse_foundation.config.unified_config import BackendConfig
-
         from cogniverse_core.factories.backend_factory import BackendFactory
+        from cogniverse_foundation.config.unified_config import BackendConfig
 
         # Get system config for defaults
         system_config = config_manager.get_system_config(tenant_id)

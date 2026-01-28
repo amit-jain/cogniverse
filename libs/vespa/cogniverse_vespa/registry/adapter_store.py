@@ -134,7 +134,7 @@ class VespaAdapterStore:
         Returns:
             Adapter metadata dict or None if not found
         """
-        yql = f"select * from {self.schema_name} where adapter_id contains \"{adapter_id}\" limit 1"
+        yql = f'select * from {self.schema_name} where adapter_id contains "{adapter_id}" limit 1'
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -169,16 +169,16 @@ class VespaAdapterStore:
         Returns:
             List of adapter metadata dicts
         """
-        conditions = [f"tenant_id contains \"{tenant_id}\""]
+        conditions = [f'tenant_id contains "{tenant_id}"']
 
         if agent_type:
-            conditions.append(f"agent_type contains \"{agent_type}\"")
+            conditions.append(f'agent_type contains "{agent_type}"')
 
         if status:
-            conditions.append(f"status contains \"{status}\"")
+            conditions.append(f'status contains "{status}"')
 
         if model_type:
-            conditions.append(f"model_type contains \"{model_type}\"")
+            conditions.append(f'model_type contains "{model_type}"')
 
         where_clause = " and ".join(conditions)
         yql = f"select * from {self.schema_name} where {where_clause} limit {limit}"
@@ -211,8 +211,8 @@ class VespaAdapterStore:
         """
         yql = (
             f"select * from {self.schema_name} "
-            f"where tenant_id contains \"{tenant_id}\" "
-            f"and agent_type contains \"{agent_type}\" "
+            f'where tenant_id contains "{tenant_id}" '
+            f'and agent_type contains "{agent_type}" '
             f"and is_active = 1 "
             f"limit 1"
         )
@@ -323,9 +323,7 @@ class VespaAdapterStore:
 
         # Filter out Vespa system fields that can't be written back
         system_fields = {"sddocname", "documentid", "relevance"}
-        fields = {
-            k: v for k, v in adapter["fields"].items() if k not in system_fields
-        }
+        fields = {k: v for k, v in adapter["fields"].items() if k not in system_fields}
 
         # Update field
         fields[field_name] = field_value

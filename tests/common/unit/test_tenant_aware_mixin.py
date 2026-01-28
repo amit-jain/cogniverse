@@ -5,6 +5,7 @@ Unit tests for TenantAwareAgentMixin
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_foundation.config.unified_config import SystemConfig
 

@@ -10,11 +10,11 @@ import random
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
-from pydantic import BaseModel
-
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import ModalityExampleSchema
+from pydantic import BaseModel
+
+from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,7 @@ class ModalityGenerator(BaseGenerator):
         logger.info("Initialized ModalityGenerator with configuration")
 
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """
         Generate ModalityExample data
@@ -109,15 +106,23 @@ class ModalityGenerator(BaseGenerator):
 
         for i in range(target_count):
             # Pick random topic and context
-            topic = random.choice(patterns["topics"]) if patterns["topics"] else "machine learning"
-            context_type = random.choice(patterns["content_types"]) if patterns["content_types"] else "tutorial"
+            topic = (
+                random.choice(patterns["topics"])
+                if patterns["topics"]
+                else "machine learning"
+            )
+            context_type = (
+                random.choice(patterns["content_types"])
+                if patterns["content_types"]
+                else "tutorial"
+            )
 
             # Generate query using DSPy
-            topics_str = ", ".join(patterns["topics"][:3]) if patterns["topics"] else topic
+            topics_str = (
+                ", ".join(patterns["topics"][:3]) if patterns["topics"] else topic
+            )
             result = query_generator(
-                modality=modality,
-                topics=topics_str,
-                context=context_type
+                modality=modality, topics=topics_str, context=context_type
             )
             query = result.query
 
@@ -137,7 +142,7 @@ class ModalityGenerator(BaseGenerator):
                 correct_agent=correct_agent,
                 success=True,
                 is_synthetic=True,
-                synthetic_source="backend_query"
+                synthetic_source="backend_query",
             )
             examples.append(example)
 
@@ -178,7 +183,9 @@ class ModalityGenerator(BaseGenerator):
             try:
                 self.query_generator = dspy.ChainOfThought(GenerateModalityQuery)
                 self.query_generator.load(module_config.compiled_path)
-                logger.info(f"Loaded compiled DSPy module from {module_config.compiled_path}")
+                logger.info(
+                    f"Loaded compiled DSPy module from {module_config.compiled_path}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to load compiled module: {e}, using uncompiled")
                 self.query_generator = None
@@ -227,7 +234,9 @@ class ModalityGenerator(BaseGenerator):
 
         for mapping in self.optimizer_config.agent_mappings:
             if mapping.modality == modality:
-                logger.debug(f"Using configured agent mapping for {modality}: {mapping.agent_name}")
+                logger.debug(
+                    f"Using configured agent mapping for {modality}: {mapping.agent_name}"
+                )
                 return mapping.agent_name
 
         # No mapping found

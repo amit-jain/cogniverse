@@ -4,13 +4,13 @@ Unit tests for tenant-aware BackendRegistry.
 Tests that backend instances are properly isolated per tenant.
 """
 
-
 import pytest
+from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
+
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
 
 
 class MockSearchBackend(SearchBackend):
@@ -50,7 +50,7 @@ class MockSearchBackend(SearchBackend):
             "needs_float": True,
             "needs_binary": False,
             "float_field": "embedding",
-            "binary_field": "embedding_binary"
+            "binary_field": "embedding_binary",
         }
 
 
@@ -101,6 +101,7 @@ class TestBackendRegistryTenantIsolation:
         from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         return FilesystemSchemaLoader(Path("configs/schemas"))
 
     def setup_method(self):
@@ -128,7 +129,12 @@ class TestBackendRegistryTenantIsolation:
         registry.register_search("mock", MockSearchBackend)
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            registry.get_search_backend("mock", tenant_id="", config_manager=config_manager, schema_loader=schema_loader)
+            registry.get_search_backend(
+                "mock",
+                tenant_id="",
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
 
     def test_tenant_id_required_for_ingestion_backend(self):
         """Test that tenant_id is required for get_ingestion_backend"""
@@ -138,16 +144,28 @@ class TestBackendRegistryTenantIsolation:
         with pytest.raises(ValueError, match="tenant_id is required"):
             registry.get_ingestion_backend("mock", tenant_id="")
 
-    def test_different_tenants_get_different_instances(self, config_manager, schema_loader):
+    def test_different_tenants_get_different_instances(
+        self, config_manager, schema_loader
+    ):
         """Test that different tenants get separate backend instances"""
         registry = get_backend_registry()
         registry.register_search("mock", MockSearchBackend)
 
         # Get backend for tenant A
-        backend_a = registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        backend_a = registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Get backend for tenant B
-        backend_b = registry.get_search_backend("mock", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
+        backend_b = registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should be different instances
         assert backend_a is not backend_b
@@ -159,10 +177,20 @@ class TestBackendRegistryTenantIsolation:
         registry.register_search("mock", MockSearchBackend)
 
         # Get backend for tenant A
-        backend_1 = registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        backend_1 = registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Get backend again for tenant A
-        backend_2 = registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        backend_2 = registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should be the same instance
         assert backend_1 is backend_2
@@ -174,8 +202,18 @@ class TestBackendRegistryTenantIsolation:
         registry.register_search("mock", MockSearchBackend)
 
         # Get backends for two tenants
-        registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
-        registry.get_search_backend("mock", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Check cache keys
         cache_keys = list(registry._backend_instances.keys())
@@ -191,8 +229,18 @@ class TestBackendRegistryTenantIsolation:
         tenant_id = "tenant_a"
 
         # Get two different backends for same tenant
-        backend1 = registry.get_search_backend("search1", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
-        backend2 = registry.get_search_backend("search2", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+        backend1 = registry.get_search_backend(
+            "search1",
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        backend2 = registry.get_search_backend(
+            "search2",
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should be different instances
         assert backend1 is not backend2
@@ -210,12 +258,20 @@ class TestBackendRegistryTenantIsolation:
 
         # Get backend for tenant A with config A
         backend_a = registry.get_search_backend(
-            "mock", tenant_id="tenant_a", config=config_a, config_manager=config_manager, schema_loader=schema_loader
+            "mock",
+            tenant_id="tenant_a",
+            config=config_a,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
         # Get backend for tenant B with config B
         backend_b = registry.get_search_backend(
-            "mock", tenant_id="tenant_b", config=config_b, config_manager=config_manager, schema_loader=schema_loader
+            "mock",
+            tenant_id="tenant_b",
+            config=config_b,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
         # Each should have their own config (with tenant_id injected by registry)
@@ -228,9 +284,24 @@ class TestBackendRegistryTenantIsolation:
         registry.register_search("mock", MockSearchBackend)
 
         # Create instances for multiple tenants
-        registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
-        registry.get_search_backend("mock", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
-        registry.get_search_backend("mock", tenant_id="tenant_c", config_manager=config_manager, schema_loader=schema_loader)
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_c",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         assert len(registry._backend_instances) == 3
 
@@ -245,8 +316,18 @@ class TestBackendRegistryTenantIsolation:
         registry.register_ingestion("mock", MockIngestionBackend)
 
         # Get ingestion backends for two tenants
-        backend_a = registry.get_ingestion_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
-        backend_b = registry.get_ingestion_backend("mock", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
+        backend_a = registry.get_ingestion_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        backend_b = registry.get_ingestion_backend(
+            "mock",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should be different instances
         assert backend_a is not backend_b
@@ -287,7 +368,7 @@ class TestBackendRegistryTenantIsolation:
                     "needs_float": True,
                     "needs_binary": False,
                     "float_field": "embedding",
-                    "binary_field": "embedding_binary"
+                    "binary_field": "embedding_binary",
                 }
 
             def ingest_documents(self, documents: list):
@@ -312,16 +393,31 @@ class TestBackendRegistryTenantIsolation:
         registry.register_backend("mock_full", MockFullBackend)
 
         # Get as search backend for tenant A
-        search_a = registry.get_search_backend("mock_full", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        search_a = registry.get_search_backend(
+            "mock_full",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Get as ingestion backend for tenant A (should be same instance)
-        ingest_a = registry.get_ingestion_backend("mock_full", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        ingest_a = registry.get_ingestion_backend(
+            "mock_full",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should be the same instance for same tenant
         assert search_a is ingest_a
 
         # Get for tenant B (should be different)
-        search_b = registry.get_search_backend("mock_full", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
+        search_b = registry.get_search_backend(
+            "mock_full",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         assert search_a is not search_b
 
@@ -330,7 +426,12 @@ class TestBackendRegistryTenantIsolation:
         registry = get_backend_registry()
 
         with pytest.raises(ValueError, match="not found"):
-            registry.get_search_backend("nonexistent", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+            registry.get_search_backend(
+                "nonexistent",
+                tenant_id="tenant_a",
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
 
     def test_cache_stats_per_tenant(self, config_manager, schema_loader):
         """Test that we can track cache statistics per tenant"""
@@ -338,16 +439,36 @@ class TestBackendRegistryTenantIsolation:
         registry.register_search("mock", MockSearchBackend)
 
         # Create instances for multiple tenants
-        registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
-        registry.get_search_backend("mock", tenant_id="tenant_b", config_manager=config_manager, schema_loader=schema_loader)
-        registry.get_search_backend("mock", tenant_id="tenant_c", config_manager=config_manager, schema_loader=schema_loader)
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_b",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_c",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Check cache size
         cache_size = len(registry._backend_instances)
         assert cache_size == 3
 
         # Get cached instance
-        registry.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        registry.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Should still be 3 (reused cached instance)
         assert len(registry._backend_instances) == 3
@@ -367,6 +488,7 @@ class TestBackendRegistryEdgeCases:
         from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         return FilesystemSchemaLoader(Path("configs/schemas"))
 
     def setup_method(self):
@@ -394,7 +516,9 @@ class TestBackendRegistryEdgeCases:
         registry.register_search("mock", MockSearchBackend)
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            registry.get_search_backend("mock", tenant_id=None, config_manager=config_manager)
+            registry.get_search_backend(
+                "mock", tenant_id=None, config_manager=config_manager
+            )
 
     def test_empty_string_tenant_id_rejected(self, config_manager):
         """Test that empty string tenant_id is rejected"""
@@ -402,7 +526,9 @@ class TestBackendRegistryEdgeCases:
         registry.register_search("mock", MockSearchBackend)
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            registry.get_search_backend("mock", tenant_id="", config_manager=config_manager)
+            registry.get_search_backend(
+                "mock", tenant_id="", config_manager=config_manager
+            )
 
     def test_whitespace_tenant_id_accepted(self, config_manager, schema_loader):
         """Test that whitespace-only tenant_id is actually accepted (truthy)"""
@@ -410,7 +536,12 @@ class TestBackendRegistryEdgeCases:
         registry.register_search("mock", MockSearchBackend)
 
         # Whitespace is truthy, so it should work
-        backend = registry.get_search_backend("mock", tenant_id="   ", config_manager=config_manager, schema_loader=schema_loader)
+        backend = registry.get_search_backend(
+            "mock",
+            tenant_id="   ",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
         assert backend is not None
 
 
@@ -428,6 +559,7 @@ class TestBackendRegistrySingleton:
         from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         return FilesystemSchemaLoader(Path("configs/schemas"))
 
     def setup_method(self):
@@ -460,7 +592,12 @@ class TestBackendRegistrySingleton:
         """Test that singleton preserves tenant caches across calls"""
         registry1 = get_backend_registry()
         registry1.register_search("mock", MockSearchBackend)
-        registry1.get_search_backend("mock", tenant_id="tenant_a", config_manager=config_manager, schema_loader=schema_loader)
+        registry1.get_search_backend(
+            "mock",
+            tenant_id="tenant_a",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         registry2 = get_backend_registry()
 

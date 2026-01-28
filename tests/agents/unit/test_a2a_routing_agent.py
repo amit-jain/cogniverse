@@ -5,6 +5,7 @@ Unit tests for A2ARoutingAgent
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.a2a_routing_agent import (
     A2ARoutingAgent,
     AgentEndpoint,
@@ -69,7 +70,9 @@ class TestA2ARoutingAgent:
         mock_registry_instance = Mock()
         mock_registry_class.return_value = mock_registry_instance
 
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         assert agent.routing_agent == mock_routing_agent
         assert agent.agent_registry == mock_registry_instance
@@ -77,13 +80,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_extract_query_and_context_with_data_part(self, mock_get_config, mock_registry_class):
+    def test_extract_query_and_context_with_data_part(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test query and context extraction from DataPart"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
         mock_routing_agent = Mock()
 
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         message = A2AMessage(
             role="user",
@@ -105,13 +112,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_extract_query_and_context_with_text_part(self, mock_get_config, mock_registry_class):
+    def test_extract_query_and_context_with_text_part(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test query extraction from TextPart"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         message = A2AMessage(
             role="user", parts=[TextPart(text="find videos about machine learning")]
@@ -125,13 +136,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_extract_query_and_context_no_messages(self, mock_get_config, mock_registry_class):
+    def test_extract_query_and_context_no_messages(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test extraction with no messages"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         task = Task(id="test_task", messages=[])
 
@@ -140,13 +155,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_extract_query_and_context_no_query(self, mock_get_config, mock_registry_class):
+    def test_extract_query_and_context_no_query(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test extraction with no query found"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         message = A2AMessage(
             role="user", parts=[DataPart(data={"other_field": "value"})]
@@ -164,7 +183,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         parameters = {"query": "test query", "top_k": 10}
         task_id = "main_task"
@@ -192,7 +213,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         # Mock HTTP client
         mock_response = Mock()
@@ -223,7 +246,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         # Mock HTTP error
         from httpx import HTTPStatusError
@@ -255,7 +280,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         routing_analysis = {
             "query": "test query",
@@ -282,13 +309,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_aggregate_results_summary_with_summarizer(self, mock_get_config, mock_registry_class):
+    def test_aggregate_results_summary_with_summarizer(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test result aggregation for summary workflow with summarizer agent"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         routing_analysis = {
             "query": "summarize videos",
@@ -308,13 +339,17 @@ class TestA2ARoutingAgent:
 
     @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_aggregate_results_summary_fallback(self, mock_get_config, mock_registry_class):
+    def test_aggregate_results_summary_fallback(
+        self, mock_get_config, mock_registry_class
+    ):
         """Test result aggregation for summary workflow without summarizer agent"""
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         routing_analysis = {
             "query": "summarize videos",
@@ -345,7 +380,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         search_results = [
             {"source_id": "video1", "title": "AI Tutorial"},
@@ -367,7 +404,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         summary = agent._create_fallback_summary([])
 
@@ -381,7 +420,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         search_results = [
             {
@@ -409,7 +450,9 @@ class TestA2ARoutingAgent:
         mock_registry_class.return_value = Mock()
 
         mock_routing_agent = Mock()
-        agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         report = agent._create_fallback_report([])
 
@@ -439,6 +482,7 @@ class TestA2ARoutingAgentIntegration:
 
         # Mock routing agent
         from cogniverse_agents.routing_agent import RoutingDecision
+
         mock_routing_agent = Mock()
         mock_routing_decision = RoutingDecision(
             query="find AI videos",
@@ -460,12 +504,16 @@ class TestA2ARoutingAgentIntegration:
                         "parameters": {"query": "find AI videos", "top_k": 10},
                     }
                 ],
-            }
+            },
         )
-        mock_routing_agent.analyze_and_route = AsyncMock(return_value=mock_routing_decision)
+        mock_routing_agent.analyze_and_route = AsyncMock(
+            return_value=mock_routing_decision
+        )
 
         # Create A2A routing agent
-        a2a_agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        a2a_agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         # Mock HTTP response
         mock_response = Mock()
@@ -510,7 +558,9 @@ class TestA2ARoutingAgentIntegration:
             side_effect=Exception("Routing failed")
         )
 
-        a2a_agent = A2ARoutingAgent(mock_routing_agent, config_manager=create_default_config_manager())
+        a2a_agent = A2ARoutingAgent(
+            mock_routing_agent, config_manager=create_default_config_manager()
+        )
 
         # Create task
         message = A2AMessage(

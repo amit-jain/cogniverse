@@ -22,12 +22,13 @@ class TestEndToEnd:
         """Test complete experiment mode workflow."""
         # Patch SearchService at the module level where it's imported
         with patch(
-            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService",
+            return_value=mock_search_service,
         ):
             # Patch get_config where it's imported
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost", "vespa_port": 8080}
+                return_value={"vespa_url": "http://localhost", "vespa_port": 8080},
             ):
                 # Create evaluation task
                 task = evaluation_task(
@@ -54,7 +55,9 @@ class TestEndToEnd:
                 eval_log = results[0]
 
                 # Validate evaluation completed successfully
-                assert eval_log.status == "success", f"Evaluation failed with status: {eval_log.status}"
+                assert (
+                    eval_log.status == "success"
+                ), f"Evaluation failed with status: {eval_log.status}"
 
                 # Validate scores were generated
                 assert eval_log.results is not None, "No results in eval log"
@@ -63,18 +66,31 @@ class TestEndToEnd:
 
                 # Validate scorer names match configured scorers
                 scorer_names = {score.name for score in eval_log.results.scores}
-                expected_scorers = {"diversity_scorer", "result_count_scorer"}  # From config (custom_metrics)
-                assert expected_scorers.issubset(scorer_names), f"Expected scorers {expected_scorers}, got {scorer_names}"
+                expected_scorers = {
+                    "diversity_scorer",
+                    "result_count_scorer",
+                }  # From config (custom_metrics)
+                assert expected_scorers.issubset(
+                    scorer_names
+                ), f"Expected scorers {expected_scorers}, got {scorer_names}"
 
                 # Validate score values are valid (0.0 to 1.0)
                 for score in eval_log.results.scores:
                     # EvalScore has metrics dict, not direct value
-                    assert score.metrics is not None, f"Scorer {score.name} has no metrics"
+                    assert (
+                        score.metrics is not None
+                    ), f"Scorer {score.name} has no metrics"
                     # Check mean metric (configured with @scorer(metrics=[mean()]))
-                    assert "mean" in score.metrics, f"Scorer {score.name} missing 'mean' metric"
+                    assert (
+                        "mean" in score.metrics
+                    ), f"Scorer {score.name} missing 'mean' metric"
                     mean_value = score.metrics["mean"].value
-                    assert mean_value is not None, f"Scorer {score.name} mean metric has no value"
-                    assert 0.0 <= mean_value <= 1.0, f"Scorer {score.name} mean {mean_value} not in [0, 1]"
+                    assert (
+                        mean_value is not None
+                    ), f"Scorer {score.name} mean metric has no value"
+                    assert (
+                        0.0 <= mean_value <= 1.0
+                    ), f"Scorer {score.name} mean {mean_value} not in [0, 1]"
 
                 # Validate samples were processed
                 assert eval_log.samples is not None, "No samples in eval log"
@@ -82,8 +98,12 @@ class TestEndToEnd:
 
                 # Validate each sample has scores
                 for sample in eval_log.samples:
-                    assert sample.scores is not None, f"Sample {sample.id} has no scores"
-                    assert len(sample.scores) > 0, f"Sample {sample.id} has empty scores"
+                    assert (
+                        sample.scores is not None
+                    ), f"Sample {sample.id} has no scores"
+                    assert (
+                        len(sample.scores) > 0
+                    ), f"Sample {sample.id} has empty scores"
 
     @pytest.mark.integration
     def test_batch_mode_e2e(self, mock_evaluator_provider):
@@ -146,9 +166,7 @@ class TestEndToEnd:
 
         runner = CliRunner()
 
-        result = runner.invoke(
-            cli, ["list-traces", "--hours", "2", "--limit", "10"]
-        )
+        result = runner.invoke(cli, ["list-traces", "--hours", "2", "--limit", "10"])
 
         assert result.exit_code == 0
         assert "Fetching traces" in result.output
@@ -250,7 +268,8 @@ class TestEndToEnd:
     ):
         """Test evaluation with multiple profiles and strategies."""
         with patch(
-            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService",
+            return_value=mock_search_service,
         ):
             task = evaluation_task(
                 mode="experiment",
@@ -268,7 +287,9 @@ class TestEndToEnd:
             assert len(results) > 0
 
     @pytest.mark.integration
-    def test_error_handling_invalid_dataset(self, mock_evaluator_provider, mock_phoenix_client):
+    def test_error_handling_invalid_dataset(
+        self, mock_evaluator_provider, mock_phoenix_client
+    ):
         """Test error handling with invalid dataset."""
         mock_phoenix_client.get_dataset.return_value = None
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
 from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 
@@ -245,7 +246,7 @@ class TestProcessorManager:
         """Test _init_from_requirements method."""
         requirements = {
             "keyframe": {"param_a": "custom_value"},
-            "audio": {"param_b": 30}
+            "audio": {"param_b": 30},
         }
 
         # Map processor names to types for this test
@@ -280,9 +281,7 @@ class TestProcessorManagerIntegration:
             manager._processor_classes["test_proc"] = MockProcessorA
 
             # Initialize processor
-            strategies = [
-                MockStrategy({"test_proc": {"param_a": "lifecycle_test"}})
-            ]
+            strategies = [MockStrategy({"test_proc": {"param_a": "lifecycle_test"}})]
             strategy_set = MockStrategySet(strategies)
             manager.initialize_from_strategies(strategy_set)
 

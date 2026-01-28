@@ -5,6 +5,8 @@ Unit tests for TextAnalysisAgent
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
+
 from cogniverse_agents.text_analysis_agent import (
     TextAnalysisAgent,
     _agent_instances,
@@ -12,14 +14,15 @@ from cogniverse_agents.text_analysis_agent import (
     get_agent,
     set_config_manager,
 )
-from fastapi.testclient import TestClient
 
 
 class TestTextAnalysisAgent:
     """Test TextAnalysisAgent initialization and core functionality"""
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
     @patch("cogniverse_core.config.utils.get_config")
     def test_initialization(
         self,
@@ -37,7 +40,9 @@ class TestTextAnalysisAgent:
         mock_get_config.return_value = mock_config
 
         # Initialize agent with config_manager
-        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager_memory)
+        agent = TextAnalysisAgent(
+            tenant_id="test_tenant", config_manager=config_manager_memory
+        )
 
         assert agent.tenant_id == "test_tenant"
         assert agent.config is not None
@@ -57,7 +62,9 @@ class TestTextAnalysisAgent:
             TextAnalysisAgent(tenant_id=None, config_manager=config_manager_memory)
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
     @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_text(
         self,
@@ -74,7 +81,9 @@ class TestTextAnalysisAgent:
         }
         mock_get_config.return_value = mock_config
 
-        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager_memory)
+        agent = TextAnalysisAgent(
+            tenant_id="test_tenant", config_manager=config_manager_memory
+        )
 
         # Mock the get_or_create_module method to return a mock module
         mock_module = MagicMock()
@@ -90,10 +99,14 @@ class TestTextAnalysisAgent:
             assert result["result"] == "Test analysis result"
             assert result["confidence"] == 0.95
             assert result["analysis_type"] == "summary"
-            mock_module.assert_called_once_with(text="Test text", analysis_type="summary")
+            mock_module.assert_called_once_with(
+                text="Test text", analysis_type="summary"
+            )
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
     @patch("cogniverse_core.config.utils.get_config")
     def test_get_agent_factory(
         self,
@@ -147,7 +160,9 @@ class TestTextAnalysisEndpoints:
         _agent_instances.clear()
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
     @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_endpoint(
         self,
@@ -221,7 +236,9 @@ class TestTextAnalysisEndpoints:
         ), "Should have validation error for missing tenant_id"
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
     @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_endpoint_error_handling(
         self,

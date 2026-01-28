@@ -10,9 +10,8 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
@@ -217,7 +216,10 @@ class RoutingAnnotationStorage:
         try:
             # Get all spans in time range
             spans_df = await self.provider.traces.get_spans(
-                project=self.project_name, start_time=start_time, end_time=end_time, limit=10000
+                project=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
+                limit=10000,
             )
 
             if spans_df.empty:

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
+
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
@@ -345,12 +346,12 @@ class TestDSPyAgentIntegration:
             mock_exists.return_value = True
 
             # Mock file loading directly
-            with patch(
-                "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-            ):
+            with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
 
                 telemetry_config = TelemetryConfig(enabled=False)
-                deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+                deps = RoutingDeps(
+                    tenant_id="test_tenant", telemetry_config=telemetry_config
+                )
                 agent = RoutingAgent(deps=deps)
 
                 # Should have DSPy module from parent class
@@ -497,7 +498,8 @@ class TestDSPyEndToEndOptimization:
                             "query_analysis",
                             QueryAnalysisToolV3,
                             lambda: QueryAnalysisToolV3(
-                                config_manager=config_manager, enable_agent_integration=False
+                                config_manager=config_manager,
+                                enable_agent_integration=False,
                             ),
                         ),
                     ]

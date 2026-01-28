@@ -13,6 +13,7 @@ from typing import Dict, List, Literal, Optional, Set
 
 import numpy as np
 import pandas as pd
+
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -134,9 +135,11 @@ class TripletExtractor:
 
         # Modality filter (check span attributes)
         modality_mask = spans_df["attributes"].apply(
-            lambda attrs: self._check_modality(attrs, modality)
-            if isinstance(attrs, dict)
-            else False
+            lambda attrs: (
+                self._check_modality(attrs, modality)
+                if isinstance(attrs, dict)
+                else False
+            )
         )
 
         return spans_df[search_mask & modality_mask].copy()
@@ -186,9 +189,7 @@ class TripletExtractor:
 
             # Get annotations for this span
             span_id = span.get("span_id", span.get("context.span_id", ""))
-            span_annotations = annotations_df[
-                annotations_df["span_id"] == span_id
-            ]
+            span_annotations = annotations_df[annotations_df["span_id"] == span_id]
 
             # Identify clicked/relevant results (positives)
             clicked_ids = self._get_clicked_results(span_annotations)

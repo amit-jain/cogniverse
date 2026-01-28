@@ -304,7 +304,9 @@ class ApprovalStorageImpl(ApprovalStorage):
             ]
 
             if batch_spans.empty:
-                logger.warning(f"Batch {batch_id} not found in telemetry backend after retries")
+                logger.warning(
+                    f"Batch {batch_id} not found in telemetry backend after retries"
+                )
                 return None
 
             # Get batch span row
@@ -464,7 +466,8 @@ class ApprovalStorageImpl(ApprovalStorage):
 
         except Exception as e:
             logger.error(
-                f"Error retrieving batch {batch_id} from telemetry backend: {e}", exc_info=True
+                f"Error retrieving batch {batch_id} from telemetry backend: {e}",
+                exc_info=True,
             )
             return None
 
@@ -590,7 +593,9 @@ class ApprovalStorageImpl(ApprovalStorage):
             return pending_batches
 
         except Exception as e:
-            logger.error(f"Error retrieving pending batches from telemetry backend: {e}")
+            logger.error(
+                f"Error retrieving pending batches from telemetry backend: {e}"
+            )
             return []
 
     async def record_decision(self, decision: ReviewDecision, item: ReviewItem) -> None:

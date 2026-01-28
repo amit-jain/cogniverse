@@ -15,6 +15,7 @@ import pytest
 # Check if cogniverse_runtime is available
 try:
     import cogniverse_runtime
+
     RUNTIME_AVAILABLE = True
 except ImportError:
     RUNTIME_AVAILABLE = False
@@ -52,6 +53,8 @@ class TestDashboardProfileIntegration:
     @pytest.fixture
     def running_api(self, temp_schema_dir: Path, tmp_path: Path):
         """Start the FastAPI server for integration tests"""
+        from fastapi.testclient import TestClient
+
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -59,7 +62,6 @@ class TestDashboardProfileIntegration:
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
-        from fastapi.testclient import TestClient
 
         # Reset registries
         BackendRegistry._instance = None
@@ -95,19 +97,25 @@ class TestDashboardProfileIntegration:
         from scripts.backend_profile_tab import deploy_schema_via_api
 
         # Create a profile first
-        running_api.post("/admin/profiles", json={
-            "profile_name": "deploy_test",
-            "tenant_id": "test_tenant",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "test_model",
-            "embedding_type": "frame_based"
-        })
+        running_api.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "deploy_test",
+                "tenant_id": "test_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "test_model",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Mock the API URL to use TestClient
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://testserver"):
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
             # Mock httpx.Client to use TestClient
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -115,15 +123,21 @@ class TestDashboardProfileIntegration:
                 def mock_post(endpoint, json):
                     # Extract profile_name from endpoint
                     profile_name = endpoint.split("/")[-2]
-                    return running_api.post(f"/admin/profiles/{profile_name}/deploy", json=json)
+                    return running_api.post(
+                        f"/admin/profiles/{profile_name}/deploy", json=json
+                    )
 
                 mock_client_instance.post = mock_post
 
                 # Call the function
-                result = deploy_schema_via_api("deploy_test", "test_tenant", force=False)
+                result = deploy_schema_via_api(
+                    "deploy_test", "test_tenant", force=False
+                )
 
                 # Verify result
-                assert result["success"] is False  # Will fail because Vespa is not available
+                assert (
+                    result["success"] is False
+                )  # Will fail because Vespa is not available
                 assert "error" in result
 
     def test_delete_profile_via_api_success(self, running_api):
@@ -131,29 +145,39 @@ class TestDashboardProfileIntegration:
         from scripts.backend_profile_tab import delete_profile_via_api
 
         # Create a profile first
-        running_api.post("/admin/profiles", json={
-            "profile_name": "delete_test",
-            "tenant_id": "test_tenant",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "test_model",
-            "embedding_type": "frame_based"
-        })
+        running_api.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "delete_test",
+                "tenant_id": "test_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "test_model",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Mock the API URL and httpx.Client
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://testserver"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
                 def mock_delete(endpoint, params):
                     profile_name = endpoint.split("/")[-1]
-                    return running_api.delete(f"/admin/profiles/{profile_name}", params=params)
+                    return running_api.delete(
+                        f"/admin/profiles/{profile_name}", params=params
+                    )
 
                 mock_client_instance.delete = mock_delete
 
                 # Call the function
-                result = delete_profile_via_api("delete_test", "test_tenant", delete_schema=False)
+                result = delete_profile_via_api(
+                    "delete_test", "test_tenant", delete_schema=False
+                )
 
                 # Verify result
                 assert result["success"] is True
@@ -164,24 +188,32 @@ class TestDashboardProfileIntegration:
         from scripts.backend_profile_tab import get_profile_schema_status
 
         # Create a profile first
-        running_api.post("/admin/profiles", json={
-            "profile_name": "status_test",
-            "tenant_id": "test_tenant",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "test_model",
-            "embedding_type": "frame_based"
-        })
+        running_api.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "status_test",
+                "tenant_id": "test_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "test_model",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Mock the API URL and httpx.Client
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://testserver"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
                 def mock_get(endpoint, params):
                     profile_name = endpoint.split("/")[-1]
-                    return running_api.get(f"/admin/profiles/{profile_name}", params=params)
+                    return running_api.get(
+                        f"/admin/profiles/{profile_name}", params=params
+                    )
 
                 mock_client_instance.get = mock_get
 
@@ -203,20 +235,26 @@ class TestDashboardProfileIntegration:
         tenant_id = "test_tenant"
 
         # Step 1: Create profile via API directly
-        create_response = running_api.post("/admin/profiles", json={
-            "profile_name": profile_name,
-            "tenant_id": tenant_id,
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "test_model",
-            "embedding_type": "frame_based",
-            "description": "E2E test profile"
-        })
+        create_response = running_api.post(
+            "/admin/profiles",
+            json={
+                "profile_name": profile_name,
+                "tenant_id": tenant_id,
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "test_model",
+                "embedding_type": "frame_based",
+                "description": "E2E test profile",
+            },
+        )
         assert create_response.status_code == 201
 
         # Step 2: Check schema status via dashboard function
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://testserver"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -231,44 +269,60 @@ class TestDashboardProfileIntegration:
                 assert status_result["schema_deployed"] is False  # Not deployed yet
 
         # Step 3: Update profile
-        update_response = running_api.put(f"/admin/profiles/{profile_name}", json={
-            "tenant_id": tenant_id,
-            "description": "Updated description"
-        })
+        update_response = running_api.put(
+            f"/admin/profiles/{profile_name}",
+            json={"tenant_id": tenant_id, "description": "Updated description"},
+        )
         assert update_response.status_code == 200
 
         # Step 4: Delete via dashboard function
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://testserver"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
                 def mock_delete(endpoint, params):
                     p_name = endpoint.split("/")[-1]
-                    return running_api.delete(f"/admin/profiles/{p_name}", params=params)
+                    return running_api.delete(
+                        f"/admin/profiles/{p_name}", params=params
+                    )
 
                 mock_client_instance.delete = mock_delete
 
-                delete_result = delete_profile_via_api(profile_name, tenant_id, delete_schema=False)
+                delete_result = delete_profile_via_api(
+                    profile_name, tenant_id, delete_schema=False
+                )
                 assert delete_result["success"] is True
 
         # Step 5: Verify deletion
-        get_response = running_api.get(f"/admin/profiles/{profile_name}", params={"tenant_id": tenant_id})
+        get_response = running_api.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": tenant_id}
+        )
         assert get_response.status_code == 404
 
     def test_api_timeout_handling(self):
         """Test that API functions handle timeouts gracefully"""
         from scripts.backend_profile_tab import deploy_schema_via_api
 
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://localhost:9999"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://localhost:9999",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
                 # Simulate timeout
-                mock_client_instance.post.side_effect = httpx.TimeoutException("Request timed out")
+                mock_client_instance.post.side_effect = httpx.TimeoutException(
+                    "Request timed out"
+                )
 
-                result = deploy_schema_via_api("test_profile", "test_tenant", force=False)
+                result = deploy_schema_via_api(
+                    "test_profile", "test_tenant", force=False
+                )
 
                 assert result["success"] is False
                 assert "timed out" in result["error"].lower()
@@ -277,8 +331,11 @@ class TestDashboardProfileIntegration:
         """Test that API functions handle connection errors gracefully"""
         from scripts.backend_profile_tab import get_profile_schema_status
 
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://nonexistent:9999"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://nonexistent:9999",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -294,8 +351,11 @@ class TestDashboardProfileIntegration:
         """Test that API functions handle HTTP errors gracefully"""
         from scripts.backend_profile_tab import delete_profile_via_api
 
-        with patch('scripts.backend_profile_tab.get_runtime_api_url', return_value="http://localhost:9999"):
-            with patch('scripts.backend_profile_tab.httpx.Client') as mock_client:
+        with patch(
+            "scripts.backend_profile_tab.get_runtime_api_url",
+            return_value="http://localhost:9999",
+        ):
+            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -307,7 +367,9 @@ class TestDashboardProfileIntegration:
 
                 mock_client_instance.delete.return_value = mock_response
 
-                result = delete_profile_via_api("nonexistent_profile", "test_tenant", delete_schema=False)
+                result = delete_profile_via_api(
+                    "nonexistent_profile", "test_tenant", delete_schema=False
+                )
 
                 assert result["success"] is False
                 assert "404" in result["error"]

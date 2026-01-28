@@ -56,7 +56,9 @@ class CrossModalOptimizer:
             ValueError: If tenant_id is empty or None
         """
         if not tenant_id:
-            raise ValueError("tenant_id is required for CrossModalOptimizer - no default allowed")
+            raise ValueError(
+                "tenant_id is required for CrossModalOptimizer - no default allowed"
+            )
 
         self.tenant_id = tenant_id
         self.model_dir = model_dir or Path("outputs/models/cross_modal")
@@ -393,7 +395,7 @@ class CrossModalOptimizer:
         service = SyntheticDataService(
             backend=backend,
             backend_config=backend_config,
-            generator_config=generator_config
+            generator_config=generator_config,
         )
         request = SyntheticDataRequest(optimizer="cross_modal", count=count)
         response = await service.generate(request)

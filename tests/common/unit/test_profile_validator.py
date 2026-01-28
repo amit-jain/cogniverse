@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
@@ -60,7 +61,9 @@ def mock_config_manager() -> MagicMock:
 
 
 @pytest.fixture
-def validator(mock_config_manager: MagicMock, temp_schema_dir: Path) -> ProfileValidator:
+def validator(
+    mock_config_manager: MagicMock, temp_schema_dir: Path
+) -> ProfileValidator:
     """Create ProfileValidator instance with mocked dependencies."""
     return ProfileValidator(
         config_manager=mock_config_manager,
@@ -97,7 +100,9 @@ def valid_profile() -> BackendProfileConfig:
 class TestProfileNameValidation:
     """Test profile name validation."""
 
-    def test_valid_profile_names(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_valid_profile_names(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """Valid profile names should pass validation."""
         valid_names = [
             "simple",
@@ -110,7 +115,9 @@ class TestProfileNameValidation:
         for name in valid_names:
             valid_profile.profile_name = name
             errors = validator._validate_profile_name(name)
-            assert not errors, f"Profile name '{name}' should be valid, got errors: {errors}"
+            assert (
+                not errors
+            ), f"Profile name '{name}' should be valid, got errors: {errors}"
 
     def test_invalid_profile_names(self, validator: ProfileValidator):
         """Invalid profile names should fail validation."""
@@ -125,9 +132,9 @@ class TestProfileNameValidation:
         for name, expected_error_substring in invalid_cases:
             errors = validator._validate_profile_name(name)
             assert errors, f"Profile name '{name}' should be invalid"
-            assert any(expected_error_substring in err for err in errors), (
-                f"Expected error containing '{expected_error_substring}', got: {errors}"
-            )
+            assert any(
+                expected_error_substring in err for err in errors
+            ), f"Expected error containing '{expected_error_substring}', got: {errors}"
 
     def test_non_string_profile_name(self, validator: ProfileValidator):
         """Non-string profile names should fail validation."""
@@ -290,9 +297,7 @@ class TestStrategyValidation:
 
     def test_non_dict_strategy_config(self, validator: ProfileValidator):
         """Strategy config that's not a dict should fail."""
-        invalid_strategies = {
-            "segmentation": "not a dict"  # type: ignore
-        }
+        invalid_strategies = {"segmentation": "not a dict"}  # type: ignore
 
         errors = validator._validate_strategies(invalid_strategies)
         assert errors
@@ -307,13 +312,17 @@ class TestStrategyValidation:
 class TestUniquenessValidation:
     """Test profile uniqueness validation."""
 
-    def test_unique_profile_name(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_unique_profile_name(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """New profile with unique name should pass."""
         validator.config_manager.get_backend_profile.return_value = None
         errors = validator._validate_uniqueness(valid_profile, tenant_id="test_tenant")
         assert not errors
 
-    def test_duplicate_profile_name(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_duplicate_profile_name(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """New profile with duplicate name should fail."""
         # Mock existing profile
         validator.config_manager.get_backend_profile.return_value = valid_profile
@@ -351,26 +360,34 @@ class TestUpdateFieldValidation:
 class TestEmbeddingDimensionValidation:
     """Test embedding dimension validation."""
 
-    def test_valid_embedding_dimension(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_valid_embedding_dimension(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """Valid embedding dimension should pass."""
         valid_profile.schema_config = {"embedding_dim": 128}
         errors = validator._validate_embedding_dimensions(valid_profile)
         assert not errors
 
-    def test_missing_embedding_dimension(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_missing_embedding_dimension(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """Missing embedding dimension should be allowed (optional)."""
         valid_profile.schema_config = {}
         errors = validator._validate_embedding_dimensions(valid_profile)
         assert not errors
 
-    def test_invalid_embedding_dimension_type(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_invalid_embedding_dimension_type(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """Non-integer embedding dimension should fail."""
         valid_profile.schema_config = {"embedding_dim": "not_a_number"}
         errors = validator._validate_embedding_dimensions(valid_profile)
         assert errors
         assert any("Invalid embedding_dim" in err for err in errors)
 
-    def test_out_of_range_embedding_dimension(self, validator: ProfileValidator, valid_profile: BackendProfileConfig):
+    def test_out_of_range_embedding_dimension(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
         """Out-of-range embedding dimension should fail."""
         test_cases = [0, -1, 100001]
 
@@ -418,7 +435,9 @@ class TestFullProfileValidation:
         )
 
         # Should have multiple errors
-        assert len(errors) >= 4  # At least: name, type, schema, embedding_model, embedding_type
+        assert (
+            len(errors) >= 4
+        )  # At least: name, type, schema, embedding_model, embedding_type
         error_text = " ".join(errors)
         assert "Profile name" in error_text
         assert "Profile type" in error_text or "type" in error_text

@@ -307,7 +307,9 @@ class ExperimentTracker:
             Dataset name to use for experiments
         """
         # Generate dataset name if not provided
-        final_dataset_name = dataset_name or f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        final_dataset_name = (
+            dataset_name or f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
 
         if dataset_name and not force_new:
             # Provider will check if dataset exists
@@ -317,7 +319,7 @@ class ExperimentTracker:
         if csv_path:
             # Load data from CSV
             df = pd.read_csv(csv_path)
-            data = df.to_dict('records')
+            data = df.to_dict("records")
             _ = self.provider.create_dataset(
                 name=final_dataset_name,
                 data=data,
@@ -598,7 +600,9 @@ class ExperimentTracker:
 
         # Get provider-specific experiment URL if available
         try:
-            experiment_url = self.provider.get_experiment_url(self.experiment_project_name)
+            experiment_url = self.provider.get_experiment_url(
+                self.experiment_project_name
+            )
             print(f"🔗 Experiments Project: {experiment_url}")
         except (AttributeError, NotImplementedError):
             # Provider doesn't support experiment URLs

@@ -11,9 +11,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_evaluation.span_evaluator import SpanEvaluator
+from opentelemetry.trace import Span as ReadableSpan
+
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from opentelemetry.trace import Span as ReadableSpan
 
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider

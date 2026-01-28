@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import dspy
 import pytest
+
 from cogniverse_agents.profile_selection_agent import (
     ProfileCandidate,
     ProfileSelectionAgent,

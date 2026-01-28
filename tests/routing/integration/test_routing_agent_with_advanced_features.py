@@ -11,8 +11,8 @@ Validates:
 4. All components work together in real routing flow
 """
 
-
 import pytest
+
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
@@ -27,7 +27,10 @@ class TestRoutingAgentWithAdvancedFeatures:
         """Create RoutingAgent instance with typed dependencies"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(

@@ -21,9 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # from cogniverse_agents.tools.query_analyzer import QueryAnalyzer  # Module removed
 import pytest
+
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
-pytestmark = pytest.mark.skip(reason="QueryAnalyzer module removed - test needs rewrite")
+pytestmark = pytest.mark.skip(
+    reason="QueryAnalyzer module removed - test needs rewrite"
+)
 
 
 @dataclass

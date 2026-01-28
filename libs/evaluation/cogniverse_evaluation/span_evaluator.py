@@ -88,7 +88,7 @@ class SpanEvaluator:
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
-                limit=limit
+                limit=limit,
             )
 
             if spans_df is None or spans_df.empty:

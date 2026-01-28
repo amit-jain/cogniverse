@@ -33,7 +33,7 @@ class VespaDockerManager:
         module_name: str,
         use_module_ports: bool = True,
         http_port: int = None,
-        config_port: int = None
+        config_port: int = None,
     ) -> Dict[str, any]:
         """
         Start isolated Vespa Docker container with unique ports.
@@ -68,7 +68,9 @@ class VespaDockerManager:
 
         container_name = f"vespa-test-{http_port}"
 
-        logger.info(f"Starting Vespa container '{container_name}' (HTTP={http_port}, Config={config_port})")
+        logger.info(
+            f"Starting Vespa container '{container_name}' (HTTP={http_port}, Config={config_port})"
+        )
 
         # Stop and remove existing container if exists
         subprocess.run(["docker", "stop", container_name], capture_output=True)
@@ -129,11 +131,7 @@ class VespaDockerManager:
             subprocess.run(["docker", "rm", container_name], capture_output=True)
             raise RuntimeError(f"Failed to start Vespa container: {e}") from e
 
-    def wait_for_config_ready(
-        self,
-        container_info: Dict[str, any],
-        timeout: int = 120
-    ):
+    def wait_for_config_ready(self, container_info: Dict[str, any], timeout: int = 120):
         """
         Wait for Vespa config server to be ready.
 
@@ -159,14 +157,10 @@ class VespaDockerManager:
             if i % 10 == 0 and i > 0:
                 logger.info(f"  Still waiting... ({i}s)")
         else:
-            raise RuntimeError(
-                f"Config server not ready after {timeout} seconds"
-            )
+            raise RuntimeError(f"Config server not ready after {timeout} seconds")
 
     def wait_for_application_ready(
-        self,
-        container_info: Dict[str, any],
-        timeout: int = 60
+        self, container_info: Dict[str, any], timeout: int = 60
     ):
         """
         Wait for Vespa application endpoint to be ready.
@@ -204,7 +198,7 @@ class VespaDockerManager:
         container_info: Dict[str, any],
         schemas_dir: Optional[Path] = None,
         include_metadata: bool = True,
-        tenant_id: str = "test_tenant"
+        tenant_id: str = "test_tenant",
     ):
         """
         Deploy schemas to Vespa container with tenant-aware naming.
@@ -257,7 +251,7 @@ class VespaDockerManager:
             backend = VespaBackend(
                 backend_config=backend_config,
                 schema_loader=schema_loader,
-                config_manager=config_manager
+                config_manager=config_manager,
             )
 
             # Create and inject SchemaRegistry
@@ -266,7 +260,7 @@ class VespaDockerManager:
             schema_registry = SchemaRegistry(
                 config_manager=config_manager,
                 backend=backend,
-                schema_loader=schema_loader
+                schema_loader=schema_loader,
             )
             backend.schema_registry = schema_registry
 
@@ -286,8 +280,7 @@ class VespaDockerManager:
 
                     # Use SchemaRegistry to deploy with tenant suffix
                     tenant_schema_name = schema_registry.deploy_schema(
-                        tenant_id=tenant_id,
-                        base_schema_name=base_schema_name
+                        tenant_id=tenant_id, base_schema_name=base_schema_name
                     )
                     deployed_schemas.append(tenant_schema_name)
                     logger.info(f"  Deployed tenant schema: {tenant_schema_name}")

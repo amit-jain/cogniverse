@@ -45,7 +45,9 @@ class ConfigLoader:
         self.config_manager = create_default_config_manager()
         self.backend_registry = BackendRegistry(config_manager=self.config_manager)
         self.agent_registry = AgentRegistry(config_manager=self.config_manager)
-        self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
+        self.config = get_config(
+            tenant_id=tenant_id, config_manager=self.config_manager
+        )
 
     def load_backends(self) -> None:
         """Load and register backends from configuration."""
@@ -80,7 +82,9 @@ class ConfigLoader:
                     # Backend should be auto-registered via package import
                     # Verify it's registered
                     if backend_name in self.backend_registry.list_backends():
-                        logger.info(f"✓ Backend '{backend_name}' registered successfully")
+                        logger.info(
+                            f"✓ Backend '{backend_name}' registered successfully"
+                        )
                     else:
                         logger.warning(
                             f"Backend '{backend_name}' loaded but not registered"
@@ -164,7 +168,9 @@ class ConfigLoader:
         logger.info("Reloading configuration...")
 
         # Reload config
-        self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
+        self.config = get_config(
+            tenant_id=tenant_id, config_manager=self.config_manager
+        )
 
         # Reload backends and agents
         self.load_backends()

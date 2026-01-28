@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+
 from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator import (
     EmbeddingResult,
 )
@@ -127,7 +128,8 @@ class TestEmbeddingGeneratorImpl:
         # Frame-based should NOT load model
         config = {"embedding_type": "frame_based"}
         with patch(
-            "cogniverse_core.common.models.get_or_load_model", return_value=(Mock(), Mock())
+            "cogniverse_core.common.models.get_or_load_model",
+            return_value=(Mock(), Mock()),
         ):
             generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
             assert generator._should_load_model() is False
@@ -137,7 +139,8 @@ class TestEmbeddingGeneratorImpl:
         for embedding_type in test_cases:
             config = {"embedding_type": embedding_type}
             with patch(
-                "cogniverse_core.common.models.get_or_load_model", return_value=(Mock(), Mock())
+                "cogniverse_core.common.models.get_or_load_model",
+                return_value=(Mock(), Mock()),
             ):
                 generator = EmbeddingGeneratorImpl(
                     config, mock_logger, mock_backend_client

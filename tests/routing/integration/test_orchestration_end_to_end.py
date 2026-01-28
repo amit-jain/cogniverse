@@ -7,8 +7,8 @@ Tests the complete orchestration workflow:
 - Proper routing decisions for multi-modal queries
 """
 
-
 import pytest
+
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
@@ -22,7 +22,10 @@ class TestOrchestrationEndToEnd:
         """Create routing agent for testing"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
@@ -44,12 +47,12 @@ class TestOrchestrationEndToEnd:
 
         # RoutingAgent returns a RoutingDecision object
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
-        assert hasattr(result, 'metadata')
+        assert hasattr(result, "recommended_agent")
+        assert hasattr(result, "metadata")
 
         # Check if orchestration signals are present in metadata
-        if 'orchestration_signals' in result.metadata:
-            signals = result.metadata['orchestration_signals']
+        if "orchestration_signals" in result.metadata:
+            signals = result.metadata["orchestration_signals"]
             assert isinstance(signals, dict)
 
     async def test_detailed_report_triggers_sequential_orchestration(
@@ -62,7 +65,7 @@ class TestOrchestrationEndToEnd:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
         # Should route to appropriate agent - accepting any valid agent name
         # as the routing logic may dynamically create agent names based on query
         assert result.recommended_agent is not None
@@ -76,7 +79,7 @@ class TestOrchestrationEndToEnd:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
     async def test_orchestration_with_telemetry_spans(self, routing_agent):
         """Test that routing creates proper telemetry"""
@@ -87,7 +90,7 @@ class TestOrchestrationEndToEnd:
 
         assert result is not None
         # Telemetry spans are created internally, just verify routing works
-        assert hasattr(result, 'metadata')
+        assert hasattr(result, "metadata")
 
     async def test_orchestration_error_handling(self, routing_agent):
         """Test error handling in routing"""
@@ -98,7 +101,7 @@ class TestOrchestrationEndToEnd:
 
         # Should still return a decision even for edge cases
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
     async def test_orchestration_pattern_selection_parallel(self, routing_agent):
         """Test parallel pattern detection"""
@@ -109,8 +112,8 @@ class TestOrchestrationEndToEnd:
 
         assert result is not None
         # Check for orchestration metadata
-        if 'needs_orchestration' in result.metadata:
-            assert isinstance(result.metadata['needs_orchestration'], bool)
+        if "needs_orchestration" in result.metadata:
+            assert isinstance(result.metadata["needs_orchestration"], bool)
 
     async def test_orchestration_pattern_selection_sequential(self, routing_agent):
         """Test sequential pattern detection"""
@@ -120,7 +123,7 @@ class TestOrchestrationEndToEnd:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
     async def test_orchestration_agent_execution_order(self, routing_agent):
         """Test agent execution order in routing decision"""
@@ -130,7 +133,7 @@ class TestOrchestrationEndToEnd:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
-        assert hasattr(result, 'metadata')
+        assert hasattr(result, "metadata")
 
     async def test_orchestration_metadata_population(self, routing_agent):
         """Test that orchestration metadata is properly populated"""
@@ -140,11 +143,11 @@ class TestOrchestrationEndToEnd:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
-        assert hasattr(result, 'metadata')
+        assert hasattr(result, "metadata")
         assert isinstance(result.metadata, dict)
 
         # Check for expected metadata keys
-        assert 'processing_time_ms' in result.metadata
+        assert "processing_time_ms" in result.metadata
 
 
 @pytest.mark.asyncio
@@ -156,14 +159,20 @@ class TestRoutingDecisions:
         """Router configuration"""
         return {
             "optimization_dir": "/tmp/optimization",
-            "llm": {"model_name": "ollama/gemma3:4b", "base_url": "http://localhost:11434"},
+            "llm": {
+                "model_name": "ollama/gemma3:4b",
+                "base_url": "http://localhost:11434",
+            },
         }
 
     async def test_multi_modal_routing_decision(self, router_config):
         """Test multi-modal routing decision"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
@@ -176,18 +185,20 @@ class TestRoutingDecisions:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
-            "Find videos and documents about AI",
-            {"tenant_id": "test"}
+            "Find videos and documents about AI", {"tenant_id": "test"}
         )
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
     async def test_summary_routing_decision(self, router_config):
         """Test summary routing decision"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
@@ -200,18 +211,20 @@ class TestRoutingDecisions:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
-            "Summarize this content",
-            {"tenant_id": "test"}
+            "Summarize this content", {"tenant_id": "test"}
         )
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
     async def test_detailed_report_routing_decision(self, router_config):
         """Test detailed report routing decision"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
@@ -224,9 +237,8 @@ class TestRoutingDecisions:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
-            "Provide detailed analysis of this topic",
-            {"tenant_id": "test"}
+            "Provide detailed analysis of this topic", {"tenant_id": "test"}
         )
 
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")

@@ -15,10 +15,9 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
 from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Lazy configuration initialization (avoids module-level bootstrap requirements)
 _config_cache: Optional[Dict[str, Any]] = None
@@ -29,8 +28,7 @@ def _get_config() -> Dict[str, Any]:
     global _config_cache
     if _config_cache is None:
         _config_cache = get_config(
-            tenant_id="default",
-            config_manager=create_default_config_manager()
+            tenant_id="default", config_manager=create_default_config_manager()
         )
     return _config_cache
 
@@ -130,8 +128,8 @@ class QueryAnalysisTool(BaseTool):
             description="Analyzes user queries to extract search intent and temporal information",
         )
         # Check configuration for inference mode
-        self.inference_mode = _get_config().get("query_inference_engine", {}).get(
-            "mode", "keyword"
+        self.inference_mode = (
+            _get_config().get("query_inference_engine", {}).get("mode", "keyword")
         )
 
         if self.inference_mode == "gliner_only":
@@ -139,8 +137,10 @@ class QueryAnalysisTool(BaseTool):
             try:
                 from gliner import GLiNER
 
-                gliner_model = _get_config().get("query_inference_engine", {}).get(
-                    "current_gliner_model"
+                gliner_model = (
+                    _get_config()
+                    .get("query_inference_engine", {})
+                    .get("current_gliner_model")
                 )
                 if gliner_model:
                     logger.info("🔄 Loading GLiNER model: {gliner_model}")
@@ -156,8 +156,7 @@ class QueryAnalysisTool(BaseTool):
             from cogniverse_core.common.utils.prompt_manager import PromptManager
 
             self.prompt_manager = PromptManager(
-                config_manager=create_default_config_manager(),
-                tenant_id="default"
+                config_manager=create_default_config_manager(), tenant_id="default"
             )
 
     async def execute(self, query: str) -> Dict[str, Any]:
@@ -193,9 +192,13 @@ class QueryAnalysisTool(BaseTool):
             and self.gliner_model
         ):
             # Use GLiNER for entity extraction
-            labels = _get_config().get("query_inference_engine", {}).get("gliner_labels", [])
-            threshold = _get_config().get("query_inference_engine", {}).get(
-                "gliner_threshold", 0.3
+            labels = (
+                _get_config().get("query_inference_engine", {}).get("gliner_labels", [])
+            )
+            threshold = (
+                _get_config()
+                .get("query_inference_engine", {})
+                .get("gliner_threshold", 0.3)
             )
 
             try:
@@ -442,8 +445,7 @@ def get_video_player_tool() -> "VideoPlayerTool":
     global _video_player_tool
     if _video_player_tool is None:
         _video_player_tool = VideoPlayerTool(
-            tenant_id="default",
-            config_manager=create_default_config_manager()
+            tenant_id="default", config_manager=create_default_config_manager()
         )
     return _video_player_tool
 

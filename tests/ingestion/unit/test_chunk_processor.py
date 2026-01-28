@@ -7,6 +7,7 @@ import json
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
 from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
 
 
@@ -41,7 +42,10 @@ class TestChunkProcessor:
     def test_processor_initialization(self, mock_logger):
         """Test processor initialization with custom values."""
         processor = ChunkProcessor(
-            logger=mock_logger, chunk_duration=60.0, chunk_overlap=5.0, cache_chunks=False
+            logger=mock_logger,
+            chunk_duration=60.0,
+            chunk_overlap=5.0,
+            cache_chunks=False,
         )
 
         assert processor.chunk_duration == 60.0
@@ -77,7 +81,9 @@ class TestChunkProcessor:
         assert processor.cache_chunks is True  # default
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
-    def test_get_video_duration_success(self, mock_subprocess, processor, sample_video_path):
+    def test_get_video_duration_success(
+        self, mock_subprocess, processor, sample_video_path
+    ):
         """Test successful video duration extraction."""
         mock_subprocess.return_value = Mock(stdout="120.5\n", returncode=0)
 
@@ -87,7 +93,9 @@ class TestChunkProcessor:
         mock_subprocess.assert_called_once()
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
-    def test_get_video_duration_error(self, mock_subprocess, processor, sample_video_path):
+    def test_get_video_duration_error(
+        self, mock_subprocess, processor, sample_video_path
+    ):
         """Test video duration extraction error handling."""
         mock_subprocess.side_effect = Exception("ffprobe error")
 
@@ -97,7 +105,9 @@ class TestChunkProcessor:
         processor.logger.error.assert_called()
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
-    def test_extract_chunk_success(self, mock_subprocess, processor, sample_video_path, tmp_path):
+    def test_extract_chunk_success(
+        self, mock_subprocess, processor, sample_video_path, tmp_path
+    ):
         """Test successful chunk extraction."""
         chunk_path = tmp_path / "chunk.mp4"
         mock_subprocess.return_value = Mock(returncode=0)
@@ -111,7 +121,9 @@ class TestChunkProcessor:
         mock_subprocess.assert_called_once()
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
-    def test_extract_chunk_failure(self, mock_subprocess, processor, sample_video_path, tmp_path):
+    def test_extract_chunk_failure(
+        self, mock_subprocess, processor, sample_video_path, tmp_path
+    ):
         """Test chunk extraction failure."""
         chunk_path = tmp_path / "chunk.mp4"
         mock_subprocess.side_effect = Exception("ffmpeg error")
@@ -123,7 +135,9 @@ class TestChunkProcessor:
 
     @patch.object(ChunkProcessor, "_extract_chunk")
     @patch.object(ChunkProcessor, "_get_video_duration")
-    def test_extract_chunks_success(self, mock_duration, mock_extract, processor, sample_video_path, tmp_path):
+    def test_extract_chunks_success(
+        self, mock_duration, mock_extract, processor, sample_video_path, tmp_path
+    ):
         """Test successful chunk extraction process."""
         mock_duration.return_value = 90.0
         mock_extract.return_value = True
@@ -134,11 +148,15 @@ class TestChunkProcessor:
         assert "metadata" in result
         assert "chunks_dir" in result
         assert "video_id" in result
-        assert len(result["chunks"]) == 4  # 90s with 30s chunks and 5s overlap: 0-30, 25-55, 50-80, 75-90
+        assert (
+            len(result["chunks"]) == 4
+        )  # 90s with 30s chunks and 5s overlap: 0-30, 25-55, 50-80, 75-90
         assert result["metadata"]["video_duration"] == 90.0
 
     @patch.object(ChunkProcessor, "_get_video_duration")
-    def test_extract_chunks_invalid_duration(self, mock_duration, processor, sample_video_path):
+    def test_extract_chunks_invalid_duration(
+        self, mock_duration, processor, sample_video_path
+    ):
         """Test chunk extraction with invalid video duration."""
         mock_duration.return_value = 0.0
 
@@ -168,7 +186,9 @@ class TestChunkProcessorIntegration:
     """Integration tests for ChunkProcessor."""
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
-    def test_full_extraction_workflow(self, mock_subprocess, mock_logger, sample_video_path, tmp_path):
+    def test_full_extraction_workflow(
+        self, mock_subprocess, mock_logger, sample_video_path, tmp_path
+    ):
         """Test complete chunk extraction workflow."""
         # Mock ffprobe for duration
         mock_subprocess.return_value = Mock(stdout="120.0\n", returncode=0)
@@ -177,7 +197,7 @@ class TestChunkProcessorIntegration:
             logger=mock_logger,
             chunk_duration=30.0,
             chunk_overlap=10.0,
-            cache_chunks=True
+            cache_chunks=True,
         )
 
         # First call is for duration, subsequent are for extraction
@@ -204,11 +224,15 @@ class TestChunkProcessorIntegration:
             saved_metadata = json.load(f)
         assert saved_metadata["video_duration"] == 120.0
 
-    def test_processor_with_output_manager(self, mock_logger, sample_video_path, tmp_path):
+    def test_processor_with_output_manager(
+        self, mock_logger, sample_video_path, tmp_path
+    ):
         """Test processor uses OutputManager when no output_dir specified."""
         processor = ChunkProcessor(logger=mock_logger)
 
-        with patch("cogniverse_core.common.utils.output_manager.get_output_manager") as mock_get_om:
+        with patch(
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
+        ) as mock_get_om:
             mock_om = MagicMock()
             mock_get_om.return_value = mock_om
             mock_om.get_processing_dir.return_value = tmp_path / "output"

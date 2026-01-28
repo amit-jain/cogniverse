@@ -117,6 +117,7 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip_gitignore = true
+known_first_party = ["cogniverse_core", "cogniverse_foundation", "cogniverse_runtime", "cogniverse_agents"]
 
 [tool.ruff]
 line-length = 88
@@ -146,6 +147,9 @@ ignore = [
     "W291",  # trailing whitespace (handled by editors)
     "W293",  # blank line with whitespace (handled by editors)
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cogniverse_core", "cogniverse_foundation", "cogniverse_runtime", "cogniverse_agents"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -9,9 +9,10 @@ import logging
 from typing import Any, Dict, List
 
 import dspy
+from pydantic import Field
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,9 @@ class QueryEnhancementAgent(
 
         logger.info(f"QueryEnhancementAgent initialized for tenant: {deps.tenant_id}")
 
-    async def _process_impl(self, input: QueryEnhancementInput) -> QueryEnhancementOutput:
+    async def _process_impl(
+        self, input: QueryEnhancementInput
+    ) -> QueryEnhancementOutput:
         """
         Process query enhancement request with typed input/output.
 

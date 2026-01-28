@@ -59,8 +59,8 @@ class PhoenixEvaluationProvider(EvaluationProvider):
                 config={
                     "project_name": project_name,
                     "http_endpoint": self.http_endpoint,
-                    "grpc_endpoint": grpc_endpoint
-                }
+                    "grpc_endpoint": grpc_endpoint,
+                },
             )
 
             self._initialized = True

@@ -7,6 +7,7 @@ Tests real audio transcription functionality using Whisper.
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 

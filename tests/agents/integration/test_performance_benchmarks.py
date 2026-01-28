@@ -15,6 +15,7 @@ import time
 
 import psutil
 import pytest
+
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
@@ -88,10 +89,15 @@ class TestPerformanceBenchmarks:
         """Benchmark routing agent response times"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
+        routing_agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        )
 
         test_queries = [
             "Find videos of robots",
@@ -255,10 +261,15 @@ class TestPerformanceBenchmarks:
         # Pre-initialize components to get baseline after model loading
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
+        routing_agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        )
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
@@ -331,10 +342,15 @@ class TestPerformanceBenchmarks:
         """Test system capacity under concurrent load"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
+        routing_agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        )
 
         # Generate concurrent queries
         num_concurrent = 5

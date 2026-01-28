@@ -2,11 +2,10 @@
 Unit tests for ModalityCacheManager
 """
 
-
 import pytest
+
 from cogniverse_agents.routing.modality_cache import LRUCache, ModalityCacheManager
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
-
 from tests.utils.async_polling import wait_for_cache_expiration
 
 
@@ -108,10 +107,10 @@ class TestModalityCacheManager:
     def test_initialization(self, cache_manager):
         """Test cache manager initialization"""
         # Should have single unified cache
-        assert hasattr(cache_manager, 'cache')
+        assert hasattr(cache_manager, "cache")
         assert isinstance(cache_manager.cache, LRUCache)
         # Should have cache_stats tracking
-        assert hasattr(cache_manager, 'cache_stats')
+        assert hasattr(cache_manager, "cache_stats")
 
     def test_cache_and_retrieve_result(self, cache_manager):
         """Test caching and retrieving result"""
@@ -147,7 +146,9 @@ class TestModalityCacheManager:
 
         # Each modality should retrieve its own cached result from the unified cache
         cached_video = cache_manager.get_cached_result(query, QueryModality.VIDEO, 3600)
-        cached_doc = cache_manager.get_cached_result(query, QueryModality.DOCUMENT, 3600)
+        cached_doc = cache_manager.get_cached_result(
+            query, QueryModality.DOCUMENT, 3600
+        )
 
         assert cached_video == video_result
         assert cached_doc == doc_result
@@ -269,7 +270,10 @@ class TestModalityCacheManager:
         # First item (q0) should be evicted
         assert small_cache.get_cached_result("q0", QueryModality.VIDEO, 3600) is None
         # Last item should still be cached
-        assert small_cache.get_cached_result(f"q{total_size}", QueryModality.VIDEO, 3600) is not None
+        assert (
+            small_cache.get_cached_result(f"q{total_size}", QueryModality.VIDEO, 3600)
+            is not None
+        )
 
         # Eviction count should be tracked (at least 1 eviction occurred)
         stats = small_cache.get_cache_stats(QueryModality.VIDEO)

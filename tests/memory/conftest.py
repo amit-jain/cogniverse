@@ -16,10 +16,10 @@ from pathlib import Path
 import cogniverse_vespa  # noqa: F401
 import pytest
 import requests
+
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
-
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
 # Shared backend configuration for all memory tests
@@ -98,13 +98,12 @@ def deploy_memory_schema_for_tests(
         tenant_id=tenant_id,
         config=backend_config_dict,
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     # Deploy via SchemaRegistry
     tenant_schema_name = backend.schema_registry.deploy_schema(
-        tenant_id=tenant_id,
-        base_schema_name=base_schema_name
+        tenant_id=tenant_id, base_schema_name=base_schema_name
     )
 
     print(f"✅ Deployed {tenant_schema_name}")
@@ -144,11 +143,15 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -
                 print(f"✅ Schema {schema_name} ready after {i + 1} seconds")
                 return True
             elif i % 10 == 0:  # Log non-success status codes every 10 attempts
-                print(f"   Attempt {i+1}: Status {response.status_code}: {response.text[:100]}")
+                print(
+                    f"   Attempt {i+1}: Status {response.status_code}: {response.text[:100]}"
+                )
         except Exception as e:
             # Log every 10th attempt to avoid spam
             if i % 10 == 0:
-                print(f"   Attempt {i+1}: Readiness check error: {type(e).__name__}: {e}")
+                print(
+                    f"   Attempt {i+1}: Readiness check error: {type(e).__name__}: {e}"
+                )
         wait_for_vespa_indexing(delay=1.0, description="schema readiness check")
 
     print(f"❌ Schema {schema_name} not ready after {timeout} seconds")
@@ -165,7 +168,9 @@ def shared_memory_vespa():
     """
     print("\n" + "=" * 70)
     print("🚀 Starting shared backend container for memory tests...")
-    print(f"   Port: {MEMORY_BACKEND_PORT} (data), {MEMORY_BACKEND_CONFIG_PORT} (config)")
+    print(
+        f"   Port: {MEMORY_BACKEND_PORT} (data), {MEMORY_BACKEND_CONFIG_PORT} (config)"
+    )
     print("=" * 70)
 
     # Stop and remove any existing container
@@ -212,13 +217,16 @@ def shared_memory_vespa():
     # Wait for backend config port to be ready
     if not wait_for_backend_ready(MEMORY_BACKEND_CONFIG_PORT, timeout=120):
         # Cleanup on failure
-        subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        subprocess.run(
+            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+        )
         subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
         pytest.fail("Backend config port failed to start within 120 seconds")
 
     # Give Vespa additional time to fully initialize all services
     # Config port being ready doesn't mean data port is ready for document operations
     import time
+
     print("⏳ Waiting additional 10 seconds for Vespa services to fully initialize...")
     time.sleep(10)
     print("✅ Vespa initialization complete")
@@ -231,6 +239,7 @@ def shared_memory_vespa():
 
     # Clear backend registry cache to force recreation with profiles
     from cogniverse_core.registries.backend_registry import BackendRegistry
+
     BackendRegistry._backend_instances.clear()
 
     try:
@@ -268,25 +277,30 @@ def shared_memory_vespa():
                 }
             },
             config_manager=config_manager,
-            schema_loader=schema_loader
+            schema_loader=schema_loader,
         )
 
         # Deploy schema via SchemaRegistry (correct pattern)
         tenant_schema_name = backend.schema_registry.deploy_schema(
-            tenant_id="test_tenant",
-            base_schema_name="agent_memories"
+            tenant_id="test_tenant", base_schema_name="agent_memories"
         )
-        print(f"✅ Schema deployment completed via SchemaRegistry: {tenant_schema_name}")
+        print(
+            f"✅ Schema deployment completed via SchemaRegistry: {tenant_schema_name}"
+        )
 
         # Clear backend cache AGAIN after schema deployment
         # This ensures the memory manager gets a fresh backend WITH profiles
         print("🔄 Clearing backend cache after schema deployment...")
         BackendRegistry._backend_instances.clear()
-        print("✅ Backend cache cleared - memory manager will create fresh instance with profiles")
+        print(
+            "✅ Backend cache cleared - memory manager will create fresh instance with profiles"
+        )
 
     except Exception as e:
         # Cleanup on failure
-        subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        subprocess.run(
+            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+        )
         subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
         pytest.fail(f"Failed to deploy schema: {e}")
 

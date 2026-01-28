@@ -34,11 +34,12 @@ class TestCompleteDSPySystem:
             with patch(
                 "cogniverse_vespa.tenant_aware_search_client.TenantAwareVespaSearchClient"
             ):
-                with patch(
-                    "cogniverse_agents.query.encoders.QueryEncoderFactory"
-                ):
+                with patch("cogniverse_agents.query.encoders.QueryEncoderFactory"):
                     # Initialize routing agent
-                    deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+                    deps = RoutingDeps(
+                        tenant_id="test_tenant",
+                        telemetry_config=telemetry_manager_without_phoenix.config,
+                    )
                     routing_agent = RoutingAgent(deps=deps)
 
                     # Test that it can process a query
@@ -151,7 +152,9 @@ class TestCompleteDSPySystem:
         assert exp_config.experiment_name == "test"
 
     @pytest.mark.asyncio
-    async def test_multi_agent_orchestration_simulation(self, telemetry_manager_without_phoenix):
+    async def test_multi_agent_orchestration_simulation(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test multi-agent orchestration with mocked agents"""
 
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
@@ -159,7 +162,10 @@ class TestCompleteDSPySystem:
         with patch(
             "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
-            deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=telemetry_manager_without_phoenix.config,
+            )
             routing_agent = RoutingAgent(deps=deps)
 
             # Test orchestration capability detection

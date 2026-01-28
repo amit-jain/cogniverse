@@ -47,14 +47,15 @@ def comprehensive_ensemble_setup():
     """
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
-
     from tests.system.vespa_test_manager import VespaTestManager
     from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
     http_port, config_port = generate_unique_ports("comprehensive_ensemble")
 
-    logger.info(f"🚀 Comprehensive Ensemble test using ports: {http_port} (http), {config_port} (config)")
+    logger.info(
+        f"🚀 Comprehensive Ensemble test using ports: {http_port} (http), {config_port} (config)"
+    )
 
     # Clear singletons
     registry = get_backend_registry()
@@ -131,7 +132,9 @@ class TestComprehensiveEnsembleSearch:
     """COMPREHENSIVE ensemble search tests with REAL profiles"""
 
     @pytest.mark.asyncio
-    async def test_comprehensive_different_embedding_dimensions(self, comprehensive_ensemble_setup):
+    async def test_comprehensive_different_embedding_dimensions(
+        self, comprehensive_ensemble_setup
+    ):
         """
         COMPREHENSIVE TEST: Validate ensemble works with profiles using different embedding dimensions.
 
@@ -198,12 +201,14 @@ class TestComprehensiveEnsembleSearch:
         logger.info("🔄 Loading REAL query encoders (ColPali model ~2GB)")
 
         try:
-            result = await agent._process_impl({
-                "query": "robot playing soccer",  # Real query matching test videos
-                "profiles": list(profiles.keys()),
-                "top_k": 5,
-                "rrf_k": 60
-            })
+            result = await agent._process_impl(
+                {
+                    "query": "robot playing soccer",  # Real query matching test videos
+                    "profiles": list(profiles.keys()),
+                    "top_k": 5,
+                    "rrf_k": 60,
+                }
+            )
 
             logger.info(f"Result from REAL Vespa with REAL encoders: {result}")
 
@@ -216,7 +221,9 @@ class TestComprehensiveEnsembleSearch:
             assert "total_results" in result
 
             # VALIDATE: MUST have results (real Vespa with ingested data)
-            assert result["total_results"] > 0, "Should return results from REAL Vespa with ingested videos"
+            assert (
+                result["total_results"] > 0
+            ), "Should return results from REAL Vespa with ingested videos"
             assert len(result["results"]) > 0, "Results list should not be empty"
 
             # VALIDATE: RRF fusion metadata on ALL results
@@ -225,16 +232,22 @@ class TestComprehensiveEnsembleSearch:
                 assert "profile_ranks" in doc, "Should have profile ranks"
                 assert "num_profiles" in doc, "Should have profile count"
                 assert doc["rrf_score"] > 0, f"Invalid RRF score: {doc['rrf_score']}"
-                logger.info(f"   Doc {doc['id']}: RRF={doc['rrf_score']:.4f}, profiles={doc['num_profiles']}")
+                logger.info(
+                    f"   Doc {doc['id']}: RRF={doc['rrf_score']:.4f}, profiles={doc['num_profiles']}"
+                )
 
-            logger.info(f"✅ Comprehensive test passed: {result['total_results']} results from REAL Vespa with REAL encoders")
+            logger.info(
+                f"✅ Comprehensive test passed: {result['total_results']} results from REAL Vespa with REAL encoders"
+            )
 
         except Exception as e:
             logger.error(f"❌ Comprehensive test failed: {e}")
             raise
 
     @pytest.mark.asyncio
-    async def test_comprehensive_encoder_loading_latency(self, comprehensive_ensemble_setup):
+    async def test_comprehensive_encoder_loading_latency(
+        self, comprehensive_ensemble_setup
+    ):
         """
         COMPREHENSIVE TEST: Validate latency with multiple real profiles.
 
@@ -297,26 +310,33 @@ class TestComprehensiveEnsembleSearch:
         try:
             start_time = time.time()
 
-            _result = await agent._process_impl({
-                "query": "robot playing soccer",
-                "profiles": list(profiles.keys()),
-                "top_k": 10,
-                "rrf_k": 60
-            })
+            _result = await agent._process_impl(
+                {
+                    "query": "robot playing soccer",
+                    "profiles": list(profiles.keys()),
+                    "top_k": 10,
+                    "rrf_k": 60,
+                }
+            )
             assert _result is not None  # Verify execution completed
 
             elapsed_ms = (time.time() - start_time) * 1000
 
-            logger.info(f"⏱️  Total latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles with REAL encoders")
+            logger.info(
+                f"⏱️  Total latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles with REAL encoders"
+            )
 
             # VALIDATE: Reasonable latency with REAL encoders and REAL Vespa
             # Target: <60000ms (60s) for real ColPali encoder (~2GB model) + real Vespa
             # First run includes model loading time
-            assert elapsed_ms < 60000, f"Latency {elapsed_ms:.2f}ms exceeds 60s threshold"
+            assert (
+                elapsed_ms < 60000
+            ), f"Latency {elapsed_ms:.2f}ms exceeds 60s threshold"
 
-            logger.info(f"✅ Latency validated: {elapsed_ms:.2f}ms with REAL encoders and REAL Vespa")
+            logger.info(
+                f"✅ Latency validated: {elapsed_ms:.2f}ms with REAL encoders and REAL Vespa"
+            )
 
         except Exception as e:
             logger.error(f"❌ Latency test failed: {e}")
             raise
-

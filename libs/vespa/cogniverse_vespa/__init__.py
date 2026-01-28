@@ -13,5 +13,5 @@ from .backend import VespaBackend
 
 # Export main classes
 __all__ = [
-    'VespaBackend',
+    "VespaBackend",
 ]

@@ -9,9 +9,10 @@ import logging
 from typing import Any, Dict, List
 
 import dspy
+from pydantic import BaseModel, Field
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,9 @@ class EntityExtractionOutput(AgentOutput):
     """Type-safe output from entity extraction"""
 
     query: str = Field(..., description="Original query")
-    entities: List[Entity] = Field(default_factory=list, description="Extracted entities")
+    entities: List[Entity] = Field(
+        default_factory=list, description="Extracted entities"
+    )
     entity_count: int = Field(0, description="Number of entities found")
     has_entities: bool = Field(False, description="Whether entities were found")
     dominant_types: List[str] = Field(
@@ -142,7 +145,9 @@ class EntityExtractionAgent(
 
         logger.info(f"EntityExtractionAgent initialized for tenant: {deps.tenant_id}")
 
-    async def _process_impl(self, input: EntityExtractionInput) -> EntityExtractionOutput:
+    async def _process_impl(
+        self, input: EntityExtractionInput
+    ) -> EntityExtractionOutput:
         """
         Process entity extraction request with typed input/output.
 
@@ -281,7 +286,9 @@ class EntityExtractionAgent(
                 },
                 "examples": [
                     {
-                        "input": {"query": "Show me videos about Barack Obama in Chicago"},
+                        "input": {
+                            "query": "Show me videos about Barack Obama in Chicago"
+                        },
                         "output": {
                             "entities": [
                                 {"text": "Barack Obama", "type": "PERSON"},

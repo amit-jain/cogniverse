@@ -14,9 +14,7 @@ class GenerateModalityQuery(dspy.Signature):
     modality: str = dspy.InputField(
         desc="Content modality type (VIDEO, DOCUMENT, IMAGE, AUDIO)"
     )
-    topics: str = dspy.InputField(
-        desc="Comma-separated topics extracted from content"
-    )
+    topics: str = dspy.InputField(desc="Comma-separated topics extracted from content")
     context: str = dspy.InputField(
         desc="Additional context about content type (tutorial, guide, etc.)"
     )
@@ -29,9 +27,7 @@ class GenerateModalityQuery(dspy.Signature):
 class GenerateEntityQuery(dspy.Signature):
     """Generate search query that MUST include at least one of the provided entities"""
 
-    topics: str = dspy.InputField(
-        desc="Comma-separated topics from content"
-    )
+    topics: str = dspy.InputField(desc="Comma-separated topics from content")
     entities: str = dspy.InputField(
         desc="Comma-separated named entities (technologies, tools, concepts) - YOUR QUERY MUST MENTION AT LEAST ONE OF THESE"
     )
@@ -53,9 +49,7 @@ class InferAgentFromModality(dspy.Signature):
     modality: str = dspy.InputField(
         desc="Content modality (VIDEO, DOCUMENT, IMAGE, AUDIO)"
     )
-    query: str = dspy.InputField(
-        desc="User's search query"
-    )
+    query: str = dspy.InputField(desc="User's search query")
     available_agents: str = dspy.InputField(
         desc="Comma-separated list of available agent names"
     )

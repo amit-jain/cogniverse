@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
@@ -26,7 +27,9 @@ class TestCrossModalOptimizer:
     @pytest.fixture
     def mock_fusion_model(self):
         """Create mocked FusionBenefitModel"""
-        with patch("cogniverse_agents.routing.cross_modal_optimizer.FusionBenefitModel") as mock:
+        with patch(
+            "cogniverse_agents.routing.cross_modal_optimizer.FusionBenefitModel"
+        ) as mock:
             model = MagicMock()
             model.is_trained = False
             model.predict_benefit = MagicMock(return_value=0.6)
@@ -36,7 +39,9 @@ class TestCrossModalOptimizer:
     @pytest.fixture
     def mock_span_collector(self):
         """Create mocked ModalitySpanCollector"""
-        with patch("cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector") as mock:
+        with patch(
+            "cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"
+        ) as mock:
             collector = MagicMock()
             mock.return_value = collector
             yield collector

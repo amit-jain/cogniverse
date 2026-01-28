@@ -18,6 +18,7 @@ import time
 
 import pytest
 import requests
+
 from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
 from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
@@ -64,7 +65,9 @@ def phoenix_container():
                     capture_output=True,
                     timeout=10,
                 )
-            logger.info(f"Cleaned up {len(old_containers)} old Phoenix e2e test containers")
+            logger.info(
+                f"Cleaned up {len(old_containers)} old Phoenix e2e test containers"
+            )
     except Exception as e:
         logger.warning(f"Error cleaning up old containers: {e}")
 
@@ -201,7 +204,10 @@ async def routing_agent(phoenix_container):
     # Use ports from phoenix_container fixture (36006 HTTP, 36317 gRPC)
     telemetry_config = TelemetryConfig(
         otlp_endpoint="http://localhost:36317",
-        provider_config={"http_endpoint": "http://localhost:36006", "grpc_endpoint": "http://localhost:36317"},
+        provider_config={
+            "http_endpoint": "http://localhost:36006",
+            "grpc_endpoint": "http://localhost:36317",
+        },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
     agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
@@ -226,9 +232,11 @@ class TestProductionRoutingRealInfrastructure:
         result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         # result is a RoutingDecision object
-        logger.info(f"✅ Routing result: {result.recommended_agent if result else 'unknown'}")
+        logger.info(
+            f"✅ Routing result: {result.recommended_agent if result else 'unknown'}"
+        )
         assert result is not None
-        assert hasattr(result, 'recommended_agent')
+        assert hasattr(result, "recommended_agent")
 
         # Force flush spans
         success = routing_agent.telemetry_manager.force_flush(timeout_millis=10000)
@@ -345,8 +353,12 @@ class TestProductionRoutingRealInfrastructure:
         assert cached is None, "Cache should be empty initially"
 
         # First execution
-        result1 = await routing_agent.route_query(query, tenant_id=context.get("tenant_id"))
-        logger.info(f"✅ First execution: {result1.recommended_agent if result1 else 'unknown'}")
+        result1 = await routing_agent.route_query(
+            query, tenant_id=context.get("tenant_id")
+        )
+        logger.info(
+            f"✅ First execution: {result1.recommended_agent if result1 else 'unknown'}"
+        )
 
         # Cache the result
         cache_manager.cache_result(query, modality, result1)
@@ -372,7 +384,9 @@ class TestProductionRoutingRealInfrastructure:
         ):
             """Execute routing for specific modality"""
             # Use real routing agent to determine results
-            result = await routing_agent.route_query(query, tenant_id=context.get("tenant_id"))
+            result = await routing_agent.route_query(
+                query, tenant_id=context.get("tenant_id")
+            )
 
             # Simulate modality-specific results
             return {
@@ -473,7 +487,9 @@ class TestProductionRoutingRealInfrastructure:
                 # Execute real routing
                 start = time.time()
                 try:
-                    result = await routing_agent.route_query(query, tenant_id="test-concurrent")
+                    result = await routing_agent.route_query(
+                        query, tenant_id="test-concurrent"
+                    )
                     latency_ms = (time.time() - start) * 1000
 
                     # Track metrics
@@ -568,12 +584,16 @@ class TestProductionRoutingRealInfrastructure:
 
         spans_df = await trace_store.get_spans(project=project_name)
 
-        assert not spans_df.empty, f"No spans found in telemetry backend for project {project_name}"
+        assert (
+            not spans_df.empty
+        ), f"No spans found in telemetry backend for project {project_name}"
 
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
         logger.info(f"📊 Routing spans with metrics: {len(routing_spans)}")
 
-        assert len(routing_spans) > 0, f"No routing spans found in project {project_name}"
+        assert (
+            len(routing_spans) > 0
+        ), f"No routing spans found in project {project_name}"
 
         # Check span contains routing information
         # Note: Phoenix DataFrames may have different column structures
@@ -581,8 +601,9 @@ class TestProductionRoutingRealInfrastructure:
         logger.info(f"📊 Available span columns: {list(latest_span.index)}")
 
         # Verify span was created successfully
-        assert latest_span["name"] == "cogniverse.routing", \
-            f"Expected span name 'cogniverse.routing', got {latest_span['name']}"
+        assert (
+            latest_span["name"] == "cogniverse.routing"
+        ), f"Expected span name 'cogniverse.routing', got {latest_span['name']}"
 
     async def test_cache_ttl_with_real_queries(self, routing_agent, cache_manager):
         """Test cache TTL expiration with real routing queries"""
@@ -591,7 +612,9 @@ class TestProductionRoutingRealInfrastructure:
 
         # Execute query
         result = await routing_agent.route_query(query, tenant_id="test-cache-ttl")
-        logger.info(f"✅ First execution: {result.recommended_agent if result else 'unknown'}")
+        logger.info(
+            f"✅ First execution: {result.recommended_agent if result else 'unknown'}"
+        )
 
         # Cache with short TTL (1 second)
         cache_manager.cache_result(query, modality, result)
@@ -621,7 +644,9 @@ class TestProductionRoutingRealInfrastructure:
             query: str, modality: QueryModality, context: dict
         ):
             execution_order.append(modality)
-            result = await routing_agent.route_query(query, tenant_id=context.get("tenant_id", "test-cost"))
+            result = await routing_agent.route_query(
+                query, tenant_id=context.get("tenant_id", "test-cost")
+            )
             # Return low confidence to force all executions
             return {
                 "results": [],

@@ -427,9 +427,13 @@ class ConfigManager:
             Updated BackendProfileConfig
         """
         with self._backend_lock:
-            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+            backend_config = self.get_backend_config(
+                tenant_id=tenant_id, service=service
+            )
             backend_config.add_profile(profile)
-            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+            self.set_backend_config(
+                backend_config, tenant_id=tenant_id, service=service
+            )
 
             logger.info(
                 f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
@@ -477,13 +481,19 @@ class ConfigManager:
 
         with self._backend_lock:
             # Get base profile (may be from default tenant or another tenant)
-            base_config = self.get_backend_config(tenant_id=base_tenant_id, service=service)
+            base_config = self.get_backend_config(
+                tenant_id=base_tenant_id, service=service
+            )
             merged_profile = base_config.merge_profile(profile_name, overrides)
 
             # Save to target tenant
-            target_config = self.get_backend_config(tenant_id=target_tenant_id, service=service)
+            target_config = self.get_backend_config(
+                tenant_id=target_tenant_id, service=service
+            )
             target_config.add_profile(merged_profile)
-            self.set_backend_config(target_config, tenant_id=target_tenant_id, service=service)
+            self.set_backend_config(
+                target_config, tenant_id=target_tenant_id, service=service
+            )
 
             logger.info(
                 f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
@@ -525,7 +535,9 @@ class ConfigManager:
             manager.delete_backend_profile("custom_profile", tenant_id="acme")
         """
         with self._backend_lock:
-            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+            backend_config = self.get_backend_config(
+                tenant_id=tenant_id, service=service
+            )
 
             # Check if profile exists
             if profile_name not in backend_config.profiles:
@@ -538,7 +550,9 @@ class ConfigManager:
             del backend_config.profiles[profile_name]
 
             # Save updated config
-            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+            self.set_backend_config(
+                backend_config, tenant_id=tenant_id, service=service
+            )
 
             logger.info(
                 f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"

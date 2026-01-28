@@ -6,6 +6,7 @@ text-to-visual conversion, temporal extraction, and modality detection.
 """
 
 import pytest
+
 from cogniverse_agents.routing.query_expansion import QueryExpander
 
 

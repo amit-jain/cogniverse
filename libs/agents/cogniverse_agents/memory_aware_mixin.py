@@ -99,12 +99,16 @@ class MemoryAwareMixin:
                 )
 
             self._memory_initialized = True
-            logger.info(f"Memory initialized for {self._memory_agent_name} (tenant: {self._memory_tenant_id})")
+            logger.info(
+                f"Memory initialized for {self._memory_agent_name} (tenant: {self._memory_tenant_id})"
+            )
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to initialize memory for {self._memory_agent_name}: {e}")
+            logger.error(
+                f"Failed to initialize memory for {self._memory_agent_name}: {e}"
+            )
             self._memory_initialized = False
             return False
 
@@ -152,7 +156,9 @@ class MemoryAwareMixin:
 
             context = "\n\n".join(context_parts)
 
-            logger.info(f"Retrieved {len(results)} memories for {self._memory_agent_name}")
+            logger.info(
+                f"Retrieved {len(results)} memories for {self._memory_agent_name}"
+            )
 
             return context
 
@@ -188,7 +194,9 @@ class MemoryAwareMixin:
             )
 
             if memory_id:
-                logger.debug(f"Updated memory for {self._memory_agent_name}: {memory_id}")
+                logger.debug(
+                    f"Updated memory for {self._memory_agent_name}: {memory_id}"
+                )
                 return True
 
             return False
@@ -299,7 +307,9 @@ class MemoryAwareMixin:
             return False
 
         # Format success memory - direct factual statement for Mem0's LLM
-        success_content = f"SUCCESS - Successfully answered: {query}. The answer was: {result}"
+        success_content = (
+            f"SUCCESS - Successfully answered: {query}. The answer was: {result}"
+        )
 
         return self.update_memory(success_content, metadata)
 
@@ -321,7 +331,9 @@ class MemoryAwareMixin:
             return False
 
         # Format failure memory - direct factual statement for Mem0's LLM
-        failure_content = f"FAILURE - Failed attempt: {query}. Error encountered: {error}"
+        failure_content = (
+            f"FAILURE - Failed attempt: {query}. Error encountered: {error}"
+        )
 
         return self.update_memory(failure_content, metadata)
 

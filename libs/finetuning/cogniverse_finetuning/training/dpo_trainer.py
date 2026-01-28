@@ -136,7 +136,9 @@ class DPOFinetuner:
         else:
             train_dataset = Dataset.from_list(dataset)
             val_dataset = None
-            logger.info(f"Training on {len(train_dataset)} preference pairs (no validation split)")
+            logger.info(
+                f"Training on {len(train_dataset)} preference pairs (no validation split)"
+            )
 
         # 2. Load model and tokenizer
         fp16 = config.get("fp16", True)
@@ -168,7 +170,9 @@ class DPOFinetuner:
                 lora_config = LoraConfig(
                     r=config.get("lora_r", 8),
                     lora_alpha=config.get("lora_alpha", 16),
-                    target_modules=config.get("target_modules", ["q_proj", "v_proj", "k_proj", "o_proj"]),
+                    target_modules=config.get(
+                        "target_modules", ["q_proj", "v_proj", "k_proj", "o_proj"]
+                    ),
                     lora_dropout=config.get("lora_dropout", 0.1),
                     bias="none",
                     task_type="CAUSAL_LM",
@@ -251,7 +255,11 @@ class DPOFinetuner:
             "train_loss": train_result.metrics.get("train_loss"),
             "train_samples": train_result.metrics.get("train_samples"),
             "total_pairs": len(dataset),
-            "train_pairs": len(train_dataset) if isinstance(train_dataset, Dataset) else len(dataset),
+            "train_pairs": (
+                len(train_dataset)
+                if isinstance(train_dataset, Dataset)
+                else len(dataset)
+            ),
             "epochs": config.get("epochs", 3),
             "batch_size": config.get("batch_size", 4),
             "learning_rate": config.get("learning_rate", 5e-5),

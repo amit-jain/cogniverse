@@ -689,8 +689,7 @@ class DSPyAgentOptimizerPipeline:
             # Try to get few-shot examples if available
             if hasattr(module, "demos") and module.demos:
                 prompts["compiled_prompts"]["few_shot_examples"] = [
-                    str(demo)
-                    for demo in module.demos[:3]  # First 3 examples
+                    str(demo) for demo in module.demos[:3]  # First 3 examples
                 ]
 
         except Exception as e:

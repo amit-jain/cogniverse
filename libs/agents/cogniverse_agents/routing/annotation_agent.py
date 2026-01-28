@@ -19,6 +19,7 @@ from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
 )
+
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -111,7 +112,9 @@ class AnnotationAgent:
         )
 
         # Initialize evaluator for outcome classification (using provider, not Phoenix)
-        self.evaluator = RoutingEvaluator(provider=self.provider, project_name=self.project_name)
+        self.evaluator = RoutingEvaluator(
+            provider=self.provider, project_name=self.project_name
+        )
 
         logger.info(
             f"🎯 Initialized AnnotationAgent for tenant '{tenant_id}' "
@@ -145,7 +148,10 @@ class AnnotationAgent:
 
         try:
             spans_df = await self.provider.traces.get_spans(
-                project=self.project_name, start_time=start_time, end_time=end_time, limit=10000
+                project=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
+                limit=10000,
             )
         except Exception as e:
             logger.error(f"❌ Error querying spans: {e}")

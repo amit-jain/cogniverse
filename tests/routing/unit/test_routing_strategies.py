@@ -194,7 +194,9 @@ class TestLLMRoutingStrategy:
 
             # Create a coroutine for json response (non-JSON structured response that triggers error)
             async def json_response():
-                return {"response": "The query needs both video content and text content for analysis"}
+                return {
+                    "response": "The query needs both video content and text content for analysis"
+                }
 
             mock_response.json = json_response
 

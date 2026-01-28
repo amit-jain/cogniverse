@@ -5,10 +5,9 @@ These tests verify the complete memory system works with real Vespa instance.
 Uses shared session-scoped Vespa container from conftest.py.
 """
 
-
 import pytest
-from cogniverse_core.memory.manager import Mem0MemoryManager
 
+from cogniverse_core.memory.manager import Mem0MemoryManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 
@@ -41,7 +40,7 @@ def memory_manager(shared_memory_vespa):
         ollama_base_url="http://localhost:11434/v1",
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     yield manager
@@ -154,21 +153,21 @@ class TestMem0VespaIntegration:
         has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
 
         # At least one should have content (if both empty, Mem0/Ollama issue)
-        assert has_tenant1_content or has_tenant2_content, (
-            f"Neither tenant has memories. T1: {tenant1_text[:100]}, T2: {tenant2_text[:100]}"
-        )
+        assert (
+            has_tenant1_content or has_tenant2_content
+        ), f"Neither tenant has memories. T1: {tenant1_text[:100]}, T2: {tenant2_text[:100]}"
 
         # Verify isolation: tenant1 shouldn't have tenant2's content
         if has_tenant1_content:
-            assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (
-                "Tenant 1 has Tenant 2's content - isolation broken"
-            )
+            assert (
+                "therapy" not in tenant1_text and "hospital" not in tenant1_text
+            ), "Tenant 1 has Tenant 2's content - isolation broken"
 
         # Verify isolation: tenant2 shouldn't have tenant1's content
         if has_tenant2_content:
-            assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, (
-                "Tenant 2 has Tenant 1's content - isolation broken"
-            )
+            assert (
+                "rescue" not in tenant2_text and "shelter" not in tenant2_text
+            ), "Tenant 2 has Tenant 1's content - isolation broken"
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_1", "test_agent")
@@ -328,9 +327,9 @@ class TestMem0VespaIntegration:
 
         assert stats["enabled"] is True
         # Mem0 may deduplicate, so check for at least 1
-        assert stats["total_memories"] >= 1, (
-            f"Expected at least 1 memory, got {stats['total_memories']}"
-        )
+        assert (
+            stats["total_memories"] >= 1
+        ), f"Expected at least 1 memory, got {stats['total_memories']}"
         assert stats["tenant_id"] == "test_tenant"
         assert stats["agent_name"] == "stats_agent"
 
@@ -382,9 +381,9 @@ class TestMem0VespaIntegration:
             agent_name="clear_test_agent",
         )
         # After clear, should have 0 memories
-        assert len(memories_after) == 0, (
-            f"Expected 0 memories after clear, got {len(memories_after)}"
-        )
+        assert (
+            len(memories_after) == 0
+        ), f"Expected 0 memories after clear, got {len(memories_after)}"
 
 
 @pytest.mark.integration

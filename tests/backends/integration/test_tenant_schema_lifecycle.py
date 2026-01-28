@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import pytest
+
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
@@ -24,8 +25,9 @@ def temp_config_manager(vespa_instance, tmp_path_factory):
     The config_metadata schema is automatically deployed as part of
     VespaSchemaManager.upload_metadata_schemas() during backend initialization.
     """
-    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    from cogniverse_foundation.config.manager import ConfigManager
 
     http_port = vespa_instance["http_port"]
     logger.info(f"Creating VespaConfigStore with http_port={http_port}")
@@ -53,6 +55,7 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
     Returns a function that creates backend instances for different tenants.
     Module-scoped to reuse backend instances across tests.
     """
+
     def _get_backend(tenant_id: str):
         registry = BackendRegistry.get_instance()
         config = {
@@ -67,8 +70,9 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
             tenant_id=tenant_id,
             config=config,
             config_manager=temp_config_manager,
-            schema_loader=schema_loader
+            schema_loader=schema_loader,
         )
+
     return _get_backend
 
 
@@ -94,8 +98,12 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("startup")
 
         # Deploy two schemas
-        backend.schema_registry.deploy_schema("startup", "video_colpali_smol500_mv_frame")
-        backend.schema_registry.deploy_schema("startup", "video_videoprism_base_mv_chunk_30s")
+        backend.schema_registry.deploy_schema(
+            "startup", "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.deploy_schema(
+            "startup", "video_videoprism_base_mv_chunk_30s"
+        )
 
         # Verify both registered
         schemas = backend.schema_registry.get_tenant_schemas("startup")
@@ -111,8 +119,12 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("multi_tenant_test")
 
         # Deploy for both tenants via same SchemaRegistry
-        backend.schema_registry.deploy_schema("tenant_a", "video_colpali_smol500_mv_frame")
-        backend.schema_registry.deploy_schema("tenant_b", "video_colpali_smol500_mv_frame")
+        backend.schema_registry.deploy_schema(
+            "tenant_a", "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.deploy_schema(
+            "tenant_b", "video_colpali_smol500_mv_frame"
+        )
 
         # Verify isolation - each tenant has their own schema
         schemas_a = backend.schema_registry.get_tenant_schemas("tenant_a")
@@ -120,16 +132,24 @@ class TestSchemaRegistryDeployment:
 
         assert len(schemas_a) == 1
         assert len(schemas_b) == 1
-        assert schemas_a[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_a"
-        assert schemas_b[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_b"
+        assert (
+            schemas_a[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_a"
+        )
+        assert (
+            schemas_b[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_b"
+        )
 
     def test_idempotent_deployment(self, get_backend):
         """Test that deploying same schema twice is idempotent"""
         backend = get_backend("idempotent_test")
 
         # Deploy twice
-        result1 = backend.schema_registry.deploy_schema("idempotent_test", "video_colpali_smol500_mv_frame")
-        result2 = backend.schema_registry.deploy_schema("idempotent_test", "video_colpali_smol500_mv_frame")
+        result1 = backend.schema_registry.deploy_schema(
+            "idempotent_test", "video_colpali_smol500_mv_frame"
+        )
+        result2 = backend.schema_registry.deploy_schema(
+            "idempotent_test", "video_colpali_smol500_mv_frame"
+        )
 
         # Both should succeed and return same name
         assert result1 == result2
@@ -144,8 +164,12 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("valid_tenant")
 
         # Invalid characters
-        with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
-            backend.schema_registry.deploy_schema("tenant-with-dash", "video_colpali_smol500_mv_frame")
+        with pytest.raises(
+            ValueError, match="only alphanumeric, underscore, and colon allowed"
+        ):
+            backend.schema_registry.deploy_schema(
+                "tenant-with-dash", "video_colpali_smol500_mv_frame"
+            )
 
         # Empty tenant_id
         with pytest.raises(ValueError, match="tenant_id is required"):
@@ -164,4 +188,6 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("test_tenant_nonexistent")
 
         with pytest.raises(Exception, match="Failed to load base schema"):
-            backend.schema_registry.deploy_schema("test_tenant_nonexistent", "nonexistent_schema_xyz")
+            backend.schema_registry.deploy_schema(
+                "test_tenant_nonexistent", "nonexistent_schema_xyz"
+            )

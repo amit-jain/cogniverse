@@ -5,16 +5,17 @@ Tests approval interfaces, agents, confidence extraction, and feedback handling.
 """
 
 import pytest
+from cogniverse_synthetic.approval import (
+    SyntheticDataConfidenceExtractor,
+    SyntheticDataFeedbackHandler,
+)
+
 from cogniverse_agents.approval import (
     ApprovalBatch,
     ApprovalStatus,
     HumanApprovalAgent,
     ReviewDecision,
     ReviewItem,
-)
-from cogniverse_synthetic.approval import (
-    SyntheticDataConfidenceExtractor,
-    SyntheticDataFeedbackHandler,
 )
 
 
@@ -41,7 +42,7 @@ class TestApprovalInterfaces:
             approved=True,
             feedback="Looks good",
             corrections={},
-            reviewer="test_user"
+            reviewer="test_user",
         )
 
         assert decision.item_id == "test_001"
@@ -56,19 +57,19 @@ class TestApprovalInterfaces:
                 item_id="test_001",
                 data={"query": "query1"},
                 confidence=0.95,
-                status=ApprovalStatus.AUTO_APPROVED
+                status=ApprovalStatus.AUTO_APPROVED,
             ),
             ReviewItem(
                 item_id="test_002",
                 data={"query": "query2"},
                 confidence=0.7,
-                status=ApprovalStatus.PENDING_REVIEW
+                status=ApprovalStatus.PENDING_REVIEW,
             ),
             ReviewItem(
                 item_id="test_003",
                 data={"query": "query3"},
                 confidence=0.6,
-                status=ApprovalStatus.PENDING_REVIEW
+                status=ApprovalStatus.PENDING_REVIEW,
             ),
         ]
 
@@ -78,7 +79,7 @@ class TestApprovalInterfaces:
         assert len(batch.pending_review) == 2
         assert len(batch.approved) == 0
         assert len(batch.rejected) == 0
-        assert batch.approval_rate == pytest.approx(1/3)  # 1 auto-approved out of 3
+        assert batch.approval_rate == pytest.approx(1 / 3)  # 1 auto-approved out of 3
 
 
 class TestConfidenceExtractor:
@@ -92,10 +93,7 @@ class TestConfidenceExtractor:
             "query": "find TensorFlow tutorial",
             "entities": ["TensorFlow"],
             "reasoning": "Including TensorFlow as primary entity",
-            "_generation_metadata": {
-                "retry_count": 0,
-                "max_retries": 3
-            }
+            "_generation_metadata": {"retry_count": 0, "max_retries": 3},
         }
 
         confidence = extractor.extract(data)
@@ -112,10 +110,7 @@ class TestConfidenceExtractor:
             "query": "find tutorial",
             "entities": ["TensorFlow"],
             "reasoning": "",
-            "_generation_metadata": {
-                "retry_count": 3,
-                "max_retries": 3
-            }
+            "_generation_metadata": {"retry_count": 3, "max_retries": 3},
         }
 
         confidence = extractor.extract(data)
@@ -131,10 +126,7 @@ class TestConfidenceExtractor:
             "query": "find tutorial",  # Missing TensorFlow
             "entities": ["TensorFlow"],
             "reasoning": "Including TensorFlow",
-            "_generation_metadata": {
-                "retry_count": 0,
-                "max_retries": 3
-            }
+            "_generation_metadata": {"retry_count": 0, "max_retries": 3},
         }
 
         confidence = extractor.extract(data)
@@ -150,10 +142,7 @@ class TestConfidenceExtractor:
             "query": "find TensorFlow tutorial",
             "entities": ["TensorFlow"],
             "reasoning": "Including TensorFlow as primary entity",
-            "_generation_metadata": {
-                "retry_count": 1,
-                "max_retries": 3
-            }
+            "_generation_metadata": {"retry_count": 1, "max_retries": 3},
         }
 
         breakdown = extractor.get_confidence_breakdown(data)
@@ -172,9 +161,7 @@ class TestHumanApprovalAgent:
         """Test initializing approval agent"""
         extractor = SyntheticDataConfidenceExtractor()
         agent = HumanApprovalAgent(
-            confidence_extractor=extractor,
-            confidence_threshold=0.85,
-            storage=None
+            confidence_extractor=extractor, confidence_threshold=0.85, storage=None
         )
 
         assert agent.confidence_extractor is not None
@@ -184,9 +171,7 @@ class TestHumanApprovalAgent:
         """Test get_approval_stats"""
         extractor = SyntheticDataConfidenceExtractor()
         agent = HumanApprovalAgent(
-            confidence_extractor=extractor,
-            confidence_threshold=0.85,
-            storage=None
+            confidence_extractor=extractor, confidence_threshold=0.85, storage=None
         )
 
         items = [
@@ -194,13 +179,13 @@ class TestHumanApprovalAgent:
                 item_id="test_001",
                 data={"query": "query1"},
                 confidence=0.95,
-                status=ApprovalStatus.AUTO_APPROVED
+                status=ApprovalStatus.AUTO_APPROVED,
             ),
             ReviewItem(
                 item_id="test_002",
                 data={"query": "query2"},
                 confidence=0.7,
-                status=ApprovalStatus.PENDING_REVIEW
+                status=ApprovalStatus.PENDING_REVIEW,
             ),
         ]
 
@@ -237,21 +222,16 @@ class TestFeedbackHandler:
                 "entities": ["TensorFlow"],
                 "entity_types": ["TECHNOLOGY"],
                 "topics": "machine learning",
-                "_generation_metadata": {
-                    "retry_count": 3,
-                    "max_retries": 3
-                }
+                "_generation_metadata": {"retry_count": 3, "max_retries": 3},
             },
-            confidence=0.5
+            confidence=0.5,
         )
 
         decision = ReviewDecision(
             item_id="test_001",
             approved=False,
             feedback="Query doesn't include TensorFlow",
-            corrections={
-                "entities": ["TensorFlow", "Tutorial"]
-            }
+            corrections={"entities": ["TensorFlow", "Tutorial"]},
         )
 
         regenerated = await handler.process_rejection(item, decision)
@@ -271,9 +251,7 @@ class TestApprovalConfig:
         from cogniverse_foundation.config.unified_config import ApprovalConfig
 
         config = ApprovalConfig(
-            enabled=True,
-            confidence_threshold=0.9,
-            storage_backend="phoenix"
+            enabled=True, confidence_threshold=0.9, storage_backend="phoenix"
         )
 
         assert config.enabled is True
@@ -288,7 +266,7 @@ class TestApprovalConfig:
             "enabled": True,
             "confidence_threshold": 0.88,
             "storage_backend": "database",
-            "phoenix_project_name": "my_project"
+            "phoenix_project_name": "my_project",
         }
 
         config = ApprovalConfig.from_dict(data)
@@ -303,9 +281,7 @@ class TestApprovalConfig:
         from cogniverse_foundation.config.unified_config import ApprovalConfig
 
         config = ApprovalConfig(
-            enabled=True,
-            confidence_threshold=0.92,
-            reviewer_email="test@example.com"
+            enabled=True, confidence_threshold=0.92, reviewer_email="test@example.com"
         )
 
         config_dict = config.to_dict()

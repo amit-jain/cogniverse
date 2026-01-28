@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
+
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationAgent,
@@ -38,7 +39,6 @@ from cogniverse_foundation.telemetry.config import (
     TelemetryConfig,
 )
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-
 from tests.utils.async_polling import (
     simulate_processing_delay,
     wait_for_phoenix_processing,
@@ -65,7 +65,14 @@ def phoenix_container():
     # Clean up old containers
     try:
         result = subprocess.run(
-            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_routing_annotation_test"],
+            [
+                "docker",
+                "ps",
+                "-a",
+                "-q",
+                "--filter",
+                "name=phoenix_routing_annotation_test",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -218,7 +225,9 @@ def telemetry_manager(phoenix_container):
             "http_endpoint": "http://localhost:26006",  # HTTP endpoint for queries
             "grpc_endpoint": "http://localhost:24317",  # gRPC endpoint (same as OTLP)
         },
-        batch_config=BatchExportConfig(use_sync_export=True),  # Synchronous export for tests
+        batch_config=BatchExportConfig(
+            use_sync_export=True
+        ),  # Synchronous export for tests
     )
 
     # Set as the global singleton so telemetry_manager.span() uses this config
@@ -424,7 +433,9 @@ class TestAnnotationSystemIntegration:
 
             # Query the project for evaluations
             # Note: Phoenix may take time to index evaluations
-            wait_for_phoenix_processing(delay=3, description="Phoenix evaluation indexing")
+            wait_for_phoenix_processing(
+                delay=3, description="Phoenix evaluation indexing"
+            )
 
             # Try to query annotated spans
             annotated_spans = annotation_storage.query_annotated_spans(
@@ -583,7 +594,9 @@ class TestAnnotationSystemIntegration:
             max_annotations_per_run=10,
         )
 
-        requests = await annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
+        requests = await annotation_agent.identify_spans_needing_annotation(
+            lookback_hours=1
+        )
 
         # Should identify at least the low confidence spans
         assert len(requests) >= 2, f"Expected at least 2 requests, got {len(requests)}"
@@ -634,7 +647,9 @@ class TestAnnotationSystemIntegration:
         annotation_agent = AnnotationAgent(
             tenant_id=test_tenant_id, confidence_threshold=0.6
         )
-        requests = await annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
+        requests = await annotation_agent.identify_spans_needing_annotation(
+            lookback_hours=1
+        )
 
         assert len(requests) > 0, "No annotation requests found"
 
@@ -727,12 +742,14 @@ class TestAnnotationSystemIntegration:
 
         eval_data = []
         for i, span_id in enumerate(span_ids):
-            eval_data.append({
-                "span_id": span_id,
-                "score": 0.7 + (i * 0.1),
-                "label": "good" if i < 2 else "excellent",
-                "explanation": f"Test evaluation {i}"
-            })
+            eval_data.append(
+                {
+                    "span_id": span_id,
+                    "score": 0.7 + (i * 0.1),
+                    "label": "good" if i < 2 else "excellent",
+                    "explanation": f"Test evaluation {i}",
+                }
+            )
 
         evaluations_df = pd.DataFrame(eval_data)
         logger.info(f"Created evaluations for {len(evaluations_df)} spans")
@@ -746,7 +763,7 @@ class TestAnnotationSystemIntegration:
             await telemetry_provider.annotations.log_evaluations(
                 eval_name="test_bulk_evaluation",
                 evaluations_df=evaluations_df,
-                project=project
+                project=project,
             )
             logger.info("Successfully logged bulk evaluations")
         except Exception as e:
@@ -765,7 +782,7 @@ class TestAnnotationSystemIntegration:
             project=project,
             start_time=eval_start_time,
             end_time=eval_end_time,
-            limit=10
+            limit=10,
         )
 
         if not spans_df.empty:
@@ -773,7 +790,7 @@ class TestAnnotationSystemIntegration:
             annotations_df = await telemetry_provider.annotations.get_annotations(
                 spans_df=spans_df,
                 project=project,
-                annotation_names=["test_bulk_evaluation"]
+                annotation_names=["test_bulk_evaluation"],
             )
 
             logger.info(f"Retrieved {len(annotations_df)} evaluation annotations")

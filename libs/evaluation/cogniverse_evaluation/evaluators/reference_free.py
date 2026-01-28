@@ -33,9 +33,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
     def __init__(self, min_score_threshold: float = 0.5):
         self.min_score_threshold = min_score_threshold
 
-    async def evaluate(
-        self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> Any:
+    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
         """
         Evaluate query-result relevance without golden dataset
 
@@ -82,9 +80,7 @@ class ResultDiversityEvaluator(Evaluator):
     Evaluates diversity of retrieved results
     """
 
-    async def evaluate(
-        self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> Any:
+    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
         """
         Evaluate result diversity
 
@@ -133,9 +129,7 @@ class TemporalCoverageEvaluator(Evaluator):
     Evaluates temporal coverage of results for video queries
     """
 
-    async def evaluate(
-        self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> Any:
+    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
         """
         Evaluate temporal coverage of results
 
@@ -203,9 +197,7 @@ class LLMRelevanceEvaluator(Evaluator):
     def __init__(self, model_name: str = "gpt-4"):
         self.model_name = model_name
 
-    async def evaluate(
-        self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> Any:
+    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
         """
         Use LLM to evaluate relevance
 
@@ -244,9 +236,7 @@ class CompositeEvaluator(Evaluator):
         total_weight = sum(self.weights)
         self.weights = [w / total_weight for w in self.weights]
 
-    async def evaluate(
-        self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> Any:
+    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
         """
         Run all evaluators and combine results
 

@@ -25,11 +25,6 @@ from typing import Any, Dict, List, Literal, Optional, Union
 import dspy
 import numpy as np
 import uvicorn
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.rlm_options import RLMOptions
-from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
@@ -39,6 +34,11 @@ from cogniverse_agents.query.encoders import QueryEncoderFactory
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.registries.backend_registry import get_backend_registry
 
 logger = logging.getLogger(__name__)
 
@@ -364,9 +364,13 @@ class ContentProcessor:
 
 # --- Generic Multi-Modal Search Agent ---
 class SearchAgent(
+<<<<<<< HEAD
     RLMAwareMixin,
     MemoryAwareMixin,
     A2AAgent[SearchInput, SearchOutput, SearchAgentDeps],
+=======
+    MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAgentDeps]
+>>>>>>> aa3143b (Configure ruff/isort first-party packages and organize imports)
 ):
     """
     Type-safe generic multi-modal search agent with full A2A protocol support.

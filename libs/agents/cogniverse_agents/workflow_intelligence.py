@@ -317,9 +317,9 @@ class WorkflowIntelligence:
                     successful = sum(1 for r in records if r.success)
                     avg_time = sum(r.duration_ms for r in records) / total
                     latest = max(records, key=lambda r: r.created_at)
-                    avg_conf = sum(
-                        r.metrics.get("confidence", 0.5) for r in records
-                    ) / total
+                    avg_conf = (
+                        sum(r.metrics.get("confidence", 0.5) for r in records) / total
+                    )
                     pref_types = latest.metrics.get("preferred_query_types", [])
                     performance = AgentPerformance(
                         agent_name=agent_name,
@@ -990,7 +990,9 @@ class WorkflowIntelligence:
             }
 
             # Calculate success for this record
-            success = performance.successful_executions > (performance.total_executions * 0.5)
+            success = performance.successful_executions > (
+                performance.total_executions * 0.5
+            )
 
             self.workflow_store.record_agent_performance(
                 tenant_id=self.tenant_id,
@@ -1017,7 +1019,9 @@ class WorkflowIntelligence:
                 "expected_execution_time": template.expected_execution_time,
                 "success_rate": template.success_rate,
                 "usage_count": template.usage_count,
-                "last_used": template.last_used.isoformat() if template.last_used else None,
+                "last_used": (
+                    template.last_used.isoformat() if template.last_used else None
+                ),
             }
 
             self.workflow_store.save_template(
@@ -1183,7 +1187,7 @@ class WorkflowIntelligence:
         service = SyntheticDataService(
             backend=backend,
             backend_config=backend_config,
-            generator_config=generator_config
+            generator_config=generator_config,
         )
         request = SyntheticDataRequest(optimizer="workflow", count=count)
         response = await service.generate(request)
@@ -1203,7 +1207,7 @@ class WorkflowIntelligence:
                 confidence_score=example_data["confidence_score"],
                 user_satisfaction=example_data.get("user_satisfaction"),
                 error_details=example_data.get("error_details"),
-                metadata=example_data.get("metadata", {})
+                metadata=example_data.get("metadata", {}),
             )
             self.workflow_history.append(execution)
 

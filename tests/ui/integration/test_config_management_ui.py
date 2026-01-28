@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
@@ -25,7 +27,6 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
-from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
 class TestConfigManagementUI:
@@ -159,7 +160,8 @@ class TestConfigManagementUI:
         assert retrieved.module_config.max_tokens == 1000
         assert retrieved.optimizer_config is not None
         assert (
-            retrieved.optimizer_config.optimizer_type == OptimizerType.BOOTSTRAP_FEW_SHOT
+            retrieved.optimizer_config.optimizer_type
+            == OptimizerType.BOOTSTRAP_FEW_SHOT
         )
         assert retrieved.optimizer_config.max_bootstrapped_demos == 4
 
@@ -287,7 +289,9 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Create version 1
-        config_v1 = SystemConfig(tenant_id=tenant_id, llm_model="gpt-4", backend_port=8080)
+        config_v1 = SystemConfig(
+            tenant_id=tenant_id, llm_model="gpt-4", backend_port=8080
+        )
         config_manager.set_system_config(config_v1)
 
         # Create version 2 (bad config)

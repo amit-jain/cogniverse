@@ -182,9 +182,11 @@ class OptimizationOrchestrator:
         while True:
             try:
                 # Step 1: Identify spans needing annotation
-                annotation_requests = await (
-                    self.annotation_agent.identify_spans_needing_annotation(
-                        lookback_hours=24
+                annotation_requests = (
+                    await (
+                        self.annotation_agent.identify_spans_needing_annotation(
+                            lookback_hours=24
+                        )
                     )
                 )
 
@@ -354,8 +356,10 @@ class OptimizationOrchestrator:
         self.metrics["experiences_created"] += span_result.get("experiences_created", 0)
 
         # 2. Identify spans for annotation
-        annotation_requests = await self.annotation_agent.identify_spans_needing_annotation(
-            lookback_hours=24
+        annotation_requests = (
+            await self.annotation_agent.identify_spans_needing_annotation(
+                lookback_hours=24
+            )
         )
         results["annotation_requests"] = len(annotation_requests)
 

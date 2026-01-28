@@ -15,9 +15,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-from opentelemetry.trace import Status, StatusCode
-
 from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
@@ -30,6 +27,9 @@ from cogniverse_finetuning.training.backend import (
     TrainingBackend,
     TrainingJobConfig,
 )
+from opentelemetry.trace import Status, StatusCode
+
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,9 @@ class OrchestrationConfig:
     model_type: Literal["llm", "embedding"]
 
     # Agent type (for LLM)
-    agent_type: Optional[Literal["routing", "profile_selection", "entity_extraction"]] = None
+    agent_type: Optional[
+        Literal["routing", "profile_selection", "entity_extraction"]
+    ] = None
 
     # Modality (for embedding)
     modality: Optional[Literal["video", "image", "text"]] = None
@@ -140,7 +142,9 @@ class OrchestrationConfig:
     learning_rate: float = 2e-4
     use_lora: bool = True
     backend: Literal["local", "remote"] = "local"
-    backend_provider: str = "modal"  # Used when backend="remote" (modal, sagemaker, azure_ml, etc.)
+    backend_provider: str = (
+        "modal"  # Used when backend="remote" (modal, sagemaker, azure_ml, etc.)
+    )
 
     # Remote backend config (GPU, timeouts, etc.)
     gpu: str = "A10G"
@@ -161,7 +165,9 @@ class OrchestrationConfig:
     adapter_version: str = "1.0.0"  # Version for registered adapter
 
     # Storage
-    adapter_storage_uri: Optional[str] = None  # Storage URI to upload adapters (hf://org/repo, file://, etc.)
+    adapter_storage_uri: Optional[str] = (
+        None  # Storage URI to upload adapters (hf://org/repo, file://, etc.)
+    )
     hf_token: Optional[str] = None  # HuggingFace token for hf:// storage
 
     # Output
@@ -289,6 +295,7 @@ class FinetuningOrchestrator:
         if self.registry is None:
             try:
                 from cogniverse_finetuning.registry import AdapterRegistry
+
                 self.registry = AdapterRegistry()
             except Exception as e:
                 logger.warning(f"Failed to initialize registry: {e}")
@@ -386,7 +393,9 @@ class FinetuningOrchestrator:
             "metrics.train_examples": result.metrics.get("train_examples"),
             "metrics.epochs_completed": result.metrics.get("epoch", config.epochs),
             # Validation Metrics (if validation split was used)
-            "metrics.used_validation_split": result.metrics.get("used_validation_split", False),
+            "metrics.used_validation_split": result.metrics.get(
+                "used_validation_split", False
+            ),
             "metrics.val_examples": result.metrics.get("val_examples"),
             "metrics.eval_loss": result.metrics.get("eval_loss"),
             "metrics.eval_samples": result.metrics.get("eval_samples"),
@@ -469,7 +478,9 @@ class FinetuningOrchestrator:
         if config.backend == "local":
             return LocalTrainingBackend(training_config)
         elif config.backend == "remote":
-            return RemoteTrainingBackend(training_config, provider=config.backend_provider)
+            return RemoteTrainingBackend(
+                training_config, provider=config.backend_provider
+            )
         else:
             raise ValueError(f"Unknown backend: {config.backend}")
 
@@ -581,9 +592,9 @@ class FinetuningOrchestrator:
                 base_model=config.base_model,
                 lora_config={"use_lora": config.use_lora},
                 used_synthetic=analysis.needs_synthetic,
-                synthetic_approval_count=approved_batch.approved_count
-                if approved_batch
-                else None,
+                synthetic_approval_count=(
+                    approved_batch.approved_count if approved_batch else None
+                ),
             )
 
             # Evaluate adapter automatically
@@ -676,9 +687,9 @@ class FinetuningOrchestrator:
                 base_model=config.base_model,
                 lora_config={"use_lora": config.use_lora},
                 used_synthetic=analysis.needs_synthetic,
-                synthetic_approval_count=approved_batch.approved_count
-                if approved_batch
-                else None,
+                synthetic_approval_count=(
+                    approved_batch.approved_count if approved_batch else None
+                ),
             )
 
             # Evaluate adapter automatically
@@ -989,8 +1000,14 @@ async def analyze_dataset_status(
     )
 
     # Calculate progress percentages
-    sft_progress = (analysis.approved_count / min_sft_examples) * 100 if min_sft_examples > 0 else 0
-    dpo_progress = (analysis.preference_pairs / min_dpo_pairs) * 100 if min_dpo_pairs > 0 else 0
+    sft_progress = (
+        (analysis.approved_count / min_sft_examples) * 100
+        if min_sft_examples > 0
+        else 0
+    )
+    dpo_progress = (
+        (analysis.preference_pairs / min_dpo_pairs) * 100 if min_dpo_pairs > 0 else 0
+    )
 
     # Determine status
     sft_ready = analysis.approved_count >= min_sft_examples
@@ -1010,24 +1027,19 @@ async def analyze_dataset_status(
         "approved_count": analysis.approved_count,
         "rejected_count": analysis.rejected_count,
         "preference_pairs": analysis.preference_pairs,
-
         # Targets
         "sft_target": min_sft_examples,
         "dpo_target": min_dpo_pairs,
-
         # Progress
         "sft_progress": sft_progress,
         "dpo_progress": dpo_progress,
-
         # Readiness
         "sft_ready": sft_ready,
         "dpo_ready": dpo_ready,
-
         # Recommendation
         "recommended_method": analysis.recommended_method,
         "confidence": confidence,
         "needs_synthetic": analysis.needs_synthetic,
-
         # Analysis object (for advanced use)
         "analysis": analysis,
     }
@@ -1119,7 +1131,10 @@ async def list_experiments(
         "start_time": "timestamp",
     }
 
-    result_df.rename(columns={k: v for k, v in column_mapping.items() if k in result_df.columns}, inplace=True)
+    result_df.rename(
+        columns={k: v for k, v in column_mapping.items() if k in result_df.columns},
+        inplace=True,
+    )
 
     # Sort by timestamp (newest first)
     if "timestamp" in result_df.columns:

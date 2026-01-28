@@ -91,12 +91,14 @@ class BackendVectorStore(VectorStoreBase):
         """Insert memory vectors via backend"""
         if self.is_telemetry:
             import uuid
+
             return ids if ids else [str(uuid.uuid4()) for _ in vectors]
 
         logger.info(f"Inserting {len(vectors)} vectors into {self.collection_name}")
 
         if not ids:
             import uuid
+
             ids = [f"memory-{uuid.uuid4()}" for _ in vectors]
 
         if not payloads:
@@ -114,6 +116,7 @@ class BackendVectorStore(VectorStoreBase):
             # Convert created_at to Unix timestamp
             if isinstance(created_at, str):
                 from datetime import datetime
+
                 try:
                     dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                     created_at = int(dt.timestamp())
@@ -129,7 +132,9 @@ class BackendVectorStore(VectorStoreBase):
                 "created_at": created_at,
             }
             if metadata:
-                doc_metadata["metadata_"] = json.dumps(metadata) if isinstance(metadata, dict) else metadata
+                doc_metadata["metadata_"] = (
+                    json.dumps(metadata) if isinstance(metadata, dict) else metadata
+                )
 
             doc = Document(
                 id=vec_id,
@@ -137,7 +142,9 @@ class BackendVectorStore(VectorStoreBase):
                 metadata=doc_metadata,
             )
             # Add embedding using the proper method
-            doc.add_embedding("embedding", np.array(vector), {"type": "float", "raw": True})
+            doc.add_embedding(
+                "embedding", np.array(vector), {"type": "float", "raw": True}
+            )
             documents.append(doc)
 
         # Feed to backend using ingest_documents()
@@ -145,7 +152,9 @@ class BackendVectorStore(VectorStoreBase):
         base_schema_name = self.profile if self.profile else self.collection_name
 
         try:
-            result = self.backend.ingest_documents(documents, schema_name=base_schema_name)
+            result = self.backend.ingest_documents(
+                documents, schema_name=base_schema_name
+            )
             logger.debug(f"Ingestion result: {result}")
             return ids
         except Exception as e:
@@ -178,6 +187,7 @@ class BackendVectorStore(VectorStoreBase):
 
             # Convert embeddings to numpy array if provided
             import numpy as np
+
             query_embeddings = np.array(vectors) if vectors is not None else None
 
             query_dict = {
@@ -199,7 +209,9 @@ class BackendVectorStore(VectorStoreBase):
 
             # Call backend.search() - embeddings provided, no encoder needed
             search_results = self.backend.search(query_dict)
-            logger.debug(f"BackendVectorStore search returned {len(search_results)} results")
+            logger.debug(
+                f"BackendVectorStore search returned {len(search_results)} results"
+            )
 
             # Convert SearchResult objects to mem0 format
             mem0_results = []
@@ -208,6 +220,7 @@ class BackendVectorStore(VectorStoreBase):
                 created_at = doc.metadata.get("created_at")
                 if isinstance(created_at, (int, float)):
                     from datetime import datetime
+
                     created_at = datetime.fromtimestamp(created_at).isoformat()
 
                 mem0_results.append(
@@ -276,7 +289,9 @@ class BackendVectorStore(VectorStoreBase):
 
             # Add embedding using the proper method (same as insert)
             if vector is not None:
-                doc.add_embedding("embedding", np.array(vector), {"type": "float", "raw": True})
+                doc.add_embedding(
+                    "embedding", np.array(vector), {"type": "float", "raw": True}
+                )
 
             # Update via backend (which calls ingest_documents)
             self.backend.update_document(vector_id, doc)
@@ -300,6 +315,7 @@ class BackendVectorStore(VectorStoreBase):
             vector = None
             if doc.embeddings and "embedding" in doc.embeddings:
                 import numpy as np
+
                 embedding = doc.embeddings["embedding"]
                 if isinstance(embedding, np.ndarray):
                     vector = embedding.tolist()
@@ -352,7 +368,7 @@ class BackendVectorStore(VectorStoreBase):
                     yql_conditions.append(f'agent_id contains "{filters["agent_id"]}"')
 
             where_clause = " and ".join(yql_conditions)
-            yql = f'select * from {self.collection_name} where {where_clause} limit {limit or 100}'
+            yql = f"select * from {self.collection_name} where {where_clause} limit {limit or 100}"
 
             # Use query_metadata_documents() to list memories
             results = self.backend.query_metadata_documents(
@@ -367,6 +383,7 @@ class BackendVectorStore(VectorStoreBase):
                 created_at = result.get("created_at")
                 if isinstance(created_at, (int, float)):
                     from datetime import datetime
+
                     created_at = datetime.fromtimestamp(created_at).isoformat()
 
                 mem0_results.append(

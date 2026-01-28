@@ -10,15 +10,15 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.common.vlm_interface import VLMInterface
 from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_agents.tools.a2a_utils import DataPart, Task
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,16 @@ class DetailedReportInput(AgentInput):
     """Type-safe input for detailed report generation"""
 
     query: str = Field(..., description="Query for report")
-    search_results: List[Dict[str, Any]] = Field(default_factory=list, description="Results to analyze")
-    report_type: str = Field("comprehensive", description="Type: comprehensive, technical, analytical")
+    search_results: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Results to analyze"
+    )
+    report_type: str = Field(
+        "comprehensive", description="Type: comprehensive, technical, analytical"
+    )
     include_visual_analysis: bool = Field(True, description="Include visual analysis")
-    include_technical_details: bool = Field(True, description="Include technical details")
+    include_technical_details: bool = Field(
+        True, description="Include technical details"
+    )
     include_recommendations: bool = Field(True, description="Include recommendations")
     max_results_to_analyze: int = Field(20, description="Maximum results to analyze")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
@@ -45,13 +51,27 @@ class DetailedReportOutput(AgentOutput):
     """Type-safe output from detailed report generation"""
 
     executive_summary: str = Field(..., description="Executive summary")
-    detailed_findings: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed findings")
-    visual_analysis: List[Dict[str, Any]] = Field(default_factory=list, description="Visual analysis")
-    technical_details: List[Dict[str, Any]] = Field(default_factory=list, description="Technical details")
-    recommendations: List[str] = Field(default_factory=list, description="Recommendations")
-    confidence_assessment: Dict[str, float] = Field(default_factory=dict, description="Confidence assessment")
-    thinking_process: Dict[str, Any] = Field(default_factory=dict, description="Thinking phase details")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    detailed_findings: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Detailed findings"
+    )
+    visual_analysis: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Visual analysis"
+    )
+    technical_details: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Technical details"
+    )
+    recommendations: List[str] = Field(
+        default_factory=list, description="Recommendations"
+    )
+    confidence_assessment: Dict[str, float] = Field(
+        default_factory=dict, description="Confidence assessment"
+    )
+    thinking_process: Dict[str, Any] = Field(
+        default_factory=dict, description="Thinking phase details"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class DetailedReportDeps(AgentDeps):
@@ -60,7 +80,9 @@ class DetailedReportDeps(AgentDeps):
     max_report_length: int = Field(2000, description="Maximum report length")
     thinking_enabled: bool = Field(True, description="Enable thinking phase")
     visual_analysis_enabled: bool = Field(True, description="Enable visual analysis")
-    technical_analysis_enabled: bool = Field(True, description="Enable technical analysis")
+    technical_analysis_enabled: bool = Field(
+        True, description="Enable technical analysis"
+    )
 
 
 # DSPy Signatures and Module
@@ -69,7 +91,9 @@ class ReportGenerationSignature(dspy.Signature):
 
     content = dspy.InputField(desc="Search results content to analyze")
     query = dspy.InputField(desc="Original user query")
-    report_type = dspy.InputField(desc="Type of report: comprehensive, technical, analytical")
+    report_type = dspy.InputField(
+        desc="Type of report: comprehensive, technical, analytical"
+    )
 
     executive_summary = dspy.OutputField(desc="Executive summary of findings")
     key_findings = dspy.OutputField(desc="Key findings (comma-separated)")
@@ -87,7 +111,9 @@ class ReportGenerationModule(dspy.Module):
     def forward(self, content: str, query: str, report_type: str = "comprehensive"):
         """Generate report using DSPy"""
         try:
-            result = self.report_generator(content=content, query=query, report_type=report_type)
+            result = self.report_generator(
+                content=content, query=query, report_type=report_type
+            )
             return result
         except Exception as e:
             logger.warning(f"DSPy report generation failed: {e}, using fallback")
@@ -100,7 +126,7 @@ class ReportGenerationModule(dspy.Module):
                 executive_summary=f"Analysis of {total_results} results for query: {query}",
                 key_findings="Content analysis, Data patterns, Technical insights",
                 recommendations="Further analysis recommended, Validate findings, Review methodology",
-                confidence_score=0.5
+                confidence_score=0.5,
             )
 
 
@@ -173,7 +199,9 @@ class ReportResult:
         return self.confidence_assessment.get("overall", 0.0)
 
 
-class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps]):
+class DetailedReportAgent(
+    A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps]
+):
     """
     Type-safe agent for generating comprehensive detailed reports with full A2A support.
     Provides visual analysis, technical insights, and actionable recommendations.
@@ -216,13 +244,16 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
 
         # Create config manager for VLM and other services
         from cogniverse_foundation.config.utils import create_default_config_manager
+
         self._config_manager = create_default_config_manager()
 
         # Initialize DSPy components
         self._initialize_vlm_client()
 
         # Initialize VLM for visual analysis
-        self.vlm = VLMInterface(config_manager=self._config_manager, tenant_id=self.deps.tenant_id)
+        self.vlm = VLMInterface(
+            config_manager=self._config_manager, tenant_id=self.deps.tenant_id
+        )
 
         # Configuration from deps
         self.max_report_length = deps.max_report_length
@@ -243,19 +274,31 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
 
         # Get system config for LLM settings
         config_manager = create_default_config_manager()
-        system_config = get_config(tenant_id=self.deps.tenant_id, config_manager=config_manager)
+        system_config = get_config(
+            tenant_id=self.deps.tenant_id, config_manager=config_manager
+        )
 
         # Try to get LLM config from system config or environment
-        if system_config and hasattr(system_config, 'get') and callable(system_config.get):
+        if (
+            system_config
+            and hasattr(system_config, "get")
+            and callable(system_config.get)
+        ):
             llm_config = system_config.get("llm", {})
-        elif system_config and hasattr(system_config, 'llm'):
-            llm_config = system_config.llm if isinstance(system_config.llm, dict) else {}
+        elif system_config and hasattr(system_config, "llm"):
+            llm_config = (
+                system_config.llm if isinstance(system_config.llm, dict) else {}
+            )
         else:
             llm_config = {}
 
         # Fall back to environment variables if not in config
-        model_name = llm_config.get("model_name") or os.environ.get("LLM_MODEL_NAME", "gemma3:4b")
-        base_url = llm_config.get("base_url") or os.environ.get("LLM_BASE_URL", "http://localhost:11434")
+        model_name = llm_config.get("model_name") or os.environ.get(
+            "LLM_MODEL_NAME", "gemma3:4b"
+        )
+        base_url = llm_config.get("base_url") or os.environ.get(
+            "LLM_BASE_URL", "http://localhost:11434"
+        )
         api_key = llm_config.get("api_key") or os.environ.get("LLM_API_KEY")
 
         if not all([model_name, base_url]):
@@ -264,7 +307,9 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
             )
 
         # Ensure model name has provider prefix for litellm (Ollama models)
-        if ("localhost:11434" in base_url or "11434" in base_url) and not model_name.startswith("ollama/"):
+        if (
+            "localhost:11434" in base_url or "11434" in base_url
+        ) and not model_name.startswith("ollama/"):
             model_name = f"ollama/{model_name}"
 
         try:
@@ -277,7 +322,9 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
             logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
         except RuntimeError as e:
             if "can only be called from the same async task" in str(e):
-                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                logger.warning(
+                    "DSPy already configured in this async context, skipping reconfiguration"
+                )
             else:
                 raise
 
@@ -510,9 +557,11 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
             patterns.append("Temporal data available for trend analysis")
 
         # Quality patterns
-        avg_score = sum(r.get("score", r.get("relevance", 0)) for r in results) / len(
-            results
-        ) if results else 0
+        avg_score = (
+            sum(r.get("score", r.get("relevance", 0)) for r in results) / len(results)
+            if results
+            else 0
+        )
         if avg_score > 0.7:
             patterns.append("High average relevance across results")
         elif avg_score < 0.3:
@@ -541,7 +590,9 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
 
         # Missing metadata
         missing_metadata_count = sum(
-            1 for r in results if not r.get("metadata") or len(r.get("metadata", {})) < 2
+            1
+            for r in results
+            if not r.get("metadata") or len(r.get("metadata", {})) < 2
         )
         if missing_metadata_count > len(results) / 2:
             gaps.append("Many results lack comprehensive metadata")
@@ -596,11 +647,13 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
                         [image_path], request.query
                     )
 
-                    visual_analysis.append({
-                        "result_id": result.get("id", "unknown"),
-                        "insights": analysis.get("insights", []),
-                        "confidence": analysis.get("confidence", 0.0),
-                    })
+                    visual_analysis.append(
+                        {
+                            "result_id": result.get("id", "unknown"),
+                            "insights": analysis.get("insights", []),
+                            "confidence": analysis.get("confidence", 0.0),
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"Visual analysis failed for {image_path}: {e}")
 
@@ -610,7 +663,9 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         self, request: ReportRequest, thinking_phase: ThinkingPhase
     ) -> str:
         """Generate executive summary using DSPy"""
-        total_results = thinking_phase.content_analysis.get("total_results", len(request.search_results))
+        total_results = thinking_phase.content_analysis.get(
+            "total_results", len(request.search_results)
+        )
 
         content_parts = [f"Total Results: {total_results}"]
         for result in request.search_results[:10]:
@@ -624,7 +679,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
             dspy_result = self.report_module.forward(
                 content=content_text,
                 query=request.query,
-                report_type=request.report_type
+                report_type=request.report_type,
             )
 
             return dspy_result.executive_summary
@@ -640,30 +695,40 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         findings = []
 
         # Content analysis finding
-        findings.append({
-            "category": "Content Analysis",
-            "finding": f"Analyzed {thinking_phase.content_analysis['total_results']} results",
-            "details": thinking_phase.content_analysis,
-            "significance": "high" if thinking_phase.content_analysis['avg_relevance'] > 0.7 else "medium"
-        })
+        findings.append(
+            {
+                "category": "Content Analysis",
+                "finding": f"Analyzed {thinking_phase.content_analysis['total_results']} results",
+                "details": thinking_phase.content_analysis,
+                "significance": (
+                    "high"
+                    if thinking_phase.content_analysis["avg_relevance"] > 0.7
+                    else "medium"
+                ),
+            }
+        )
 
         # Pattern findings
         if thinking_phase.patterns_identified:
-            findings.append({
-                "category": "Patterns Identified",
-                "finding": f"{len(thinking_phase.patterns_identified)} patterns detected",
-                "details": thinking_phase.patterns_identified,
-                "significance": "medium"
-            })
+            findings.append(
+                {
+                    "category": "Patterns Identified",
+                    "finding": f"{len(thinking_phase.patterns_identified)} patterns detected",
+                    "details": thinking_phase.patterns_identified,
+                    "significance": "medium",
+                }
+            )
 
         # Technical findings
         if thinking_phase.technical_findings:
-            findings.append({
-                "category": "Technical Analysis",
-                "finding": f"{len(thinking_phase.technical_findings)} technical aspects identified",
-                "details": thinking_phase.technical_findings,
-                "significance": "medium"
-            })
+            findings.append(
+                {
+                    "category": "Technical Analysis",
+                    "finding": f"{len(thinking_phase.technical_findings)} technical aspects identified",
+                    "details": thinking_phase.technical_findings,
+                    "significance": "medium",
+                }
+            )
 
         return findings
 
@@ -677,18 +742,22 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         technical_details = []
 
         # Content distribution
-        technical_details.append({
-            "category": "Content Distribution",
-            "metrics": thinking_phase.content_analysis["content_types"],
-            "analysis": "Distribution of content types across results"
-        })
+        technical_details.append(
+            {
+                "category": "Content Distribution",
+                "metrics": thinking_phase.content_analysis["content_types"],
+                "analysis": "Distribution of content types across results",
+            }
+        )
 
         # Quality metrics
-        technical_details.append({
-            "category": "Quality Metrics",
-            "metrics": thinking_phase.content_analysis["quality_metrics"],
-            "analysis": "Quality distribution of search results"
-        })
+        technical_details.append(
+            {
+                "category": "Quality Metrics",
+                "metrics": thinking_phase.content_analysis["quality_metrics"],
+                "analysis": "Quality distribution of search results",
+            }
+        )
 
         return technical_details
 
@@ -746,9 +815,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
 
         # Visual analysis confidence
         visual_confidence = (
-            0.8
-            if thinking_phase.visual_assessment["has_visual_content"]
-            else 0.3
+            0.8 if thinking_phase.visual_assessment["has_visual_content"] else 0.3
         )
 
         # Technical confidence
@@ -785,7 +852,8 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
 
         # Use enhanced query for basic report generation
         basic_request = ReportRequest(
-            query=routing_decision.enhanced_query or routing_decision.routing_metadata.get("original_query", ""),
+            query=routing_decision.enhanced_query
+            or routing_decision.routing_metadata.get("original_query", ""),
             search_results=search_results,
             report_type=kwargs.get("report_type", "comprehensive"),
             include_visual_analysis=kwargs.get("include_visual_analysis", True),
@@ -799,13 +867,17 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
 
         # Add relationship metadata
         result.enhancement_applied = True
-        result.metadata.update({
-            "original_query": routing_decision.routing_metadata.get("original_query", ""),
-            "enhanced_query": routing_decision.enhanced_query,
-            "entities_found": len(routing_decision.extracted_entities),
-            "relationships_found": len(routing_decision.extracted_relationships),
-            "routing_confidence": routing_decision.confidence,
-        })
+        result.metadata.update(
+            {
+                "original_query": routing_decision.routing_metadata.get(
+                    "original_query", ""
+                ),
+                "enhanced_query": routing_decision.enhanced_query,
+                "entities_found": len(routing_decision.extracted_entities),
+                "relationships_found": len(routing_decision.extracted_relationships),
+                "routing_confidence": routing_decision.confidence,
+            }
+        )
 
         return result
 
@@ -883,7 +955,9 @@ async def startup_event():
         if not os.getenv("PYTEST_CURRENT_TEST"):
             raise ValueError(error_msg)
         else:
-            logger.warning("PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id")
+            logger.warning(
+                "PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id"
+            )
             tenant_id = "test_tenant"
 
     try:
@@ -931,7 +1005,9 @@ async def get_agent_card():
             "comprehensive_analysis",
             "relationship_aware_reporting",
         ],
-        "skills": detailed_report_agent.get_agent_skills() if detailed_report_agent else [],
+        "skills": (
+            detailed_report_agent.get_agent_skills() if detailed_report_agent else []
+        ),
     }
 
 

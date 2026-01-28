@@ -5,8 +5,8 @@ Tests the routing-specific DSPy components including relationship extraction,
 query enhancement, adaptive threshold learning, and advanced optimization.
 """
 
-
 import pytest
+
 from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
@@ -156,7 +156,9 @@ class TestAdvancedRoutingOptimizer:
     def test_optimizer_initialization(self, temp_storage):
         """Test optimizer initialization"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+        )
 
         assert optimizer.config == config
         assert len(optimizer.experiences) == 0
@@ -166,7 +168,9 @@ class TestAdvancedRoutingOptimizer:
     async def test_record_experience(self, temp_storage):
         """Test recording routing experience"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+        )
 
         reward = await optimizer.record_routing_experience(
             query="test query",
@@ -186,7 +190,9 @@ class TestAdvancedRoutingOptimizer:
     def test_get_optimization_status(self, temp_storage):
         """Test getting optimization status"""
         config = AdvancedOptimizerConfig()
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+        )
 
         status = optimizer.get_optimization_status()
         assert isinstance(status, dict)
@@ -219,11 +225,13 @@ class TestDSPyRoutingIntegration:
         # Initialize components with temporary storage
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
-        AdaptiveThresholdLearner(tenant_id="test-tenant")  # Create but don't assign to unused variable
+        AdaptiveThresholdLearner(
+            tenant_id="test-tenant"
+        )  # Create but don't assign to unused variable
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             config=AdvancedOptimizerConfig(min_experiences_for_training=10),
-            base_storage_dir=str(tmp_path / "test_optimizer")
+            base_storage_dir=str(tmp_path / "test_optimizer"),
         )
 
         # Test real interactions (components handle missing models gracefully)
@@ -233,9 +241,7 @@ class TestDSPyRoutingIntegration:
         )
 
         # Enhance query
-        enhanced = await pipeline.enhance_query_with_relationships(
-            "test query"
-        )
+        enhanced = await pipeline.enhance_query_with_relationships("test query")
 
         assert isinstance(extract_result, dict)
         assert isinstance(enhanced, dict)

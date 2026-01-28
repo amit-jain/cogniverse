@@ -32,11 +32,7 @@ class PhoenixMonitoringProvider(MonitoringProvider):
         self._alerts = {}  # Store alerts in memory for now
 
     async def create_alert(
-        self,
-        name: str,
-        condition: str,
-        threshold: float,
-        project: str
+        self, name: str, condition: str, threshold: float, project: str
     ) -> str:
         """
         Create an alert for monitoring metrics.
@@ -63,9 +59,7 @@ class PhoenixMonitoringProvider(MonitoringProvider):
         return alert_id
 
     async def get_metrics_window(
-        self,
-        project: str,
-        window_minutes: int = 5
+        self, project: str, window_minutes: int = 5
     ) -> Dict[str, Any]:
         """
         Get metrics for recent time window.
@@ -85,9 +79,7 @@ class PhoenixMonitoringProvider(MonitoringProvider):
 
             # Get recent spans
             spans_df = self.client.get_spans_dataframe(
-                project_name=project,
-                start_time=start_time,
-                end_time=end_time
+                project_name=project, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:
@@ -112,7 +104,9 @@ class PhoenixMonitoringProvider(MonitoringProvider):
             if "status_code" in spans_df.columns:
                 error_count = len(spans_df[spans_df["status_code"] == "ERROR"])
                 metrics["error_count"] = error_count
-                metrics["error_rate"] = error_count / len(spans_df) if len(spans_df) > 0 else 0
+                metrics["error_rate"] = (
+                    error_count / len(spans_df) if len(spans_df) > 0 else 0
+                )
 
             # Latency
             latency_col = None
@@ -123,7 +117,9 @@ class PhoenixMonitoringProvider(MonitoringProvider):
 
             if latency_col:
                 mean_latency = spans_df[latency_col].mean()
-                metrics["mean_latency_ms"] = float(mean_latency) if not pd.isna(mean_latency) else 0
+                metrics["mean_latency_ms"] = (
+                    float(mean_latency) if not pd.isna(mean_latency) else 0
+                )
 
             return metrics
 

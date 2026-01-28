@@ -8,6 +8,7 @@ routing -> relationship extraction -> query enhancement -> search execution
 import asyncio
 
 import pytest
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -65,9 +66,7 @@ class TestQueryProcessingPipeline:
 
         # Step 3: Verify pipeline results
         assert enhanced_query is not None
-        assert len(enhanced_query) >= len(
-            query
-        )  # Enhanced should be same or longer
+        assert len(enhanced_query) >= len(query)  # Enhanced should be same or longer
         assert isinstance(enhancement_metadata, dict)
 
     def test_complex_research_query_processing(self):
@@ -139,7 +138,9 @@ class TestQueryProcessingPipeline:
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         # Mock only external service URLs, not core logic
-        with patch("cogniverse_core.config.utils.create_default_config_manager") as mock_config_manager:
+        with patch(
+            "cogniverse_core.config.utils.create_default_config_manager"
+        ) as mock_config_manager:
             mock_config = Mock()
             mock_config.get.side_effect = lambda key, default=None: {
                 "video_agent_url": "http://localhost:8002",
@@ -150,9 +151,7 @@ class TestQueryProcessingPipeline:
 
             # Mock RoutingAgent initialization to avoid hangs
             with (
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-                ),
+                patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
                 patch(
                     "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
@@ -390,7 +389,9 @@ class TestAgentWorkflowIntegration:
         # Test agent exists and has required interface
         assert summarizer is not None
         assert hasattr(summarizer, "process")  # Type-safe process method
-        assert hasattr(summarizer, "summarize_with_relationships")  # Enhanced summarization
+        assert hasattr(
+            summarizer, "summarize_with_relationships"
+        )  # Enhanced summarization
         assert callable(summarizer.process)
 
         print("SummarizerAgent functional interface validated")
@@ -403,7 +404,9 @@ class TestAgentWorkflowIntegration:
         # Test agent exists and has required interface
         assert reporter is not None
         assert hasattr(reporter, "process")  # Type-safe process method
-        assert hasattr(reporter, "generate_report_with_routing_decision")  # Enhanced reporting
+        assert hasattr(
+            reporter, "generate_report_with_routing_decision"
+        )  # Enhanced reporting
         assert callable(reporter.process)
 
         print("DetailedReportAgent functional interface validated")
@@ -501,7 +504,7 @@ class TestSystemIntegrationReadiness:
         # Should return a configuration
         assert config is not None
         # Config can be dict or ConfigUtils object - just verify it's a valid config
-        assert hasattr(config, 'get') or isinstance(config, dict)
+        assert hasattr(config, "get") or isinstance(config, dict)
 
         # Print config info - handle both dict and ConfigUtils
         if isinstance(config, dict):

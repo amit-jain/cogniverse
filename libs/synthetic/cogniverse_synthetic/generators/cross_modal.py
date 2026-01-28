@@ -9,10 +9,9 @@ import random
 from collections import defaultdict
 from typing import Any, Dict, List
 
-from pydantic import BaseModel
-
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import FusionHistorySchema
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,7 @@ class CrossModalGenerator(BaseGenerator):
     ]
 
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """
         Generate FusionHistory data
@@ -90,14 +86,16 @@ class CrossModalGenerator(BaseGenerator):
                 secondary_modality=secondary,
                 fusion_context=fusion_context,
                 success=success,
-                improvement=improvement
+                improvement=improvement,
             )
             examples.append(example)
 
         logger.info(f"Generated {len(examples)} FusionHistory examples")
         return examples
 
-    def _group_by_modality(self, content_samples: List[Dict[str, Any]]) -> Dict[str, List[Dict]]:
+    def _group_by_modality(
+        self, content_samples: List[Dict[str, Any]]
+    ) -> Dict[str, List[Dict]]:
         """
         Group content by modality
 
@@ -164,10 +162,12 @@ class CrossModalGenerator(BaseGenerator):
             "modality_agreement": round(modality_agreement, 2),
             "query_ambiguity": round(query_ambiguity, 2),
             "content_overlap": round(content_overlap, 2),
-            "fusion_confidence": round(modality_agreement * (1 - query_ambiguity), 2)
+            "fusion_confidence": round(modality_agreement * (1 - query_ambiguity), 2),
         }
 
-    def _calculate_improvement(self, fusion_context: Dict[str, Any], success: bool) -> float:
+    def _calculate_improvement(
+        self, fusion_context: Dict[str, Any], success: bool
+    ) -> float:
         """
         Calculate improvement from fusion
 

@@ -12,13 +12,13 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
+from pydantic import Field
+
+from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.models.model_loaders import get_or_load_model
-from pydantic import Field
-
-from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,9 @@ class DocumentResult(AgentOutput):
     content_preview: str = Field("", description="Content preview")
     relevance_score: float = Field(0.0, description="Relevance score")
     strategy_used: str = Field("unknown", description="Strategy: visual, text, hybrid")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class DocumentSearchInput(AgentInput):
@@ -54,7 +56,9 @@ class DocumentSearchInput(AgentInput):
 class DocumentSearchOutput(AgentOutput):
     """Type-safe output from document search"""
 
-    results: List[DocumentResult] = Field(default_factory=list, description="Search results")
+    results: List[DocumentResult] = Field(
+        default_factory=list, description="Search results"
+    )
     count: int = Field(0, description="Number of results")
 
 
@@ -66,7 +70,8 @@ class DocumentAgentDeps(AgentDeps):
 
 
 class DocumentAgent(
-    MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSearchOutput, DocumentAgentDeps]
+    MemoryAwareMixin,
+    A2AAgent[DocumentSearchInput, DocumentSearchOutput, DocumentAgentDeps],
 ):
     """
     Type-safe document analysis and search with dual strategy support.
@@ -556,7 +561,9 @@ class DocumentAgent(
             "agent": self.agent_name,
             "result_type": "document_search_results",
             "count": result.get("count", len(results)),
-            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+            "results": [
+                r.model_dump() if hasattr(r, "model_dump") else r for r in results
+            ],
         }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -565,7 +572,11 @@ class DocumentAgent(
             {
                 "name": "search_documents",
                 "description": "Search documents using visual, text, or hybrid strategy",
-                "input_schema": {"query": "string", "strategy": "string", "limit": "integer"},
+                "input_schema": {
+                    "query": "string",
+                    "strategy": "string",
+                    "limit": "integer",
+                },
                 "output_schema": {"results": "list", "count": "integer"},
             },
             {

@@ -258,7 +258,9 @@ class TestDatasetGroundTruthStrategy:
         from unittest.mock import AsyncMock
 
         # Mock provider's dataset method
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider"
+        ) as mock_get_provider:
             mock_provider = MagicMock()
 
             # Create dataset data with matching query
@@ -267,13 +269,15 @@ class TestDatasetGroundTruthStrategy:
                     {
                         "id": "ex1",
                         "input": {"query": "test query"},
-                        "output": {"expected_items": ["item1", "item2", "item3"]}
+                        "output": {"expected_items": ["item1", "item2", "item3"]},
                     }
                 ]
             }
 
             # Mock async get_dataset method
-            mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=dataset_data)
+            mock_provider.telemetry.datasets.get_dataset = AsyncMock(
+                return_value=dataset_data
+            )
             mock_get_provider.return_value = mock_provider
 
             trace_data = {
@@ -714,7 +718,9 @@ class TestDatasetGroundTruthStrategyExtended:
         from unittest.mock import AsyncMock
 
         # Mock provider's dataset method
-        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider"
+        ) as mock_get_provider:
             mock_provider = MagicMock()
 
             # Create dataset data with alternative field names
@@ -723,13 +729,15 @@ class TestDatasetGroundTruthStrategyExtended:
                     {
                         "id": "ex1",
                         "input": {"query": "test query"},
-                        "output": {"expected_videos": ["video1", "video2"]}
+                        "output": {"expected_videos": ["video1", "video2"]},
                     }
                 ]
             }
 
             # Mock async get_dataset method
-            mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=dataset_data)
+            mock_provider.telemetry.datasets.get_dataset = AsyncMock(
+                return_value=dataset_data
+            )
             mock_get_provider.return_value = mock_provider
 
             trace_data = {

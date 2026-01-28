@@ -184,6 +184,7 @@ class EvaluationProvider(ABC):
 
 # Data structures for providers
 
+
 @dataclass
 class TraceMetrics:
     """Metrics extracted from traces"""
@@ -226,6 +227,7 @@ class RootCauseHypothesis:
 
 
 # Additional provider interfaces
+
 
 class AnalyticsProvider(ABC):
     """

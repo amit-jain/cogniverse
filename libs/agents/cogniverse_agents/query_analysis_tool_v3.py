@@ -10,10 +10,9 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from cogniverse_foundation.config.utils import get_config
-
 from cogniverse_agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -139,7 +138,12 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
     - Workflow orchestration
     """
 
-    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None, **kwargs):
+    def __init__(
+        self,
+        tenant_id: str = "default",
+        config_manager: "ConfigManager" = None,
+        **kwargs,
+    ):
         """Initialize the enhanced query analysis tool
 
         Args:
@@ -1035,8 +1039,8 @@ def create_enhanced_query_analyzer(**kwargs) -> QueryAnalysisToolV3:
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     # Provide default config_manager if not specified
-    if 'config_manager' not in kwargs:
-        kwargs['config_manager'] = create_default_config_manager()
+    if "config_manager" not in kwargs:
+        kwargs["config_manager"] = create_default_config_manager()
 
     return QueryAnalysisToolV3(**kwargs)
 

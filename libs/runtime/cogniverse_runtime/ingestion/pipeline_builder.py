@@ -129,7 +129,9 @@ class VideoIngestionPipelineBuilder:
             self._config = (
                 PipelineConfig(**config_dict)
                 if config_dict
-                else PipelineConfig.from_config(tenant_id=self._tenant_id, config_manager=self._config_manager)
+                else PipelineConfig.from_config(
+                    tenant_id=self._tenant_id, config_manager=self._config_manager
+                )
             )
 
         # Create pipeline instance - config_manager will be used to create app_config if not provided

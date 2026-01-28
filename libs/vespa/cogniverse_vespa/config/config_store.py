@@ -108,7 +108,7 @@ class VespaConfigStore(ConfigStore):
         # Use contains() for indexed string matching (avoids YQL colon parsing issues)
         yql = (
             f"select version from {self.schema_name} "
-            f"where config_id contains \"{config_id}\" "
+            f'where config_id contains "{config_id}" '
             f"order by version desc limit 1"
         )
 
@@ -228,13 +228,13 @@ class VespaConfigStore(ConfigStore):
             # Get latest version
             yql = (
                 f"select * from {self.schema_name} "
-                f"where config_id contains \"{config_id}\" "
+                f'where config_id contains "{config_id}" '
                 f"order by version desc limit 1"
             )
         else:
             # Get specific version
             doc_id = f"{self.schema_name}::{config_id}::{version}"
-            yql = f"select * from {self.schema_name} where documentid = \"{doc_id}\""
+            yql = f'select * from {self.schema_name} where documentid = "{doc_id}"'
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -285,7 +285,7 @@ class VespaConfigStore(ConfigStore):
 
         yql = (
             f"select * from {self.schema_name} "
-            f"where config_id contains \"{config_id}\" "
+            f'where config_id contains "{config_id}" '
             f"order by version desc limit {limit}"
         )
 
@@ -335,13 +335,13 @@ class VespaConfigStore(ConfigStore):
         """
         # Build YQL query with filters
         # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        conditions = [f"tenant_id contains \"{tenant_id}\""]
+        conditions = [f'tenant_id contains "{tenant_id}"']
 
         if scope is not None:
-            conditions.append(f"scope contains \"{scope.value}\"")
+            conditions.append(f'scope contains "{scope.value}"')
 
         if service is not None:
-            conditions.append(f"service contains \"{service}\"")
+            conditions.append(f'service contains "{service}"')
 
         where_clause = " and ".join(conditions)
 
@@ -406,10 +406,10 @@ class VespaConfigStore(ConfigStore):
         conditions = []
 
         if scope is not None:
-            conditions.append(f"scope contains \"{scope.value}\"")
+            conditions.append(f'scope contains "{scope.value}"')
 
         if service is not None:
-            conditions.append(f"service contains \"{service}\"")
+            conditions.append(f'service contains "{service}"')
 
         where_clause = " and ".join(conditions) if conditions else "true"
 
@@ -513,7 +513,7 @@ class VespaConfigStore(ConfigStore):
         """
         if include_history:
             # Get all versions
-            yql = f"select * from {self.schema_name} where tenant_id contains \"{tenant_id}\" limit 400"
+            yql = f'select * from {self.schema_name} where tenant_id contains "{tenant_id}" limit 400'
         else:
             # Get only latest versions
             configs = self.list_configs(tenant_id)
@@ -614,9 +614,7 @@ class VespaConfigStore(ConfigStore):
         """
         try:
             # Select all fields needed for stats
-            yql_total = (
-                f"select config_id, tenant_id, scope from {self.schema_name} where true limit 400"
-            )
+            yql_total = f"select config_id, tenant_id, scope from {self.schema_name} where true limit 400"
             response = self.vespa_app.query(yql=yql_total)
 
             total_versions = len(response.hits)

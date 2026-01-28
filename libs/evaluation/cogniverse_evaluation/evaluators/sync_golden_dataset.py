@@ -26,9 +26,7 @@ class SyncGoldenDatasetEvaluator(Evaluator):
         """
         self.golden_dataset = golden_dataset
 
-    def evaluate(
-        self, *, input=None, output=None, expected=None, **kwargs
-    ) -> Any:
+    def evaluate(self, *, input=None, output=None, expected=None, **kwargs) -> Any:
         """
         Evaluate results against golden dataset
         """

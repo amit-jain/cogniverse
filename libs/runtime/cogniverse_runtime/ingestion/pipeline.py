@@ -26,29 +26,33 @@ import os
 # Add project root to path
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Cache imports removed - using pipeline_cache directly
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.events import (
+    EventQueue,
+    TaskState,
+    create_complete_event,
+    create_error_event,
+    create_progress_event,
+    create_status_event,
+)
 from cogniverse_foundation.config.utils import get_config
-
 from cogniverse_runtime.ingestion.exceptions import (
     PipelineException,
     wrap_content_error,
 )
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
-
-# Processors are imported dynamically by processor_manager
 from cogniverse_runtime.ingestion.processors.embedding_generator import (
     create_embedding_generator,
 )
-
-# StrategyConfig imported locally where needed
 from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 
 
@@ -163,6 +167,7 @@ class VideoIngestionPipeline:
         schema_loader=None,
         schema_name: str | None = None,
         debug_mode: bool = False,
+        event_queue: Optional[EventQueue] = None,
     ):
         """
         Initialize the video ingestion pipeline with async support
@@ -175,6 +180,7 @@ class VideoIngestionPipeline:
             schema_loader: SchemaLoader instance (optional, for backend operations)
             schema_name: Schema/profile name
             debug_mode: Enable debug logging
+            event_queue: Optional EventQueue for real-time progress notifications
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -185,18 +191,28 @@ class VideoIngestionPipeline:
         self.tenant_id = tenant_id
         self.config_manager = config_manager
         self.schema_loader = schema_loader
+        self.event_queue = event_queue
+        self.job_id: Optional[str] = None  # Set when processing starts
 
         if config is None:
             if config_manager is None:
-                raise ValueError("config_manager is required when config is not provided")
-            self.config = PipelineConfig.from_config(tenant_id=tenant_id, config_manager=config_manager)
+                raise ValueError(
+                    "config_manager is required when config is not provided"
+                )
+            self.config = PipelineConfig.from_config(
+                tenant_id=tenant_id, config_manager=config_manager
+            )
         else:
             self.config = config
 
         if app_config is None:
             if config_manager is None:
-                raise ValueError("config_manager is required when app_config is not provided")
-            self.app_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+                raise ValueError(
+                    "config_manager is required when app_config is not provided"
+                )
+            self.app_config = get_config(
+                tenant_id=tenant_id, config_manager=config_manager
+            )
         else:
             self.app_config = app_config
         self.schema_name = schema_name
@@ -235,7 +251,6 @@ class VideoIngestionPipeline:
 
         # Initialize processors using ProcessorManager - NEW CLEAN APPROACH
         self.processor_manager = ProcessorManager(self.logger)
-
 
         # Create processing strategy set from config - CLEAN APPROACH
         self.strategy_set = self._create_strategy_set_from_config()
@@ -381,7 +396,6 @@ class VideoIngestionPipeline:
 
         return StrategyFactory.create_from_profile_config(profile_config)
 
-
     def _get_chunk_duration(self) -> float:
         """Get chunk duration from profile configuration"""
         if not self.schema_name:
@@ -410,7 +424,9 @@ class VideoIngestionPipeline:
 
         # Initialize embedding generator v2 directly
         try:
-            self.logger.info(f"Initializing embedding generator with schema_name={self.schema_name}, tenant_id={self.tenant_id}")
+            self.logger.info(
+                f"Initializing embedding generator with schema_name={self.schema_name}, tenant_id={self.tenant_id}"
+            )
             self.embedding_generator = create_embedding_generator(
                 config=self.app_config,
                 schema_name=self.schema_name,
@@ -424,9 +440,15 @@ class VideoIngestionPipeline:
                 f"with backend: {self.config.search_backend}"
             )
         except Exception as e:
-            self.logger.error(f"Failed to initialize embedding generator: {e}", exc_info=True)
-            self.logger.error(f"  schema_name={self.schema_name}, tenant_id={self.tenant_id}")
-            self.logger.error(f"  app_config keys: {list(self.app_config.keys()) if self.app_config else 'None'}")
+            self.logger.error(
+                f"Failed to initialize embedding generator: {e}", exc_info=True
+            )
+            self.logger.error(
+                f"  schema_name={self.schema_name}, tenant_id={self.tenant_id}"
+            )
+            self.logger.error(
+                f"  app_config keys: {list(self.app_config.keys()) if self.app_config else 'None'}"
+            )
             if self.app_config and "backend" in self.app_config:
                 backend_config = self.app_config.get("backend", {})
                 profiles = backend_config.get("profiles", {})
@@ -701,6 +723,17 @@ class VideoIngestionPipeline:
         # Convert result to expected format
         return self._convert_embedding_result(result)
 
+    async def _emit_event(self, event) -> None:
+        """Emit event to EventQueue if configured."""
+        if self.event_queue is not None:
+            await self.event_queue.enqueue(event)
+
+    def _is_cancelled(self) -> bool:
+        """Check if pipeline execution has been cancelled."""
+        if self.event_queue is None:
+            return False
+        return self.event_queue.cancellation_token.is_cancelled
+
     async def process_video_async_with_strategies(
         self, video_path: Path
     ) -> dict[str, Any]:
@@ -721,7 +754,26 @@ class VideoIngestionPipeline:
         # Prepare base results
         results = self._prepare_base_results(video_path)
 
+        # Emit video processing start event
+        if self.job_id:
+            await self._emit_event(
+                create_status_event(
+                    task_id=self.job_id,
+                    tenant_id=self.tenant_id,
+                    state=TaskState.WORKING,
+                    phase=f"video_{video_id}",
+                    message=f"Processing video: {video_path.name}",
+                )
+            )
+
         try:
+            # Check for cancellation before processing
+            if self._is_cancelled():
+                self.logger.info(f"Cancelled before processing video: {video_id}")
+                results["status"] = "cancelled"
+                results["error"] = "Pipeline cancelled"
+                return results
+
             # Let strategy set orchestrate everything
             self.logger.info("Delegating to ProcessingStrategySet.process()")
             processing_results = await self.strategy_set.process(
@@ -741,6 +793,22 @@ class VideoIngestionPipeline:
             self.logger.info(f"Async video processing completed in {total_time:.2f}s")
             print(f"\n✅ Video processing completed in {total_time:.1f}s")
 
+            # Emit video completion event
+            if self.job_id:
+                await self._emit_event(
+                    create_progress_event(
+                        task_id=self.job_id,
+                        tenant_id=self.tenant_id,
+                        current=1,
+                        total=1,
+                        step=f"video_{video_id}_complete",
+                        details={
+                            "video_id": video_id,
+                            "processing_time": total_time,
+                        },
+                    )
+                )
+
             return results
 
         except PipelineException as e:
@@ -752,6 +820,20 @@ class VideoIngestionPipeline:
             results["error"] = str(e)
             results["error_type"] = type(e).__name__
             results["error_context"] = getattr(e, "context", {})
+
+            # Emit error event
+            if self.job_id:
+                await self._emit_event(
+                    create_error_event(
+                        task_id=self.job_id,
+                        tenant_id=self.tenant_id,
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                        context={"video_id": video_id, "video_path": str(video_path)},
+                        recoverable=True,
+                    )
+                )
+
             return results
         except Exception as e:
             # Wrap unexpected exceptions as ContentProcessingError
@@ -767,6 +849,20 @@ class VideoIngestionPipeline:
             results["error"] = str(wrapped_error)
             results["error_type"] = type(wrapped_error).__name__
             results["error_context"] = wrapped_error.context
+
+            # Emit error event
+            if self.job_id:
+                await self._emit_event(
+                    create_error_event(
+                        task_id=self.job_id,
+                        tenant_id=self.tenant_id,
+                        error_type=type(wrapped_error).__name__,
+                        error_message=str(wrapped_error),
+                        context=wrapped_error.context,
+                        recoverable=False,
+                    )
+                )
+
             return results
 
     def _prepare_base_results(self, video_path: Path) -> dict[str, Any]:
@@ -872,10 +968,9 @@ class VideoIngestionPipeline:
         """
         return await self.process_video_async_with_strategies(video_path)
 
-
     async def process_videos_concurrent(
         self, video_files: list[Path], max_concurrent: int = 3
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
         Process multiple videos concurrently with resource control
 
@@ -884,13 +979,43 @@ class VideoIngestionPipeline:
             max_concurrent: Maximum number of videos to process simultaneously
 
         Returns:
-            List of results for each video
+            Dict with job_id and list of results for each video
         """
+        # Generate job_id for this batch
+        self.job_id = f"ingestion_{uuid.uuid4().hex[:8]}"
+        start_time = time.time()
+
+        self.logger.info(
+            f"Starting ingestion job {self.job_id} with {len(video_files)} videos"
+        )
+
+        # Emit job start event
+        await self._emit_event(
+            create_status_event(
+                task_id=self.job_id,
+                tenant_id=self.tenant_id,
+                state=TaskState.WORKING,
+                phase="starting",
+                message=f"Starting ingestion of {len(video_files)} videos",
+            )
+        )
+
         # Create semaphore to limit concurrent processing
         semaphore = asyncio.Semaphore(max_concurrent)
+        completed_count = 0
 
         async def process_with_limit(video_path: Path, index: int, total: int):
             """Process a video with concurrency limit and progress tracking"""
+            nonlocal completed_count
+
+            # Check for cancellation
+            if self._is_cancelled():
+                return {
+                    "video_path": str(video_path),
+                    "status": "cancelled",
+                    "error": "Pipeline cancelled",
+                }
+
             async with semaphore:
                 try:
                     self.logger.info(
@@ -898,9 +1023,22 @@ class VideoIngestionPipeline:
                     )
                     print(f"\n🎯 [{index}/{total}] Processing: {video_path.name}")
 
+                    # Emit progress event before processing
+                    await self._emit_event(
+                        create_progress_event(
+                            task_id=self.job_id,
+                            tenant_id=self.tenant_id,
+                            current=completed_count,
+                            total=total,
+                            step=f"processing_video_{index}",
+                            details={"video": video_path.name},
+                        )
+                    )
+
                     result = await self.process_video_async(video_path)
 
                     if result["status"] == "completed":
+                        completed_count += 1
                         self.logger.info(
                             f"[{index}/{total}] Completed: {video_path.name} in {result['total_processing_time']:.1f}s"
                         )
@@ -955,7 +1093,6 @@ class VideoIngestionPipeline:
             f"\n🚀 Processing {len(video_files)} videos concurrently (max {max_concurrent} at once)"
         )
 
-        start_time = time.time()
         results = await asyncio.gather(*tasks, return_exceptions=False)
         total_time = time.time() - start_time
 
@@ -964,6 +1101,9 @@ class VideoIngestionPipeline:
             1 for r in results if isinstance(r, dict) and r.get("status") == "completed"
         )
         failed = len(results) - successful
+        cancelled = sum(
+            1 for r in results if isinstance(r, dict) and r.get("status") == "cancelled"
+        )
 
         self.logger.info(
             f"Concurrent processing completed: {successful}/{len(video_files)} successful in {total_time:.1f}s"
@@ -973,7 +1113,61 @@ class VideoIngestionPipeline:
         print(f"   ❌ Failed: {failed}/{len(video_files)}")
         print(f"   ⚡ Average time: {total_time/len(video_files):.1f}s per video")
 
-        return results
+        # Emit completion event
+        if cancelled > 0:
+            await self._emit_event(
+                create_status_event(
+                    task_id=self.job_id,
+                    tenant_id=self.tenant_id,
+                    state=TaskState.CANCELLED,
+                    phase="completed",
+                    message=f"Ingestion cancelled: {successful} completed, {cancelled} cancelled",
+                )
+            )
+        elif failed > 0:
+            await self._emit_event(
+                create_complete_event(
+                    task_id=self.job_id,
+                    tenant_id=self.tenant_id,
+                    result={
+                        "successful": successful,
+                        "failed": failed,
+                        "total": len(video_files),
+                    },
+                    summary=f"Ingestion completed with errors: {successful}/{len(video_files)} successful",
+                    execution_time_seconds=total_time,
+                )
+            )
+        else:
+            await self._emit_event(
+                create_complete_event(
+                    task_id=self.job_id,
+                    tenant_id=self.tenant_id,
+                    result={
+                        "successful": successful,
+                        "failed": 0,
+                        "total": len(video_files),
+                    },
+                    summary=f"Ingestion completed successfully: {successful}/{len(video_files)} videos",
+                    execution_time_seconds=total_time,
+                )
+            )
+
+        # Return structured result with job_id
+        return {
+            "job_id": self.job_id,
+            "status": (
+                "cancelled"
+                if cancelled > 0
+                else ("completed" if failed == 0 else "completed_with_errors")
+            ),
+            "total_videos": len(video_files),
+            "successful": successful,
+            "failed": failed,
+            "cancelled": cancelled,
+            "execution_time_seconds": total_time,
+            "results": results,
+        }
 
     def get_video_files(self, video_dir: Path) -> list[Path]:
         """Get list of video files from directory"""
@@ -1027,16 +1221,20 @@ class VideoIngestionPipeline:
         }
 
         # Process videos concurrently
-        processed_results = asyncio.run(
+        batch_result = asyncio.run(
             self.process_videos_concurrent(video_files, max_concurrent)
         )
 
+        # Extract job_id and video results from batch result
+        results["job_id"] = batch_result.get("job_id")
+        video_results = batch_result.get("results", [])
+
         # Separate successful and failed results
         results["processed_videos"] = [
-            r for r in processed_results if r.get("status") == "completed"
+            r for r in video_results if r.get("status") == "completed"
         ]
         results["failed_videos"] = [
-            r for r in processed_results if r.get("status") != "completed"
+            r for r in video_results if r.get("status") != "completed"
         ]
 
         results["completed_at"] = time.time()
@@ -1093,8 +1291,6 @@ class VideoIngestionPipeline:
         """Cleanup resources"""
         # No custom event loop to clean up
         pass
-
-
 
 
 if __name__ == "__main__":

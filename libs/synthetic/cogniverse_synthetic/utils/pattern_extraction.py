@@ -244,9 +244,7 @@ class PatternExtractor:
                             str(timestamp).replace("Z", "+00:00")
                         )
 
-                    days_old = (
-                        datetime.now() - content_date.replace(tzinfo=None)
-                    ).days
+                    days_old = (datetime.now() - content_date.replace(tzinfo=None)).days
 
                     # Add recency modifiers
                     if days_old < 30:
@@ -269,9 +267,7 @@ class PatternExtractor:
 
         return list(temporal)
 
-    def extract_content_types(
-        self, content_samples: List[Dict[str, Any]]
-    ) -> List[str]:
+    def extract_content_types(self, content_samples: List[Dict[str, Any]]) -> List[str]:
         """
         Extract content type indicators from titles and descriptions
 
@@ -294,9 +290,7 @@ class PatternExtractor:
 
         # Return content types or defaults
         return (
-            list(content_types)
-            if content_types
-            else ["tutorial", "guide", "overview"]
+            list(content_types) if content_types else ["tutorial", "guide", "overview"]
         )
 
     def extract_relationships(

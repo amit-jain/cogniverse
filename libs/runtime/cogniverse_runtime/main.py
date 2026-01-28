@@ -10,16 +10,16 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.config_loader import get_config_loader
 
 # Import routers
-from cogniverse_runtime.routers import admin, agents, health, ingestion, search
+from cogniverse_runtime.routers import admin, agents, events, health, ingestion, search
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(events.router, prefix="/events", tags=["events"])
 
 
 @app.get("/")
@@ -120,6 +121,7 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     # Load config to get port

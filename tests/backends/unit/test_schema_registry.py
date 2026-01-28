@@ -7,6 +7,7 @@ Tests validation, orchestration logic, and schema tracking without requiring Ves
 from unittest.mock import MagicMock
 
 import pytest
+
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 
 
@@ -35,7 +36,7 @@ def mock_schema_loader():
     loader = MagicMock()
     loader.load_schema.return_value = {
         "name": "base_schema",
-        "fields": [{"name": "id", "type": "string"}]
+        "fields": [{"name": "id", "type": "string"}],
     }
     return loader
 
@@ -46,7 +47,7 @@ def schema_registry(mock_config_manager, mock_backend, mock_schema_loader):
     return SchemaRegistry(
         config_manager=mock_config_manager,
         backend=mock_backend,
-        schema_loader=mock_schema_loader
+        schema_loader=mock_schema_loader,
     )
 
 
@@ -68,13 +69,19 @@ class TestSchemaRegistryValidation:
 
     def test_validate_tenant_id_invalid_chars_rejected(self, schema_registry):
         """Test tenant_id with invalid characters is rejected"""
-        with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
+        with pytest.raises(
+            ValueError, match="only alphanumeric, underscore, and colon allowed"
+        ):
             schema_registry._validate_tenant_id("tenant-with-dash")
 
-        with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
+        with pytest.raises(
+            ValueError, match="only alphanumeric, underscore, and colon allowed"
+        ):
             schema_registry._validate_tenant_id("tenant with space")
 
-        with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
+        with pytest.raises(
+            ValueError, match="only alphanumeric, underscore, and colon allowed"
+        ):
             schema_registry._validate_tenant_id("tenant.with.dot")
 
     def test_validate_tenant_id_wrong_type_rejected(self, schema_registry):
@@ -102,7 +109,9 @@ class TestSchemaRegistryValidation:
 class TestSchemaRegistryDeployment:
     """Test schema deployment orchestration"""
 
-    def test_deploy_schema_success(self, schema_registry, mock_backend, mock_schema_loader, mock_config_manager):
+    def test_deploy_schema_success(
+        self, schema_registry, mock_backend, mock_schema_loader, mock_config_manager
+    ):
         """Test successful schema deployment"""
         result = schema_registry.deploy_schema("acme", "test_schema")
 
@@ -123,7 +132,9 @@ class TestSchemaRegistryDeployment:
         # Should register in ConfigManager store
         mock_config_manager.store.set_config.assert_called_once()
 
-    def test_deploy_schema_includes_existing_schemas(self, mock_config_manager, mock_backend, mock_schema_loader):
+    def test_deploy_schema_includes_existing_schemas(
+        self, mock_config_manager, mock_backend, mock_schema_loader
+    ):
         """Test that deployment includes all existing schemas"""
         # Mock existing schema in store format (ConfigEntry with config_value)
         existing_entry = MagicMock()
@@ -133,14 +144,14 @@ class TestSchemaRegistryDeployment:
             "full_schema_name": "existing_schema_existing_tenant",
             "schema_definition": '{"name": "existing_schema_existing_tenant"}',
             "deployment_time": "2024-01-01T00:00:00",
-            "config": {}
+            "config": {},
         }
         mock_config_manager.store.list_all_configs.return_value = [existing_entry]
 
         registry = SchemaRegistry(
             config_manager=mock_config_manager,
             backend=mock_backend,
-            schema_loader=mock_schema_loader
+            schema_loader=mock_schema_loader,
         )
 
         registry.deploy_schema("new_tenant", "new_schema")
@@ -168,7 +179,9 @@ class TestSchemaRegistryDeployment:
         assert result1 == result2
         assert result1 == "test_schema_acme"
 
-    def test_deploy_schema_force_flag_bypasses_exists_check(self, schema_registry, mock_backend):
+    def test_deploy_schema_force_flag_bypasses_exists_check(
+        self, schema_registry, mock_backend
+    ):
         """Test force=True redeploys even if schema exists"""
         # First deployment
         schema_registry.deploy_schema("acme", "test_schema")
@@ -200,31 +213,39 @@ class TestSchemaRegistryDeployment:
         with pytest.raises(Exception, match="Backend failed to deploy"):
             schema_registry.deploy_schema("acme", "test_schema")
 
-    def test_deploy_schema_schema_load_failure_raises(self, schema_registry, mock_schema_loader):
+    def test_deploy_schema_schema_load_failure_raises(
+        self, schema_registry, mock_schema_loader
+    ):
         """Test that schema load failure raises exception"""
-        mock_schema_loader.load_schema.side_effect = FileNotFoundError("Schema not found")
+        mock_schema_loader.load_schema.side_effect = FileNotFoundError(
+            "Schema not found"
+        )
 
         with pytest.raises(Exception, match="Failed to load base schema"):
             schema_registry.deploy_schema("acme", "nonexistent_schema")
 
-    def test_deploy_schema_requires_backend(self, mock_config_manager, mock_schema_loader):
+    def test_deploy_schema_requires_backend(
+        self, mock_config_manager, mock_schema_loader
+    ):
         """Test that backend is required at construction time (fail fast)"""
         # Backend must be provided at construction - cannot be None
         with pytest.raises(ValueError, match="backend is required"):
             SchemaRegistry(
                 config_manager=mock_config_manager,
                 backend=None,  # No backend - should fail at construction
-                schema_loader=mock_schema_loader
+                schema_loader=mock_schema_loader,
             )
 
-    def test_deploy_schema_requires_schema_loader(self, mock_config_manager, mock_backend):
+    def test_deploy_schema_requires_schema_loader(
+        self, mock_config_manager, mock_backend
+    ):
         """Test that schema_loader is required at construction time (fail fast)"""
         # Schema loader must be provided at construction - cannot be None
         with pytest.raises(ValueError, match="schema_loader is required"):
             SchemaRegistry(
                 config_manager=mock_config_manager,
                 backend=mock_backend,
-                schema_loader=None  # No loader - should fail at construction
+                schema_loader=None,  # No loader - should fail at construction
             )
 
 
@@ -281,7 +302,7 @@ class TestSchemaRegistryTracking:
             base_schema_name="test_schema",
             full_schema_name="test_schema_acme",
             schema_definition='{"name": "test_schema_acme"}',
-            config={"profile": "test"}
+            config={"profile": "test"},
         )
 
         # Should be tracked
@@ -293,14 +314,16 @@ class TestSchemaRegistryTracking:
         assert schemas[0].full_schema_name == "test_schema_acme"
         assert schemas[0].config == {"profile": "test"}
 
-    def test_unregister_schema_removes_from_tracking(self, schema_registry, mock_config_manager):
+    def test_unregister_schema_removes_from_tracking(
+        self, schema_registry, mock_config_manager
+    ):
         """Test unregister_schema removes schema from tracking"""
         # Register first
         schema_registry.register_schema(
             tenant_id="acme",
             base_schema_name="test_schema",
             full_schema_name="test_schema_acme",
-            schema_definition='{"name": "test_schema_acme"}'
+            schema_definition='{"name": "test_schema_acme"}',
         )
 
         assert schema_registry.schema_exists("acme", "test_schema") is True
@@ -322,19 +345,33 @@ class TestSchemaRegistryInitialization:
     def test_requires_config_manager(self, mock_backend, mock_schema_loader):
         """Test that ConfigManager is required"""
         with pytest.raises(ValueError, match="config_manager is required"):
-            SchemaRegistry(config_manager=None, backend=mock_backend, schema_loader=mock_schema_loader)
+            SchemaRegistry(
+                config_manager=None,
+                backend=mock_backend,
+                schema_loader=mock_schema_loader,
+            )
 
     def test_requires_backend(self, mock_config_manager, mock_schema_loader):
         """Test that backend is required"""
         with pytest.raises(ValueError, match="backend is required"):
-            SchemaRegistry(config_manager=mock_config_manager, backend=None, schema_loader=mock_schema_loader)
+            SchemaRegistry(
+                config_manager=mock_config_manager,
+                backend=None,
+                schema_loader=mock_schema_loader,
+            )
 
     def test_requires_schema_loader(self, mock_config_manager, mock_backend):
         """Test that schema_loader is required"""
         with pytest.raises(ValueError, match="schema_loader is required"):
-            SchemaRegistry(config_manager=mock_config_manager, backend=mock_backend, schema_loader=None)
+            SchemaRegistry(
+                config_manager=mock_config_manager,
+                backend=mock_backend,
+                schema_loader=None,
+            )
 
-    def test_loads_schemas_from_storage_on_init(self, mock_config_manager, mock_backend, mock_schema_loader):
+    def test_loads_schemas_from_storage_on_init(
+        self, mock_config_manager, mock_backend, mock_schema_loader
+    ):
         """Test that existing schemas are loaded from ConfigManager on init"""
         # Mock schema entries in store format (ConfigEntry with config_value)
         entry1 = MagicMock()
@@ -344,7 +381,7 @@ class TestSchemaRegistryInitialization:
             "full_schema_name": "schema1_acme",
             "schema_definition": '{"name": "schema1_acme"}',
             "deployment_time": "2024-01-01T00:00:00",
-            "config": {}
+            "config": {},
         }
         entry2 = MagicMock()
         entry2.config_value = {
@@ -353,14 +390,14 @@ class TestSchemaRegistryInitialization:
             "full_schema_name": "schema2_startup",
             "schema_definition": '{"name": "schema2_startup"}',
             "deployment_time": "2024-01-01T00:00:00",
-            "config": {}
+            "config": {},
         }
         mock_config_manager.store.list_all_configs.return_value = [entry1, entry2]
 
         registry = SchemaRegistry(
             config_manager=mock_config_manager,
             backend=mock_backend,
-            schema_loader=mock_schema_loader
+            schema_loader=mock_schema_loader,
         )
 
         # Should have loaded both schemas

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
+
 from cogniverse_agents.routing.base import SearchModality
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_foundation.telemetry.config import (
@@ -24,7 +25,6 @@ from cogniverse_foundation.telemetry.config import (
     TelemetryConfig,
 )
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,11 @@ def phoenix_container():
 
     # Reset TelemetryManager singleton to force re-initialization with new env var
     from cogniverse_foundation.telemetry.manager import TelemetryManager
-    if hasattr(TelemetryManager, '_instance') and TelemetryManager._instance is not None:
+
+    if (
+        hasattr(TelemetryManager, "_instance")
+        and TelemetryManager._instance is not None
+    ):
         # Shutdown existing instance
         try:
             TelemetryManager._instance.shutdown()
@@ -65,12 +69,16 @@ def phoenix_container():
             ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_test"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.stdout.strip():
-            old_containers = result.stdout.strip().split('\n')
+            old_containers = result.stdout.strip().split("\n")
             for container_id in old_containers:
-                subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, timeout=10)
+                subprocess.run(
+                    ["docker", "rm", "-f", container_id],
+                    capture_output=True,
+                    timeout=10,
+                )
             logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
     except Exception as e:
         logger.warning(f"Error cleaning up old containers: {e}")
@@ -79,15 +87,20 @@ def phoenix_container():
         # Start Phoenix container
         result = subprocess.run(
             [
-                "docker", "run", "-d",
-                "--name", container_name,
-                "-p", "16006:6006",  # HTTP port
-                "-p", "14317:4317",  # gRPC port
-                "arizephoenix/phoenix:latest"
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                "16006:6006",  # HTTP port
+                "-p",
+                "14317:4317",  # gRPC port
+                "arizephoenix/phoenix:latest",
             ],
             check=True,
             capture_output=True,
-            text=True
+            text=True,
         )
         logger.info(f"Phoenix container {container_name} started")
 
@@ -116,7 +129,7 @@ def phoenix_container():
                 ["docker", "logs", container_name],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
             logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
             raise RuntimeError(f"Phoenix failed to start after {max_wait_time} seconds")
@@ -130,13 +143,13 @@ def phoenix_container():
                 ["docker", "stop", container_name],
                 check=False,
                 capture_output=True,
-                timeout=30
+                timeout=30,
             )
             subprocess.run(
                 ["docker", "rm", container_name],
                 check=False,
                 capture_output=True,
-                timeout=10
+                timeout=10,
             )
             logger.info(f"Phoenix container {container_name} stopped and removed")
         except Exception as e:
@@ -147,7 +160,7 @@ def phoenix_container():
                     ["docker", "rm", "-f", container_name],
                     check=False,
                     capture_output=True,
-                    timeout=10
+                    timeout=10,
                 )
             except Exception:
                 pass
@@ -292,7 +305,9 @@ class TestMultiModalRoutingIntegration:
             end_time=end_time,
         )
 
-        assert not spans_df.empty, f"No spans found in telemetry for project {project_name}"
+        assert (
+            not spans_df.empty
+        ), f"No spans found in telemetry for project {project_name}"
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
         assert (
             len(routing_spans) >= 3
@@ -424,7 +439,9 @@ class TestMultiModalRoutingIntegration:
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
         assert len(routing_spans) >= 3
 
-        logger.info(f"✅ Found {len(routing_spans)} document routing spans in telemetry")
+        logger.info(
+            f"✅ Found {len(routing_spans)} document routing spans in telemetry"
+        )
 
     @pytest.mark.asyncio
     async def test_multi_modal_query_routing(

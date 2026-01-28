@@ -13,6 +13,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from cogniverse_agents.orchestrator.checkpoint_types import (
     CheckpointConfig,
     CheckpointLevel,
@@ -37,11 +38,13 @@ logger = logging.getLogger(__name__)
 def mock_routing_agent():
     """Create a mock routing agent to avoid RoutingDeps validation"""
     agent = MagicMock(spec=RoutingAgent)
-    agent.route_query = AsyncMock(return_value=MagicMock(
-        recommended_agent="search_agent",
-        confidence=0.9,
-        enhanced_query="test query"
-    ))
+    agent.route_query = AsyncMock(
+        return_value=MagicMock(
+            recommended_agent="search_agent",
+            confidence=0.9,
+            enhanced_query="test query",
+        )
+    )
     return agent
 
 
@@ -102,23 +105,26 @@ class MockCheckpointStorage:
             ckpt
             for ckpt in self.checkpoints.values()
             if ckpt.workflow_id == workflow_id
-            and (include_superseded or ckpt.checkpoint_status != CheckpointStatus.SUPERSEDED)
+            and (
+                include_superseded
+                or ckpt.checkpoint_status != CheckpointStatus.SUPERSEDED
+            )
         ]
 
-    async def get_resumable_workflows(
-        self, tenant_id: str | None = None
-    ) -> list[dict]:
+    async def get_resumable_workflows(self, tenant_id: str | None = None) -> list[dict]:
         """Get resumable workflows"""
         resumable = []
         for ckpt in self.checkpoints.values():
             if ckpt.checkpoint_status == CheckpointStatus.ACTIVE:
                 if ckpt.workflow_status in ["running", "failed"]:
-                    resumable.append({
-                        "workflow_id": ckpt.workflow_id,
-                        "checkpoint_id": ckpt.checkpoint_id,
-                        "workflow_status": ckpt.workflow_status,
-                        "current_phase": ckpt.current_phase,
-                    })
+                    resumable.append(
+                        {
+                            "workflow_id": ckpt.workflow_id,
+                            "checkpoint_id": ckpt.checkpoint_id,
+                            "workflow_status": ckpt.workflow_status,
+                            "current_phase": ckpt.current_phase,
+                        }
+                    )
         return resumable
 
 
@@ -153,7 +159,11 @@ class TestCheckpointCreation:
 
     @pytest.mark.asyncio
     async def test_checkpoint_created_after_each_phase(
-        self, mock_checkpoint_storage, checkpoint_config, mock_a2a_client, mock_routing_agent
+        self,
+        mock_checkpoint_storage,
+        checkpoint_config,
+        mock_a2a_client,
+        mock_routing_agent,
     ):
         """Test that checkpoints are created after each phase completes"""
         orchestrator = MultiAgentOrchestrator(
@@ -198,7 +208,11 @@ class TestCheckpointCreation:
 
     @pytest.mark.asyncio
     async def test_checkpoint_contains_task_states(
-        self, mock_checkpoint_storage, checkpoint_config, mock_a2a_client, mock_routing_agent
+        self,
+        mock_checkpoint_storage,
+        checkpoint_config,
+        mock_a2a_client,
+        mock_routing_agent,
     ):
         """Test that checkpoints contain correct task states"""
         orchestrator = MultiAgentOrchestrator(
@@ -273,7 +287,9 @@ class TestCheckpointCreation:
         assert mock_storage.save_count == 0
 
     @pytest.mark.asyncio
-    async def test_checkpoint_without_storage(self, checkpoint_config, mock_a2a_client, mock_routing_agent):
+    async def test_checkpoint_without_storage(
+        self, checkpoint_config, mock_a2a_client, mock_routing_agent
+    ):
         """Test that workflow executes even without checkpoint storage"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
@@ -312,7 +328,11 @@ class TestWorkflowResume:
 
     @pytest.mark.asyncio
     async def test_resume_skips_completed_tasks(
-        self, mock_checkpoint_storage, checkpoint_config, mock_a2a_client, mock_routing_agent
+        self,
+        mock_checkpoint_storage,
+        checkpoint_config,
+        mock_a2a_client,
+        mock_routing_agent,
     ):
         """Test that resume skips already completed tasks"""
         # Create a checkpoint with task_1 completed
@@ -371,7 +391,11 @@ class TestWorkflowResume:
 
     @pytest.mark.asyncio
     async def test_resume_marks_old_checkpoint_superseded(
-        self, mock_checkpoint_storage, checkpoint_config, mock_a2a_client, mock_routing_agent
+        self,
+        mock_checkpoint_storage,
+        checkpoint_config,
+        mock_a2a_client,
+        mock_routing_agent,
     ):
         """Test that old checkpoint is marked as superseded on resume"""
         checkpoint = WorkflowCheckpoint(
@@ -411,7 +435,10 @@ class TestWorkflowResume:
         )
 
         # Original checkpoint should be marked superseded
-        assert ("ckpt_supersede", CheckpointStatus.SUPERSEDED) in mock_checkpoint_storage.status_updates
+        assert (
+            "ckpt_supersede",
+            CheckpointStatus.SUPERSEDED,
+        ) in mock_checkpoint_storage.status_updates
 
     @pytest.mark.asyncio
     async def test_resume_without_checkpoint_returns_error(
@@ -434,7 +461,9 @@ class TestWorkflowResume:
         assert "No checkpoint found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_resume_without_storage_returns_error(self, checkpoint_config, mock_routing_agent):
+    async def test_resume_without_storage_returns_error(
+        self, checkpoint_config, mock_routing_agent
+    ):
         """Test that resume fails when no storage is configured"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
@@ -573,7 +602,9 @@ class TestCheckpointLevels:
         assert mock_checkpoint_storage.save_count >= 2
 
     @pytest.mark.asyncio
-    async def test_should_checkpoint_phase_returns_correct_value(self, mock_routing_agent):
+    async def test_should_checkpoint_phase_returns_correct_value(
+        self, mock_routing_agent
+    ):
         """Test _should_checkpoint_phase returns correct values"""
         mock_storage = MockCheckpointStorage()
 
@@ -581,7 +612,9 @@ class TestCheckpointLevels:
         orchestrator1 = MultiAgentOrchestrator(
             tenant_id="test",
             routing_agent=mock_routing_agent,
-            checkpoint_config=CheckpointConfig(enabled=True, level=CheckpointLevel.PHASE),
+            checkpoint_config=CheckpointConfig(
+                enabled=True, level=CheckpointLevel.PHASE
+            ),
             checkpoint_storage=mock_storage,
             enable_workflow_intelligence=False,
         )
@@ -591,7 +624,9 @@ class TestCheckpointLevels:
         orchestrator2 = MultiAgentOrchestrator(
             tenant_id="test",
             routing_agent=mock_routing_agent,
-            checkpoint_config=CheckpointConfig(enabled=True, level=CheckpointLevel.TASK),
+            checkpoint_config=CheckpointConfig(
+                enabled=True, level=CheckpointLevel.TASK
+            ),
             checkpoint_storage=mock_storage,
             enable_workflow_intelligence=False,
         )

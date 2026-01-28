@@ -178,14 +178,24 @@ class TestOrchestrationFlows:
         mock_backend_result.adapter_path = "/tmp/adapters/sft_routing_123"
         mock_backend_result.metrics = {"train_loss": 0.5}
 
-        with patch("cogniverse_finetuning.orchestrator.TrainingMethodSelector") as mock_selector_cls, \
-             patch("cogniverse_finetuning.orchestrator.TraceToInstructionConverter") as mock_converter_cls, \
-             patch("cogniverse_finetuning.orchestrator.InstructionFormatter.format_alpaca_text") as mock_formatter, \
-             patch.object(orchestrator, "_create_backend") as mock_create_backend:
+        with (
+            patch(
+                "cogniverse_finetuning.orchestrator.TrainingMethodSelector"
+            ) as mock_selector_cls,
+            patch(
+                "cogniverse_finetuning.orchestrator.TraceToInstructionConverter"
+            ) as mock_converter_cls,
+            patch(
+                "cogniverse_finetuning.orchestrator.InstructionFormatter.format_alpaca_text"
+            ) as mock_formatter,
+            patch.object(orchestrator, "_create_backend") as mock_create_backend,
+        ):
 
             # Setup mocks
             mock_selector = MagicMock()
-            mock_selector.analyze_and_prepare = AsyncMock(return_value=(mock_analysis, None))
+            mock_selector.analyze_and_prepare = AsyncMock(
+                return_value=(mock_analysis, None)
+            )
             mock_selector_cls.return_value = mock_selector
 
             mock_converter = MagicMock()
@@ -216,7 +226,9 @@ class TestOrchestrationFlows:
             mock_selector.analyze_and_prepare.assert_called_once()
 
             # Verify converter was called
-            mock_converter.convert.assert_called_once_with("cogniverse-tenant1", "routing")
+            mock_converter.convert.assert_called_once_with(
+                "cogniverse-tenant1", "routing"
+            )
 
             # Verify formatter was called
             mock_formatter.assert_called_once()
@@ -267,14 +279,24 @@ class TestOrchestrationFlows:
         mock_backend_result.adapter_path = "/tmp/adapters/dpo_routing_123"
         mock_backend_result.metrics = {"train_loss": 0.3}
 
-        with patch("cogniverse_finetuning.orchestrator.TrainingMethodSelector") as mock_selector_cls, \
-             patch("cogniverse_finetuning.orchestrator.PreferencePairExtractor") as mock_extractor_cls, \
-             patch("cogniverse_finetuning.orchestrator.InstructionFormatter.format_dpo") as mock_formatter, \
-             patch.object(orchestrator, "_create_backend") as mock_create_backend:
+        with (
+            patch(
+                "cogniverse_finetuning.orchestrator.TrainingMethodSelector"
+            ) as mock_selector_cls,
+            patch(
+                "cogniverse_finetuning.orchestrator.PreferencePairExtractor"
+            ) as mock_extractor_cls,
+            patch(
+                "cogniverse_finetuning.orchestrator.InstructionFormatter.format_dpo"
+            ) as mock_formatter,
+            patch.object(orchestrator, "_create_backend") as mock_create_backend,
+        ):
 
             # Setup mocks
             mock_selector = MagicMock()
-            mock_selector.analyze_and_prepare = AsyncMock(return_value=(mock_analysis, None))
+            mock_selector.analyze_and_prepare = AsyncMock(
+                return_value=(mock_analysis, None)
+            )
             mock_selector_cls.return_value = mock_selector
 
             mock_extractor = MagicMock()
@@ -305,7 +327,9 @@ class TestOrchestrationFlows:
             mock_selector.analyze_and_prepare.assert_called_once()
 
             # Verify extractor was called
-            mock_extractor.extract.assert_called_once_with("cogniverse-tenant1", "routing")
+            mock_extractor.extract.assert_called_once_with(
+                "cogniverse-tenant1", "routing"
+            )
 
             # Verify formatter was called
             mock_formatter.assert_called_once()
@@ -354,8 +378,12 @@ class TestOrchestrationFlows:
         mock_backend_result.adapter_path = "/tmp/adapters/embedding_video_123"
         mock_backend_result.metrics = {"train_loss": 0.2}
 
-        with patch("cogniverse_finetuning.orchestrator.TripletExtractor") as mock_extractor_cls, \
-             patch.object(orchestrator, "_create_backend") as mock_create_backend:
+        with (
+            patch(
+                "cogniverse_finetuning.orchestrator.TripletExtractor"
+            ) as mock_extractor_cls,
+            patch.object(orchestrator, "_create_backend") as mock_create_backend,
+        ):
 
             # Setup mocks
             mock_extractor = MagicMock()
@@ -448,7 +476,9 @@ class TestOrchestrationFlows:
             backend="local",
         )
 
-        with patch("cogniverse_finetuning.orchestrator.LocalTrainingBackend") as mock_local_backend:
+        with patch(
+            "cogniverse_finetuning.orchestrator.LocalTrainingBackend"
+        ) as mock_local_backend:
             orchestrator._create_backend(config)
 
             # Verify LocalTrainingBackend was instantiated
@@ -474,7 +504,9 @@ class TestOrchestrationFlows:
             gpu="A100-40GB",
         )
 
-        with patch("cogniverse_finetuning.orchestrator.RemoteTrainingBackend") as mock_remote_backend:
+        with patch(
+            "cogniverse_finetuning.orchestrator.RemoteTrainingBackend"
+        ) as mock_remote_backend:
             orchestrator._create_backend(config)
 
             # Verify RemoteTrainingBackend was instantiated with correct provider

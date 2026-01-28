@@ -8,10 +8,9 @@ import logging
 import random
 from typing import Any, Dict, List
 
-from pydantic import BaseModel
-
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import WorkflowExecutionSchema
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +42,11 @@ class WorkflowGenerator(BaseGenerator):
             ["video_search_agent", "summarizer", "detailed_report"],
             ["document_agent", "video_search_agent", "summarizer"],
             ["image_search_agent", "document_agent", "detailed_report"],
-        ]
+        ],
     }
 
     async def generate(
-        self,
-        sampled_content: List[Dict[str, Any]],
-        target_count: int,
-        **kwargs
+        self, sampled_content: List[Dict[str, Any]], target_count: int, **kwargs
     ) -> List[BaseModel]:
         """
         Generate WorkflowExecution data
@@ -91,7 +87,9 @@ class WorkflowGenerator(BaseGenerator):
             # User satisfaction
             user_satisfaction = None
             if success:
-                user_satisfaction = round(confidence_score * random.uniform(0.85, 1.0), 2)
+                user_satisfaction = round(
+                    confidence_score * random.uniform(0.85, 1.0), 2
+                )
                 user_satisfaction = min(1.0, user_satisfaction)
 
             # Create example
@@ -106,7 +104,7 @@ class WorkflowGenerator(BaseGenerator):
                 parallel_efficiency=round(parallel_efficiency, 2),
                 confidence_score=round(confidence_score, 2),
                 user_satisfaction=user_satisfaction,
-                error_details=None if success else "Agent execution failed"
+                error_details=None if success else "Agent execution failed",
             )
             examples.append(example)
 

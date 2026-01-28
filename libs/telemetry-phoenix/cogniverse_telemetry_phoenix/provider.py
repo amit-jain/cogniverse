@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 
 import pandas as pd
+from phoenix.client import AsyncClient
+
 from cogniverse_foundation.telemetry.providers.base import (
     AnalyticsStore,
     AnnotationStore,
@@ -18,7 +20,6 @@ from cogniverse_foundation.telemetry.providers.base import (
     TelemetryProvider,
     TraceStore,
 )
-from phoenix.client import AsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,9 @@ class PhoenixTraceStore(TraceStore):
 
     def _get_client(self) -> AsyncClient:
         """Create AsyncClient for current event loop."""
-        logger.info(f"🔍 Creating Phoenix AsyncClient with endpoint: {self.http_endpoint}")
+        logger.info(
+            f"🔍 Creating Phoenix AsyncClient with endpoint: {self.http_endpoint}"
+        )
         return AsyncClient(base_url=self.http_endpoint)
 
     async def get_spans(
@@ -254,7 +257,9 @@ class PhoenixAnnotationStore(AnnotationStore):
         try:
             # Validate required columns
             required_cols = ["span_id", "score", "label"]
-            missing_cols = [col for col in required_cols if col not in evaluations_df.columns]
+            missing_cols = [
+                col for col in required_cols if col not in evaluations_df.columns
+            ]
             if missing_cols:
                 raise ValueError(
                     f"evaluations_df missing required columns: {missing_cols}. "
@@ -683,9 +688,7 @@ class PhoenixProvider(TelemetryProvider):
             logger.error(
                 f"Failed to configure Phoenix span export for {project_name}: {e}"
             )
-            raise RuntimeError(
-                f"Phoenix span export configuration failed: {e}"
-            ) from e
+            raise RuntimeError(f"Phoenix span export configuration failed: {e}") from e
 
     @property
     def client(self):
@@ -698,7 +701,9 @@ class PhoenixProvider(TelemetryProvider):
         import phoenix as px
 
         if not self._http_endpoint:
-            raise RuntimeError("PhoenixProvider not initialized - call initialize() first")
+            raise RuntimeError(
+                "PhoenixProvider not initialized - call initialize() first"
+            )
 
         return px.Client(endpoint=self._http_endpoint)
 

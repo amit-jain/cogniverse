@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import dspy
 import pytest
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -18,7 +19,9 @@ def real_dspy_lm():
     import requests
 
     response = requests.get("http://localhost:11434/v1/models", timeout=2)
-    assert response.status_code == 200, "Ollama server must be running at localhost:11434"
+    assert (
+        response.status_code == 200
+    ), "Ollama server must be running at localhost:11434"
 
     # Configure real DSPy.LM with Ollama using correct API
     lm = dspy.LM(
@@ -146,6 +149,7 @@ class TestSummarizerAgentDSPyIntegration:
 
             # Create summarization request (direct API instead of A2A)
             from cogniverse_agents.summarizer_agent import SummaryRequest
+
             request = SummaryRequest(
                 query="summarize AI research",
                 search_results=sample_search_results,
@@ -174,7 +178,9 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent with real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
             agent.llm = real_dspy_lm
 
             from cogniverse_agents.detailed_report_agent import ReportRequest
@@ -222,11 +228,14 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
             agent.llm = real_dspy_lm
 
             # Create report request using direct API
             from cogniverse_agents.detailed_report_agent import ReportRequest
+
             request = ReportRequest(
                 query="detailed AI research report",
                 search_results=sample_search_results,
@@ -248,9 +257,7 @@ class TestDetailedReportAgentDSPyIntegration:
 
                 # Verify response with real DSPy.LM
                 assert result.executive_summary is not None
-                assert (
-                    len(result.executive_summary) > 20
-                )  # Should have actual content
+                assert len(result.executive_summary) > 20  # Should have actual content
                 assert len(result.detailed_findings) > 0
                 assert len(result.recommendations) > 0
 
@@ -269,7 +276,9 @@ class TestCrossAgentDSPyIntegration:
         with dspy.context(lm=real_dspy_lm):
             summarizer = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
             summarizer.llm = real_dspy_lm
-            report_agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            report_agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
             report_agent.llm = real_dspy_lm
 
             # Step 1: Generate summary with real DSPy.LM
@@ -395,9 +404,7 @@ class TestDSPyLMConfigurationIntegration:
             # This should raise an exception due to bad model config
             result = await agent._summarize(request)
             # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
-            assert (
-                result is not None
-            ), "Agent should either fail or return valid result"
+            assert result is not None, "Agent should either fail or return valid result"
 
         except Exception as e:
             # Should fail with meaningful error about model or connection

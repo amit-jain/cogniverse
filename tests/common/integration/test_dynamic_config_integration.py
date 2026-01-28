@@ -6,9 +6,10 @@ Tests complete end-to-end flow with TextAnalysisAgent.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
+
 from cogniverse_agents.text_analysis_agent import TextAnalysisAgent, app
 from cogniverse_foundation.config.agent_config import DSPyModuleType
-from fastapi.testclient import TestClient
 
 
 @pytest.mark.integration
@@ -24,8 +25,9 @@ class TestDynamicConfigIntegration:
     @pytest.fixture
     def fresh_agent(self, tmp_path):
         """Create fresh TextAnalysisAgent instance with clean config"""
-        from cogniverse_foundation.config.utils import create_default_config_manager
         from fastapi import FastAPI
+
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Create ConfigManager instance with backend store
         config_manager = create_default_config_manager()
@@ -127,7 +129,8 @@ class TestDynamicConfigIntegration:
 
         # Verify agent config was updated
         assert (
-            agent.agent_config.module_config.module_type == DSPyModuleType.CHAIN_OF_THOUGHT
+            agent.agent_config.module_config.module_type
+            == DSPyModuleType.CHAIN_OF_THOUGHT
         )
         assert agent.agent_config.module_config.max_retries == 5
 
@@ -240,7 +243,9 @@ class TestDynamicConfigIntegration:
 
         # Add /analyze endpoint to fresh_app
         @fresh_app.post("/analyze")
-        async def analyze_endpoint(text: str, tenant_id: str, analysis_type: str = "summary"):
+        async def analyze_endpoint(
+            text: str, tenant_id: str, analysis_type: str = "summary"
+        ):
             result = agent.analyze_text(text, analysis_type)
             return {"status": "success", "analysis": result}
 
@@ -294,7 +299,8 @@ class TestDynamicConfigIntegration:
 
         # Step 3: Verify agent updated
         assert (
-            agent.agent_config.module_config.module_type == DSPyModuleType.CHAIN_OF_THOUGHT
+            agent.agent_config.module_config.module_type
+            == DSPyModuleType.CHAIN_OF_THOUGHT
         )
 
         # Step 4: Update to ReAct

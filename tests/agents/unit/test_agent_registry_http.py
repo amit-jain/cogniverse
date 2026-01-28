@@ -8,9 +8,10 @@ via HTTP POST and clients discover agents via HTTP GET.
 from unittest.mock import Mock
 
 import pytest
+from fastapi.testclient import TestClient
+
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from fastapi.testclient import TestClient
 
 
 @pytest.mark.unit
@@ -26,10 +27,7 @@ class TestAgentRegistryHTTPEndpoints:
     @pytest.fixture
     def agent_registry(self, config_manager):
         """Create agent registry for testing"""
-        registry = AgentRegistry(
-            tenant_id="default",
-            config_manager=config_manager
-        )
+        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
         return registry
 
     @pytest.fixture
@@ -42,6 +40,7 @@ class TestAgentRegistryHTTPEndpoints:
 
         # Create test client
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router, prefix="/agents")
 
@@ -55,13 +54,10 @@ class TestAgentRegistryHTTPEndpoints:
             "capabilities": ["search", "summarize"],
             "health_endpoint": "/health",
             "process_endpoint": "/tasks/send",
-            "timeout": 30
+            "timeout": 30,
         }
 
-        response = test_client.post(
-            "/agents/register",
-            json=registration_data
-        )
+        response = test_client.post("/agents/register", json=registration_data)
 
         assert response.status_code == 201
         data = response.json()
@@ -79,16 +75,16 @@ class TestAgentRegistryHTTPEndpoints:
     def test_list_agents_endpoint(self, test_client, agent_registry):
         """Test GET /agents endpoint"""
         # Register some agents
-        agent_registry.register_agent(AgentEndpoint(
-            name="agent1",
-            url="http://localhost:8001",
-            capabilities=["search"]
-        ))
-        agent_registry.register_agent(AgentEndpoint(
-            name="agent2",
-            url="http://localhost:8002",
-            capabilities=["summarize"]
-        ))
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="agent1", url="http://localhost:8001", capabilities=["search"]
+            )
+        )
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="agent2", url="http://localhost:8002", capabilities=["summarize"]
+            )
+        )
 
         response = test_client.get("/agents/")
 
@@ -101,11 +97,13 @@ class TestAgentRegistryHTTPEndpoints:
     def test_get_registry_stats_endpoint(self, test_client, agent_registry):
         """Test GET /agents/stats endpoint"""
         # Register an agent
-        agent_registry.register_agent(AgentEndpoint(
-            name="test_agent",
-            url="http://localhost:9000",
-            capabilities=["search", "analyze"]
-        ))
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="test_agent",
+                url="http://localhost:9000",
+                capabilities=["search", "analyze"],
+            )
+        )
 
         response = test_client.get("/agents/stats")
 
@@ -119,21 +117,27 @@ class TestAgentRegistryHTTPEndpoints:
     def test_find_agents_by_capability_endpoint(self, test_client, agent_registry):
         """Test GET /agents/by-capability/{capability} endpoint"""
         # Register agents with different capabilities
-        agent_registry.register_agent(AgentEndpoint(
-            name="search_agent",
-            url="http://localhost:8001",
-            capabilities=["search", "index"]
-        ))
-        agent_registry.register_agent(AgentEndpoint(
-            name="summarize_agent",
-            url="http://localhost:8002",
-            capabilities=["summarize"]
-        ))
-        agent_registry.register_agent(AgentEndpoint(
-            name="hybrid_agent",
-            url="http://localhost:8003",
-            capabilities=["search", "summarize"]
-        ))
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="search_agent",
+                url="http://localhost:8001",
+                capabilities=["search", "index"],
+            )
+        )
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="summarize_agent",
+                url="http://localhost:8002",
+                capabilities=["summarize"],
+            )
+        )
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="hybrid_agent",
+                url="http://localhost:8003",
+                capabilities=["search", "summarize"],
+            )
+        )
 
         response = test_client.get("/agents/by-capability/search")
 
@@ -149,11 +153,11 @@ class TestAgentRegistryHTTPEndpoints:
 
     def test_get_agent_info_endpoint(self, test_client, agent_registry):
         """Test GET /agents/{agent_name} endpoint"""
-        agent_registry.register_agent(AgentEndpoint(
-            name="test_agent",
-            url="http://localhost:9000",
-            capabilities=["search"]
-        ))
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="test_agent", url="http://localhost:9000", capabilities=["search"]
+            )
+        )
 
         response = test_client.get("/agents/test_agent")
 
@@ -174,11 +178,11 @@ class TestAgentRegistryHTTPEndpoints:
     def test_unregister_agent_endpoint(self, test_client, agent_registry):
         """Test DELETE /agents/{agent_name} endpoint"""
         # Register an agent first
-        agent_registry.register_agent(AgentEndpoint(
-            name="test_agent",
-            url="http://localhost:9000",
-            capabilities=["search"]
-        ))
+        agent_registry.register_agent(
+            AgentEndpoint(
+                name="test_agent", url="http://localhost:9000", capabilities=["search"]
+            )
+        )
 
         # Verify it exists
         assert agent_registry.get_agent("test_agent") is not None
@@ -208,7 +212,7 @@ class TestAgentRegistryHTTPEndpoints:
             "capabilities": ["search"],
             "health_endpoint": "/health",
             "process_endpoint": "/tasks/send",
-            "timeout": 30
+            "timeout": 30,
         }
 
         # First registration
@@ -236,9 +240,10 @@ class TestAgentRegistryIntegration:
 
     def test_full_registration_discovery_flow(self):
         """Test complete flow: register → discover by capability → get info"""
-        from cogniverse_runtime.routers.agents import router, set_agent_registry
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
+        from cogniverse_runtime.routers.agents import router, set_agent_registry
 
         # Setup
         config_manager = Mock()
@@ -250,23 +255,29 @@ class TestAgentRegistryIntegration:
         client = TestClient(app)
 
         # Step 1: Register two agents
-        client.post("/agents/register", json={
-            "name": "search_agent",
-            "url": "http://localhost:8001",
-            "capabilities": ["search", "index"],
-            "health_endpoint": "/health",
-            "process_endpoint": "/tasks/send",
-            "timeout": 30
-        })
+        client.post(
+            "/agents/register",
+            json={
+                "name": "search_agent",
+                "url": "http://localhost:8001",
+                "capabilities": ["search", "index"],
+                "health_endpoint": "/health",
+                "process_endpoint": "/tasks/send",
+                "timeout": 30,
+            },
+        )
 
-        client.post("/agents/register", json={
-            "name": "summarize_agent",
-            "url": "http://localhost:8002",
-            "capabilities": ["summarize", "condense"],
-            "health_endpoint": "/health",
-            "process_endpoint": "/tasks/send",
-            "timeout": 30
-        })
+        client.post(
+            "/agents/register",
+            json={
+                "name": "summarize_agent",
+                "url": "http://localhost:8002",
+                "capabilities": ["summarize", "condense"],
+                "health_endpoint": "/health",
+                "process_endpoint": "/tasks/send",
+                "timeout": 30,
+            },
+        )
 
         # Step 2: Discover by capability
         response = client.get("/agents/by-capability/search")

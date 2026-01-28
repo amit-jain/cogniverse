@@ -56,13 +56,16 @@ def vespa_instance():
 
     try:
         # Start container with module-specific ports
-        container_info = manager.start_container(module_name=__name__, use_module_ports=True)
+        container_info = manager.start_container(
+            module_name=__name__, use_module_ports=True
+        )
 
         # Wait for config server to be ready (with longer timeout for slow startups)
         manager.wait_for_config_ready(container_info, timeout=180)
 
         # Give Vespa additional time for internal services to initialize
         import time
+
         logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
         time.sleep(15)
 
@@ -72,7 +75,7 @@ def vespa_instance():
 
         schema_manager = VespaSchemaManager(
             backend_endpoint="http://localhost",
-            backend_port=container_info['config_port'],
+            backend_port=container_info["config_port"],
         )
         schema_manager.upload_metadata_schemas(app_name="cogniverse")
         logger.info("Deployed metadata schemas (organization, tenant, config)")

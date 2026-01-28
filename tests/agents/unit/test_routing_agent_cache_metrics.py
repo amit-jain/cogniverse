@@ -8,6 +8,7 @@ Unit tests for cache and metrics integration in RoutingAgent:
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.telemetry.config import TelemetryConfig
@@ -21,12 +22,13 @@ class TestRoutingAgentCacheMetrics:
         """Create routing agent with test configuration"""
         # Reset TelemetryManager singleton to avoid conflicts with previous tests
         from cogniverse_foundation.telemetry.manager import TelemetryManager
+
         TelemetryManager._instance = None
 
         # Create telemetry config
         telemetry_config = TelemetryConfig(
             enabled=False,  # Disable telemetry for unit tests (cache/metrics don't need it)
-            provider_config={}
+            provider_config={},
         )
 
         # Create deps with test configuration
@@ -45,27 +47,32 @@ class TestRoutingAgentCacheMetrics:
 
         # Mock all external dependencies to avoid network calls and delays
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
-        with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
-             patch("cogniverse_core.agents.a2a_agent.A2AClient"), \
-             patch("cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"):
+        with (
+            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
+            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
+            patch(
+                "cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"
+            ),
+        ):
             agent = RoutingAgent(deps=deps, port=8001)
 
             # Yield agent for test use
             yield agent
 
             # Cleanup after each test to prevent state pollution
-            if hasattr(agent, 'cache_manager') and agent.cache_manager:
+            if hasattr(agent, "cache_manager") and agent.cache_manager:
                 # Clear all caches
                 agent.cache_manager.invalidate_all()
                 agent.cache_manager.reset_stats()
 
-            if hasattr(agent, 'metrics_tracker') and agent.metrics_tracker:
+            if hasattr(agent, "metrics_tracker") and agent.metrics_tracker:
                 # Reset all metrics
                 agent.metrics_tracker.reset_all_stats()
 
             # Reset TelemetryManager singleton after test
             from cogniverse_foundation.telemetry.manager import TelemetryManager
+
             TelemetryManager._instance = None
 
     def test_cache_metrics_components_initialized(self, routing_agent):
@@ -79,7 +86,6 @@ class TestRoutingAgentCacheMetrics:
         assert routing_agent.cache_manager is not None
         assert routing_agent.lazy_executor is not None
         assert routing_agent.metrics_tracker is not None
-
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_cached_result(self, routing_agent):
@@ -100,7 +106,7 @@ class TestRoutingAgentCacheMetrics:
             entities=[],
             relationships=[],
             metadata={"cached": True},
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
         )
 
         # Pre-populate cache (video_search_agent maps to VIDEO modality)
@@ -109,7 +115,7 @@ class TestRoutingAgentCacheMetrics:
         )
 
         # Mock the routing module to ensure it's not called on cache hit
-        with patch.object(routing_agent.routing_module, 'forward') as mock_forward:
+        with patch.object(routing_agent.routing_module, "forward") as mock_forward:
             # Call route_query
             result = await routing_agent.route_query(query)
 
@@ -134,7 +140,9 @@ class TestRoutingAgentCacheMetrics:
         mock_prediction.primary_intent = "search"
         mock_prediction.complexity_score = 0.5
 
-        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+        with patch.object(
+            routing_agent.routing_module, "forward", return_value=mock_prediction
+        ):
             # Call route_query
             result = await routing_agent.route_query(query)
 
@@ -144,7 +152,9 @@ class TestRoutingAgentCacheMetrics:
             assert result.confidence > 0
 
             # Verify result was cached (video_search_agent maps to VIDEO modality)
-            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.VIDEO)
+            cached = routing_agent.cache_manager.get_cached_result(
+                query, QueryModality.VIDEO
+            )
             assert cached is not None
             assert cached.query == result.query
             assert cached.recommended_agent == result.recommended_agent
@@ -162,7 +172,9 @@ class TestRoutingAgentCacheMetrics:
         mock_prediction.primary_intent = "search"
         mock_prediction.complexity_score = 0.5
 
-        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+        with patch.object(
+            routing_agent.routing_module, "forward", return_value=mock_prediction
+        ):
             # Call route_query
             await routing_agent.route_query(query)
 
@@ -176,7 +188,11 @@ class TestRoutingAgentCacheMetrics:
         query = "test query"
 
         # Mock routing module to raise exception
-        with patch.object(routing_agent.routing_module, 'forward', side_effect=Exception("Routing failed")):
+        with patch.object(
+            routing_agent.routing_module,
+            "forward",
+            side_effect=Exception("Routing failed"),
+        ):
             # Call route_query (should not raise, returns fallback decision)
             result = await routing_agent.route_query(query)
 
@@ -207,17 +223,20 @@ class TestRoutingAgentCacheMetrics:
         mock_prediction.primary_intent = "search"
         mock_prediction.complexity_score = 0.5
 
-        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+        with patch.object(
+            routing_agent.routing_module, "forward", return_value=mock_prediction
+        ):
             # Process query
             result = await routing_agent.route_query(query)
 
             # Verify result was cached (video_search_agent maps to VIDEO modality)
-            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.VIDEO)
+            cached = routing_agent.cache_manager.get_cached_result(
+                query, QueryModality.VIDEO
+            )
             assert cached is not None
             assert cached.query == result.query
             assert cached.recommended_agent == result.recommended_agent
             assert cached.confidence == result.confidence
-
 
 
 if __name__ == "__main__":

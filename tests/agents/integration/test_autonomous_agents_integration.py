@@ -10,6 +10,7 @@ These tests validate CORRECTNESS, not just structure.
 import dspy
 import pytest
 import requests
+
 from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionAgent,
     EntityExtractionDeps,
@@ -121,7 +122,9 @@ def orchestrator_with_real_agents(real_dspy_lm):
         AgentType.QUERY_ENHANCEMENT: query_agent,
     }
 
-    orchestrator_deps = OrchestratorDeps(tenant_id="test_tenant", agent_registry=agent_registry)
+    orchestrator_deps = OrchestratorDeps(
+        tenant_id="test_tenant", agent_registry=agent_registry
+    )
     orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
     return orchestrator
 
@@ -567,9 +570,7 @@ class TestOrchestratorAgentIntegration:
         )
 
         # VALIDATE: Parallel groups were created
-        assert (
-            len(result.parallel_groups) > 0
-        ), "Should have parallel execution groups"
+        assert len(result.parallel_groups) > 0, "Should have parallel execution groups"
         assert result.parallel_groups[0] == [
             0,
             1,

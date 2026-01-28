@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pandas as pd
 import pytest
+
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 
 
@@ -33,14 +34,19 @@ def mock_provider():
 @pytest.fixture
 def span_evaluator(mock_optimizer, mock_provider):
     """Create RoutingSpanEvaluator with mocked dependencies"""
-    with patch(
-        "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-    ) as mock_get_manager, patch(
-        "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
-    ) as mock_span_evaluator_class:
+    with (
+        patch(
+            "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+        ) as mock_get_manager,
+        patch(
+            "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+        ) as mock_span_evaluator_class,
+    ):
         mock_manager = Mock()
         mock_config = Mock()
-        mock_config.get_project_name = Mock(return_value="cogniverse-test-tenant-routing-optimization")
+        mock_config.get_project_name = Mock(
+            return_value="cogniverse-test-tenant-routing-optimization"
+        )
         mock_manager.config = mock_config
         mock_manager.get_provider = Mock(return_value=mock_provider)
         mock_get_manager.return_value = mock_manager
@@ -59,14 +65,19 @@ class TestRoutingSpanEvaluatorInit:
 
     def test_initialization_default_tenant(self, mock_optimizer, mock_provider):
         """Test initialization with default tenant"""
-        with patch(
-            "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-        ) as mock_get_manager, patch(
-            "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
-        ) as mock_span_evaluator_class:
+        with (
+            patch(
+                "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+            ) as mock_get_manager,
+            patch(
+                "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+            ) as mock_span_evaluator_class,
+        ):
             mock_manager = Mock()
             mock_config = Mock()
-            mock_config.get_project_name = Mock(return_value="cogniverse-default-routing-optimization")
+            mock_config.get_project_name = Mock(
+                return_value="cogniverse-default-routing-optimization"
+            )
             mock_manager.config = mock_config
             mock_manager.get_provider = Mock(return_value=mock_provider)
             mock_get_manager.return_value = mock_manager
@@ -81,14 +92,19 @@ class TestRoutingSpanEvaluatorInit:
 
     def test_initialization_custom_tenant(self, mock_optimizer, mock_provider):
         """Test initialization with custom tenant"""
-        with patch(
-            "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-        ) as mock_get_manager, patch(
-            "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
-        ) as mock_span_evaluator_class:
+        with (
+            patch(
+                "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+            ) as mock_get_manager,
+            patch(
+                "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+            ) as mock_span_evaluator_class,
+        ):
             mock_manager = Mock()
             mock_config = Mock()
-            mock_config.get_project_name = Mock(return_value="cogniverse-custom-tenant-routing-optimization")
+            mock_config.get_project_name = Mock(
+                return_value="cogniverse-custom-tenant-routing-optimization"
+            )
             mock_manager.config = mock_config
             mock_manager.get_provider = Mock(return_value=mock_provider)
             mock_get_manager.return_value = mock_manager
@@ -273,9 +289,7 @@ class TestEvaluateRoutingSpans:
     """Test span evaluation and experience creation"""
 
     @pytest.mark.asyncio
-    async def test_evaluate_routing_spans_success(
-        self, span_evaluator, mock_provider
-    ):
+    async def test_evaluate_routing_spans_success(self, span_evaluator, mock_provider):
         """Test successful evaluation of routing spans"""
         # Mock Phoenix client to return routing spans
         routing_spans = pd.DataFrame(
@@ -314,9 +328,7 @@ class TestEvaluateRoutingSpans:
         assert span_evaluator.optimizer.record_routing_experience.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_evaluate_routing_spans_no_spans(
-        self, span_evaluator, mock_provider
-    ):
+    async def test_evaluate_routing_spans_no_spans(self, span_evaluator, mock_provider):
         """Test evaluation when no spans are found"""
         mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 

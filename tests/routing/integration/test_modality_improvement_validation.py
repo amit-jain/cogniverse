@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from cogniverse_agents.routing.base import (
     GenerationType,
     RoutingDecision,
@@ -180,7 +181,11 @@ class TestModalityImprovementValidation:
 
     @pytest.mark.asyncio
     async def test_modality_prediction_influences_routing_decision(
-        self, mock_router, video_training_examples, tmp_path, telemetry_manager_with_phoenix
+        self,
+        mock_router,
+        video_training_examples,
+        tmp_path,
+        telemetry_manager_with_phoenix,
     ):
         """
         Test that high-confidence modality predictions influence routing decisions
@@ -323,7 +328,9 @@ class TestModalityImprovementValidation:
         context = {"modality_prediction": prediction}
 
         # Create router and test routing with modality prediction
-        with patch("cogniverse_agents.routing.router.ComprehensiveRouter") as MockRouter:
+        with patch(
+            "cogniverse_agents.routing.router.ComprehensiveRouter"
+        ) as MockRouter:
             mock_router_instance = MockRouter.return_value
             mock_router_instance.route = AsyncMock(
                 return_value=RoutingDecision(

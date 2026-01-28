@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from cogniverse_foundation.config.utils import create_default_config_manager
 
+from cogniverse_foundation.config.utils import create_default_config_manager
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.markers import (
     skip_heavy_models_in_ci,
@@ -87,7 +87,9 @@ class TestMockBackendIngestion:
             mock_cap_instance.read.return_value = (False, None)  # No frames
             mock_cap.return_value = mock_cap_instance
 
-            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
+            with patch(
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
+            ):
                 result = processor.extract_keyframes(video_file)
 
                 assert "video_id" in result
@@ -113,7 +115,9 @@ class TestMockBackendIngestion:
             # Mock ffprobe for duration
             mock_subprocess.return_value.stdout = "60.0\n"
 
-            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
+            with patch(
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
+            ):
                 result = processor.extract_chunks(video_file)
 
                 assert "video_id" in result
@@ -134,6 +138,8 @@ class TestVespaBackendIngestion:
         Note: This fixture ONLY starts the container. Schema deployment happens
         automatically when VideoIngestionPipeline creates backends via BackendRegistry.
         """
+        import os
+
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
 
         # Start Vespa container (no schema deployment)
@@ -143,9 +149,22 @@ class TestVespaBackendIngestion:
         if not manager.deploy_test_application():
             pytest.skip("Failed to deploy Vespa test application")
 
+        # Set BACKEND_URL for the tests to use
+        old_backend_url = os.environ.get("BACKEND_URL")
+        os.environ["BACKEND_URL"] = "http://localhost"
+        os.environ["BACKEND_PORT"] = str(manager.http_port)
+
         yield manager
 
-        # Cleanup
+        # Cleanup environment
+        if old_backend_url is not None:
+            os.environ["BACKEND_URL"] = old_backend_url
+        elif "BACKEND_URL" in os.environ:
+            del os.environ["BACKEND_URL"]
+        if "BACKEND_PORT" in os.environ:
+            del os.environ["BACKEND_PORT"]
+
+        # Cleanup container
         manager.cleanup()
 
     @pytest.fixture
@@ -155,11 +174,15 @@ class TestVespaBackendIngestion:
         if test_dir.exists():
             return list(test_dir.glob("*.mp4"))[:2]  # Limit to 2 videos
         else:
-            pytest.fail("Test videos not available at data/testset/evaluation/sample_videos")
+            pytest.fail(
+                "Test videos not available at data/testset/evaluation/sample_videos"
+            )
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
+    async def test_lightweight_vespa_ingestion(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
         """Test lightweight ingestion to Vespa (no heavy models)."""
         # Test with basic frame extraction only
         from cogniverse_runtime.ingestion.pipeline import (
@@ -168,7 +191,9 @@ class TestVespaBackendIngestion:
         )
 
         config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="default", config_manager=config_manager
+        )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
         config.transcribe_audio = False
@@ -179,7 +204,7 @@ class TestVespaBackendIngestion:
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_name="video_colpali_smol500_mv_frame"
+            schema_name="video_colpali_smol500_mv_frame",
         )
 
         # Process just one video
@@ -192,14 +217,19 @@ class TestVespaBackendIngestion:
     @pytest.mark.requires_colpali
     @skip_heavy_models_in_ci
     @pytest.mark.asyncio
-    async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
+    async def test_colpali_vespa_ingestion(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
         """Test ColPali model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
+
         config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="default", config_manager=config_manager
+        )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 2
@@ -208,7 +238,7 @@ class TestVespaBackendIngestion:
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_name="video_colpali_smol500_mv_frame"
+            schema_name="video_colpali_smol500_mv_frame",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
@@ -220,14 +250,19 @@ class TestVespaBackendIngestion:
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
-    async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
+    async def test_videoprism_vespa_ingestion(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
         """Test VideoPrism model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
+
         config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="default", config_manager=config_manager
+        )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 1
@@ -236,7 +271,7 @@ class TestVespaBackendIngestion:
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_name="video_videoprism_base_mv_chunk_30s"
+            schema_name="video_videoprism_base_mv_chunk_30s",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
@@ -247,14 +282,19 @@ class TestVespaBackendIngestion:
     @pytest.mark.requires_colqwen
     @skip_heavy_models_in_ci
     @pytest.mark.asyncio
-    async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
+    async def test_colqwen_vespa_ingestion(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
         """Test ColQwen model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
+
         config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="default", config_manager=config_manager
+        )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 1
@@ -263,7 +303,7 @@ class TestVespaBackendIngestion:
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_name="video_colqwen_omni_mv_chunk_30s"
+            schema_name="video_colqwen_omni_mv_chunk_30s",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
@@ -284,12 +324,16 @@ class TestComprehensiveIngestion:
         if test_dir.exists():
             return list(test_dir.glob("*.mp4"))
         else:
-            pytest.fail("Test videos not available at data/testset/evaluation/sample_videos")
+            pytest.fail(
+                "Test videos not available at data/testset/evaluation/sample_videos"
+            )
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
     @pytest.mark.asyncio
-    async def test_multi_profile_ingestion(self, all_test_videos, tmp_path):
+    async def test_multi_profile_ingestion(
+        self, ingestion_vespa_backend, all_test_videos, tmp_path
+    ):
         """Test ingestion with multiple profiles."""
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
@@ -306,7 +350,9 @@ class TestComprehensiveIngestion:
         for profile in profiles_to_test:
             try:
                 config_manager = create_default_config_manager()
-                config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+                config = PipelineConfig.from_config(
+                    tenant_id="default", config_manager=config_manager
+                )
                 config.video_dir = all_test_videos[0].parent
                 config.search_backend = "vespa"
                 config.max_frames_per_video = 1
@@ -315,7 +361,7 @@ class TestComprehensiveIngestion:
                     tenant_id="test_tenant",
                     config=config,
                     config_manager=config_manager,
-                    schema_name=profile
+                    schema_name=profile,
                 )
                 result = await pipeline.process_video_async(all_test_videos[0])
                 results[profile] = result
@@ -329,15 +375,20 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.benchmark
     @pytest.mark.asyncio
-    async def test_ingestion_performance(self, all_test_videos, tmp_path):
+    async def test_ingestion_performance(
+        self, ingestion_vespa_backend, all_test_videos, tmp_path
+    ):
         """Benchmark ingestion performance."""
 
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
+
         config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
+        config = PipelineConfig.from_config(
+            tenant_id="default", config_manager=config_manager
+        )
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 5
@@ -346,7 +397,7 @@ class TestComprehensiveIngestion:
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_name="video_colpali_smol500_mv_frame"
+            schema_name="video_colpali_smol500_mv_frame",
         )
 
         start_time = time.time()

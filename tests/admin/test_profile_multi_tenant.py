@@ -92,7 +92,7 @@ class TestProfileMultiTenantIsolation:
             "schema_name": "video_test",
             "embedding_model": "model_a",
             "embedding_type": "frame_based",
-            "description": "Tenant A's profile"
+            "description": "Tenant A's profile",
         }
 
         profile_b = {
@@ -102,7 +102,7 @@ class TestProfileMultiTenantIsolation:
             "schema_name": "video_test",
             "embedding_model": "model_b",
             "embedding_type": "single_vector",
-            "description": "Tenant B's profile"
+            "description": "Tenant B's profile",
         }
 
         # Create profile for tenant A
@@ -116,12 +116,16 @@ class TestProfileMultiTenantIsolation:
         assert response_b.json()["tenant_id"] == "tenant_b"
 
         # Verify both exist independently
-        response_a_get = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"})
+        response_a_get = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"}
+        )
         assert response_a_get.status_code == 200
         assert response_a_get.json()["embedding_model"] == "model_a"
         assert response_a_get.json()["description"] == "Tenant A's profile"
 
-        response_b_get = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"})
+        response_b_get = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"}
+        )
         assert response_b_get.status_code == 200
         assert response_b_get.json()["embedding_model"] == "model_b"
         assert response_b_get.json()["description"] == "Tenant B's profile"
@@ -129,36 +133,47 @@ class TestProfileMultiTenantIsolation:
     def test_tenant_cannot_see_other_tenant_profiles(self, test_client):
         """Test that tenant A cannot see tenant B's profiles in list"""
         # Create profiles for tenant A
-        test_client.post("/admin/profiles", json={
-            "profile_name": "tenant_a_profile_1",
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_a",
-            "embedding_type": "frame_based"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "tenant_a_profile_1",
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_a",
+                "embedding_type": "frame_based",
+            },
+        )
 
-        test_client.post("/admin/profiles", json={
-            "profile_name": "tenant_a_profile_2",
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_a",
-            "embedding_type": "frame_based"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "tenant_a_profile_2",
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_a",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Create profiles for tenant B
-        test_client.post("/admin/profiles", json={
-            "profile_name": "tenant_b_profile_1",
-            "tenant_id": "tenant_b",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_b",
-            "embedding_type": "frame_based"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "tenant_b_profile_1",
+                "tenant_id": "tenant_b",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_b",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # List profiles for tenant A
-        response_a = test_client.get("/admin/profiles", params={"tenant_id": "tenant_a"})
+        response_a = test_client.get(
+            "/admin/profiles", params={"tenant_id": "tenant_a"}
+        )
         assert response_a.status_code == 200
         profiles_a = response_a.json()["profiles"]
         profile_names_a = [p["profile_name"] for p in profiles_a]
@@ -169,7 +184,9 @@ class TestProfileMultiTenantIsolation:
         assert len(profiles_a) == 2
 
         # List profiles for tenant B
-        response_b = test_client.get("/admin/profiles", params={"tenant_id": "tenant_b"})
+        response_b = test_client.get(
+            "/admin/profiles", params={"tenant_id": "tenant_b"}
+        )
         assert response_b.status_code == 200
         profiles_b = response_b.json()["profiles"]
         profile_names_b = [p["profile_name"] for p in profiles_b]
@@ -182,76 +199,96 @@ class TestProfileMultiTenantIsolation:
     def test_tenant_cannot_access_other_tenant_profile_details(self, test_client):
         """Test that tenant A cannot access tenant B's profile details"""
         # Create profile for tenant A
-        test_client.post("/admin/profiles", json={
-            "profile_name": "secret_profile",
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "secret_model",
-            "embedding_type": "frame_based"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "secret_profile",
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "secret_model",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Tenant B tries to access tenant A's profile
-        response = test_client.get("/admin/profiles/secret_profile", params={"tenant_id": "tenant_b"})
+        response = test_client.get(
+            "/admin/profiles/secret_profile", params={"tenant_id": "tenant_b"}
+        )
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
     def test_tenant_cannot_update_other_tenant_profile(self, test_client):
         """Test that tenant A cannot update tenant B's profile"""
         # Create profile for tenant A
-        test_client.post("/admin/profiles", json={
-            "profile_name": "protected_profile",
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_a",
-            "embedding_type": "frame_based",
-            "description": "Original description"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "protected_profile",
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_a",
+                "embedding_type": "frame_based",
+                "description": "Original description",
+            },
+        )
 
         # Tenant B tries to update tenant A's profile
-        response = test_client.put("/admin/profiles/protected_profile", json={
-            "tenant_id": "tenant_b",
-            "description": "Malicious update"
-        })
+        response = test_client.put(
+            "/admin/profiles/protected_profile",
+            json={"tenant_id": "tenant_b", "description": "Malicious update"},
+        )
         assert response.status_code == 404
 
         # Verify profile was not modified
-        response_check = test_client.get("/admin/profiles/protected_profile", params={"tenant_id": "tenant_a"})
+        response_check = test_client.get(
+            "/admin/profiles/protected_profile", params={"tenant_id": "tenant_a"}
+        )
         assert response_check.status_code == 200
         assert response_check.json()["description"] == "Original description"
 
     def test_tenant_cannot_delete_other_tenant_profile(self, test_client):
         """Test that tenant A cannot delete tenant B's profile"""
         # Create profile for tenant A
-        test_client.post("/admin/profiles", json={
-            "profile_name": "permanent_profile",
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_a",
-            "embedding_type": "frame_based"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "permanent_profile",
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_a",
+                "embedding_type": "frame_based",
+            },
+        )
 
         # Tenant B tries to delete tenant A's profile
-        response = test_client.delete("/admin/profiles/permanent_profile", params={"tenant_id": "tenant_b"})
+        response = test_client.delete(
+            "/admin/profiles/permanent_profile", params={"tenant_id": "tenant_b"}
+        )
         assert response.status_code == 404
 
         # Verify profile still exists
-        response_check = test_client.get("/admin/profiles/permanent_profile", params={"tenant_id": "tenant_a"})
+        response_check = test_client.get(
+            "/admin/profiles/permanent_profile", params={"tenant_id": "tenant_a"}
+        )
         assert response_check.status_code == 200
 
     def test_empty_tenant_id_not_allowed(self, test_client):
         """Test that empty or missing tenant_id is rejected"""
         # Try to create profile with empty tenant_id
-        response = test_client.post("/admin/profiles", json={
-            "profile_name": "no_tenant_profile",
-            "tenant_id": "",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model",
-            "embedding_type": "frame_based"
-        })
+        response = test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "no_tenant_profile",
+                "tenant_id": "",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model",
+                "embedding_type": "frame_based",
+            },
+        )
         # Should fail validation or use default tenant
         # Behavior depends on implementation - just verify it doesn't create issues
 
@@ -260,52 +297,68 @@ class TestProfileMultiTenantIsolation:
         profile_name = "isolation_test"
 
         # Tenant A creates profile
-        test_client.post("/admin/profiles", json={
-            "profile_name": profile_name,
-            "tenant_id": "tenant_a",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_a",
-            "embedding_type": "frame_based",
-            "description": "Version 1"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": profile_name,
+                "tenant_id": "tenant_a",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_a",
+                "embedding_type": "frame_based",
+                "description": "Version 1",
+            },
+        )
 
         # Tenant A updates profile
-        test_client.put(f"/admin/profiles/{profile_name}", json={
-            "tenant_id": "tenant_a",
-            "description": "Version 2"
-        })
+        test_client.put(
+            f"/admin/profiles/{profile_name}",
+            json={"tenant_id": "tenant_a", "description": "Version 2"},
+        )
 
         # Tenant B creates profile with same name
-        test_client.post("/admin/profiles", json={
-            "profile_name": profile_name,
-            "tenant_id": "tenant_b",
-            "type": "video",
-            "schema_name": "video_test",
-            "embedding_model": "model_b",
-            "embedding_type": "frame_based",
-            "description": "Tenant B version"
-        })
+        test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": profile_name,
+                "tenant_id": "tenant_b",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "model_b",
+                "embedding_type": "frame_based",
+                "description": "Tenant B version",
+            },
+        )
 
         # Verify tenant A's profile is unchanged
-        response_a = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"})
+        response_a = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"}
+        )
         assert response_a.status_code == 200
         assert response_a.json()["description"] == "Version 2"
         assert response_a.json()["embedding_model"] == "model_a"
 
         # Verify tenant B's profile is separate
-        response_b = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"})
+        response_b = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"}
+        )
         assert response_b.status_code == 200
         assert response_b.json()["description"] == "Tenant B version"
         assert response_b.json()["embedding_model"] == "model_b"
 
         # Delete tenant B's profile
-        test_client.delete(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"})
+        test_client.delete(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"}
+        )
 
         # Verify tenant A's profile still exists
-        response_a_check = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"})
+        response_a_check = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_a"}
+        )
         assert response_a_check.status_code == 200
 
         # Verify tenant B's profile is gone
-        response_b_check = test_client.get(f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"})
+        response_b_check = test_client.get(
+            f"/admin/profiles/{profile_name}", params={"tenant_id": "tenant_b"}
+        )
         assert response_b_check.status_code == 404

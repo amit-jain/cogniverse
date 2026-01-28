@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
+
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -35,15 +36,17 @@ class PreferenceDataset:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert to pandas DataFrame."""
-        return pd.DataFrame([
-            {
-                "prompt": pair.prompt,
-                "chosen": pair.chosen,
-                "rejected": pair.rejected,
-                **pair.metadata
-            }
-            for pair in self.pairs
-        ])
+        return pd.DataFrame(
+            [
+                {
+                    "prompt": pair.prompt,
+                    "chosen": pair.chosen,
+                    "rejected": pair.rejected,
+                    **pair.metadata,
+                }
+                for pair in self.pairs
+            ]
+        )
 
     def save(self, path: str, format: Literal["jsonl", "parquet"] = "jsonl") -> None:
         """
@@ -162,7 +165,7 @@ class PreferencePairExtractor:
                 "total_annotations": len(annotations_df),
                 "preference_pairs": len(pairs),
                 "created_at": datetime.utcnow().isoformat(),
-            }
+            },
         )
 
     def _filter_agent_spans(
@@ -271,28 +274,31 @@ class PreferencePairExtractor:
                 )
                 continue
 
-            pairs.append(PreferencePair(
-                prompt=prompt,
-                chosen=chosen_response,
-                rejected=rejected_response,
-                metadata={
-                    "span_id": span_id,
-                    "agent_type": agent_type,
-                    "chosen_score": float(approved.iloc[0].get("result.score", 1.0)),
-                    "rejected_score": float(rejected.iloc[0].get("result.score", 0.0)),
-                    "start_time": span_row.get("start_time"),
-                }
-            ))
+            pairs.append(
+                PreferencePair(
+                    prompt=prompt,
+                    chosen=chosen_response,
+                    rejected=rejected_response,
+                    metadata={
+                        "span_id": span_id,
+                        "agent_type": agent_type,
+                        "chosen_score": float(
+                            approved.iloc[0].get("result.score", 1.0)
+                        ),
+                        "rejected_score": float(
+                            rejected.iloc[0].get("result.score", 0.0)
+                        ),
+                        "start_time": span_row.get("start_time"),
+                    },
+                )
+            )
 
         return pairs
 
     def _extract_prompt(self, span_row: pd.Series, agent_type: str) -> str:
         """Extract prompt from span attributes."""
         # Get attributes
-        attributes = {
-            k: v for k, v in span_row.items()
-            if k.startswith("attributes.")
-        }
+        attributes = {k: v for k, v in span_row.items() if k.startswith("attributes.")}
 
         # Common input attribute names
         input_keys = [
@@ -324,21 +330,21 @@ class PreferencePairExtractor:
         """
         # First try to get response from annotation metadata
         # (if human edited the response)
-        metadata_cols = [col for col in annotation_row.index if col.startswith("metadata.")]
+        metadata_cols = [
+            col for col in annotation_row.index if col.startswith("metadata.")
+        ]
         for col in metadata_cols:
             if "response" in col.lower() or "output" in col.lower():
                 value = annotation_row[col]
                 if value:
                     if isinstance(value, (dict, list)):
                         import json
+
                         return json.dumps(value)
                     return str(value)
 
         # Fallback to span output attributes
-        attributes = {
-            k: v for k, v in span_row.items()
-            if k.startswith("attributes.")
-        }
+        attributes = {k: v for k, v in span_row.items() if k.startswith("attributes.")}
 
         output_keys = [
             "attributes.output.response",
@@ -353,6 +359,7 @@ class PreferencePairExtractor:
                 value = attributes[key]
                 if isinstance(value, (dict, list)):
                     import json
+
                     return json.dumps(value)
                 return str(value)
 

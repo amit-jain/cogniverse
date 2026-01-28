@@ -17,9 +17,10 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal
 
 import torch
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,7 @@ class AdapterEvaluator:
 
         # 3. Evaluate base model
         logger.info("Evaluating base model...")
-        base_metrics = await self._evaluate_model(
-            base_model_obj, tokenizer, test_set
-        )
+        base_metrics = await self._evaluate_model(base_model_obj, tokenizer, test_set)
 
         # 4. Load adapter model
         logger.info(f"Loading adapter: {adapter_path}")
@@ -131,9 +130,7 @@ class AdapterEvaluator:
 
         # 5. Evaluate adapter model
         logger.info("Evaluating adapter model...")
-        adapter_metrics = await self._evaluate_model(
-            adapter_model, tokenizer, test_set
-        )
+        adapter_metrics = await self._evaluate_model(adapter_model, tokenizer, test_set)
 
         # 6. Compute improvements
         comparison = self._compare_metrics(base_metrics, adapter_metrics)
@@ -144,9 +141,7 @@ class AdapterEvaluator:
 
         return comparison
 
-    async def _create_test_set(
-        self, project: str, test_size: int
-    ) -> List[Dict]:
+    async def _create_test_set(self, project: str, test_size: int) -> List[Dict]:
         """
         Create test set from telemetry data.
 
@@ -158,10 +153,9 @@ class AdapterEvaluator:
 
         # Get data from telemetry (TODO: implement time-based split for test set)
         # Future: Filter to last 7 days assuming training used older data
-
         # Extract examples
         converter = TraceToInstructionConverter(self.provider)
-        
+
         try:
             dataset = await converter.convert(
                 project=project,
@@ -184,11 +178,13 @@ class AdapterEvaluator:
         # Format as test examples
         test_set = []
         for ex in examples:
-            test_set.append({
-                "input": f"{ex.instruction}\n\n{ex.input}",
-                "expected_output": ex.output,
-                "metadata": ex.metadata,
-            })
+            test_set.append(
+                {
+                    "input": f"{ex.instruction}\n\n{ex.input}",
+                    "expected_output": ex.output,
+                    "metadata": ex.metadata,
+                }
+            )
 
         return test_set
 
@@ -258,16 +254,16 @@ class AdapterEvaluator:
 
                 # Check accuracy (agent/profile match)
                 if self.agent_type == "routing":
-                    correct_prediction = (
-                        pred_json.get("recommended_agent") == expected_json.get("recommended_agent")
-                    )
+                    correct_prediction = pred_json.get(
+                        "recommended_agent"
+                    ) == expected_json.get("recommended_agent")
                 elif self.agent_type == "profile_selection":
-                    correct_prediction = (
-                        pred_json.get("selected_profiles") == expected_json.get("selected_profiles")
-                    )
+                    correct_prediction = pred_json.get(
+                        "selected_profiles"
+                    ) == expected_json.get("selected_profiles")
                 else:
                     # Exact match fallback
-                    correct_prediction = (pred_json == expected_json)
+                    correct_prediction = pred_json == expected_json
 
                 if correct_prediction:
                     correct += 1
@@ -311,7 +307,9 @@ class AdapterEvaluator:
         """Compare base vs adapter metrics."""
         # Compute improvements
         accuracy_improvement = adapter_metrics.accuracy - base_metrics.accuracy
-        confidence_improvement = adapter_metrics.avg_confidence - base_metrics.avg_confidence
+        confidence_improvement = (
+            adapter_metrics.avg_confidence - base_metrics.avg_confidence
+        )
         error_reduction = base_metrics.error_rate - adapter_metrics.error_rate
         latency_overhead = adapter_metrics.avg_latency_ms - base_metrics.avg_latency_ms
 

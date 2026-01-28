@@ -318,7 +318,9 @@ def train_embedding_remote(
     )
     from torch.utils.data import DataLoader
 
-    logger.info(f"Starting embedding training: model={base_model}, triplets={len(dataset)}")
+    logger.info(
+        f"Starting embedding training: model={base_model}, triplets={len(dataset)}"
+    )
 
     # 1. Convert to InputExample format (passed directly, no download!)
     train_examples = [

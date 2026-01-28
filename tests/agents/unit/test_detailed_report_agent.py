@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -292,7 +293,9 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
 
         # Create report request
         request = ReportRequest(
@@ -325,7 +328,9 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
 
         # Empty search results should still generate a report
         request = ReportRequest(
@@ -403,7 +408,9 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(tenant_id="test_tenant")
+            )
             agent.vlm = mock_vlm
             return agent
 
@@ -471,7 +478,9 @@ class TestDetailedReportAgentCoreFunctionality:
             # Should call the VLM client
             # Visual analysis is called via vlm.analyze_visual_content
             # Just verify that visual analysis happened (check results have insights)
-            assert len(visual_analysis) > 0 or not visual_request.include_visual_analysis
+            assert (
+                len(visual_analysis) > 0 or not visual_request.include_visual_analysis
+            )
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -534,7 +543,9 @@ class TestDetailedReportAgentCoreFunctionality:
         mock_dspy_result = Mock()
         mock_dspy_result.executive_summary = "Comprehensive analysis of 3 results for test query, covering key topics in HD quality with educational content"
 
-        with patch.object(agent.report_module, 'forward', return_value=mock_dspy_result):
+        with patch.object(
+            agent.report_module, "forward", return_value=mock_dspy_result
+        ):
             summary = await agent._generate_executive_summary(
                 sample_report_request, thinking_phase
             )
@@ -682,6 +693,7 @@ class TestDetailedReportAgentCoreFunctionality:
 
             # Use generate_report_with_routing_decision method
             from cogniverse_agents.routing_agent import RoutingDecision
+
             routing_decision = RoutingDecision(
                 query=enhanced_request.original_query,
                 enhanced_query=enhanced_request.enhanced_query,

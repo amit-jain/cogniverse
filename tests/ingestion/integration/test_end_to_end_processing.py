@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.strategies import (
@@ -61,9 +62,13 @@ class TestEndToEndVideoProcessing:
             embedding=embedding_strategy,
         )
 
-    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor"
+    )
     @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
+    )
     def test_complete_frame_based_pipeline(
         self,
         mock_embedding_class,
@@ -170,7 +175,9 @@ class TestEndToEndVideoProcessing:
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.ChunkProcessor")
     @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
+    )
     def test_complete_chunk_based_pipeline(
         self,
         mock_embedding_class,
@@ -405,9 +412,13 @@ class TestEndToEndVideoProcessing:
             with pytest.raises(Exception, match="Audio processing failed"):
                 audio_processor.transcribe_audio(sample_video_path)
 
-    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor"
+    )
     @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch(
+        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
+    )
     def test_pipeline_data_flow_validation(
         self,
         mock_embedding_class,
@@ -571,7 +582,9 @@ class TestEndToEndVideoProcessing:
             def extract_keyframes(self, *args, **kwargs):
                 with self._lock:
                     self.call_count += 1
-                    simulate_processing_delay(delay=0.01, description="concurrent processing")
+                    simulate_processing_delay(
+                        delay=0.01, description="concurrent processing"
+                    )
                     return {
                         "video_id": f"video_{self.call_count}",
                         "total_keyframes": 1,

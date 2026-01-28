@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Dict, Type
 
 import dspy
+
 from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerType
 
 logger = logging.getLogger(__name__)

@@ -167,7 +167,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
 
         @self.app.post("/tasks/send", response_model=None)
         async def handle_task(
-            task: Dict[str, Any]
+            task: Dict[str, Any],
         ) -> Union[StreamingResponse, Dict[str, Any]]:
             """
             Standard A2A task endpoint with streaming support.
@@ -203,9 +203,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                             }
                             yield f"data: {json.dumps(error_event)}\n\n"
 
-                    return StreamingResponse(
-                        generate(), media_type="text/event-stream"
-                    )
+                    return StreamingResponse(generate(), media_type="text/event-stream")
                 else:
                     # Non-streaming: process and return JSON
                     typed_output = await self.process(typed_input, stream=False)
@@ -307,9 +305,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                 },
                 "dspy_module": {
                     "type": (
-                        type(self.dspy_module).__name__
-                        if self.dspy_module
-                        else None
+                        type(self.dspy_module).__name__ if self.dspy_module else None
                     ),
                     "available": self.dspy_module is not None,
                 },

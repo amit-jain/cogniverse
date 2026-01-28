@@ -18,7 +18,9 @@ class EmbeddingTrainingConfig:
     """Configuration for embedding model training."""
 
     # Model
-    base_model: str  # "jinaai/jina-embeddings-v3", "sentence-transformers/all-MiniLM-L6-v2"
+    base_model: (
+        str  # "jinaai/jina-embeddings-v3", "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     # LoRA config
     use_lora: bool = True
@@ -121,9 +123,7 @@ class EmbeddingFinetuner:
         )
         from torch.utils.data import DataLoader
 
-        logger.info(
-            f"Training {self.base_model} with {len(dataset)} triplets..."
-        )
+        logger.info(f"Training {self.base_model} with {len(dataset)} triplets...")
 
         # 1. Load base model
         model = SentenceTransformer(self.base_model)
@@ -191,7 +191,14 @@ class EmbeddingFinetuner:
             "metrics": metrics,
         }
 
-    def _apply_lora(self, model, lora_r: int, lora_alpha: int, lora_dropout: float, target_modules: List[str]):
+    def _apply_lora(
+        self,
+        model,
+        lora_r: int,
+        lora_alpha: int,
+        lora_dropout: float,
+        target_modules: List[str],
+    ):
         """Apply LoRA adapters to model."""
         try:
             from peft import LoraConfig, get_peft_model

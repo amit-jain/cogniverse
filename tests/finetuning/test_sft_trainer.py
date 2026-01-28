@@ -17,8 +17,7 @@ class TestTrainerInitialization:
     def test_init_with_base_model_and_output_dir(self):
         """Test initialization with required params"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         assert finetuner.base_model == "HuggingFaceTB/SmolLM-135M"
@@ -28,17 +27,18 @@ class TestTrainerInitialization:
     async def test_train_calls_train_local(self):
         """Test that train() delegates to _train_local()"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         dataset = [{"text": "Example instruction"}]
         config = {"epochs": 1, "learning_rate": 2e-4}
 
-        with patch.object(finetuner, '_train_local', new_callable=AsyncMock) as mock_train_local:
+        with patch.object(
+            finetuner, "_train_local", new_callable=AsyncMock
+        ) as mock_train_local:
             mock_train_local.return_value = {
                 "adapter_path": "/tmp/adapter",
-                "metrics": {}
+                "metrics": {},
             }
 
             result = await finetuner.train(dataset, config)
@@ -55,8 +55,7 @@ class TestValidationSplit:
     async def test_no_validation_split_for_small_dataset(self):
         """Test that datasets with ≤100 examples don't get a validation split"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         # Small dataset: 50 examples (≤100)
@@ -76,13 +75,15 @@ class TestValidationSplit:
         mock_trainer.train.return_value = mock_train_result
 
         # Patch at the point where they're imported/used inside _train_local
-        with patch("transformers.AutoModelForCausalLM") as mock_model_cls, \
-             patch("transformers.AutoTokenizer") as mock_tokenizer_cls, \
-             patch("datasets.Dataset") as mock_dataset_cls, \
-             patch("peft.LoraConfig"), \
-             patch("peft.get_peft_model", return_value=mock_model), \
-             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer, \
-             patch("pathlib.Path.mkdir"):
+        with (
+            patch("transformers.AutoModelForCausalLM") as mock_model_cls,
+            patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
+            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("peft.LoraConfig"),
+            patch("peft.get_peft_model", return_value=mock_model),
+            patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
+            patch("pathlib.Path.mkdir"),
+        ):
 
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
@@ -107,8 +108,7 @@ class TestValidationSplit:
     async def test_validation_split_for_large_dataset(self):
         """Test that datasets with >100 examples get a 90/10 train/val split"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         # Large dataset: 150 examples (>100)
@@ -132,17 +132,22 @@ class TestValidationSplit:
         }
         mock_trainer.evaluate.return_value = mock_eval_result
 
-        with patch("transformers.AutoModelForCausalLM") as mock_model_cls, \
-             patch("transformers.AutoTokenizer") as mock_tokenizer_cls, \
-             patch("datasets.Dataset") as mock_dataset_cls, \
-             patch("peft.LoraConfig"), \
-             patch("peft.get_peft_model", return_value=mock_model), \
-             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer, \
-             patch("pathlib.Path.mkdir"):
+        with (
+            patch("transformers.AutoModelForCausalLM") as mock_model_cls,
+            patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
+            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("peft.LoraConfig"),
+            patch("peft.get_peft_model", return_value=mock_model),
+            patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
+            patch("pathlib.Path.mkdir"),
+        ):
 
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.side_effect = [mock_train_dataset, mock_val_dataset]
+            mock_dataset_cls.from_list.side_effect = [
+                mock_train_dataset,
+                mock_val_dataset,
+            ]
 
             try:
                 await finetuner._train_local(dataset, config)
@@ -175,8 +180,7 @@ class TestLoRAFallback:
     async def test_lora_success_path(self):
         """Test that LoRA is applied successfully when use_lora=True"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         dataset = [{"text": f"Example {i}"} for i in range(50)]
@@ -197,13 +201,19 @@ class TestLoRAFallback:
         mock_trainer.train.return_value = mock_train_result
         mock_lora_config = MagicMock()
 
-        with patch("transformers.AutoModelForCausalLM") as mock_model_cls, \
-             patch("transformers.AutoTokenizer") as mock_tokenizer_cls, \
-             patch("datasets.Dataset") as mock_dataset_cls, \
-             patch("peft.LoraConfig", return_value=mock_lora_config) as mock_lora_config_cls, \
-             patch("peft.get_peft_model", return_value=mock_peft_model) as mock_get_peft_model_func, \
-             patch("trl.SFTTrainer", return_value=mock_trainer), \
-             patch("pathlib.Path.mkdir"):
+        with (
+            patch("transformers.AutoModelForCausalLM") as mock_model_cls,
+            patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
+            patch("datasets.Dataset") as mock_dataset_cls,
+            patch(
+                "peft.LoraConfig", return_value=mock_lora_config
+            ) as mock_lora_config_cls,
+            patch(
+                "peft.get_peft_model", return_value=mock_peft_model
+            ) as mock_get_peft_model_func,
+            patch("trl.SFTTrainer", return_value=mock_trainer),
+            patch("pathlib.Path.mkdir"),
+        ):
 
             mock_model_cls.from_pretrained.return_value = mock_base_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
@@ -219,7 +229,9 @@ class TestLoRAFallback:
             mock_lora_config_cls.assert_called_once()
 
             # Verify get_peft_model was called with base model and lora config
-            mock_get_peft_model_func.assert_called_once_with(mock_base_model, mock_lora_config)
+            mock_get_peft_model_func.assert_called_once_with(
+                mock_base_model, mock_lora_config
+            )
 
             # Verify print_trainable_parameters was called (indicates LoRA was applied)
             mock_peft_model.print_trainable_parameters.assert_called_once()
@@ -228,8 +240,7 @@ class TestLoRAFallback:
     async def test_lora_fallback_on_error(self, caplog):
         """Test that when LoRA fails, it logs a warning and continues with full fine-tuning"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         dataset = [{"text": f"Example {i}"} for i in range(50)]
@@ -247,14 +258,18 @@ class TestLoRAFallback:
         mock_train_result.metrics = {"train_loss": 0.5}
         mock_trainer.train.return_value = mock_train_result
 
-        with patch("transformers.AutoModelForCausalLM") as mock_model_cls, \
-             patch("transformers.AutoTokenizer") as mock_tokenizer_cls, \
-             patch("datasets.Dataset") as mock_dataset_cls, \
-             patch("peft.LoraConfig"), \
-             patch("peft.get_peft_model", side_effect=Exception("LoRA not supported")) as mock_get_peft_model_func, \
-             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer, \
-             patch("pathlib.Path.mkdir"), \
-             caplog.at_level("WARNING"):
+        with (
+            patch("transformers.AutoModelForCausalLM") as mock_model_cls,
+            patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
+            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("peft.LoraConfig"),
+            patch(
+                "peft.get_peft_model", side_effect=Exception("LoRA not supported")
+            ) as mock_get_peft_model_func,
+            patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
+            patch("pathlib.Path.mkdir"),
+            caplog.at_level("WARNING"),
+        ):
 
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
@@ -270,8 +285,13 @@ class TestLoRAFallback:
             mock_get_peft_model_func.assert_called_once()
 
             # Verify warning was logged
-            assert any("Failed to apply LoRA" in record.message for record in caplog.records)
-            assert any("continuing with full fine-tuning" in record.message for record in caplog.records)
+            assert any(
+                "Failed to apply LoRA" in record.message for record in caplog.records
+            )
+            assert any(
+                "continuing with full fine-tuning" in record.message
+                for record in caplog.records
+            )
 
             # Verify SFTTrainer was still called (training continued with base model)
             if mock_sft_trainer.called:
@@ -283,8 +303,7 @@ class TestLoRAFallback:
     async def test_lora_disabled_via_config(self):
         """Test that LoRA is skipped when use_lora=False"""
         finetuner = SFTFinetuner(
-            base_model="HuggingFaceTB/SmolLM-135M",
-            output_dir="/tmp/output"
+            base_model="HuggingFaceTB/SmolLM-135M", output_dir="/tmp/output"
         )
 
         dataset = [{"text": f"Example {i}"} for i in range(50)]
@@ -302,13 +321,15 @@ class TestLoRAFallback:
         mock_train_result.metrics = {"train_loss": 0.5}
         mock_trainer.train.return_value = mock_train_result
 
-        with patch("transformers.AutoModelForCausalLM") as mock_model_cls, \
-             patch("transformers.AutoTokenizer") as mock_tokenizer_cls, \
-             patch("datasets.Dataset") as mock_dataset_cls, \
-             patch("peft.LoraConfig") as mock_lora_config_cls, \
-             patch("peft.get_peft_model") as mock_get_peft_model_func, \
-             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer, \
-             patch("pathlib.Path.mkdir"):
+        with (
+            patch("transformers.AutoModelForCausalLM") as mock_model_cls,
+            patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
+            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("peft.LoraConfig") as mock_lora_config_cls,
+            patch("peft.get_peft_model") as mock_get_peft_model_func,
+            patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
+            patch("pathlib.Path.mkdir"),
+        ):
 
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer

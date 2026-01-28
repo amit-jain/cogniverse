@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
 from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisResult,
     QueryAnalysisToolV3,
@@ -92,7 +93,10 @@ class TestQueryAnalysisToolV3:
         mock_routing_instance = Mock()
         mock_routing_agent.return_value = mock_routing_instance
 
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=True)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=True,
+        )
 
         assert analyzer.routing_agent == mock_routing_instance
         mock_routing_agent.assert_called_once()
@@ -106,7 +110,10 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         mock_routing_agent.side_effect = Exception("Routing agent failed")
 
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=True)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=True,
+        )
 
         assert analyzer.routing_agent is None
 
@@ -382,7 +389,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test workflow determination without routing agent"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         workflow = await analyzer._determine_workflow(
             "analyze this content",
@@ -410,13 +420,16 @@ class TestQueryAnalysisToolV3:
             "workflow": {
                 "type": "detailed_report",
                 "agents": ["video_search", "detailed_report"],
-                "steps": []
+                "steps": [],
             }
         }
         mock_routing_agent = Mock()
         mock_routing_agent.route_query = AsyncMock(return_value=routing_response)
 
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=True)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=True,
+        )
         analyzer.routing_agent = mock_routing_agent
 
         workflow = await analyzer._determine_workflow(
@@ -471,7 +484,10 @@ class TestQueryAnalysisToolV3:
     async def test_analyze_simple_query(self, mock_get_config, mock_config):
         """Test full analysis of a simple query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         result = await analyzer.analyze("find videos about cats")
 
@@ -496,7 +512,10 @@ class TestQueryAnalysisToolV3:
     async def test_analyze_complex_query(self, mock_get_config, mock_config):
         """Test full analysis of a complex query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         result = await analyzer.analyze(
             "analyze all content about artificial intelligence from last week and create a detailed report"
@@ -521,7 +540,8 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
-            enable_query_expansion=True, enable_agent_integration=False
+            enable_query_expansion=True,
+            enable_agent_integration=False,
         )
 
         result = await analyzer.analyze("find videos about machine learning")
@@ -538,7 +558,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test analysis with context"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         result = await analyzer.analyze("latest developments", sample_context)
 
@@ -551,7 +574,10 @@ class TestQueryAnalysisToolV3:
     async def test_analyze_error_handling(self, mock_get_config, mock_config):
         """Test analysis error handling"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         # Mock a method to raise an exception
         with patch.object(
@@ -623,7 +649,10 @@ class TestQueryAnalysisToolV3EdgeCases:
     async def test_analyze_empty_query(self, mock_get_config, mock_config):
         """Test analysis of empty query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         result = await analyzer.analyze("")
 
@@ -639,7 +668,10 @@ class TestQueryAnalysisToolV3EdgeCases:
     async def test_analyze_very_long_query(self, mock_get_config, mock_config):
         """Test analysis of very long query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager(), enable_agent_integration=False)
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            enable_agent_integration=False,
+        )
 
         long_query = (
             "analyze " + " ".join(["word"] * 50) + " and create detailed report"
@@ -666,7 +698,9 @@ class TestFactoryFunction:
         """Test factory function with default parameters"""
         mock_get_config.return_value = mock_config
 
-        analyzer = create_enhanced_query_analyzer(config_manager=create_default_config_manager())
+        analyzer = create_enhanced_query_analyzer(
+            config_manager=create_default_config_manager()
+        )
 
         assert isinstance(analyzer, QueryAnalysisToolV3)
         assert analyzer.enable_thinking_phase is True
@@ -680,7 +714,8 @@ class TestFactoryFunction:
 
         analyzer = create_enhanced_query_analyzer(
             config_manager=create_default_config_manager(),
-            enable_thinking_phase=False, max_expanded_queries=10
+            enable_thinking_phase=False,
+            max_expanded_queries=10,
         )
 
         assert isinstance(analyzer, QueryAnalysisToolV3)

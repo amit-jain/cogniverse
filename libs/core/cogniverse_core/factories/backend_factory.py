@@ -67,9 +67,7 @@ class BackendFactory:
         if backend_init_config is None:
             raise ValueError("backend_init_config is required")
 
-        logger.debug(
-            f"Creating backend {backend_class.__name__} with factory"
-        )
+        logger.debug(f"Creating backend {backend_class.__name__} with factory")
 
         # Phase 1: Create backend instance
         # Backend is created without schema_registry to break circular dependency
@@ -84,8 +82,14 @@ class BackendFactory:
         from cogniverse_core.registries.schema_registry import SchemaRegistry
 
         # Debug: Log which DB config_manager is using
-        db_path = getattr(config_manager.store, 'db_path', 'unknown') if config_manager and hasattr(config_manager, 'store') else 'no store'
-        logger.warning(f"🔍 BACKEND_FACTORY creating SchemaRegistry with config_manager DB: {db_path}")
+        db_path = (
+            getattr(config_manager.store, "db_path", "unknown")
+            if config_manager and hasattr(config_manager, "store")
+            else "no store"
+        )
+        logger.warning(
+            f"🔍 BACKEND_FACTORY creating SchemaRegistry with config_manager DB: {db_path}"
+        )
 
         schema_registry = SchemaRegistry(
             config_manager=config_manager,
@@ -105,7 +109,10 @@ class BackendFactory:
         # Phase 5: Inject schema_registry into backend's internal schema manager
         # Some backends have an internal schema manager that also needs registry access
         # This is backend-specific but safe to attempt on any backend
-        if hasattr(backend_instance, "schema_manager") and backend_instance.schema_manager:
+        if (
+            hasattr(backend_instance, "schema_manager")
+            and backend_instance.schema_manager
+        ):
             if hasattr(backend_instance.schema_manager, "_schema_registry"):
                 backend_instance.schema_manager._schema_registry = schema_registry
                 logger.debug(

@@ -64,7 +64,9 @@ class PhoenixTestServer:
                     raise RuntimeError(
                         f"Phoenix server failed to start on port {self.port}"
                     ) from None
-                wait_for_phoenix_processing(delay=1, description="Phoenix server startup")
+                wait_for_phoenix_processing(
+                    delay=1, description="Phoenix server startup"
+                )
 
         return self
 

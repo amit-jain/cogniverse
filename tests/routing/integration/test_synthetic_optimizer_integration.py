@@ -5,6 +5,7 @@ Tests that synthetic data generation integrates correctly with all optimizers.
 """
 
 import pytest
+
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
@@ -79,7 +80,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer.experiences.clear()
 
         # Generate small batch without Vespa (uses mock data)
-        count = await optimizer.generate_synthetic_training_data(count=10, generator_config=test_generator_config)
+        count = await optimizer.generate_synthetic_training_data(
+            count=10, generator_config=test_generator_config
+        )
 
         assert count == 10
         assert len(optimizer.experiences) == 10
@@ -89,7 +92,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test generated data has correct structure"""
         optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
-        await optimizer.generate_synthetic_training_data(count=5, generator_config=test_generator_config)
+        await optimizer.generate_synthetic_training_data(
+            count=5, generator_config=test_generator_config
+        )
 
         # Check first experience
         experience = optimizer.experiences[0]
@@ -106,7 +111,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test that generated data has variety"""
         optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
-        await optimizer.generate_synthetic_training_data(count=20, generator_config=test_generator_config)
+        await optimizer.generate_synthetic_training_data(
+            count=20, generator_config=test_generator_config
+        )
 
         # Check we have variety in queries
         queries = [exp.query for exp in optimizer.experiences]
@@ -128,7 +135,7 @@ class TestWorkflowIntelligenceIntegration:
         """Test WorkflowIntelligence can be initialized"""
         workflow_intel = WorkflowIntelligence()
         assert workflow_intel is not None
-        assert hasattr(workflow_intel, 'workflow_history')
+        assert hasattr(workflow_intel, "workflow_history")
 
     @pytest.mark.asyncio
     async def test_generate_synthetic_workflow_data(self):
@@ -172,7 +179,9 @@ class TestWorkflowIntelligenceIntegration:
         await workflow_intel.generate_synthetic_training_data(count=30)
 
         # Check we have different workflow lengths
-        sequence_lengths = [len(ex.agent_sequence) for ex in workflow_intel.workflow_history]
+        sequence_lengths = [
+            len(ex.agent_sequence) for ex in workflow_intel.workflow_history
+        ]
 
         # Should have at least simple (1 agent) and complex (3+ agents) workflows
         assert min(sequence_lengths) >= 1
@@ -191,7 +200,9 @@ class TestMultiOptimizerIntegration:
 
         # Generate for all
         cross_modal_count = await cross_modal.generate_synthetic_training_data(count=5)
-        routing_count = await routing.generate_synthetic_training_data(count=5, generator_config=test_generator_config)
+        routing_count = await routing.generate_synthetic_training_data(
+            count=5, generator_config=test_generator_config
+        )
         workflow_count = await workflow.generate_synthetic_training_data(count=5)
 
         assert cross_modal_count == 5
@@ -209,7 +220,9 @@ class TestMultiOptimizerIntegration:
         routing.experiences.clear()
 
         await cross_modal.generate_synthetic_training_data(count=3)
-        await routing.generate_synthetic_training_data(count=3, generator_config=test_generator_config)
+        await routing.generate_synthetic_training_data(
+            count=3, generator_config=test_generator_config
+        )
 
         # Data should be different (fusion history vs routing experiences)
         assert len(cross_modal.fusion_history) == 3

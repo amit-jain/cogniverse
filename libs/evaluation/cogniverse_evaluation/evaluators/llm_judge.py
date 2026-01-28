@@ -214,7 +214,9 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
             if "conversation" in input:
                 # Multi-turn mode
                 conversation = input["conversation"]
-                current_query = conversation[-1].get("query", "") if conversation else ""
+                current_query = (
+                    conversation[-1].get("query", "") if conversation else ""
+                )
                 history = conversation[:-1] if len(conversation) > 1 else []
             else:
                 # Single-turn mode (backward compatible)
@@ -289,7 +291,9 @@ Consider visual relevance, content match, and result quality."""
                 history_lines.append(f"Turn {i}:")
                 history_lines.append(f"  User: {q}")
                 history_lines.append(f"  Assistant: {r}")
-            history_text = "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+            history_text = (
+                "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+            )
 
         prompt = f"""{history_text}Current Query: "{query}"
 
@@ -356,9 +360,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
         LLMJudgeBase.__init__(self, model_name, base_url)
         self.fetch_metadata = True  # Always fetch metadata for meaningful evaluation
 
-    def evaluate(
-        self, *, input=None, output=None, expected=None, **kwargs
-    ) -> Any:
+    def evaluate(self, *, input=None, output=None, expected=None, **kwargs) -> Any:
         """
         Synchronous evaluation for Phoenix experiments
         """
@@ -412,9 +414,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
                 tags=["video"],
             )
 
-    async def _evaluate_async(
-        self, input, output, expected=None, **kwargs
-    ) -> Any:
+    async def _evaluate_async(self, input, output, expected=None, **kwargs) -> Any:
         """
         Evaluate results against ground truth using LLM.
 
@@ -427,7 +427,9 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
             if "conversation" in input:
                 # Multi-turn mode
                 conversation = input["conversation"]
-                current_query = conversation[-1].get("query", "") if conversation else ""
+                current_query = (
+                    conversation[-1].get("query", "") if conversation else ""
+                )
                 history = conversation[:-1] if len(conversation) > 1 else []
             else:
                 # Single-turn mode (backward compatible)
@@ -516,7 +518,9 @@ Consider both precision (are retrieved videos relevant?) and recall (are relevan
                 history_lines.append(f"Turn {i}:")
                 history_lines.append(f"  User: {q}")
                 history_lines.append(f"  Assistant: {r}")
-            history_text = "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+            history_text = (
+                "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+            )
 
         prompt = f"""{history_text}Current Query: "{query}"
 
@@ -619,9 +623,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
         self.reference_free = SyncLLMReferenceFreeEvaluator(model_name, base_url)
         self.reference_based = SyncLLMReferenceBasedEvaluator(model_name, base_url)
 
-    def evaluate(
-        self, *, input=None, output=None, expected=None, **kwargs
-    ) -> Any:
+    def evaluate(self, *, input=None, output=None, expected=None, **kwargs) -> Any:
         """
         Hybrid evaluation combining both approaches
         """
@@ -637,9 +639,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
             self._evaluate_async(input, output, expected, **kwargs)
         )
 
-    async def _evaluate_async(
-        self, input, output, expected=None, **kwargs
-    ) -> Any:
+    async def _evaluate_async(self, input, output, expected=None, **kwargs) -> Any:
         """
         Perform hybrid evaluation combining reference-free and reference-based approaches.
 

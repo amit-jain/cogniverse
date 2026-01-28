@@ -48,7 +48,8 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService",
+                return_value=mock_search_service,
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
@@ -83,7 +84,8 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService",
+                return_value=mock_search_service,
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
@@ -109,7 +111,8 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService",
+                return_value=mock_search_service,
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
@@ -175,7 +178,9 @@ class TestPhoenixExperimentPlugin:
         service.search.return_value = results
 
         with (
-            patch("cogniverse_agents.search.service.SearchService", return_value=service),
+            patch(
+                "cogniverse_agents.search.service.SearchService", return_value=service
+            ),
             patch(
                 "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
@@ -206,7 +211,9 @@ class TestPhoenixExperimentPlugin:
         service.search.return_value = [result_without_score]
 
         with (
-            patch("cogniverse_agents.search.service.SearchService", return_value=service),
+            patch(
+                "cogniverse_agents.search.service.SearchService", return_value=service
+            ),
             patch(
                 "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
@@ -242,7 +249,9 @@ class TestPhoenixExperimentPlugin:
                 "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
                 return_value=mock_result,
             ) as mock_run_exp,
-            patch("cogniverse_evaluation.core.solvers.create_retrieval_solver") as mock_solver,
+            patch(
+                "cogniverse_evaluation.core.solvers.create_retrieval_solver"
+            ) as mock_solver,
         ):
 
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(

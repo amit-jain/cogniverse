@@ -7,13 +7,13 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
+from fastapi import APIRouter, Depends, HTTPException
+
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
-from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
-from fastapi import APIRouter, Depends, HTTPException
-
 from cogniverse_runtime.admin.profile_models import (
     ProfileCreateRequest,
     ProfileCreateResponse,
@@ -53,6 +53,7 @@ def set_schema_loader(schema_loader: SchemaLoader) -> None:
 def set_profile_validator_schema_dir(schema_dir) -> None:
     """Set ProfileValidator schema directory for this module (for tests)."""
     from pathlib import Path
+
     global _profile_validator_schema_dir
     _profile_validator_schema_dir = Path(schema_dir) if schema_dir is not None else None
 
@@ -128,7 +129,9 @@ def get_profile_validator_dependency(
         For test overrides, use set_profile_validator_schema_dir() to set schema directory,
         or override this dependency in app.dependency_overrides
     """
-    return ProfileValidator(config_manager, schema_templates_dir=_profile_validator_schema_dir)
+    return ProfileValidator(
+        config_manager, schema_templates_dir=_profile_validator_schema_dir
+    )
 
 
 # Tenant management endpoints removed - use standalone tenant_manager app
@@ -145,7 +148,12 @@ async def get_system_stats(
     """Get system statistics."""
     try:
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+        backend_instance = backend_registry.get_ingestion_backend(
+            backend,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
         if not backend_instance:
             raise HTTPException(
                 status_code=400, detail=f"Backend '{backend}' not found"
@@ -243,13 +251,16 @@ async def create_profile(
             try:
                 backend_registry = BackendRegistry.get_instance()
                 backend = backend_registry.get_ingestion_backend(
-                    "vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader
+                    "vespa",
+                    tenant_id=request.tenant_id,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
                 )
 
                 if backend:
                     backend.schema_registry.deploy_schema(
                         tenant_id=request.tenant_id,
-                        base_schema_name=request.schema_name
+                        base_schema_name=request.schema_name,
                     )
                     success = True
                     schema_deployed = True
@@ -320,7 +331,12 @@ async def list_profiles(
             # Check if schema is deployed
             schema_deployed = False
             try:
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+                backend = backend_registry.get_ingestion_backend(
+                    "vespa",
+                    tenant_id=tenant_id,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
+                )
                 if backend:
                     schema_deployed = backend.schema_exists(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -393,7 +409,12 @@ async def get_profile(
 
         try:
             backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+            backend = backend_registry.get_ingestion_backend(
+                "vespa",
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
             if backend:
                 schema_deployed = backend.schema_exists(
                     schema_name=profile.schema_name, tenant_id=tenant_id
@@ -493,9 +514,7 @@ async def update_profile(
             updated_fields.append("model_specific")
 
         if not overrides:
-            raise HTTPException(
-                status_code=400, detail="No fields to update provided"
-            )
+            raise HTTPException(status_code=400, detail="No fields to update provided")
 
         # Validate update fields
         validation_errors = validator.validate_update_fields(overrides)
@@ -519,6 +538,7 @@ async def update_profile(
 
         # Get the actual version from the store after update
         from cogniverse_sdk.interfaces.config_store import ConfigScope
+
         config_entry = config_manager.store.get_config(
             tenant_id=request.tenant_id,
             scope=ConfigScope.BACKEND,
@@ -607,7 +627,12 @@ async def delete_profile(
             # Delete schema
             try:
                 backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+                backend = backend_registry.get_ingestion_backend(
+                    "vespa",
+                    tenant_id=tenant_id,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
+                )
                 if backend:
                     deleted_schemas = backend.delete_schema(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -641,9 +666,7 @@ async def delete_profile(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post(
-    "/profiles/{profile_name}/deploy", response_model=SchemaDeploymentResponse
-)
+@router.post("/profiles/{profile_name}/deploy", response_model=SchemaDeploymentResponse)
 async def deploy_profile_schema(
     profile_name: str,
     request: SchemaDeploymentRequest,
@@ -685,7 +708,12 @@ async def deploy_profile_schema(
 
         # Check if schema already deployed (unless force=True)
         backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader)
+        backend = backend_registry.get_ingestion_backend(
+            "vespa",
+            tenant_id=request.tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         if not backend:
             raise HTTPException(
@@ -714,7 +742,7 @@ async def deploy_profile_schema(
             backend.schema_registry.deploy_schema(
                 tenant_id=request.tenant_id,
                 base_schema_name=profile.schema_name,
-                force=request.force
+                force=request.force,
             )
 
             tenant_schema_name = backend.get_tenant_schema_name(
@@ -757,6 +785,7 @@ async def deploy_profile_schema(
         raise
     except Exception as e:
         import traceback
+
         logger.error(f"Failed to deploy schema: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -10,10 +10,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
-from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_core.common.a2a_utils import A2AClient
 from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -37,7 +37,9 @@ class AgentRegistry:
     Uses dependency injection for ConfigManager instead of singleton pattern.
     """
 
-    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+    def __init__(
+        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+    ):
         """Initialize agent registry with dependency injection
 
         Args:

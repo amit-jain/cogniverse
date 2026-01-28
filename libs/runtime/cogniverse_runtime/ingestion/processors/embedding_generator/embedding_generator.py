@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
 from cogniverse_core.common.models import get_or_load_model
 
 from .document_builders import DocumentBuilderFactory, DocumentMetadata

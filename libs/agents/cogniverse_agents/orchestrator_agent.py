@@ -11,9 +11,10 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 import dspy
+from pydantic import BaseModel, Field
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,28 @@ class OrchestratorOutput(AgentOutput):
     """Type-safe output from orchestration"""
 
     query: str = Field(..., description="Original query")
-    plan_steps: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestration plan steps")
-    parallel_groups: List[List[int]] = Field(default_factory=list, description="Parallel execution groups")
+    plan_steps: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Orchestration plan steps"
+    )
+    parallel_groups: List[List[int]] = Field(
+        default_factory=list, description="Parallel execution groups"
+    )
     plan_reasoning: str = Field("", description="Plan reasoning")
-    agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
-    final_output: Dict[str, Any] = Field(default_factory=dict, description="Aggregated final output")
+    agent_results: Dict[str, Any] = Field(
+        default_factory=dict, description="Results from each agent"
+    )
+    final_output: Dict[str, Any] = Field(
+        default_factory=dict, description="Aggregated final output"
+    )
     execution_summary: str = Field("", description="Summary of execution")
 
 
 class OrchestratorDeps(AgentDeps):
     """Dependencies for orchestrator agent"""
 
-    agent_registry: Dict[Any, Any] = Field(default_factory=dict, description="Registry of available agents")
+    agent_registry: Dict[Any, Any] = Field(
+        default_factory=dict, description="Registry of available agents"
+    )
 
 
 class AgentType(str, Enum):
@@ -145,7 +156,9 @@ class OrchestrationModule(dspy.Module):
         )
 
 
-class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]):
+class OrchestratorAgent(
+    A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]
+):
     """
     Type-safe autonomous A2A agent for multi-agent orchestration.
 
@@ -179,7 +192,9 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
             ValidationError: If deps fails Pydantic validation
         """
         # Use agent_registry from constructor or fall back to deps
-        self.agent_registry = agent_registry if agent_registry is not None else deps.agent_registry
+        self.agent_registry = (
+            agent_registry if agent_registry is not None else deps.agent_registry
+        )
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
@@ -211,7 +226,9 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def _process_impl(self, input: Union[OrchestratorInput, Dict[str, Any]]) -> OrchestratorOutput:
+    async def _process_impl(
+        self, input: Union[OrchestratorInput, Dict[str, Any]]
+    ) -> OrchestratorOutput:
         """
         Process orchestration request with typed input/output.
 

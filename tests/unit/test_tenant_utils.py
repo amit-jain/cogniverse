@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
 from cogniverse_core.common.tenant_utils import (
     get_tenant_storage_path,
     parse_tenant_id,
@@ -47,13 +48,17 @@ class TestParseTenantId:
     @pytest.mark.ci_fast
     def test_parse_empty_org(self):
         """Test parsing empty org raises error"""
-        with pytest.raises(ValueError, match="both org and tenant parts must be non-empty"):
+        with pytest.raises(
+            ValueError, match="both org and tenant parts must be non-empty"
+        ):
             parse_tenant_id(":tenant")
 
     @pytest.mark.ci_fast
     def test_parse_empty_tenant(self):
         """Test parsing empty tenant raises error"""
-        with pytest.raises(ValueError, match="both org and tenant parts must be non-empty"):
+        with pytest.raises(
+            ValueError, match="both org and tenant parts must be non-empty"
+        ):
             parse_tenant_id("org:")
 
 
@@ -143,13 +148,17 @@ class TestValidateTenantId:
     @pytest.mark.ci_fast
     def test_validate_empty_org_part(self):
         """Test validating tenant ID with empty org"""
-        with pytest.raises(ValueError, match="both org and tenant parts must be non-empty"):
+        with pytest.raises(
+            ValueError, match="both org and tenant parts must be non-empty"
+        ):
             validate_tenant_id(":tenant")
 
     @pytest.mark.ci_fast
     def test_validate_empty_tenant_part(self):
         """Test validating tenant ID with empty tenant"""
-        with pytest.raises(ValueError, match="both org and tenant parts must be non-empty"):
+        with pytest.raises(
+            ValueError, match="both org and tenant parts must be non-empty"
+        ):
             validate_tenant_id("org:")
 
 

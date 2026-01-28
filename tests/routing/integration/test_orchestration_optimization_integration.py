@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
@@ -46,7 +47,9 @@ class TestOrchestrationOptimizationIntegration:
     @pytest.fixture
     def routing_optimizer(self):
         """Create real AdvancedRoutingOptimizer instance"""
-        return AdvancedRoutingOptimizer(tenant_id="test-tenant", base_storage_dir="/tmp/test_routing_optimizer")
+        return AdvancedRoutingOptimizer(
+            tenant_id="test-tenant", base_storage_dir="/tmp/test_routing_optimizer"
+        )
 
     @pytest.mark.asyncio
     async def test_phoenix_evaluator_extracts_workflows_from_spans(
@@ -124,7 +127,9 @@ class TestOrchestrationOptimizationIntegration:
         assert failed_workflow.error_details == "Agent timeout"
 
     @pytest.mark.asyncio
-    async def test_annotation_storage_stores_and_retrieves_annotations(self, telemetry_manager_without_phoenix):
+    async def test_annotation_storage_stores_and_retrieves_annotations(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test that OrchestrationAnnotationStorage stores and retrieves annotations"""
         storage = OrchestrationAnnotationStorage(tenant_id="test-tenant")
 
@@ -146,7 +151,9 @@ class TestOrchestrationOptimizationIntegration:
         )
 
         # Patch only provider annotations, storage logic is real
-        with patch.object(storage.provider.annotations, "add_annotation") as mock_add_annotation:
+        with patch.object(
+            storage.provider.annotations, "add_annotation"
+        ) as mock_add_annotation:
             result = await storage.store_annotation(annotation)
 
         # Verify annotation was stored
@@ -381,7 +388,10 @@ class TestOrchestrationOptimizationIntegration:
 
     @pytest.mark.asyncio
     async def test_end_to_end_orchestration_optimization_flow(
-        self, workflow_intelligence, routing_optimizer, telemetry_manager_without_phoenix
+        self,
+        workflow_intelligence,
+        routing_optimizer,
+        telemetry_manager_without_phoenix,
     ):
         """Test complete end-to-end orchestration optimization flow with REAL components"""
         # 1. Create OrchestrationEvaluator with REAL WorkflowIntelligence

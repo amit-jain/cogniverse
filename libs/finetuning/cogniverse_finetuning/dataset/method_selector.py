@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 import pandas as pd
+
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -304,12 +305,13 @@ class TrainingMethodSelector:
         Raises:
             ValueError: If approval fails or insufficient approvals
         """
+        from cogniverse_synthetic.schemas import SyntheticDataRequest
+
         from cogniverse_agents.approval.interfaces import (
             ApprovalBatch,
             ApprovalStatus,
             ReviewItem,
         )
-        from cogniverse_synthetic.schemas import SyntheticDataRequest
 
         # 1. Map agent_type to optimizer
         optimizer_map = {

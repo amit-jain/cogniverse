@@ -13,6 +13,7 @@ class SchemaDeploymentError(Exception):
     All schema deployment errors inherit from this base exception,
     allowing callers to catch all deployment-related errors easily.
     """
+
     pass
 
 
@@ -26,6 +27,7 @@ class BackendDeploymentError(SchemaDeploymentError):
 
     This error occurs BEFORE ConfigStore registration, so state is consistent.
     """
+
     pass
 
 
@@ -37,6 +39,7 @@ class RegistryStorageError(SchemaDeploymentError):
     disk full, etc.). This error occurs AFTER backend deployment succeeds,
     requiring rollback to maintain consistency.
     """
+
     pass
 
 
@@ -50,4 +53,5 @@ class SchemaRegistryInitializationError(Exception):
     In strict_mode=True, this exception is raised to fail fast.
     In strict_mode=False, initialization continues with empty registry.
     """
+
     pass

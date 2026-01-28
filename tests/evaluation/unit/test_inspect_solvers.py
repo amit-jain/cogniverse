@@ -14,7 +14,9 @@ class TestCogniverseRetrievalSolver:
     @pytest.fixture
     def mock_search_service(self):
         """Create mock search service."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.SearchService"
+        ) as mock_cls:
             mock_service = Mock()
             mock_service.search = Mock(
                 return_value=[
@@ -47,7 +49,9 @@ class TestCogniverseRetrievalSolver:
     @pytest.fixture
     def mock_config(self):
         """Create mock config."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_get:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_get:
             mock_get.return_value = {
                 "vespa": {"url": "http://localhost:8080"},
                 "profiles": {"test_profile": {"embedding_model": "test_model"}},
@@ -95,7 +99,9 @@ class TestCogniverseRetrievalSolver:
     @pytest.mark.asyncio
     async def test_solver_error_handling(self, mock_config):
         """Test solver error handling."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.SearchService"
+        ) as mock_cls:
             mock_cls.side_effect = Exception("Connection failed")
 
             solver = CogniverseRetrievalSolver(
@@ -401,7 +407,9 @@ class TestSolverChaining:
     @pytest.mark.asyncio
     async def test_chain_multiple_solvers(self):
         """Test chaining multiple solvers."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
@@ -435,7 +443,9 @@ class TestSolverChaining:
         """Test parallel solver execution."""
         import asyncio
 
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
@@ -477,7 +487,9 @@ class TestSolverConfiguration:
             },
         }
 
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_config:
             mock_config.return_value = custom_config
 
             solver = CogniverseRetrievalSolver(
@@ -490,7 +502,9 @@ class TestSolverConfiguration:
     @pytest.mark.unit
     def test_solver_with_invalid_profile(self):
         """Test solver with invalid profile."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
@@ -507,7 +521,9 @@ class TestSolverConfiguration:
     @pytest.mark.asyncio
     async def test_solver_config_override(self):
         """Test solver configuration override."""
-        with patch("cogniverse_evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch(
+            "cogniverse_evaluation.inspect_tasks.solvers.get_config"
+        ) as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},

@@ -28,7 +28,9 @@ def vespa_instance():
 
     try:
         # Start container with module-specific ports
-        container_info = manager.start_container(module_name=__name__, use_module_ports=True)
+        container_info = manager.start_container(
+            module_name=__name__, use_module_ports=True
+        )
 
         # Wait for config server to be ready
         manager.wait_for_config_ready(container_info, timeout=180)

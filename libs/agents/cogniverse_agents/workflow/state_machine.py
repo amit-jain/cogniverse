@@ -290,7 +290,10 @@ class WorkflowStateMachine:
             True if transition is possible with current context
         """
         for trans in self.transitions:
-            if trans.from_state == self.current_state and trans.to_state == target_state:
+            if (
+                trans.from_state == self.current_state
+                and trans.to_state == target_state
+            ):
                 try:
                     return trans.condition(self.context)
                 except Exception:

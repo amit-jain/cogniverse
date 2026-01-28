@@ -69,8 +69,12 @@ class TestTieredRouterInitialization:
 
         with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy"):
             with patch("cogniverse_agents.routing.router.LLMRoutingStrategy"):
-                with patch("cogniverse_agents.routing.router.LangExtractRoutingStrategy"):
-                    with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy"):
+                with patch(
+                    "cogniverse_agents.routing.router.LangExtractRoutingStrategy"
+                ):
+                    with patch(
+                        "cogniverse_agents.routing.router.KeywordRoutingStrategy"
+                    ):
                         router = TieredRouter(config)
                         assert router.config == config
                         # Check that langextract was not initialized

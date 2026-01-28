@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_agents.routing.mlflow_integration import (
     ABTestConfig,
     ExperimentConfig,
@@ -125,7 +126,9 @@ class TestMLflowIntegration:
         """Test MLflow integration when MLflow is not available."""
         config = ExperimentConfig(experiment_name="test_experiment")
 
-        with patch("cogniverse_agents.routing.mlflow_integration.MLFLOW_AVAILABLE", False):
+        with patch(
+            "cogniverse_agents.routing.mlflow_integration.MLFLOW_AVAILABLE", False
+        ):
             with pytest.raises(ImportError, match="MLflow not available"):
                 MLflowIntegration(config)
 
@@ -197,7 +200,7 @@ class TestMLflowIntegration:
                             },
                             "config": {
                                 "convergence_step": 50,
-                            }
+                            },
                         },
                     )
                 )
@@ -331,8 +334,14 @@ class TestMLflowIntegration:
                 asyncio.run(
                     integration.log_routing_performance(
                         query="test query",
-                        routing_decision={"recommended_agent": "video_search", "confidence": 0.85},
-                        performance_metrics={"success_rate": 0.88, "avg_response_time": 1.1},
+                        routing_decision={
+                            "recommended_agent": "video_search",
+                            "confidence": 0.85,
+                        },
+                        performance_metrics={
+                            "success_rate": 0.88,
+                            "avg_response_time": 1.1,
+                        },
                     )
                 )
 
@@ -412,14 +421,19 @@ class TestMLflowIntegrationIntegration:
             integration = MLflowIntegration(config, storage_dir=temp_dir)
 
             # Start experiment run
-            with integration.start_run("e2e_test_run", tags={"phase": "testing"}) as run:
+            with integration.start_run(
+                "e2e_test_run", tags={"phase": "testing"}
+            ) as run:
                 import asyncio
 
                 # Log routing performance with explicit step to avoid param collision
                 asyncio.run(
                     integration.log_routing_performance(
                         query="test query",
-                        routing_decision={"recommended_agent": "video_search", "confidence": 0.92},
+                        routing_decision={
+                            "recommended_agent": "video_search",
+                            "confidence": 0.92,
+                        },
                         performance_metrics={
                             "success_rate": 0.92,
                             "avg_response_time": 0.8,
@@ -440,7 +454,7 @@ class TestMLflowIntegrationIntegration:
                             },
                             "config": {
                                 "convergence_step": 75,
-                            }
+                            },
                         },
                         step=2,
                     )

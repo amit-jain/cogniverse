@@ -222,7 +222,9 @@ def telemetry_manager_without_phoenix():
             "http_endpoint": "http://localhost:26006",  # HTTP endpoint for queries
             "grpc_endpoint": "http://localhost:24317",  # gRPC endpoint (same as OTLP)
         },
-        batch_config=BatchExportConfig(use_sync_export=True),  # Synchronous export for tests
+        batch_config=BatchExportConfig(
+            use_sync_export=True
+        ),  # Synchronous export for tests
     )
 
     # Set as the global singleton
@@ -250,6 +252,7 @@ def phoenix_container():
     import subprocess
 
     import requests
+
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     original_endpoint = os.environ.get("OTLP_ENDPOINT")
@@ -467,7 +470,6 @@ def config_manager_memory():
     needing real backend connectivity.
     """
     from cogniverse_foundation.config.manager import ConfigManager
-
     from tests.utils.memory_store import InMemoryConfigStore
 
     store = InMemoryConfigStore()

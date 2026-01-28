@@ -130,7 +130,9 @@ def create_encoder_stub(model_name: str, **kwargs) -> EncoderStub:
         return EncoderStub(model_name, embedding_dim=128, load_time_ms=10.0)
 
 
-def mock_encoder_factory(profile_name: str, model_name: str, config: Dict[str, Any] = None):
+def mock_encoder_factory(
+    profile_name: str, model_name: str, config: Dict[str, Any] = None
+):
     """
     Mock for QueryEncoderFactory.create_encoder that returns encoder stubs.
 

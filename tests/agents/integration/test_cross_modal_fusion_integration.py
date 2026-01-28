@@ -13,6 +13,9 @@ from datetime import datetime
 import numpy as np
 import pytest
 import requests
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from PIL import Image
+
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
@@ -22,9 +25,6 @@ from cogniverse_agents.workflow_types import (
     WorkflowStatus,
     WorkflowTask,
 )
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from PIL import Image
-
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 
@@ -190,8 +190,9 @@ class TestCrossModalFusionIntegration:
         print("-" * 80)
 
         import torch
-        from cogniverse_core.common.models.model_loaders import get_or_load_model
         from sentence_transformers import SentenceTransformer
+
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
 
         # Load models
         print("\n📦 Loading models...")
@@ -334,14 +335,20 @@ class TestCrossModalFusionIntegration:
         wait_for_vespa_indexing(delay=5)
         print("✅ Indexing complete")
 
-    def test_cross_modal_fusion_workflow(self, test_vespa_fusion, telemetry_manager_without_phoenix):
+    def test_cross_modal_fusion_workflow(
+        self, test_vespa_fusion, telemetry_manager_without_phoenix
+    ):
         """Test multi-agent workflow with cross-modal fusion"""
         print("\n" + "-" * 80)
         print("Test: Cross-Modal Fusion Workflow")
         print("-" * 80)
 
         # Create orchestrator (will use mocked agents)
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_workflow_intelligence=False,
+        )
 
         # Create mock workflow with completed tasks from different modalities
         print("\n🎭 Creating mock multi-modal workflow...")
@@ -459,13 +466,19 @@ class TestCrossModalFusionIntegration:
 
         print("✅ Cross-modal fusion validated successfully")
 
-    def test_fusion_strategies(self, test_vespa_fusion, telemetry_manager_without_phoenix):
+    def test_fusion_strategies(
+        self, test_vespa_fusion, telemetry_manager_without_phoenix
+    ):
         """Test different fusion strategies"""
         print("\n" + "-" * 80)
         print("Test: Fusion Strategies")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_workflow_intelligence=False,
+        )
 
         # Create sample task results
         task_results = {
@@ -523,13 +536,19 @@ class TestCrossModalFusionIntegration:
 
         print("\n✅ All fusion strategies validated")
 
-    def test_fusion_quality_metrics(self, test_vespa_fusion, telemetry_manager_without_phoenix):
+    def test_fusion_quality_metrics(
+        self, test_vespa_fusion, telemetry_manager_without_phoenix
+    ):
         """Test fusion quality metrics calculation"""
         print("\n" + "-" * 80)
         print("Test: Fusion Quality Metrics")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+            enable_workflow_intelligence=False,
+        )
 
         # Create diverse task results
         task_results = {

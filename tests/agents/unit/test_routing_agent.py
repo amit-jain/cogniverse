@@ -5,8 +5,8 @@ NOTE: RoutingAgent has been refactored to use type-safe base classes.
 Tests use the new typed API with RoutingDeps, RoutingInput, RoutingOutput.
 """
 
-
 import pytest
+
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
     RoutingDeps,
@@ -46,9 +46,7 @@ class TestRoutingAgentLegacy:
         )
 
     @pytest.mark.ci_fast
-    def test_routing_agent_initialization(
-        self, mock_system_config, routing_deps
-    ):
+    def test_routing_agent_initialization(self, mock_system_config, routing_deps):
         """Test RoutingAgent initialization with typed deps"""
         agent = RoutingAgent(deps=routing_deps)
 

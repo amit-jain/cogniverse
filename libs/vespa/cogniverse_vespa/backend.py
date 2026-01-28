@@ -19,10 +19,11 @@ from .vespa_schema_manager import VespaSchemaManager
 # Check if async ingestion client is available (optional dependency)
 try:
     from .async_ingestion_client import AsyncVespaBackendAdapter  # noqa: F401
+
     ASYNC_AVAILABLE = True
 except ImportError:
     ASYNC_AVAILABLE = False
-    
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,15 +45,23 @@ class VespaBackend(Backend):
             config_manager: ConfigManager instance for configuration access (REQUIRED)
         """
         if backend_config is None:
-            raise ValueError("backend_config is required for VespaBackend initialization")
+            raise ValueError(
+                "backend_config is required for VespaBackend initialization"
+            )
         if schema_loader is None:
-            raise ValueError("schema_loader is required for VespaBackend initialization")
+            raise ValueError(
+                "schema_loader is required for VespaBackend initialization"
+            )
         if config_manager is None:
-            raise ValueError("config_manager is required for VespaBackend initialization")
+            raise ValueError(
+                "config_manager is required for VespaBackend initialization"
+            )
 
         # Validate backend type
         if backend_config.backend_type != "vespa":
-            raise ValueError(f"VespaBackend requires backend_type='vespa', got '{backend_config.backend_type}'")
+            raise ValueError(
+                f"VespaBackend requires backend_type='vespa', got '{backend_config.backend_type}'"
+            )
 
         super().__init__("vespa")
         self._backend_config = backend_config
@@ -61,7 +70,9 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[str, Any] = {}  # For async ingestion (optional)
+        self._async_ingestion_clients: Dict[str, Any] = (
+            {}
+        )  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
@@ -74,7 +85,7 @@ class VespaBackend(Backend):
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
-    
+
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
         Initialize Vespa backend components.
@@ -89,11 +100,15 @@ class VespaBackend(Backend):
         # Allow tenant_id override from config (but use BackendConfig tenant_id as default)
         config_tenant_id = config.get("tenant_id")
         if config_tenant_id and config_tenant_id != self._tenant_id:
-            logger.debug(f"Overriding tenant_id from {self._tenant_id} to {config_tenant_id}")
+            logger.debug(
+                f"Overriding tenant_id from {self._tenant_id} to {config_tenant_id}"
+            )
             self._tenant_id = config_tenant_id
 
         if not self._tenant_id:
-            logger.warning("No tenant_id configured - backend will use base schemas without tenant isolation")
+            logger.warning(
+                "No tenant_id configured - backend will use base schemas without tenant isolation"
+            )
 
         # Extract backend section if present, otherwise use config as-is
         backend_section = config.get("backend", config)
@@ -121,7 +136,9 @@ class VespaBackend(Backend):
         self.config = merged_config
 
         # Check if async ingestion is requested (optional feature)
-        self.use_async_ingestion = merged_config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
+        self.use_async_ingestion = (
+            merged_config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
+        )
 
         # Allow config to override URL/port from BackendConfig
         config_url = merged_config.get("url")
@@ -146,7 +163,9 @@ class VespaBackend(Backend):
         config_port = merged_config.get("config_port")
         if not config_port:
             config_port = calculate_config_port(self._port)
-            logger.debug(f"Calculated config port {config_port} from data port {self._port}")
+            logger.debug(
+                f"Calculated config port {config_port} from data port {self._port}"
+            )
 
         # Store config port for schema deployment
         self._config_port = config_port
@@ -157,7 +176,7 @@ class VespaBackend(Backend):
             backend_endpoint=self._url,
             backend_port=config_port,
             schema_loader=self._schema_loader_instance,
-            schema_registry=None  # Will be set after SchemaRegistry is injected
+            schema_registry=None,  # Will be set after SchemaRegistry is injected
         )
 
         # Backend is initialized with all profiles available
@@ -168,19 +187,25 @@ class VespaBackend(Backend):
         # This happens before metadata schema deployment so schema_manager can preserve existing schemas
         if self.schema_registry:
             self.schema_manager._schema_registry = self.schema_registry
-            logger.debug("Injected schema_registry into schema_manager before metadata deployment")
+            logger.debug(
+                "Injected schema_registry into schema_manager before metadata deployment"
+            )
 
         # Deploy metadata schemas automatically during backend initialization
         # upload_metadata_schemas() is schema-aware and preserves existing video schemas
         system_config = self._config_manager_instance.get_system_config()
         app_name = system_config.application_name
         self.schema_manager.upload_metadata_schemas(app_name=app_name)
-        logger.info("Automatically deployed metadata schemas during backend initialization")
+        logger.info(
+            "Automatically deployed metadata schemas during backend initialization"
+        )
 
-        logger.info(f"Initialized Vespa backend for tenant '{self._tenant_id}' with {len(self.config.get('profiles', {}))} profiles")
-    
+        logger.info(
+            f"Initialized Vespa backend for tenant '{self._tenant_id}' with {len(self.config.get('profiles', {}))} profiles"
+        )
+
     # Ingestion methods
-    
+
     def _get_or_create_ingestion_client(self, schema_name: str) -> VespaPyClient:
         """
         Get or create a schema-specific ingestion client with tenant-aware schema naming.
@@ -200,7 +225,9 @@ class VespaBackend(Backend):
         # Transform base schema name to tenant-scoped name if tenant_id is set
         target_schema_name = schema_name
         if self._tenant_id:
-            target_schema_name = self.get_tenant_schema_name(self._tenant_id, schema_name)
+            target_schema_name = self.get_tenant_schema_name(
+                self._tenant_id, schema_name
+            )
             logger.debug(
                 f"Transformed base schema '{schema_name}' to tenant schema '{target_schema_name}' "
                 f"for tenant '{self._tenant_id}'"
@@ -215,10 +242,11 @@ class VespaBackend(Backend):
 
             try:
                 self.schema_registry.deploy_schema(
-                    tenant_id=self._tenant_id,
-                    base_schema_name=schema_name
+                    tenant_id=self._tenant_id, base_schema_name=schema_name
                 )
-                logger.debug(f"Verified tenant schema '{target_schema_name}' exists in Vespa")
+                logger.debug(
+                    f"Verified tenant schema '{target_schema_name}' exists in Vespa"
+                )
             except Exception as e:
                 logger.error(f"Failed to ensure tenant schema exists: {e}")
                 raise
@@ -230,7 +258,9 @@ class VespaBackend(Backend):
             profile_config = {}
             if self.config:
                 profiles = self.config.get("profiles", {})
-                profile_config = profiles.get(schema_name, {})  # Use base name for config lookup
+                profile_config = profiles.get(
+                    schema_name, {}
+                )  # Use base name for config lookup
 
             # Pass connection details and profile config
             client_config = {
@@ -239,20 +269,19 @@ class VespaBackend(Backend):
                 "url": self._url,
                 "port": self._port,
                 "profile_config": profile_config,  # Pass only the specific profile config
-                "schema_loader": self._schema_loader_instance  # Pass schema_loader for StrategyAwareProcessor
+                "schema_loader": self._schema_loader_instance,  # Pass schema_loader for StrategyAwareProcessor
             }
 
-            client = VespaPyClient(
-                config=client_config,
-                logger=logger
-            )
+            client = VespaPyClient(config=client_config, logger=logger)
             client.connect()
 
             self._vespa_ingestion_clients[target_schema_name] = client
 
         return self._vespa_ingestion_clients[target_schema_name]
-    
-    def ingest_documents(self, documents: List[Document], schema_name: str) -> Dict[str, Any]:
+
+    def ingest_documents(
+        self, documents: List[Document], schema_name: str
+    ) -> Dict[str, Any]:
         """
         Ingest documents into Vespa.
 
@@ -286,43 +315,49 @@ class VespaBackend(Backend):
 
             # Wait for successfully fed documents to be queryable
             for doc in documents:
-                if doc.id not in [fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs]:
+                if doc.id not in [
+                    fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs
+                ]:
                     try:
                         # Get the tenant-scoped schema name for verification
                         target_schema = schema_name
                         if self._tenant_id:
-                            target_schema = self.get_tenant_schema_name(self._tenant_id, schema_name)
+                            target_schema = self.get_tenant_schema_name(
+                                self._tenant_id, schema_name
+                            )
 
                         wait_for_vespa_document_visible(
                             vespa_url=f"{self._url}:{self._port}",
                             schema_name=target_schema,
                             document_id=doc.id,
-                            timeout=timeout
+                            timeout=timeout,
                         )
                     except Exception as e:
-                        logger.warning(f"Document {doc.id} fed but not immediately queryable: {e}")
+                        logger.warning(
+                            f"Document {doc.id} fed but not immediately queryable: {e}"
+                        )
 
         return {
             "success_count": success_count,
             "failed_count": len(failed_docs),
             "failed_documents": failed_docs,
-            "total_documents": len(documents)
+            "total_documents": len(documents),
         }
-    
+
     def feed(self, document: Document, schema_name: str) -> Tuple[int, List[str]]:
         """
         Feed a single document to Vespa.
-        
+
         Args:
             document: Document object to feed
             schema_name: Schema to feed document to (REQUIRED)
-            
+
         Returns:
             Tuple of (success_count, failed_document_ids)
         """
         # Convert single document to list and call ingest_documents
         result = self.ingest_documents([document], schema_name)
-        
+
         # Extract failed document IDs from the result
         failed_ids = []
         if result.get("failed_documents"):
@@ -332,18 +367,20 @@ class VespaBackend(Backend):
                     failed_ids.append(failed_doc)
                 elif isinstance(failed_doc, dict) and "id" in failed_doc:
                     failed_ids.append(failed_doc["id"])
-        
+
         success_count = result.get("success_count", 0)
         return success_count, failed_ids
-    
-    def ingest_stream(self, documents: Iterator[Document], batch_size: int = 100) -> Iterator[Dict[str, Any]]:
+
+    def ingest_stream(
+        self, documents: Iterator[Document], batch_size: int = 100
+    ) -> Iterator[Dict[str, Any]]:
         """
         Stream documents for ingestion.
-        
+
         Args:
             documents: Iterator of Document objects
             batch_size: Number of documents per batch
-            
+
         Yields:
             Ingestion results for each batch
         """
@@ -353,11 +390,11 @@ class VespaBackend(Backend):
             if len(batch) >= batch_size:
                 yield self.ingest_documents(batch)
                 batch = []
-        
+
         # Process remaining documents
         if batch:
             yield self.ingest_documents(batch)
-    
+
     def update_document(self, document_id: str, document: Document) -> bool:
         """
         Update a document in Vespa.
@@ -381,7 +418,7 @@ class VespaBackend(Backend):
         except Exception as e:
             logger.error(f"Failed to update document {document_id}: {e}")
             return False
-    
+
     def delete_document(self, document_id: str) -> bool:
         """
         Delete a document from Vespa.
@@ -417,17 +454,17 @@ class VespaBackend(Backend):
         except Exception as e:
             logger.error(f"Failed to delete document {document_id}: {e}")
             return False
-    
+
     def get_schema_info(self) -> Dict[str, Any]:
         """
         Get Vespa schema information.
-        
+
         Returns:
             Schema information
         """
         if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
-        
+
         try:
             # Get actual schema info if available from search backend
             if self._vespa_search_backend:
@@ -437,34 +474,34 @@ class VespaBackend(Backend):
                     "backend": "vespa",
                     "initialized": True,
                     "search_enabled": self._initialized_as_search,
-                "ingestion_enabled": self._initialized_as_ingestion
+                    "ingestion_enabled": self._initialized_as_ingestion,
                 }
-            
+
             # Basic info if only ingestion is configured
             return {
                 "name": self.config.get("schema_name", "unknown"),
                 "backend": "vespa",
                 "initialized": True,
                 "search_enabled": False,
-                "ingestion_enabled": self._initialized_as_ingestion
+                "ingestion_enabled": self._initialized_as_ingestion,
             }
         except Exception as e:
             logger.error(f"Failed to get schema info: {e}")
             raise  # Re-raise instead of returning empty dict
-    
+
     def validate_schema(self, schema_name: str) -> bool:
         """
         Validate that a schema exists in Vespa.
-        
+
         Args:
             schema_name: Name of schema to validate
-            
+
         Returns:
             True if valid
         """
         if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
-        
+
         try:
             # Check if schema exists
             # This would query Vespa for the schema
@@ -472,7 +509,7 @@ class VespaBackend(Backend):
         except Exception as e:
             logger.error(f"Failed to validate schema {schema_name}: {e}")
             return False
-    
+
     # Search methods
 
     @property
@@ -490,10 +527,7 @@ class VespaBackend(Backend):
             return self.config["schema_name"]
         return None
 
-    def search(
-        self,
-        query_dict: Dict[str, Any]
-    ) -> Any:
+    def search(self, query_dict: Dict[str, Any]) -> Any:
         """
         Execute a search query using query dict format.
 
@@ -522,7 +556,7 @@ class VespaBackend(Backend):
             self._vespa_search_backend = VespaSearchBackend(
                 config=self.config,  # Pass merged config (includes url, port, profiles, default_profiles)
                 config_manager=self._config_manager_instance,
-                schema_loader=self._schema_loader_instance
+                schema_loader=self._schema_loader_instance,
             )
             self._initialized_as_search = True
             logger.info("VespaSearchBackend initialized with all profiles")
@@ -530,7 +564,7 @@ class VespaBackend(Backend):
         # Delegate directly to VespaSearchBackend
         # It returns List[SearchResult], which is what SearchService expects
         return self._vespa_search_backend.search(query_dict)
-    
+
     def get_document(self, document_id: str) -> Optional[Document]:
         """
         Retrieve a document by ID (uses batch method).
@@ -544,7 +578,7 @@ class VespaBackend(Backend):
         # Use batch method for consistency and optimization
         results = self.batch_get_documents([document_id])
         return results[0] if results else None
-    
+
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
         Retrieve multiple documents by ID (primary batch method).
@@ -559,32 +593,30 @@ class VespaBackend(Backend):
             raise RuntimeError("Search backend not initialized.")
 
         return self._vespa_search_backend.batch_get_documents(document_ids)
-    
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         Get Vespa statistics.
-        
+
         Returns:
             Statistics dictionary
         """
         if self._vespa_search_backend:
             # Delegate to search backend if available
             return self._vespa_search_backend.get_statistics()
-        
+
         # Basic stats if only ingestion is configured
         return {
             "backend": "vespa",
             "status": "healthy" if self.schema_manager else "not initialized",
-            "search_enabled": self._initialized_as_search
+            "search_enabled": self._initialized_as_search,
         }
-    
+
     # ============================================================================
     # Schema Management Operations (Backend interface implementation)
     # ============================================================================
 
-    def deploy_schemas(
-        self, schema_definitions: List[Dict[str, Any]]
-    ) -> bool:
+    def deploy_schemas(self, schema_definitions: List[Dict[str, Any]]) -> bool:
         """
         Deploy multiple schemas together.
 
@@ -611,9 +643,8 @@ class VespaBackend(Backend):
         try:
             import json
 
-            from vespa.package import ApplicationPackage
-
             from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+            from vespa.package import ApplicationPackage
 
             parser = JsonSchemaParser()
             schemas_to_deploy = []
@@ -649,6 +680,7 @@ class VespaBackend(Backend):
             from cogniverse_vespa.metadata_schemas import (
                 add_metadata_schemas_to_package,
             )
+
             add_metadata_schemas_to_package(app_package)
             logger.debug("Added metadata schemas to deployment package")
 
@@ -662,7 +694,9 @@ class VespaBackend(Backend):
             logger.error(f"Failed to deploy schemas: {e}")
             return False
 
-    def _deploy_package(self, app_package, allow_field_type_change: bool = False) -> None:
+    def _deploy_package(
+        self, app_package, allow_field_type_change: bool = False
+    ) -> None:
         """
         Deploy an application package to Vespa.
 
@@ -682,12 +716,13 @@ class VespaBackend(Backend):
         # Add validation override if requested
         if allow_field_type_change:
             from datetime import datetime, timedelta
+
             # Set validation until 29 days from now (to stay within 30-day limit)
             until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
             validation = Validation(
                 validation_id=ValidationID.fieldTypeChange,
                 until=until_date,
-                comment="Allow field type changes for schema updates"
+                comment="Allow field type changes for schema updates",
             )
             if app_package.validations is None:
                 app_package.validations = []
@@ -695,7 +730,7 @@ class VespaBackend(Backend):
 
         # Create the deployment URL - properly construct with base URL and port
         # Remove any existing port from endpoint
-        base_url = re.sub(r':\d+$', '', self._url)
+        base_url = re.sub(r":\d+$", "", self._url)
         deploy_url = f"{base_url}:{self._config_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
@@ -707,7 +742,7 @@ class VespaBackend(Backend):
                 deploy_url,
                 headers={"Content-Type": "application/zip"},
                 data=app_zip,
-                verify=False
+                verify=False,
             )
 
             if response.status_code == 200:
@@ -715,7 +750,7 @@ class VespaBackend(Backend):
             else:
                 error_msg = f"Deployment failed with status {response.status_code}"
                 try:
-                    error_detail = json.loads(response.content.decode('utf-8'))
+                    error_detail = json.loads(response.content.decode("utf-8"))
                     error_msg += f": {error_detail}"
                 except Exception:
                     error_msg += f": {response.content.decode('utf-8')}"
@@ -748,9 +783,7 @@ class VespaBackend(Backend):
             raise ValueError("tenant_id required for schema deletion")
 
         try:
-            deleted_schemas = self._delete_tenant_schemas(
-                effective_tenant_id
-            )
+            deleted_schemas = self._delete_tenant_schemas(effective_tenant_id)
             logger.info(
                 f"Deleted {len(deleted_schemas)} schemas for tenant '{effective_tenant_id}'"
             )
@@ -761,9 +794,7 @@ class VespaBackend(Backend):
             )
             return []
 
-    def schema_exists(
-        self, schema_name: str, tenant_id: Optional[str] = None
-    ) -> bool:
+    def schema_exists(self, schema_name: str, tenant_id: Optional[str] = None) -> bool:
         """
         Check if schema exists.
 
@@ -808,9 +839,7 @@ class VespaBackend(Backend):
         """
         return self.schema_manager.delete_tenant_schemas(tenant_id)
 
-    def get_tenant_schema_name(
-        self, tenant_id: str, base_schema_name: str
-    ) -> str:
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
         Get tenant-specific schema name.
 
@@ -855,9 +884,7 @@ class VespaBackend(Backend):
 
             # Feed metadata document
             response = vespa_client.feed_data_point(
-                schema=schema,
-                data_id=doc_id,
-                fields=fields
+                schema=schema, data_id=doc_id, fields=fields
             )
 
             # Check response status
@@ -871,9 +898,7 @@ class VespaBackend(Backend):
             logger.debug(f"Created metadata document: {schema}/{doc_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"Failed to create metadata document {schema}/{doc_id}: {e}"
-            )
+            logger.error(f"Failed to create metadata document {schema}/{doc_id}: {e}")
             return False
 
     def get_metadata_document(
@@ -908,9 +933,7 @@ class VespaBackend(Backend):
             result = response.json
             return result.get("fields", {})
         except Exception as e:
-            logger.error(
-                f"Failed to get metadata document {schema}/{doc_id}: {e}"
-            )
+            logger.error(f"Failed to get metadata document {schema}/{doc_id}: {e}")
             return None
 
     def query_metadata_documents(
@@ -918,7 +941,7 @@ class VespaBackend(Backend):
         schema: str,
         query: Optional[str] = None,
         yql: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Query metadata documents.
@@ -954,12 +977,14 @@ class VespaBackend(Backend):
                     query_params["query"] = query
             elif query:
                 # Use userQuery() for text search
-                query_params["yql"] = f'select * from {schema} where userQuery()'
+                query_params["yql"] = f"select * from {schema} where userQuery()"
                 query_params["query"] = query
             else:
                 # Get all documents - Vespa requires at least one search term
                 # Using a match-all pattern with limit
-                query_params["yql"] = f'select * from {schema} where true limit {kwargs.get("hits", 100)}'
+                query_params["yql"] = (
+                    f'select * from {schema} where true limit {kwargs.get("hits", 100)}'
+                )
 
             # Execute query
             results = vespa_client.query(**query_params)
@@ -1003,9 +1028,7 @@ class VespaBackend(Backend):
             logger.debug(f"Deleted metadata document: {schema}/{doc_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"Failed to delete metadata document {schema}/{doc_id}: {e}"
-            )
+            logger.error(f"Failed to delete metadata document {schema}/{doc_id}: {e}")
             return False
 
     # ============================================================================
@@ -1066,7 +1089,7 @@ class VespaBackend(Backend):
 def register() -> None:
     """Register Vespa backend with the backend registry."""
     from cogniverse_core.registries.backend_registry import register_backend
-    
+
     try:
         register_backend("vespa", VespaBackend)
         logger.info("Vespa backend registered successfully")

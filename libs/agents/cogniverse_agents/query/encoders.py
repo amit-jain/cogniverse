@@ -163,7 +163,11 @@ class QueryEncoderFactory:
     _encoder_cache = {}  # Cache for config-based encoder mappings
 
     @staticmethod
-    def create_encoder(profile: str, model_name: Optional[str] = None, config: Optional["SystemConfig"] = None) -> QueryEncoder:
+    def create_encoder(
+        profile: str,
+        model_name: Optional[str] = None,
+        config: Optional["SystemConfig"] = None,
+    ) -> QueryEncoder:
         """Create query encoder for the given profile
 
         Dynamically determines the encoder based on config.json backend.profiles

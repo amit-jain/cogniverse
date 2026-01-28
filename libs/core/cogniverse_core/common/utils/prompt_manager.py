@@ -23,7 +23,7 @@ class PromptManager:
         config_path: str = "config.json",
         artifacts_path: Optional[str] = None,
         config_manager: "ConfigManager" = None,
-        tenant_id: str = "default"
+        tenant_id: str = "default",
     ):
         """
         Initialize the prompt manager.
@@ -35,8 +35,12 @@ class PromptManager:
             tenant_id: Tenant identifier for config retrieval
         """
         if config_manager is None:
-            raise ValueError("config_manager is required for PromptManager initialization")
-        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager).get_all()
+            raise ValueError(
+                "config_manager is required for PromptManager initialization"
+            )
+        self.config = get_config(
+            tenant_id=tenant_id, config_manager=config_manager
+        ).get_all()
         self.artifacts = self._load_artifacts(artifacts_path)
 
     def _load_artifacts(

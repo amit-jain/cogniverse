@@ -4,12 +4,12 @@ import json
 import logging
 from typing import Any, Dict, Optional, Union
 
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_runtime.search.service import SearchService
 
 logger = logging.getLogger(__name__)

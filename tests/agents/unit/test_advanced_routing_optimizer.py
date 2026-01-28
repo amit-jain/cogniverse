@@ -69,7 +69,7 @@ class TestAdvancedRoutingOptimizerCore:
         """Test basic optimizer initialization without complex dependencies."""
         config = AdvancedOptimizerConfig(
             min_experiences_for_training=5,
-            enable_persistence=False  # Disable persistence for test isolation
+            enable_persistence=False,  # Disable persistence for test isolation
         )
 
         # Advanced optimizer doesn't use SentenceTransformer directly, so no mocking needed
@@ -86,7 +86,7 @@ class TestAdvancedRoutingOptimizerCore:
         """Test basic experience recording functionality."""
         config = AdvancedOptimizerConfig(
             min_experiences_for_training=100,  # High threshold
-            enable_persistence=False  # Disable persistence for test isolation
+            enable_persistence=False,  # Disable persistence for test isolation
         )
 
         optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
@@ -323,43 +323,55 @@ class TestAdvancedRoutingOptimizerIntegration:
                     entities=[{"type": "TEST", "text": f"entity_{i}"}],
                     relationships=[],
                     enhanced_query=f"Enhanced query {i}",
-                    chosen_agent="video_search_agent" if i % 2 == 0 else "summarizer_agent",
+                    chosen_agent=(
+                        "video_search_agent" if i % 2 == 0 else "summarizer_agent"
+                    ),
                     routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
                     search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
                     agent_success=i % 10 != 0,  # 90% success rate
                 )
 
             # Verify optimizer was initialized
-            assert optimizer.advanced_optimizer is not None, \
-                "Advanced optimizer should be initialized after min_experiences_for_training"
+            assert (
+                optimizer.advanced_optimizer is not None
+            ), "Advanced optimizer should be initialized after min_experiences_for_training"
 
             # Verify we have enough experiences
-            assert len(optimizer.experiences) == 210, \
-                f"Should have 210 experiences, got {len(optimizer.experiences)}"
+            assert (
+                len(optimizer.experiences) == 210
+            ), f"Should have 210 experiences, got {len(optimizer.experiences)}"
 
             # Test optimizer selection with 210 examples
             dataset_size = 210
-            selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
+            selected_optimizer, optimizer_name = (
+                optimizer.advanced_optimizer._select_optimizer(dataset_size)
+            )
 
-            assert optimizer_name == "gepa", \
-                f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
+            assert (
+                optimizer_name == "gepa"
+            ), f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
 
             # Get optimization info to verify logic
             opt_info = optimizer.advanced_optimizer.get_optimization_info(dataset_size)
-            assert opt_info["primary_optimizer"] == "gepa", \
-                f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
+            assert (
+                opt_info["primary_optimizer"] == "gepa"
+            ), f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
             assert opt_info["dataset_size"] == 210
-            assert len(opt_info["applicable_optimizers"]) == 4, \
-                "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
+            assert (
+                len(opt_info["applicable_optimizers"]) == 4
+            ), "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
 
             # Test that compile() is called with correct optimizer
             # Mock the actual GEPA.compile to avoid LLM calls
-            with patch.object(optimizer.advanced_optimizer.gepa_optimizer, 'compile') as mock_gepa_compile:
+            with patch.object(
+                optimizer.advanced_optimizer.gepa_optimizer, "compile"
+            ) as mock_gepa_compile:
                 mock_optimized_module = MagicMock()
                 mock_gepa_compile.return_value = mock_optimized_module
 
                 # Create dummy training data
                 import dspy
+
                 trainset = [
                     dspy.Example(
                         query="test",
@@ -368,8 +380,10 @@ class TestAdvancedRoutingOptimizerIntegration:
                         enhanced_query="test",
                         recommended_agent="video_search_agent",
                         confidence="0.8",
-                        reasoning="test"
-                    ).with_inputs("query", "entities", "relationships", "enhanced_query")
+                        reasoning="test",
+                    ).with_inputs(
+                        "query", "entities", "relationships", "enhanced_query"
+                    )
                     for _ in range(210)
                 ]
 
@@ -383,13 +397,15 @@ class TestAdvancedRoutingOptimizerIntegration:
 
                 # Verify GEPA was called
                 mock_gepa_compile.assert_called_once()
-                assert result == mock_optimized_module, \
-                    "Should return optimized module from GEPA"
+                assert (
+                    result == mock_optimized_module
+                ), "Should return optimized module from GEPA"
 
             # Verify status shows optimizer ready
             status = optimizer.get_optimization_status()
-            assert status["optimizer_ready"] is True, \
-                "Optimizer should be ready with 210 experiences"
+            assert (
+                status["optimizer_ready"] is True
+            ), "Optimizer should be ready with 210 experiences"
             assert status["total_experiences"] == 210
 
     @pytest.mark.asyncio
@@ -432,17 +448,20 @@ class TestAdvancedRoutingOptimizerIntegration:
 
             # Test selections at different dataset sizes
             test_cases = [
-                (15, "bootstrap"),   # < 20: bootstrap only
-                (25, "bootstrap"),   # < 50: bootstrap (highest applicable)
-                (60, "simba"),       # >= 50, < 100: simba
-                (120, "mipro"),      # >= 100, < 200: mipro
-                (250, "gepa"),       # >= 200: gepa
+                (15, "bootstrap"),  # < 20: bootstrap only
+                (25, "bootstrap"),  # < 50: bootstrap (highest applicable)
+                (60, "simba"),  # >= 50, < 100: simba
+                (120, "mipro"),  # >= 100, < 200: mipro
+                (250, "gepa"),  # >= 200: gepa
             ]
 
             for dataset_size, expected_optimizer in test_cases:
-                selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
-                assert optimizer_name == expected_optimizer, \
-                    f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
+                selected_optimizer, optimizer_name = (
+                    optimizer.advanced_optimizer._select_optimizer(dataset_size)
+                )
+                assert (
+                    optimizer_name == expected_optimizer
+                ), f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
 
     @pytest.mark.asyncio
     async def test_end_to_end_workflow_simulation(self):
@@ -450,7 +469,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         # Create basic optimizer with low threshold for testing
         config = AdvancedOptimizerConfig(
             min_experiences_for_training=3,
-            enable_persistence=False  # Disable persistence for test isolation
+            enable_persistence=False,  # Disable persistence for test isolation
         )
 
         optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)

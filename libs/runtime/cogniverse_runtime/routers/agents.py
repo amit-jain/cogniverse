@@ -3,9 +3,10 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.registries.agent_registry import AgentRegistry
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
+
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,9 @@ def set_agent_registry(registry: AgentRegistry) -> None:
 def get_registry() -> AgentRegistry:
     """Get the injected registry or raise error"""
     if _agent_registry is None:
-        raise RuntimeError("AgentRegistry not initialized. Call set_agent_registry() first.")
+        raise RuntimeError(
+            "AgentRegistry not initialized. Call set_agent_registry() first."
+        )
     return _agent_registry
 
 

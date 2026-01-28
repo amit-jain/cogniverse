@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.xgboost_meta_models import (
@@ -260,7 +261,9 @@ class TestModalityOptimizer:
         ]
 
         # Mock SyntheticDataService
-        with patch("cogniverse_agents.routing.modality_optimizer.SyntheticDataService") as mock_service:
+        with patch(
+            "cogniverse_agents.routing.modality_optimizer.SyntheticDataService"
+        ) as mock_service:
             # Mock response
             mock_response = MagicMock()
             mock_response.data = [
@@ -300,7 +303,9 @@ class TestModalityOptimizer:
         ]
 
         # Mock SyntheticDataService
-        with patch("cogniverse_agents.routing.modality_optimizer.SyntheticDataService") as mock_service:
+        with patch(
+            "cogniverse_agents.routing.modality_optimizer.SyntheticDataService"
+        ) as mock_service:
             # Mock response
             mock_response = MagicMock()
             mock_response.data = [
@@ -345,7 +350,9 @@ class TestModalityOptimizer:
         assert result["training_samples"] == 1
         assert result["strategy"] == TrainingStrategy.PURE_REAL.value
         assert "validation_accuracy" in result
-        assert "optimizer" in result  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
+        assert (
+            "optimizer" in result
+        )  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
         assert "model_path" in result
 
     def test_record_training(self, optimizer):
