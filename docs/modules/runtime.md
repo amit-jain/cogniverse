@@ -51,6 +51,7 @@ cogniverse_runtime/
 │   ├── search.py                    # Search API endpoints
 │   ├── ingestion.py                 # Video ingestion endpoints
 │   ├── agents.py                    # Agent orchestration endpoints
+│   ├── events.py                    # SSE streaming for real-time notifications
 │   └── admin.py                     # Admin/tenant management
 ├── ingestion/                       # Video processing pipeline
 │   ├── pipeline.py                  # VideoIngestionPipeline
@@ -455,6 +456,37 @@ curl http://localhost:8000/ingestion/status/job-123
 **GET /health** - Health check
 **GET /health/ready** - Readiness probe
 **GET /health/live** - Liveness probe
+
+### Events Endpoints (SSE Streaming)
+
+**GET /events/workflows/{workflow_id}** - Subscribe to workflow events
+```bash
+curl -N "http://localhost:8000/events/workflows/workflow_123"
+# Returns Server-Sent Events stream:
+# data: {"event_type": "status", "state": "working", "phase": "planning"}
+# data: {"event_type": "progress", "current": 1, "total": 3}
+# ...
+```
+
+**GET /events/ingestion/{job_id}** - Subscribe to ingestion job events
+```bash
+curl -N "http://localhost:8000/events/ingestion/ingestion_456"
+```
+
+**POST /events/workflows/{workflow_id}/cancel** - Cancel a running workflow
+```bash
+curl -X POST "http://localhost:8000/events/workflows/workflow_123/cancel" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "User requested cancellation"}'
+```
+
+**POST /events/ingestion/{job_id}/cancel** - Cancel a running ingestion job
+
+**GET /events/queues** - List active event queues (admin)
+
+**GET /events/queues/{task_id}** - Get queue information
+
+See [Events Module](./events.md) for complete documentation.
 
 ---
 

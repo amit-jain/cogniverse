@@ -389,3 +389,176 @@ class TestEventQueueReconnection:
         assert reconnect_events[0].phase == "phase_2"
         assert reconnect_events[1].phase == "phase_3"
         assert reconnect_events[2].phase == "phase_4"
+
+
+class TestCheckpointEventIntegration:
+    """Test that checkpoint saves automatically emit A2A events."""
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_checkpoint_storage_accepts_event_queue(self):
+        """Test CheckpointStorage can be initialized with EventQueue."""
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.orchestrator.checkpoint_storage import (
+            WorkflowCheckpointStorage,
+        )
+        from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
+
+        queue = InMemoryEventQueue(
+            task_id="workflow_checkpoint_test",
+            tenant_id="test_tenant",
+        )
+
+        mock_telemetry_manager = MagicMock()
+        mock_telemetry_manager.config = MagicMock()
+        mock_telemetry_manager.config.provider_config = {}
+
+        # Should accept event_queue parameter
+        storage = WorkflowCheckpointStorage(
+            grpc_endpoint="localhost:4317",
+            http_endpoint="http://localhost:6006",
+            tenant_id="test_tenant",
+            config=CheckpointConfig(enabled=True),
+            telemetry_manager=mock_telemetry_manager,
+            event_queue=queue,
+        )
+
+        assert storage.event_queue is queue
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_checkpoint_save_emits_events(self):
+        """Test that saving a checkpoint emits A2A events."""
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.orchestrator.checkpoint_storage import (
+            WorkflowCheckpointStorage,
+        )
+        from cogniverse_agents.orchestrator.checkpoint_types import (
+            CheckpointConfig,
+            CheckpointStatus,
+            TaskCheckpoint,
+            WorkflowCheckpoint,
+        )
+
+        queue = InMemoryEventQueue(
+            task_id="workflow_checkpoint_test",
+            tenant_id="test_tenant",
+        )
+
+        # Create mock telemetry manager
+        mock_telemetry_manager = MagicMock()
+        mock_telemetry_manager.config = MagicMock()
+        mock_telemetry_manager.config.provider_config = {}
+        mock_telemetry_manager.span = MagicMock()
+        mock_telemetry_manager.span.return_value.__enter__ = MagicMock()
+        mock_telemetry_manager.span.return_value.__exit__ = MagicMock()
+
+        storage = WorkflowCheckpointStorage(
+            grpc_endpoint="localhost:4317",
+            http_endpoint="http://localhost:6006",
+            tenant_id="test_tenant",
+            config=CheckpointConfig(enabled=True),
+            telemetry_manager=mock_telemetry_manager,
+            event_queue=queue,
+        )
+
+        # Create a test checkpoint
+        checkpoint = WorkflowCheckpoint(
+            checkpoint_id="cp_001",
+            workflow_id="wf_001",
+            tenant_id="test_tenant",
+            workflow_status="running",
+            current_phase=1,
+            original_query="test query",
+            execution_order=[["task1"], ["task2"]],
+            metadata={"test": "data"},
+            task_states={
+                "task1": TaskCheckpoint(
+                    task_id="task1",
+                    agent_name="test_agent",
+                    query="test",
+                    dependencies=[],
+                    status="completed",
+                ),
+            },
+            checkpoint_time=datetime.now(),
+            checkpoint_status=CheckpointStatus.ACTIVE,
+        )
+
+        # Save checkpoint - should emit events
+        await storage.save_checkpoint(checkpoint)
+
+        # Verify events were emitted
+        offset = await queue.get_latest_offset()
+        assert offset == 2  # Status event + Progress event
+
+        # Check event contents
+        events = []
+        async for event in queue.subscribe(from_offset=0):
+            events.append(event)
+            if len(events) >= 2:
+                break
+
+        # First event should be status
+        assert events[0].event_type == "status"
+        assert events[0].task_id == "wf_001"
+        assert events[0].tenant_id == "test_tenant"
+
+        # Second event should be progress
+        assert events[1].event_type == "progress"
+        assert events[1].current == 1  # 1 completed task
+        assert events[1].total == 1  # 1 total task
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_checkpoint_without_event_queue_does_not_fail(self):
+        """Test that checkpoint works without EventQueue."""
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.orchestrator.checkpoint_storage import (
+            WorkflowCheckpointStorage,
+        )
+        from cogniverse_agents.orchestrator.checkpoint_types import (
+            CheckpointConfig,
+            CheckpointStatus,
+            WorkflowCheckpoint,
+        )
+
+        mock_telemetry_manager = MagicMock()
+        mock_telemetry_manager.config = MagicMock()
+        mock_telemetry_manager.config.provider_config = {}
+        mock_telemetry_manager.span = MagicMock()
+        mock_telemetry_manager.span.return_value.__enter__ = MagicMock()
+        mock_telemetry_manager.span.return_value.__exit__ = MagicMock()
+
+        # Create without event_queue
+        storage = WorkflowCheckpointStorage(
+            grpc_endpoint="localhost:4317",
+            http_endpoint="http://localhost:6006",
+            tenant_id="test_tenant",
+            config=CheckpointConfig(enabled=True),
+            telemetry_manager=mock_telemetry_manager,
+            # No event_queue - should still work
+        )
+
+        checkpoint = WorkflowCheckpoint(
+            checkpoint_id="cp_002",
+            workflow_id="wf_002",
+            tenant_id="test_tenant",
+            workflow_status="completed",
+            current_phase=2,
+            original_query="test",
+            execution_order=[["task1"]],
+            metadata={},
+            task_states={},
+            checkpoint_time=datetime.now(),
+            checkpoint_status=CheckpointStatus.COMPLETED,
+        )
+
+        # Should not raise
+        result = await storage.save_checkpoint(checkpoint)
+        assert result == "cp_002"

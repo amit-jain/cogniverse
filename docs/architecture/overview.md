@@ -78,6 +78,7 @@ cogniverse/
 │   │   └── cogniverse_core/
 │   │       ├── agents/           # Base agent classes
 │   │       ├── common/           # Shared utilities
+│   │       ├── events/           # A2A EventQueue for real-time notifications
 │   │       ├── registries/       # Component registries
 │   │       └── memory/           # Memory management
 │   │
@@ -159,7 +160,7 @@ graph TB
     end
 
     subgraph "Core Layer"
-        Core[cogniverse-core<br/>Base Agent Classes<br/>Registries<br/>Memory Management]
+        Core[cogniverse-core<br/>Base Agent Classes<br/>Registries<br/>Memory Management<br/>EventQueue System]
         Evaluation[cogniverse-evaluation<br/>Experiments<br/>Metrics<br/>Datasets]
         TelemetryPhoenix[cogniverse-telemetry-phoenix<br/>Phoenix Provider<br/>Plugin via Entry Points]
     end

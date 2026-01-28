@@ -41,6 +41,9 @@ Central registry for vector database backends. Enables switching backends withou
 
 ## C
 
+### CancellationToken
+Thread-safe signal for graceful task cancellation. Used by EventQueue to coordinate workflow/ingestion abort at phase boundaries.
+
 ### Checkpoint
 Saved state during workflow execution for durability. Allows resuming workflows after failures without re-executing completed tasks.
 
@@ -84,6 +87,12 @@ Vector representation of content for similarity search. Different models produce
 
 ### EmbeddingGenerator
 Component that generates embeddings and feeds them to backends. Handles multi-vector and single-vector strategies.
+
+### EventQueue
+A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports pub/sub pattern, reconnection with replay, and graceful cancellation. Used by orchestrator and ingestion pipeline.
+
+### EventType
+Standard A2A event categories: `StatusEvent` (state transitions), `ProgressEvent` (incremental progress), `ArtifactEvent` (intermediate results), `ErrorEvent` (errors), `CompleteEvent` (task completion).
 
 ---
 
@@ -217,7 +226,20 @@ Pluggable algorithm for processing steps. Types: `FrameSegmentationStrategy`, `C
 
 ---
 
+## Q
+
+### QueueManager
+Lifecycle manager for EventQueues. Creates, retrieves, closes, and cleans up expired queues. Supports multi-tenant isolation via `tenant_id`.
+
+---
+
 ## T
+
+### TaskEvent
+Base type for all A2A-compatible events. Contains `event_id`, `task_id`, `tenant_id`, `timestamp`, and type-specific data.
+
+### TaskState
+A2A-compatible workflow state: `pending`, `working`, `input-required`, `completed`, `failed`, `cancelled`.
 
 ### Telemetry
 Observability data: traces, spans, metrics. Managed by `TelemetryManager` with tenant isolation.

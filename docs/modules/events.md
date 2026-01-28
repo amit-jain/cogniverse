@@ -266,6 +266,58 @@ if queue.cancellation_token.is_cancelled:
 - No long-term persistence needed
 - Fast real-time notification
 
+## Checkpoint-Event Integration
+
+Checkpoint saves automatically emit A2A events when an EventQueue is provided. This unifies state persistence with real-time notifications:
+
+```python
+from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+from cogniverse_core.events import get_queue_manager
+
+manager = get_queue_manager()
+queue = await manager.create_queue("workflow_123", "tenant1")
+
+# Create checkpoint storage with event queue
+checkpoint_storage = WorkflowCheckpointStorage(
+    grpc_endpoint="localhost:4317",
+    http_endpoint="http://localhost:6006",
+    tenant_id="tenant1",
+    event_queue=queue,  # Events emitted automatically on checkpoint save
+)
+
+# When a checkpoint is saved, these events are automatically emitted:
+# 1. StatusEvent - state change notification
+# 2. ProgressEvent - task completion progress (if tasks exist)
+```
+
+### How It Works
+
+1. **Checkpoint saves** emit A2A-compatible status/progress events
+2. **Orchestrator** emits events at non-checkpoint boundaries (planning, task artifacts, final results)
+3. **No duplicate code paths** - state changes trigger notifications automatically
+
+### Event Flow
+
+```
+Workflow Execution
+    │
+    ├─► Planning Phase
+    │       └─► Orchestrator emits StatusEvent("planning")
+    │
+    ├─► Execution Phase
+    │       ├─► Orchestrator emits StatusEvent("executing")
+    │       │
+    │       ├─► Phase 1 completes
+    │       │       └─► Checkpoint saves → StatusEvent + ProgressEvent
+    │       │
+    │       └─► Phase 2 completes
+    │               └─► Checkpoint saves → StatusEvent + ProgressEvent
+    │
+    └─► Completion
+            ├─► Checkpoint saves → StatusEvent(COMPLETED)
+            └─► Orchestrator emits CompleteEvent(result)
+```
+
 ## Relationship with Checkpoints
 
 | Concern | Solution |
@@ -275,7 +327,7 @@ if queue.cancellation_token.is_cancelled:
 | Client disconnects/reconnects | EventQueue replay (short-term) |
 | Dashboard shows live status | EventQueue subscription |
 
-EventQueue is **ephemeral** - it's a notification channel, not a state store. Checkpoints handle crash recovery.
+**Key Design Principle**: Checkpoints handle crash recovery (durable), EventQueue handles notifications (ephemeral). When both are configured together, checkpoint saves automatically emit events - single source of truth for state changes.
 
 ## Testing
 
@@ -298,3 +350,4 @@ uv run pytest tests/events/integration/ -v
 | `libs/core/cogniverse_core/events/queue.py` | EventQueue/QueueManager protocols |
 | `libs/core/cogniverse_core/events/backends/memory.py` | In-memory backend |
 | `libs/runtime/cogniverse_runtime/routers/events.py` | SSE streaming endpoints |
+| `libs/agents/.../checkpoint_storage.py` | Checkpoint storage with event emission |

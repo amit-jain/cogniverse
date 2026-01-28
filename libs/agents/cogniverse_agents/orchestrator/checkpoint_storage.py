@@ -8,6 +8,10 @@ Structure:
 - workflow_checkpoint (root span): Contains checkpoint metadata
   - Attributes: checkpoint_id, workflow_id, current_phase, task_states, etc.
   - Annotations: Status updates (ACTIVE -> SUPERSEDED, COMPLETED, FAILED)
+
+A2A Integration:
+- When an EventQueue is provided, checkpoint saves automatically emit A2A-compatible
+  status events, enabling real-time notifications without duplicate code paths.
 """
 
 import logging
@@ -24,6 +28,7 @@ from cogniverse_agents.orchestrator.checkpoint_types import (
 )
 
 if TYPE_CHECKING:
+    from cogniverse_core.events import EventQueue
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,7 @@ class WorkflowCheckpointStorage:
         tenant_id: str,
         config: Optional[CheckpointConfig] = None,
         telemetry_manager: Optional["TelemetryManager"] = None,
+        event_queue: Optional["EventQueue"] = None,
     ):
         """
         Initialize checkpoint storage
@@ -73,11 +79,14 @@ class WorkflowCheckpointStorage:
             tenant_id: Tenant ID for multi-tenant scoping
             config: Checkpoint configuration
             telemetry_manager: TelemetryManager instance (creates one if None)
+            event_queue: Optional EventQueue for A2A-compatible real-time notifications.
+                         When provided, checkpoint saves automatically emit status events.
         """
         self.grpc_endpoint = grpc_endpoint
         self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
         self.config = config or CheckpointConfig()
+        self.event_queue = event_queue
         self.project_name = self.config.project_name
 
         # Initialize TelemetryManager
@@ -129,7 +138,10 @@ class WorkflowCheckpointStorage:
 
     async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
         """
-        Save a new workflow checkpoint as a telemetry span
+        Save a new workflow checkpoint as a telemetry span.
+
+        When an EventQueue is configured, this also emits an A2A-compatible
+        status event for real-time notifications.
 
         Args:
             checkpoint: Checkpoint to save
@@ -172,7 +184,65 @@ class WorkflowCheckpointStorage:
         # Force flush to ensure span is exported
         self._force_flush()
 
+        # Emit A2A event if EventQueue is configured
+        await self._emit_checkpoint_event(checkpoint)
+
         return checkpoint.checkpoint_id
+
+    async def _emit_checkpoint_event(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Emit A2A-compatible event when checkpoint is saved."""
+        if self.event_queue is None:
+            return
+
+        from cogniverse_core.events import (
+            TaskState,
+            create_progress_event,
+            create_status_event,
+        )
+
+        # Map workflow_status to A2A TaskState
+        status_mapping = {
+            "pending": TaskState.PENDING,
+            "running": TaskState.WORKING,
+            "completed": TaskState.COMPLETED,
+            "failed": TaskState.FAILED,
+            "cancelled": TaskState.CANCELLED,
+            "partially_completed": TaskState.WORKING,
+        }
+        state = status_mapping.get(checkpoint.workflow_status, TaskState.WORKING)
+
+        # Count completed tasks for progress
+        completed_tasks = len(checkpoint.get_completed_task_ids())
+        total_tasks = len(checkpoint.task_states)
+
+        # Emit status event
+        await self.event_queue.enqueue(
+            create_status_event(
+                task_id=checkpoint.workflow_id,
+                tenant_id=checkpoint.tenant_id,
+                state=state,
+                phase=f"phase_{checkpoint.current_phase}",
+                message=f"Checkpoint saved: {checkpoint.workflow_status}",
+            )
+        )
+
+        # Emit progress event if there are tasks
+        if total_tasks > 0:
+            await self.event_queue.enqueue(
+                create_progress_event(
+                    task_id=checkpoint.workflow_id,
+                    tenant_id=checkpoint.tenant_id,
+                    current=completed_tasks,
+                    total=total_tasks,
+                    step=f"phase_{checkpoint.current_phase}",
+                    details={
+                        "checkpoint_id": checkpoint.checkpoint_id,
+                        "workflow_status": checkpoint.workflow_status,
+                        "current_phase": checkpoint.current_phase,
+                        "total_phases": len(checkpoint.execution_order),
+                    },
+                )
+            )
 
     def _force_flush(self) -> None:
         """Force flush tracer provider to ensure spans are exported"""

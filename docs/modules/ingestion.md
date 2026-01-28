@@ -1722,10 +1722,78 @@ def test_colpali_embedding_generation():
 
 ---
 
+## Real-Time Progress Notifications
+
+### Overview
+
+The `VideoIngestionPipeline` integrates with the A2A EventQueue for real-time progress notifications. This enables:
+
+- **Live Progress**: Monitor processing status as videos are ingested
+- **Multiple Subscribers**: Dashboard and CLI can watch the same job
+- **Graceful Cancellation**: Stop long-running ingestion jobs cleanly
+- **Job Tracking**: Each ingestion run returns a `job_id` for subscription
+
+### Enabling EventQueue
+
+```python
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
+from cogniverse_core.events import get_queue_manager
+
+# Create event queue
+manager = get_queue_manager()
+queue = await manager.create_queue("ingestion_job_123", "tenant1")
+
+# Create pipeline with event queue
+pipeline = VideoIngestionPipeline(
+    tenant_id="tenant1",
+    config=PipelineConfig(video_dir=video_path, output_dir=output_path),
+    event_queue=queue,  # Real-time notifications
+)
+
+# Process videos - returns job_id
+result = await pipeline.process_videos_concurrent(video_files)
+job_id = result["job_id"]  # Use for subscription
+```
+
+### Event Flow
+
+When ingestion runs with EventQueue configured:
+
+1. **Job starts** → StatusEvent("working", phase="starting")
+2. **Each video** → ProgressEvent(current=N, total=total_videos)
+3. **Processing steps** → StatusEvent per step (keyframes, transcription, embeddings)
+4. **Job completes** → CompleteEvent with results summary
+
+### Subscribing to Progress
+
+```python
+# In another process (dashboard/CLI)
+async for event in queue.subscribe():
+    if event.event_type == "progress":
+        print(f"Processing video {event.current}/{event.total}")
+    elif event.event_type == "complete":
+        print(f"Ingestion complete: {event.summary}")
+        break
+```
+
+### Cancellation
+
+```python
+# Cancel running ingestion
+await manager.cancel_task("ingestion_job_123", reason="User cancelled")
+
+# Pipeline checks cancellation between videos and aborts gracefully
+```
+
+See [Events Module](./events.md) for complete EventQueue documentation.
+
+---
+
 ## Related Modules
 
 - **Backends Module** (`04_BACKENDS_MODULE.md`): Vespa search integration, document feeding
 - **Common Module** (`03_COMMON_MODULE.md`): Model loading, configuration, output management
+- **Events Module** (`events.md`): A2A EventQueue for real-time notifications
 - **System Integration** (`test_real_system_integration.py`): End-to-end ingestion → search testing
 
 ---
@@ -1740,6 +1808,7 @@ def test_colpali_embedding_generation():
 - ✅ Set appropriate `max_concurrent` based on resources
 - ✅ Implement error handling and retry logic
 - ✅ Save summaries for audit trails
+- ✅ Enable EventQueue for live progress monitoring
 
 ---
 

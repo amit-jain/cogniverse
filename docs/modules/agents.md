@@ -3269,6 +3269,77 @@ except Exception as e:
 
 ---
 
+## Real-Time Event Notifications
+
+### Overview
+
+The `MultiAgentOrchestrator` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
+
+- **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
+- **Automatic Event Emission**: Checkpoint saves automatically emit A2A-compatible events
+- **Graceful Cancellation**: Workflows can be cancelled at phase boundaries
+- **Reconnection with Replay**: Clients can resume from a specific event offset
+
+### Enabling EventQueue
+
+```python
+from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+from cogniverse_core.events import get_queue_manager
+
+# Create event queue for the workflow
+manager = get_queue_manager()
+queue = await manager.create_queue("workflow_123", "tenant1")
+
+# Create checkpoint storage with event queue (automatic event emission)
+storage = WorkflowCheckpointStorage(
+    grpc_endpoint="localhost:4317",
+    http_endpoint="http://localhost:6006",
+    tenant_id="tenant1",
+    event_queue=queue,  # Events emitted on checkpoint saves
+)
+
+# Create orchestrator
+orchestrator = MultiAgentOrchestrator(
+    tenant_id="tenant1",
+    checkpoint_storage=storage,
+    event_queue=queue,  # Additional events at non-checkpoint boundaries
+)
+```
+
+### Event Flow
+
+When a workflow executes with EventQueue configured:
+
+1. **Planning phase** → StatusEvent("planning")
+2. **Execution starts** → StatusEvent("executing")
+3. **Each phase completes** → Checkpoint saves → StatusEvent + ProgressEvent (automatic)
+4. **Task results** → ArtifactEvent (per-task)
+5. **Workflow completes** → Checkpoint saves → StatusEvent("completed") + CompleteEvent
+
+### Subscribing to Events
+
+```python
+# Subscribe to workflow progress
+async for event in queue.subscribe():
+    print(f"[{event.event_type}] {event.phase}: {event.message}")
+    if event.event_type == "complete":
+        break
+```
+
+### Cancellation
+
+```python
+# Cancel a running workflow
+await manager.cancel_task("workflow_123", reason="User requested")
+
+# Orchestrator checks cancellation at phase boundaries and aborts gracefully
+```
+
+See [Events Module](./events.md) for complete EventQueue documentation.
+
+---
+
 ## Related Documentation
 
 ### Architecture Documentation
@@ -3280,10 +3351,11 @@ except Exception as e:
 ### Module Documentation
 - [Backends Module](./backends.md) - Vespa backend integration and profile management
 - [Common Module](./common.md) - Shared utilities and base classes (MemoryAwareMixin, TenantAwareAgentMixin, etc.)
+- [Events Module](./events.md) - A2A EventQueue for real-time notifications
 
 ### Integration Documentation
 - [A2A Protocol Specification](https://github.com/google/a2a) - Google's Agent-to-Agent communication protocol
 
 ---
 
-**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package now includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), ensemble search with RRF fusion (SearchAgent), and **durable execution with workflow checkpointing** for fault-tolerant long-running workflows.
+**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package now includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), ensemble search with RRF fusion (SearchAgent), **durable execution with workflow checkpointing**, and **real-time event notifications** for fault-tolerant, observable long-running workflows.

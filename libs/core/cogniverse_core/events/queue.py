@@ -235,7 +235,7 @@ class BaseEventQueue(ABC):
         self._task_id = task_id
         self._tenant_id = tenant_id
         self._ttl = timedelta(minutes=ttl_minutes)
-        self._created_at = datetime.utcnow()
+        self._created_at = datetime.now()
         self._cancellation_token = CancellationToken()
         self._closed = False
 
@@ -253,7 +253,7 @@ class BaseEventQueue(ABC):
 
     @property
     def is_expired(self) -> bool:
-        return datetime.utcnow() > self._created_at + self._ttl
+        return datetime.now() > self._created_at + self._ttl
 
     @property
     def is_closed(self) -> bool:

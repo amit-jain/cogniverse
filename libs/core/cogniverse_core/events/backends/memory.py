@@ -41,7 +41,7 @@ class InMemoryEventQueue(BaseEventQueue):
         self._condition = asyncio.Condition()
         self._subscriber_count = 0
         self._max_buffer_size = max_buffer_size
-        self._last_activity = datetime.utcnow()
+        self._last_activity = datetime.now()
 
     async def enqueue(self, event: TaskEvent) -> None:
         """
@@ -63,7 +63,7 @@ class InMemoryEventQueue(BaseEventQueue):
                 )
 
             self._events.append(event)
-            self._last_activity = datetime.utcnow()
+            self._last_activity = datetime.now()
 
             logger.debug(
                 f"Queue {self._task_id}: enqueued {event.event_type} "

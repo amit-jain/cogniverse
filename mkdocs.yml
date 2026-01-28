@@ -212,6 +212,7 @@ nav:
     - Cache System: modules/cache/README.md
     - Cache Design: modules/cache/design.md
     - Evaluation Framework: modules/evaluation/README.md
+    - Events System: modules/events.md
 
   - Testing:
     - Search Client Testing: testing/search_client_testing.md
