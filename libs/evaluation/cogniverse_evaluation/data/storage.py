@@ -3,6 +3,7 @@ Production-ready telemetry storage implementation with comprehensive error handl
 retry logic, health checks, and monitoring.
 """
 
+import json
 import logging
 import os
 import threading
@@ -144,6 +145,9 @@ class MonitoredSpanExporter(SpanExporter):
                     delay = self.config.retry_delay_seconds * (
                         self.config.retry_backoff_factor**attempt
                     )
+                    logger.warning(
+                        f"Span export error, retrying in {delay:.1f}s (attempt {attempt + 1})"
+                    )
                     wait_for_retry_backoff(
                         attempt,
                         base_delay=self.config.retry_delay_seconds,
@@ -250,6 +254,9 @@ class TelemetryStorage:
                         delay = self.config.retry_delay_seconds * (
                             self.config.retry_backoff_factor**attempt
                         )
+                        logger.warning(
+                            f"Telemetry connection failed, retrying in {delay:.1f}s (attempt {attempt + 1})"
+                        )
                         wait_for_retry_backoff(
                             attempt,
                             base_delay=self.config.retry_delay_seconds,
@@ -339,9 +346,8 @@ class TelemetryStorage:
                 if self.provider:
                     import asyncio
 
-                    # Handle nested event loop
                     try:
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                         import concurrent.futures
 
                         with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -413,7 +419,6 @@ class TelemetryStorage:
                     "num_results": len(results),
                 },
             ) as span:
-                # Format results for dashboard
                 formatted_results = {
                     "profile": profile,
                     "strategy": strategy,
@@ -422,19 +427,21 @@ class TelemetryStorage:
                         "recall@1": {"mean": metrics.get("recall@1", 0.0)},
                         "recall@5": {"mean": metrics.get("recall@5", 0.0)},
                     },
-                    "queries": results,
+                    "num_queries": len(results),
                     "timestamp": datetime.now().isoformat(),
                 }
 
-                # Add detailed metrics as events
                 if span:
+                    span.set_attribute(
+                        "experiment_results", json.dumps(formatted_results)
+                    )
+
                     for metric_name, metric_value in metrics.items():
                         span.add_event(
                             f"metric_{metric_name}",
                             attributes={"value": str(metric_value)},
                         )
 
-                    # Get trace ID for reference
                     trace_id = format(span.get_span_context().trace_id, "032x")
                     span.set_attribute("trace_id", trace_id)
 
@@ -467,8 +474,7 @@ class TelemetryStorage:
         def _fetch_spans(**kwargs):
             """Helper to fetch spans with async handling."""
             try:
-                loop = asyncio.get_running_loop()
-                # If we're here, loop is running - run in a separate thread
+                asyncio.get_running_loop()
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     return pool.submit(
                         lambda: asyncio.run(

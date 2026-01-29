@@ -107,7 +107,7 @@ class TraceManager:
                         import json
 
                         data["results"] = json.loads(data["results"])
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         data["results"] = []
 
                 trace_data.append(data)
