@@ -71,7 +71,7 @@ class TestDashboardProfileIntegration:
 
         # Create config manager with SQLite store (no Vespa required)
         db_path = tmp_path / "test_config.db"
-        store = SQLiteConfigStore(db_path=str(db_path))
+        store = SQLiteConfigStore(db_path=db_path)
         config_manager = ConfigManager(store=store)
 
         # Set up system config
