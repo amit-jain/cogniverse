@@ -407,8 +407,8 @@ See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for detailed contribution gui
 
 **Commit Standards:**
 - Use imperative mood: `Add`, `Fix`, `Update`, `Refactor`, `Remove`
-- Keep first line under 72 characters
-- Describe WHAT changed, not WHY or HOW
+- Subject line: WHAT changed (under 72 chars)
+- Body: WHY the change was needed (for non-trivial changes)
 
 **Pre-Commit Checklist:**
 - Run `uv run pytest` and ensure 100% pass rate

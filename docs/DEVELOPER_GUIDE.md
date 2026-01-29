@@ -640,21 +640,36 @@ Brief description of changes
 
 ### Commit Message Guidelines
 
-**Format**: Imperative mood, describe WHAT changed
+**Format**:
+```
+<subject line - WHAT changed>
+
+<body - WHY this change was needed (for non-trivial changes)>
+```
 
 **Rules**:
 - Start with a verb: `Add`, `Fix`, `Update`, `Refactor`, `Remove`
-- Keep first line under 72 characters
-- Describe the change, not meta-commentary
-- No test counts, phase numbers, or "all tests pass"
+- Keep subject line under 72 characters
+- Add body explaining WHY for non-trivial changes
+- No meta-commentary (test counts, phase numbers, "all tests pass")
 
 **Examples**:
 ```
 Add BM25 rerank search strategy
+
+Enable hybrid search combining semantic and lexical matching
+for improved recall on keyword-heavy queries.
+```
+
+```
 Fix tensor encoding issue in ColPali embeddings
-Update architecture overview with 11-package structure
+```
+
+```
 Refactor tenant context logic to middleware
-Add integration tests for routing agent
+
+Centralizes tenant isolation checks to reduce code duplication
+across 12 endpoint handlers.
 ```
 
 **Pre-Commit Checklist**:
