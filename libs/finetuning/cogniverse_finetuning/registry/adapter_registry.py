@@ -47,20 +47,23 @@ class AdapterRegistry:
         Initialize adapter registry.
 
         Args:
-            store: VespaAdapterStore instance (optional).
-                   If not provided, creates one from BootstrapConfig.
+            store: AdapterStore instance (optional).
+                   If not provided, discovers one via AdapterStoreRegistry.
         """
         if store is not None:
             self.store = store
         else:
-            # Create store from BootstrapConfig
+            # Discover store via registry pattern
+            from cogniverse_core.registries import AdapterStoreRegistry
             from cogniverse_foundation.config.bootstrap import BootstrapConfig
-            from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
 
             bootstrap = BootstrapConfig.from_environment()
-            self.store = VespaAdapterStore(
-                vespa_url=bootstrap.backend_url,
-                vespa_port=bootstrap.backend_port,
+            self.store = AdapterStoreRegistry.get_adapter_store(
+                name=bootstrap.backend_type,
+                config={
+                    "vespa_url": bootstrap.backend_url,
+                    "vespa_port": bootstrap.backend_port,
+                },
             )
 
         logger.info("AdapterRegistry initialized")

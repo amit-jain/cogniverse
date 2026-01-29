@@ -240,23 +240,21 @@ class WorkflowIntelligence:
     def _create_default_workflow_store(self) -> Optional["WorkflowStore"]:
         """Create default WorkflowStore based on backend configuration."""
         try:
+            from cogniverse_core.registries.workflow_store_registry import (
+                WorkflowStoreRegistry,
+            )
             from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
             bootstrap = BootstrapConfig.from_environment()
 
-            if bootstrap.backend_type == "vespa":
-                from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
-
-                store = VespaWorkflowStore(
-                    vespa_url=bootstrap.backend_url,
-                    vespa_port=bootstrap.backend_port,
-                )
-                return store
-            else:
-                self.logger.warning(
-                    f"Unsupported backend type: {bootstrap.backend_type}"
-                )
-                return None
+            store = WorkflowStoreRegistry.get_workflow_store(
+                name=bootstrap.backend_type,
+                config={
+                    "vespa_url": bootstrap.backend_url,
+                    "vespa_port": bootstrap.backend_port,
+                },
+            )
+            return store
 
         except Exception as e:
             self.logger.warning(f"Could not create default WorkflowStore: {e}")

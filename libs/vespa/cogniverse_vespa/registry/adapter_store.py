@@ -10,10 +10,12 @@ from typing import Any, Dict, List, Optional
 
 from vespa.application import Vespa
 
+from cogniverse_sdk.interfaces.adapter_store import AdapterStore
+
 logger = logging.getLogger(__name__)
 
 
-class VespaAdapterStore:
+class VespaAdapterStore(AdapterStore):
     """
     Vespa-backed storage for adapter metadata.
 

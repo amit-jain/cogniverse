@@ -26,3 +26,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_vespa"]
+
+[project.entry-points."cogniverse.workflow.stores"]
+vespa = "cogniverse_vespa.workflow.workflow_store:VespaWorkflowStore"
+
+[project.entry-points."cogniverse.adapter.stores"]
+vespa = "cogniverse_vespa.registry.adapter_store:VespaAdapterStore"

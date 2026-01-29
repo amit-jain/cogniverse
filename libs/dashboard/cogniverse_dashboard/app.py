@@ -2948,20 +2948,20 @@ with main_tabs[8]:
             if st.button("💾 Save Evaluation", type="primary"):
                 if session_outcome != "Not Rated":
                     try:
-                        # Log session evaluation via Phoenix provider
-                        from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
-                            PhoenixEvaluationProvider,
+                        # Log session evaluation via evaluation registry
+                        from cogniverse_evaluation.providers.registry import (
+                            EvaluationRegistry,
                         )
 
-                        eval_provider = PhoenixEvaluationProvider()
-                        eval_provider.initialize(
-                            {
-                                "tenant_id": "default",
+                        eval_provider = EvaluationRegistry.get_evaluation_provider(
+                            name="phoenix",
+                            tenant_id="default",
+                            config={
                                 "http_endpoint": agent_config.get(
                                     "phoenix_base_url", "http://localhost:6006"
                                 ),
                                 "project_name": "cogniverse-search",
-                            }
+                            },
                         )
 
                         eval_provider.log_session_evaluation(
