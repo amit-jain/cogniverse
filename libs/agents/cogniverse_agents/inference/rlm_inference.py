@@ -8,6 +8,11 @@ RLM enables LLMs to handle near-infinite context by:
 
 This module uses DSPy's built-in RLM module (available in dspy-ai>=3.1.0).
 
+Features:
+    - Optional EventQueue integration for real-time progress tracking
+    - Cancellation support via CancellationToken
+    - Timeout handling with RLMTimeoutError
+
 References:
     - Paper: https://arxiv.org/abs/2512.24601
     - DSPy: https://github.com/stanfordnlp/dspy
@@ -17,9 +22,14 @@ import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import dspy
+
+if TYPE_CHECKING:
+    from cogniverse_core.events import EventQueue
+
+from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +104,9 @@ class RLMInference:
         sandbox: str = "local",
         api_key: Optional[str] = None,
         timeout_seconds: Optional[int] = 300,
+        event_queue: Optional["EventQueue"] = None,
+        task_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ):
         """Initialize RLM inference wrapper.
 
@@ -105,6 +118,9 @@ class RLMInference:
             sandbox: Execution sandbox (local only for now)
             api_key: Optional API key for the backend
             timeout_seconds: Maximum time for RLM processing (default: 300s/5min)
+            event_queue: Optional EventQueue for real-time progress events
+            task_id: Task identifier for events (required if event_queue provided)
+            tenant_id: Tenant identifier for events
         """
         self.backend = backend
         self.model = model
@@ -113,6 +129,9 @@ class RLMInference:
         self.sandbox = sandbox
         self._api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self._event_queue = event_queue
+        self._task_id = task_id
+        self._tenant_id = tenant_id or "default"
         self._rlm = None  # Lazy initialization
 
     @property
@@ -138,15 +157,32 @@ class RLMInference:
             return dspy.LM(self.model, api_key=self._api_key)
 
     def _get_rlm(self):
-        """Get or create DSPy RLM instance."""
+        """Get or create DSPy RLM instance.
+
+        Uses InstrumentedRLM if event_queue is provided for real-time
+        progress tracking. Otherwise uses standard dspy.RLM.
+        """
         if self._rlm is None:
             self._lm = self._create_lm()
-            self._rlm = dspy.RLM(
-                "context, query -> answer",
-                max_iterations=self.max_iterations,
-                max_llm_calls=self.max_llm_calls,
-                verbose=False,
-            )
+
+            # Use InstrumentedRLM if event_queue provided for progress tracking
+            if self._event_queue:
+                self._rlm = InstrumentedRLM(
+                    "context, query -> answer",
+                    max_iterations=self.max_iterations,
+                    max_llm_calls=self.max_llm_calls,
+                    verbose=False,
+                    event_queue=self._event_queue,
+                    task_id=self._task_id,
+                    tenant_id=self._tenant_id,
+                )
+            else:
+                self._rlm = dspy.RLM(
+                    "context, query -> answer",
+                    max_iterations=self.max_iterations,
+                    max_llm_calls=self.max_llm_calls,
+                    verbose=False,
+                )
         return self._rlm
 
     def _execute_rlm(self, rlm, full_query: str, context: str) -> Any:

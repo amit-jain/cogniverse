@@ -2,14 +2,21 @@
 
 RLM (Recursive Language Models) enables near-infinite context processing.
 This mixin provides query-configurable RLM inference for A/B testing.
+
+Features:
+    - Query-configurable RLM via RLMOptions
+    - Optional EventQueue integration for real-time progress tracking
+    - Cancellation support via CancellationToken
 """
 
 import logging
-from typing import Any, Dict, Optional
-
-from cogniverse_core.agents.rlm_options import RLMOptions
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+if TYPE_CHECKING:
+    from cogniverse_core.events import EventQueue
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +63,9 @@ class RLMAwareMixin:
         max_iterations: int = 10,
         max_llm_calls: int = 30,
         timeout_seconds: int = 300,
+        event_queue: Optional["EventQueue"] = None,
+        task_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> RLMInference:
         """Get or create RLM inference instance with specified config.
 
@@ -65,11 +75,28 @@ class RLMAwareMixin:
             max_iterations: Maximum REPL iteration loops
             max_llm_calls: Maximum LLM sub-calls
             timeout_seconds: Timeout for RLM processing
+            event_queue: Optional EventQueue for real-time progress events
+            task_id: Task identifier for events
+            tenant_id: Tenant identifier for events
 
         Returns:
-            RLMInference instance
+            RLMInference instance (with InstrumentedRLM if event_queue provided)
         """
-        # Create new instance if config changed
+        # Always create new instance when event_queue is provided
+        # (event_queue/task_id may change per request)
+        if event_queue:
+            return RLMInference(
+                backend=backend,
+                model=model,
+                max_iterations=max_iterations,
+                max_llm_calls=max_llm_calls,
+                timeout_seconds=timeout_seconds,
+                event_queue=event_queue,
+                task_id=task_id,
+                tenant_id=tenant_id or getattr(self, "tenant_id", "default"),
+            )
+
+        # Create cached instance if config changed (no event_queue)
         if (
             self._rlm_instance is None
             or self._rlm_instance.backend != backend
@@ -113,6 +140,8 @@ class RLMAwareMixin:
         context: str,
         rlm_options: RLMOptions,
         system_prompt: Optional[str] = None,
+        event_queue: Optional["EventQueue"] = None,
+        task_id: Optional[str] = None,
     ) -> RLMResult:
         """
         Process query using RLM with the specified options.
@@ -122,6 +151,8 @@ class RLMAwareMixin:
             context: Large context to process
             rlm_options: RLM configuration from query
             system_prompt: Optional system instructions
+            event_queue: Optional EventQueue for real-time progress events
+            task_id: Task identifier for events
 
         Returns:
             RLMResult with answer and telemetry data
@@ -132,12 +163,16 @@ class RLMAwareMixin:
             max_iterations=rlm_options.max_depth,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
+            event_queue=event_queue,
+            task_id=task_id,
+            tenant_id=getattr(self, "tenant_id", "default"),
         )
 
         logger.info(
             f"Using RLM inference (max_iterations={rlm_options.max_depth}, "
             f"max_llm_calls={rlm_options.max_llm_calls}, "
-            f"timeout={rlm_options.timeout_seconds}s, context={len(context)} chars)"
+            f"timeout={rlm_options.timeout_seconds}s, context={len(context)} chars, "
+            f"events={'enabled' if event_queue else 'disabled'})"
         )
 
         return rlm.process(
@@ -151,6 +186,8 @@ class RLMAwareMixin:
         query: str,
         results: list[dict],
         rlm_options: RLMOptions,
+        event_queue: Optional["EventQueue"] = None,
+        task_id: Optional[str] = None,
     ) -> RLMResult:
         """
         Process search results using RLM.
@@ -159,6 +196,8 @@ class RLMAwareMixin:
             query: User query
             results: List of search result dicts
             rlm_options: RLM configuration from query
+            event_queue: Optional EventQueue for real-time progress events
+            task_id: Task identifier for events
 
         Returns:
             RLMResult with synthesized answer
@@ -169,11 +208,15 @@ class RLMAwareMixin:
             max_iterations=rlm_options.max_depth,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
+            event_queue=event_queue,
+            task_id=task_id,
+            tenant_id=getattr(self, "tenant_id", "default"),
         )
 
         logger.info(
             f"Using RLM for result aggregation ({len(results)} results, "
-            f"max_iterations={rlm_options.max_depth}, timeout={rlm_options.timeout_seconds}s)"
+            f"max_iterations={rlm_options.max_depth}, timeout={rlm_options.timeout_seconds}s, "
+            f"events={'enabled' if event_queue else 'disabled'})"
         )
 
         return rlm.process_search_results(

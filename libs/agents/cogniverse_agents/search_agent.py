@@ -364,13 +364,9 @@ class ContentProcessor:
 
 # --- Generic Multi-Modal Search Agent ---
 class SearchAgent(
-<<<<<<< HEAD
     RLMAwareMixin,
     MemoryAwareMixin,
     A2AAgent[SearchInput, SearchOutput, SearchAgentDeps],
-=======
-    MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAgentDeps]
->>>>>>> aa3143b (Configure ruff/isort first-party packages and organize imports)
 ):
     """
     Type-safe generic multi-modal search agent with full A2A protocol support.
