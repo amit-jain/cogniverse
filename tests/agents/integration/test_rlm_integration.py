@@ -11,8 +11,8 @@ Tests the complete RLM integration pipeline:
 import logging
 
 import pytest
-from cogniverse_core.agents.rlm_options import RLMOptions
 
+from cogniverse_core.agents.rlm_options import RLMOptions
 from tests.agents.integration.conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class TestRLMOptionsIntegration:
             enabled=True,
             auto_detect=False,
             context_threshold=75_000,
-            max_depth=4,
+            max_iterations=4,
             backend="anthropic",
             model="claude-3-opus",
         )
@@ -92,7 +92,7 @@ class TestRLMOptionsIntegration:
         assert reconstructed.enabled == original.enabled
         assert reconstructed.auto_detect == original.auto_detect
         assert reconstructed.context_threshold == original.context_threshold
-        assert reconstructed.max_depth == original.max_depth
+        assert reconstructed.max_iterations == original.max_iterations
         assert reconstructed.backend == original.backend
         assert reconstructed.model == original.model
 
@@ -112,13 +112,13 @@ class TestRLMOptionsIntegration:
         assert "enabled" in props
         assert "auto_detect" in props
         assert "context_threshold" in props
-        assert "max_depth" in props
+        assert "max_iterations" in props
         assert "backend" in props
         assert "model" in props
 
-        # VALIDATE: max_depth has bounds
-        assert props["max_depth"].get("minimum") == 1
-        assert props["max_depth"].get("maximum") == 10
+        # VALIDATE: max_iterations has bounds
+        assert props["max_iterations"].get("minimum") == 1
+        assert props["max_iterations"].get("maximum") == 10
 
         logger.info(f"RLMOptions JSON schema validated: {len(props)} properties")
 
@@ -210,7 +210,7 @@ class TestSearchInputRLMIntegration:
             "top_k": 20,
             "rlm": {
                 "enabled": True,
-                "max_depth": 4,
+                "max_iterations": 4,
                 "backend": "openai",
                 "model": "gpt-4o",
             },
@@ -223,7 +223,7 @@ class TestSearchInputRLMIntegration:
         assert search_input.query == "machine learning video tutorials"
         assert search_input.rlm is not None
         assert search_input.rlm.enabled is True
-        assert search_input.rlm.max_depth == 4
+        assert search_input.rlm.max_iterations == 4
         assert search_input.rlm.backend == "openai"
         assert search_input.rlm.model == "gpt-4o"
 
@@ -330,7 +330,7 @@ class TestRLMSearchAgentIntegration:
         # Verify SearchInput supports RLM options
         search_input = SearchInput(
             query="test",
-            rlm=RLMOptions(enabled=True, max_depth=3),
+            rlm=RLMOptions(enabled=True, max_iterations=3),
         )
 
         # VALIDATE: RLM options are accessible
@@ -358,13 +358,13 @@ class TestRLMSearchAgentIntegration:
         search_input = SearchInput(
             query="complex analysis query",
             top_k=10,
-            rlm=RLMOptions(enabled=True, max_depth=3, backend="anthropic"),
+            rlm=RLMOptions(enabled=True, max_iterations=3, backend="anthropic"),
         )
 
         # VALIDATE: RLM options accessible
         assert search_input.rlm is not None
         assert search_input.rlm.enabled is True
-        assert search_input.rlm.max_depth == 3
+        assert search_input.rlm.max_iterations == 3
         assert search_input.rlm.backend == "anthropic"
 
         # Serialize and deserialize
@@ -374,7 +374,7 @@ class TestRLMSearchAgentIntegration:
         # VALIDATE: RLM options preserved
         assert reconstructed.rlm is not None
         assert reconstructed.rlm.enabled is True
-        assert reconstructed.rlm.max_depth == 3
+        assert reconstructed.rlm.max_iterations == 3
         assert reconstructed.rlm.backend == "anthropic"
 
         logger.info("RLM options propagation validated")
@@ -393,7 +393,6 @@ class TestRLMInferenceIntegration:
         rlm = RLMInference(
             backend="anthropic",
             model="claude-3-opus",
-            sandbox="docker",
             max_iterations=5,
             max_llm_calls=20,
             api_key="test-key",
@@ -401,9 +400,7 @@ class TestRLMInferenceIntegration:
 
         assert rlm.backend == "anthropic"
         assert rlm.model == "claude-3-opus"
-        assert rlm.sandbox == "docker"
         assert rlm.max_iterations == 5
-        assert rlm.max_depth == 5  # Backward compat property
         assert rlm.max_llm_calls == 20
         assert rlm._api_key == "test-key"
         assert rlm._rlm is None  # Lazy initialization
@@ -490,7 +487,7 @@ class TestRLMABTestingIntegration:
         input_b = SearchInput(
             query="test query",
             top_k=10,
-            rlm=RLMOptions(enabled=True, max_depth=3),
+            rlm=RLMOptions(enabled=True, max_iterations=3),
         )
 
         mixin = RLMAwareMixin()
@@ -591,7 +588,7 @@ class TestRLMVespaIntegration:
         search_input = SearchInput(
             query="machine learning video tutorials",
             top_k=5,
-            rlm=RLMOptions(enabled=True, max_depth=2),
+            rlm=RLMOptions(enabled=True, max_iterations=2),
         )
 
         # VALIDATE: Input is valid with RLM options
@@ -823,7 +820,7 @@ class TestRLMRealInferenceIntegration:
 
         rlm_options = RLMOptions(
             enabled=True,
-            max_depth=2,
+            max_iterations=2,
             backend="litellm",
             model="ollama/qwen2.5:1.5b",
         )
@@ -906,7 +903,7 @@ class TestSearchAgentRLMIntegration:
 
         rlm_opts = RLMOptions(
             enabled=True,
-            max_depth=5,
+            max_iterations=5,
             max_llm_calls=50,
             timeout_seconds=600,
             backend="anthropic",
@@ -916,7 +913,7 @@ class TestSearchAgentRLMIntegration:
         input_data = SearchInput(query="test", rlm=rlm_opts)
 
         assert input_data.rlm.enabled is True
-        assert input_data.rlm.max_depth == 5
+        assert input_data.rlm.max_iterations == 5
         assert input_data.rlm.max_llm_calls == 50
         assert input_data.rlm.timeout_seconds == 600
         assert input_data.rlm.backend == "anthropic"
