@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
+from opentelemetry.sdk.trace.export import SpanExportResult
+
 from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
@@ -13,7 +15,6 @@ from cogniverse_evaluation.data.storage import (
     MonitoredSpanExporter,
     TelemetryStorage,
 )
-from opentelemetry.sdk.trace.export import SpanExportResult
 
 
 class TestConnectionConfig:

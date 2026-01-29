@@ -45,7 +45,9 @@ logger = logging.getLogger(__name__)
 class RLMCancelledError(Exception):
     """Raised when RLM is cancelled via CancellationToken."""
 
-    def __init__(self, message: str = "RLM cancelled by user", reason: Optional[str] = None):
+    def __init__(
+        self, message: str = "RLM cancelled by user", reason: Optional[str] = None
+    ):
         self.reason = reason
         super().__init__(message)
 
@@ -168,7 +170,10 @@ class InstrumentedRLM(dspy.RLM):
                         current=iteration,
                         total=self.max_iterations,
                         step=f"iteration_{iteration + 1}",
-                        details={"iteration": iteration + 1, "max_iterations": self.max_iterations},
+                        details={
+                            "iteration": iteration + 1,
+                            "max_iterations": self.max_iterations,
+                        },
                     )
                 )
 
@@ -188,7 +193,9 @@ class InstrumentedRLM(dspy.RLM):
                                     data={
                                         "iteration": iteration + 1,
                                         "reasoning": str(last_entry.reasoning)[:500],
-                                        "code": str(getattr(last_entry, "code", ""))[:500],
+                                        "code": str(getattr(last_entry, "code", ""))[
+                                            :500
+                                        ],
                                     },
                                     is_partial=True,
                                 )
@@ -316,7 +323,9 @@ class InstrumentedRLM(dspy.RLM):
                     )
                 )
 
-            result = await self._aextract_fallback(variables, history, output_field_names)
+            result = await self._aextract_fallback(
+                variables, history, output_field_names
+            )
 
             if self._event_queue and self._task_id:
                 await self._event_queue.enqueue(

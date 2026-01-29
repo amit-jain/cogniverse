@@ -176,47 +176,88 @@ extra:
 nav:
   - Home: index.md
 
+  - Getting Started:
+    - Quickstart: QUICKSTART.md
+    - User Guide: USER_GUIDE.md
+    - Troubleshooting: TROUBLESHOOTING.md
+
   - Architecture:
-    - Overview: architecture.md
-    - Multi-Agent System: agent-orchestration.md
-    - Multi-Tenant: multi-tenant-system.md
+    - Overview: architecture/overview.md
+    - SDK Architecture: architecture/sdk-architecture.md
+    - Multi-Agent System: architecture/multi-agent-interactions.md
+    - Multi-Tenant: architecture/multi-tenant.md
+    - System Flows: architecture/system-flows.md
     - Schema-Driven Flow: architecture/schema_driven_flow.md
     - Caching Strategy: architecture/caching_strategy.md
     - Code Flow Examples: architecture/code_flow_examples.md
+    - Dynamic Profiles: architecture/dynamic-profiles.md
+    - Ensemble Composition: architecture/ensemble-composition.md
 
   - System Components:
-    - System Flows: system-flows.md
-    - Memory System: memory-system.md
-    - Optimization Framework: optimization-system.md
     - Configuration System: CONFIGURATION_SYSTEM.md
     - Performance Targets: PERFORMANCE_TARGETS.md
 
-  - Deployment & Operations:
-    - Deployment Guide: deployment.md
-    - Modal VLM Deployment: modal/deploy_modal_vlm.md
-    - Modal GPU Guide: modal/gpu_recommendations.md
-    - Detailed Setup: setup/detailed_setup.md
-
-  - Observability:
-    - Phoenix Integration: phoenix-integration.md
-    - Evaluation Framework: evaluation.md
-
   - Module Documentation:
-    - modules/index.md
-    - Agents: modules/agents/README.md
-    - Ingestion Pipeline: modules/ingestion/README.md
-    - Routing System: modules/routing/README.md
-    - Embedding Generator: modules/ingestion/embeddings/README.md
-    - Remote Inference: modules/ingestion/embeddings/remote-inference.md
-    - Vespa Backend: modules/backends/vespa.md
-    - Cache System: modules/cache/README.md
-    - Cache Design: modules/cache/design.md
-    - Evaluation Framework: modules/evaluation/README.md
-    - Events System: modules/events.md
+    - SDK: modules/sdk.md
+    - Foundation: modules/foundation.md
+    - Core: modules/core.md
+    - Agents: modules/agents.md
+    - Routing: modules/routing.md
+    - Ingestion: modules/ingestion.md
+    - Search & Reranking: modules/search-reranking.md
+    - Backends: modules/backends.md
+    - Cache: modules/cache.md
+    - Evaluation: modules/evaluation.md
+    - Telemetry: modules/telemetry.md
+    - Events: modules/events.md
+    - Optimization: modules/optimization.md
+    - Synthetic: modules/synthetic.md
+    - Finetuning: modules/finetuning.md
+    - Runtime: modules/runtime.md
+    - Dashboard: modules/dashboard.md
+    - Common: modules/common.md
+    - Tools: modules/tools.md
+
+  - Operations:
+    - Setup & Installation: operations/setup-installation.md
+    - Configuration: operations/configuration.md
+    - Deployment: operations/deployment.md
+    - Docker Deployment: operations/docker-deployment.md
+    - Kubernetes Deployment: operations/kubernetes-deployment.md
+    - Multi-Tenant Operations: operations/multi-tenant-ops.md
+    - Argo Workflows: operations/argo-workflows.md
+    - Istio Service Mesh: operations/istio-service-mesh.md
+    - Performance Monitoring: operations/performance-monitoring.md
+    - Troubleshooting: operations/troubleshooting.md
+
+  - Modal Deployment:
+    - VLM Deployment: modal/deploy_modal_vlm.md
+    - GPU Recommendations: modal/gpu_recommendations.md
+    - Deployment Guide: modal/deployment_guide.md
+
+  - Development:
+    - Developer Guide: DEVELOPER_GUIDE.md
+    - Package Development: development/package-dev.md
+    - Scripts & Operations: development/scripts-operations.md
+    - Code Style: development/code-style.md
+    - Instrumentation: development/instrumentation.md
+    - UI Dashboard: development/ui-dashboard.md
+    - Publishing Guide: development/publishing-guide.md
 
   - Testing:
+    - Testing Guide: testing/TESTING_GUIDE.md
+    - Pytest Best Practices: testing/pytest-best-practices.md
     - Search Client Testing: testing/search_client_testing.md
     - Vespa Search Strategies: testing/vespa_search_strategies.md
+
+  - Diagrams:
+    - SDK Architecture: diagrams/sdk-architecture-diagrams.md
+    - Multi-Tenant: diagrams/multi-tenant-diagrams.md
+
+  - Reference:
+    - Glossary: GLOSSARY.md
+    - Approval Workflow: modules/approval-workflow.md
+    - Synthetic Data: synthetic-data-generation.md
 
 # Validation
 validation:

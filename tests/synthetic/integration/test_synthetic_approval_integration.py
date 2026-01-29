@@ -21,12 +21,6 @@ from datetime import datetime
 import dspy
 import httpx
 import pytest
-from cogniverse_synthetic.approval.confidence_extractor import (
-    SyntheticDataConfidenceExtractor,
-)
-from cogniverse_synthetic.approval.feedback_handler import SyntheticDataFeedbackHandler
-from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_synthetic.service import SyntheticDataService
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
@@ -43,6 +37,12 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_synthetic.approval.confidence_extractor import (
+    SyntheticDataConfidenceExtractor,
+)
+from cogniverse_synthetic.approval.feedback_handler import SyntheticDataFeedbackHandler
+from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_synthetic.service import SyntheticDataService
 from tests.utils.async_polling import wait_for_phoenix_processing
 
 logger = logging.getLogger(__name__)

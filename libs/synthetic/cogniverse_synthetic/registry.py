@@ -9,13 +9,14 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Type
 
+from pydantic import BaseModel
+
 from cogniverse_synthetic.schemas import (
     FusionHistorySchema,
     ModalityExampleSchema,
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

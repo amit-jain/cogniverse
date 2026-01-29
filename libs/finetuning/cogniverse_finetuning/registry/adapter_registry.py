@@ -54,9 +54,8 @@ class AdapterRegistry:
             self.store = store
         else:
             # Create store from BootstrapConfig
-            from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
-
             from cogniverse_foundation.config.bootstrap import BootstrapConfig
+            from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
 
             bootstrap = BootstrapConfig.from_environment()
             self.store = VespaAdapterStore(

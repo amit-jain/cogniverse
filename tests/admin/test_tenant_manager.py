@@ -6,10 +6,10 @@ Tests organization and tenant CRUD operations with Vespa backend.
 
 import logging
 
-import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
 import pytest
 from fastapi.testclient import TestClient
 
+import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
@@ -58,12 +58,11 @@ class TestTenantManagerAPI:
     @pytest.fixture(scope="module")
     def config_manager(self, vespa_backend, shared_test_db):
         """Create class-scoped ConfigManager"""
-        from cogniverse_vespa.config.config_store import VespaConfigStore
-
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.config.config_store import VespaConfigStore
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 

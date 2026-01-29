@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import phoenix as px
+
 from cogniverse_evaluation.providers.base import AnalyticsProvider
 
 logger = logging.getLogger(__name__)

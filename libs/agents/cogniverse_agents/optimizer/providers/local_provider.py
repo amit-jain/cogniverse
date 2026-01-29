@@ -61,7 +61,7 @@ class LocalModelProvider(ModelProvider):
         except Exception as e:
             raise Exception(f"Local model call failed: {e}")
 
-    def deploy_model_service(self, model_id: str = None, **kwargs) -> Dict[str, str]:
+    def deploy_model_service(self, model_id: str = None, **kwargs) -> Dict[str, Any]:
         """
         For local provider, this ensures Ollama is running and model is available.
         """

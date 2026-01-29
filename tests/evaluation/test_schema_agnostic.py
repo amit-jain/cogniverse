@@ -3,6 +3,7 @@ Test that evaluation works with any schema type.
 """
 
 import pytest
+
 from cogniverse_evaluation.core.schema_analyzer import (
     get_schema_analyzer,
     register_analyzer,

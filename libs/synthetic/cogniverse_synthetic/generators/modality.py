@@ -10,11 +10,11 @@ import random
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_synthetic.generators.base import BaseGenerator
-from cogniverse_synthetic.schemas import ModalityExampleSchema
 from pydantic import BaseModel
 
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.schemas import ModalityExampleSchema
 
 logger = logging.getLogger(__name__)
 

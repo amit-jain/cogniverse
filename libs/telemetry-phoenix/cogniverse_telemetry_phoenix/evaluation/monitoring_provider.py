@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 import pandas as pd
 import phoenix as px
+
 from cogniverse_evaluation.providers.base import MonitoringProvider
 
 logger = logging.getLogger(__name__)

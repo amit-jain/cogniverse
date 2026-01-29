@@ -8,8 +8,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from cogniverse_sdk.interfaces.config_store import ConfigScope
-from cogniverse_vespa.config.config_store import VespaConfigStore
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -24,6 +22,8 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)

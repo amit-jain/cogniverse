@@ -13,8 +13,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 from PIL import Image
+
+from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .embedding_generator import EmbeddingGenerator, EmbeddingResult
 

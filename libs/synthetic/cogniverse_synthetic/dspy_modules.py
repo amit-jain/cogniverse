@@ -7,6 +7,7 @@ Provides validated query generation modules that ensure output quality.
 import logging
 
 import dspy
+
 from cogniverse_synthetic.dspy_signatures import GenerateEntityQuery
 
 logger = logging.getLogger(__name__)

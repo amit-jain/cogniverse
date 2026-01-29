@@ -95,7 +95,7 @@ def wait_for_vespa_ready(
                 ready = check_fn()
             else:
                 # Default: check if document API responds
-                response = requests.get(health_check_url, timeout=2)
+                requests.get(health_check_url, timeout=2)
                 ready = True  # Any response means API is alive
 
             if ready:

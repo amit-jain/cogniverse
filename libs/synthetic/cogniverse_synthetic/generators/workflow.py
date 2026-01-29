@@ -8,9 +8,10 @@ import logging
 import random
 from typing import Any, Dict, List
 
+from pydantic import BaseModel
+
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import WorkflowExecutionSchema
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

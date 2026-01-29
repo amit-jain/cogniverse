@@ -1415,13 +1415,14 @@ class VespaSchemaManager:
             app_name: Name of the application (default: "videosearch" to match standard app name)
         """
         try:
+            from vespa.package import ApplicationPackage
+
             from cogniverse_vespa.metadata_schemas import (
                 create_adapter_registry_schema,
                 create_config_metadata_schema,
                 create_organization_metadata_schema,
                 create_tenant_metadata_schema,
             )
-            from vespa.package import ApplicationPackage
 
             # Get metadata schemas from centralized definitions
             metadata_schemas = [

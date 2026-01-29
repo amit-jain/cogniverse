@@ -17,8 +17,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from vespa.package import Schema
+
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 logger = logging.getLogger(__name__)
 

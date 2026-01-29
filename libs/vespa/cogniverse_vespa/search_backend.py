@@ -21,6 +21,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from vespa.application import Vespa
+
+from cogniverse_core.common.utils.output_manager import OutputManager
+from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import (
     ContentType,
     Document,
@@ -28,10 +32,6 @@ from cogniverse_sdk.document import (
     SearchResult,
 )
 from cogniverse_sdk.interfaces.backend import SearchBackend
-from vespa.application import Vespa
-
-from cogniverse_core.common.utils.output_manager import OutputManager
-from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 
 logger = logging.getLogger(__name__)
 

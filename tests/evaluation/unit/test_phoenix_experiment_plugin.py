@@ -5,6 +5,7 @@ Unit tests for Phoenix experiment plugin.
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_telemetry_phoenix.evaluation.experiments import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,

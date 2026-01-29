@@ -3,6 +3,12 @@ Integration tests for all synthetic data generators
 """
 
 import pytest
+
+from cogniverse_foundation.config.unified_config import (
+    AgentMappingRule,
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+)
 from cogniverse_synthetic.generators import (
     CrossModalGenerator,
     ModalityGenerator,
@@ -16,12 +22,6 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
-
-from cogniverse_foundation.config.unified_config import (
-    AgentMappingRule,
-    DSPyModuleConfig,
-    OptimizerGenerationConfig,
-)
 
 
 # Test configuration fixtures

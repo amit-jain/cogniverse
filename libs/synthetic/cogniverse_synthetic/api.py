@@ -7,11 +7,12 @@ Provides REST API endpoints for generating synthetic training data for all optim
 import logging
 from typing import Optional
 
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import ValidationError
+
 from cogniverse_synthetic.registry import list_optimizers, validate_optimizer_exists
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
 from cogniverse_synthetic.service import SyntheticDataService
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 

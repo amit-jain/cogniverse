@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -27,6 +26,7 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
 class TestConfigManagementUI:

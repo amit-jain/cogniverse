@@ -17,11 +17,11 @@ import torch
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
 from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
 
 # Setup logging with more verbose output
 logging.basicConfig(

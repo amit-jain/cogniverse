@@ -201,11 +201,10 @@ class TestLLMAutoAnnotator:
     @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
     def test_annotate(self, mock_completion, mock_litellm_response):
         """Test LLM annotation generation"""
+        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
         from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingOutcome,
         )
-
-        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -239,11 +238,10 @@ class TestLLMAutoAnnotator:
     @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
     def test_batch_annotate(self, mock_completion, mock_litellm_response):
         """Test batch annotation"""
+        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
         from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingOutcome,
         )
-
-        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response

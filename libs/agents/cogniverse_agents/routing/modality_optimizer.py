@@ -12,11 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_synthetic import (
-    ModalityExampleSchema,
-    SyntheticDataRequest,
-    SyntheticDataService,
-)
 from dspy.teleprompt import BootstrapFewShot, MIPROv2
 
 from cogniverse_agents.routing.modality_evaluator import ModalityEvaluator
@@ -29,6 +24,11 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategyModel,
 )
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_synthetic import (
+    ModalityExampleSchema,
+    SyntheticDataRequest,
+    SyntheticDataService,
+)
 
 logger = logging.getLogger(__name__)
 

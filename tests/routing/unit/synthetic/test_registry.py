@@ -3,6 +3,7 @@ Unit tests for optimizer registry
 """
 
 import pytest
+
 from cogniverse_synthetic.registry import (
     OPTIMIZER_REGISTRY,
     OptimizerConfig,

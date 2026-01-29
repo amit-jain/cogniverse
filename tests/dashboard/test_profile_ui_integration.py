@@ -14,7 +14,7 @@ import pytest
 
 # Check if cogniverse_runtime is available
 try:
-    import cogniverse_runtime
+    import cogniverse_runtime  # noqa: F401
 
     RUNTIME_AVAILABLE = True
 except ImportError:

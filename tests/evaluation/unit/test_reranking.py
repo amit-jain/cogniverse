@@ -5,6 +5,7 @@ Unit tests for reranking strategies.
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_evaluation.core.reranking import (
     ContentSimilarityRerankingStrategy,
     DiversityRerankingStrategy,

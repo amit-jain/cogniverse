@@ -7,7 +7,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import APIRouter, Depends, HTTPException
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -26,6 +25,7 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentRequest,
     SchemaDeploymentResponse,
 )
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 

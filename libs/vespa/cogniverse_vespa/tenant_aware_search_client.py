@@ -36,11 +36,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_vespa.vespa_search_client import (
     VespaVideoSearchClient,
 )
-
-from cogniverse_core.registries.backend_registry import BackendRegistry
 
 logger = logging.getLogger(__name__)
 

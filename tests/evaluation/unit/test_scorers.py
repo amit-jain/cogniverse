@@ -5,6 +5,7 @@ Unit tests for evaluation scorers.
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_evaluation.core.scorers import (
     _calculate_keyword_relevance,
     diversity_scorer,

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pandas as pd
 import pytest
+
 from cogniverse_finetuning.dataset.trace_converter import (
     ConversationTrajectory,
     ConversationTurn,

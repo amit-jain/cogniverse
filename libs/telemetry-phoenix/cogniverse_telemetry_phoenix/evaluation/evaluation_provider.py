@@ -8,8 +8,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from cogniverse_evaluation.providers.base import EvaluationProvider
 from phoenix.experiments.types import EvaluationResult
+
+from cogniverse_evaluation.providers.base import EvaluationProvider
 
 logger = logging.getLogger(__name__)
 

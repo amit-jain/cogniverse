@@ -32,8 +32,6 @@ import time
 from typing import Dict, List, Optional
 
 import uvicorn
-from cogniverse_sdk.interfaces.backend import Backend
-from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_core.common.tenant_utils import parse_tenant_id
@@ -46,6 +44,8 @@ from cogniverse_runtime.admin.models import (
     Tenant,
     TenantListResponse,
 )
+from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 

@@ -84,7 +84,7 @@ class EmbeddingIntegrityTester:
                     if video_id:
                         video_frame_counts[video_id] += 1
                         total_docs += 1
-                except:
+                except (json.JSONDecodeError, KeyError):
                     pass
 
         print(

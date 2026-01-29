@@ -643,8 +643,9 @@ class VespaBackend(Backend):
         try:
             import json
 
-            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
             from vespa.package import ApplicationPackage
+
+            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
             parser = JsonSchemaParser()
             schemas_to_deploy = []

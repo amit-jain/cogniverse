@@ -12,11 +12,11 @@ import platform
 import subprocess
 from pathlib import Path
 
-# Import vespa backend to trigger self-registration
-import cogniverse_vespa  # noqa: F401
 import pytest
 import requests
 
+# Import vespa backend to trigger self-registration
+import cogniverse_vespa  # noqa: F401
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager

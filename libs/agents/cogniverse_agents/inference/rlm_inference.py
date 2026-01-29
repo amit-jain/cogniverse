@@ -131,7 +131,6 @@ class RLMInference:
         self._tenant_id = tenant_id or "default"
         self._rlm = None  # Lazy initialization
 
-
     def _create_lm(self):
         """Create DSPy LM based on backend."""
         if self.backend == "ollama":

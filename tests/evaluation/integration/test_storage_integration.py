@@ -9,12 +9,12 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
+
 from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     TelemetryStorage,
 )
-
 from tests.utils.async_polling import wait_for_telemetry_processing
 
 

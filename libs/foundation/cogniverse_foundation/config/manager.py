@@ -8,8 +8,6 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cogniverse_sdk.interfaces.config_store import ConfigScope, ConfigStore
-
 from cogniverse_foundation.config.agent_config import AgentConfig
 from cogniverse_foundation.config.unified_config import (
     AgentConfigUnified,
@@ -19,6 +17,7 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
+from cogniverse_sdk.interfaces.config_store import ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
 

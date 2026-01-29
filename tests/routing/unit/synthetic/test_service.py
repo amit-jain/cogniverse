@@ -5,8 +5,6 @@ Tests the main service orchestrator end-to-end.
 """
 
 import pytest
-from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_synthetic.service import SyntheticDataService
 
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
@@ -14,6 +12,8 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
+from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_synthetic.service import SyntheticDataService
 
 
 def create_test_generator_config():

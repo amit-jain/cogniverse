@@ -10,12 +10,11 @@ import logging
 import random
 from typing import Any, Dict, List, Optional
 
-from cogniverse_sdk.interfaces.backend import Backend
-
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     FieldMappingConfig,
 )
+from cogniverse_sdk.interfaces.backend import Backend
 
 logger = logging.getLogger(__name__)
 

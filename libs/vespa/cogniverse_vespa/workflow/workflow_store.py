@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from vespa.application import Vespa
+
 from cogniverse_sdk.interfaces.workflow_store import (
     AgentPerformanceRecord,
     AgentStats,
@@ -16,7 +18,6 @@ from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowStore,
     WorkflowTemplate,
 )
-from vespa.application import Vespa
 
 logger = logging.getLogger(__name__)
 

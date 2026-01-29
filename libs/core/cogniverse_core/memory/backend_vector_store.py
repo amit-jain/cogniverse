@@ -106,6 +106,7 @@ class BackendVectorStore(VectorStoreBase):
 
         # Prepare Document objects for backend
         import numpy as np
+
         from cogniverse_sdk.document import Document
 
         documents = []
@@ -265,6 +266,7 @@ class BackendVectorStore(VectorStoreBase):
         try:
             # VespaBackend.update_document() takes a Document object
             import numpy as np
+
             from cogniverse_sdk.document import Document
 
             # Build updated document

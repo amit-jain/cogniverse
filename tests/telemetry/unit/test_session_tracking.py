@@ -231,7 +231,7 @@ class TestTelemetryManagerSessionSpan:
             tenant_id="test-tenant",
             session_id="session-123",
             attributes={"key": "value"},
-        ) as span:
+        ):
             # May be NoOpSpan if provider unavailable, but should not raise
             pass
 
@@ -338,7 +338,9 @@ class TestSessionTrackingWithPhoenix:
         """Test that session_span creates traces with session.id attribute."""
         try:
             # Check if Phoenix provider is available
-            from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+            from cogniverse_telemetry_phoenix.provider import (
+                PhoenixProvider,  # noqa: F401
+            )
         except ImportError:
             pytest.skip("cogniverse-telemetry-phoenix not installed")
 
@@ -369,7 +371,9 @@ class TestSessionTrackingWithPhoenix:
     def test_multiple_requests_grouped_by_session(self, phoenix_config):
         """Test that multiple requests with same session_id are grouped."""
         try:
-            from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+            from cogniverse_telemetry_phoenix.provider import (
+                PhoenixProvider,  # noqa: F401
+            )
         except ImportError:
             pytest.skip("cogniverse-telemetry-phoenix not installed")
 

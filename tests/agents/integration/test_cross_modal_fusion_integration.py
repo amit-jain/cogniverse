@@ -13,7 +13,6 @@ from datetime import datetime
 import numpy as np
 import pytest
 import requests
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from PIL import Image
 
 from cogniverse_agents.multi_agent_orchestrator import (
@@ -25,6 +24,7 @@ from cogniverse_agents.workflow_types import (
     WorkflowStatus,
     WorkflowTask,
 )
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 

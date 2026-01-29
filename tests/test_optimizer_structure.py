@@ -25,7 +25,10 @@ def test_imports():
     # Test 1: Core schemas
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.schemas import AgenticRouter, RoutingDecision
+        from cogniverse_agents.optimizer.schemas import (  # noqa: F401
+            AgenticRouter,
+            RoutingDecision,
+        )
 
         print("✅ schemas: RoutingDecision, AgenticRouter")
         tests_passed += 1
@@ -35,7 +38,7 @@ def test_imports():
     # Test 2: Router optimizer
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.router_optimizer import (
+        from cogniverse_agents.optimizer.router_optimizer import (  # noqa: F401
             OptimizedRouter,
             RouterModule,
         )
@@ -48,7 +51,9 @@ def test_imports():
     # Test 3: Orchestrator
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
+        from cogniverse_agents.optimizer.orchestrator import (
+            OptimizationOrchestrator,  # noqa: F401
+        )
 
         print("✅ orchestrator: OptimizationOrchestrator")
         tests_passed += 1
@@ -58,7 +63,9 @@ def test_imports():
     # Test 4: Provider abstractions
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.providers.base_provider import ProviderFactory
+        from cogniverse_agents.optimizer.providers.base_provider import (
+            ProviderFactory,  # noqa: F401
+        )
 
         print("✅ base_provider: ProviderFactory")
         tests_passed += 1
@@ -68,7 +75,7 @@ def test_imports():
     # Test 5: Modal provider
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.providers.modal_provider import (
+        from cogniverse_agents.optimizer.providers.modal_provider import (  # noqa: F401
             ModalModelProvider,
         )
 
@@ -80,7 +87,7 @@ def test_imports():
     # Test 6: Local provider
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.providers.local_provider import (
+        from cogniverse_agents.optimizer.providers.local_provider import (  # noqa: F401
             LocalModelProvider,
         )
 

@@ -6,9 +6,8 @@ Legacy wrapper for ModalityExampleSchema to maintain backward compatibility.
 
 from typing import Any, Dict, Optional
 
-from cogniverse_synthetic import ModalityExampleSchema
-
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_synthetic import ModalityExampleSchema
 
 
 class ModalityExample:

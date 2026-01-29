@@ -17,7 +17,6 @@ import subprocess
 from datetime import datetime, timedelta
 
 import pytest
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 from cogniverse_agents.routing.contextual_analyzer import ContextualAnalyzer
 from cogniverse_agents.routing.query_expansion import QueryExpander
@@ -26,6 +25,7 @@ from cogniverse_agents.search.multi_modal_reranker import (
     QueryModality,
     SearchResult,
 )
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 

@@ -5,10 +5,6 @@ Tests approval interfaces, agents, confidence extraction, and feedback handling.
 """
 
 import pytest
-from cogniverse_synthetic.approval import (
-    SyntheticDataConfidenceExtractor,
-    SyntheticDataFeedbackHandler,
-)
 
 from cogniverse_agents.approval import (
     ApprovalBatch,
@@ -16,6 +12,10 @@ from cogniverse_agents.approval import (
     HumanApprovalAgent,
     ReviewDecision,
     ReviewItem,
+)
+from cogniverse_synthetic.approval import (
+    SyntheticDataConfidenceExtractor,
+    SyntheticDataFeedbackHandler,
 )
 
 

@@ -5,8 +5,9 @@ Unit tests for BaseGenerator
 from typing import Any, Dict, List
 
 import pytest
-from cogniverse_synthetic.generators.base import BaseGenerator
 from pydantic import BaseModel
+
+from cogniverse_synthetic.generators.base import BaseGenerator
 
 
 class MockSchema(BaseModel):

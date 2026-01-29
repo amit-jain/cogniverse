@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
+
 from cogniverse_sdk.document import Document
 
 

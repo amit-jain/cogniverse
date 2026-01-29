@@ -6,12 +6,12 @@ import threading
 from unittest.mock import Mock, patch
 
 import pytest
+
 from cogniverse_telemetry_phoenix.evaluation.monitoring import (
     AlertThresholds,
     MetricWindow,
     RetrievalMonitor,
 )
-
 from tests.utils.async_polling import wait_for_phoenix_processing
 
 

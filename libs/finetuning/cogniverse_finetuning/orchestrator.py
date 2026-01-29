@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
+from opentelemetry.trace import Status, StatusCode
+
 from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
@@ -27,8 +29,6 @@ from cogniverse_finetuning.training.backend import (
     TrainingBackend,
     TrainingJobConfig,
 )
-from opentelemetry.trace import Status, StatusCode
-
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)

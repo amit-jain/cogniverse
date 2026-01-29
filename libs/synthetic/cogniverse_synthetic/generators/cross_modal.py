@@ -9,9 +9,10 @@ import random
 from collections import defaultdict
 from typing import Any, Dict, List
 
+from pydantic import BaseModel
+
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import FusionHistorySchema
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

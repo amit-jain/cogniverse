@@ -11,12 +11,12 @@ import os
 from datetime import datetime, timedelta
 
 import pytest
+
 from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
     RoutingOutcome,
 )
-
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 logger = logging.getLogger(__name__)

@@ -5,6 +5,8 @@ Unit tests for synthetic data schemas
 from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
+
 from cogniverse_synthetic.schemas import (
     FusionHistorySchema,
     ModalityExampleSchema,
@@ -13,7 +15,6 @@ from cogniverse_synthetic.schemas import (
     SyntheticDataResponse,
     WorkflowExecutionSchema,
 )
-from pydantic import ValidationError
 
 
 class TestModalityExampleSchema:

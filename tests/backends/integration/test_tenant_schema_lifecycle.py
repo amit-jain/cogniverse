@@ -25,9 +25,8 @@ def temp_config_manager(vespa_instance, tmp_path_factory):
     The config_metadata schema is automatically deployed as part of
     VespaSchemaManager.upload_metadata_schemas() during backend initialization.
     """
-    from cogniverse_vespa.config.config_store import VespaConfigStore
-
     from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
 
     http_port = vespa_instance["http_port"]
     logger.info(f"Creating VespaConfigStore with http_port={http_port}")

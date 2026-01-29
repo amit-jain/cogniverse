@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 import pytest
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 

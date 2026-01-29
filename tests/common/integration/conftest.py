@@ -6,10 +6,10 @@ Provides Vespa Docker instance fixture for testing configuration persistence.
 
 import logging
 
-# Import vespa backend to trigger self-registration
-import cogniverse_vespa  # noqa: F401
 import pytest
 
+# Import vespa backend to trigger self-registration
+import cogniverse_vespa  # noqa: F401
 from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)

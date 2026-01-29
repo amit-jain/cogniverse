@@ -278,7 +278,7 @@ class TestProfileMultiTenantIsolation:
     def test_empty_tenant_id_not_allowed(self, test_client):
         """Test that empty or missing tenant_id is rejected"""
         # Try to create profile with empty tenant_id
-        response = test_client.post(
+        test_client.post(
             "/admin/profiles",
             json={
                 "profile_name": "no_tenant_profile",
