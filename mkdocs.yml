@@ -1,9 +1,9 @@
 site_name: Cogniverse
 site_description: Multi-Agent System for Multi-Modal Content with Automated Optimization and Evaluation
 site_author: Cogniverse Team
-site_url: https://cogniverse.github.io/cogniverse/
-repo_name: cogniverse/cogniverse
-repo_url: https://github.com/cogniverse/cogniverse
+site_url: https://amit-jain.github.io/cogniverse/
+repo_name: amit-jain/cogniverse
+repo_url: https://github.com/amit-jain/cogniverse
 edit_uri: edit/main/docs/
 
 # Copyright
