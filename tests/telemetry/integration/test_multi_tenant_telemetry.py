@@ -24,6 +24,7 @@ from tests.utils.async_polling import wait_for_phoenix_processing
 
 @pytest.mark.integration
 @pytest.mark.telemetry
+@pytest.mark.ci_fast
 class TestMultiTenantTelemetryIntegration:
     """Integration tests for multi-tenant telemetry."""
 

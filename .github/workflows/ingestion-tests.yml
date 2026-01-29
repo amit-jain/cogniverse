@@ -157,7 +157,7 @@ jobs:
         print('✅ Processor discovery successful')
         "
 
-  fast-integration-tests:
+  integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: unit-tests
@@ -187,7 +187,7 @@ jobs:
 
     - name: Free up disk space for Vespa
       run: |
-        echo "🧹 Cleaning up disk space for Vespa..."
+        echo "🧹 Cleaning up disk space for Vespa (needs <75% disk usage)..."
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -198,97 +198,21 @@ jobs:
     - name: Pre-pull Vespa Docker image
       run: |
         docker pull vespaengine/vespa:latest
+        df -h
 
-    - name: Run integration tests (Vespa Docker)
+    - name: Run integration tests
       timeout-minutes: 10
+      env:
+        COVERAGE_FILE: .coverage
       run: |
-        echo "🧪 Running ingestion integration tests with Vespa..."
         # Tests manage their own Vespa containers via fixtures
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/ingestion/integration/ \
           -m "integration and ci_fast" \
-          -v --tb=short || true
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
-    
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-    
-    - name: Install dependencies
-      run: |
-        uv sync --all-packages --all-extras
-        uv pip install pytest-cov torch
-    
-    - name: Try to start Vespa
-      run: |
-        echo "🚀 Starting Vespa container..."
-        docker run -d \
-          --name vespa-test \
-          -p 8080:8080 \
-          -p 19071:19071 \
-          vespaengine/vespa:latest
-        
-        echo "⏳ Waiting for Vespa to start (max 2 minutes)..."
-        VESPA_READY=false
-        for i in {1..40}; do
-          if curl -s http://localhost:8080/state/v1/health >/dev/null 2>&1; then
-            echo "✅ Vespa is ready after $((i*3)) seconds!"
-            VESPA_READY=true
-            break
-          fi
-          echo "Waiting for Vespa... (attempt $i/40)"
-          sleep 3
-        done
-        
-        if [ "$VESPA_READY" = false ]; then
-          echo "⚠️ Vespa failed to start within 2 minutes - will skip Vespa tests"
-          echo "SKIP_VESPA_TESTS=true" >> $GITHUB_ENV
-        else
-          echo "SKIP_VESPA_TESTS=false" >> $GITHUB_ENV
-        fi
-    
-    - name: Run integration tests
-      env:
-        COVERAGE_FILE: .coverage
-      run: |
-        # Run integration tests with coverage reporting only (no failure threshold)
-        if [ "$SKIP_VESPA_TESTS" = "true" ]; then
-          echo "🚫 Skipping Vespa-dependent tests"
-          JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration/ \
-            -m "integration and not requires_vespa" \
-            -v \
-            --tb=short \
-            --cov=libs/runtime/cogniverse_runtime/ingestion \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage_ingestion_integration.xml
-        else
-          echo "✅ Running all integration tests including Vespa"
-          JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration/ \
-            -m "integration" \
-            -v \
-            --tb=short \
-            --cov=libs/runtime/cogniverse_runtime/ingestion \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage_ingestion_integration.xml
-        fi
+          -v --tb=short \
+          --cov=libs/runtime/cogniverse_runtime/ingestion \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_ingestion_integration.xml
         # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
           echo "✅ Integration coverage file found, renaming to coverage_integration.dat"
@@ -296,7 +220,7 @@ jobs:
         else
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
-    
+
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
@@ -305,7 +229,7 @@ jobs:
         path: coverage_integration.dat
         retention-days: 1
         if-no-files-found: warn
-    
+
     - name: Upload coverage XML
       if: always()
       uses: actions/upload-artifact@v4
@@ -314,12 +238,6 @@ jobs:
         path: coverage_ingestion_integration.xml
         retention-days: 1
         if-no-files-found: warn
-    
-    - name: Stop Vespa
-      if: always()
-      run: |
-        docker stop vespa-test || true
-        docker rm vespa-test || true
 
   coverage-report:
     runs-on: ubuntu-latest

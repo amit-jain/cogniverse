@@ -83,9 +83,8 @@ jobs:
 
     - name: Run linting
       run: |
-        uv run ruff check libs/vespa/cogniverse_vespa tests/backends || true
-        uv run black --check libs/vespa/cogniverse_vespa tests/backends || true
-      continue-on-error: true
+        uv run ruff check libs/vespa/cogniverse_vespa tests/backends
+        uv run black --check libs/vespa/cogniverse_vespa tests/backends
 
   test-imports:
     runs-on: ubuntu-latest
@@ -114,7 +113,7 @@ jobs:
         uv run python -c "from cogniverse_vespa.config.config_store import VespaConfigStore; print('VespaConfigStore import successful')"
         echo "All vespa imports successful"
 
-  fast-integration-tests:
+  integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: unit-tests
@@ -140,7 +139,6 @@ jobs:
     - name: Free up disk space for Vespa
       run: |
         echo "🧹 Cleaning up disk space for Vespa (needs <75% disk usage)..."
-        # Remove unnecessary large packages
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -150,67 +148,12 @@ jobs:
 
     - name: Pre-pull Vespa Docker image
       run: |
-        echo "📦 Pre-pulling Vespa Docker image..."
         docker pull vespaengine/vespa:latest
         df -h
 
-    - name: Run integration tests (self-managed Docker)
+    - name: Run integration tests
       timeout-minutes: 10
       run: |
-        echo "🧪 Running real integration tests (tests manage their own Vespa containers)..."
-        # Tests use VespaDockerManager with module-scoped fixtures
-        # 7 tests sharing one container = efficient startup amortization
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
-          tests/backends/integration/test_tenant_schema_lifecycle.py \
-          -m "integration" \
-          -v --tb=short 2>&1 | tee /tmp/vespa_test_output.log || {
-            echo "::warning::Integration tests failed - check logs"
-            cat /tmp/vespa_test_output.log
-            exit 1
-          }
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: unit-tests
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "latest"
-
-    - name: Install dependencies
-      run: |
-        uv sync --all-packages --all-extras
-        uv pip install pytest-cov
-
-    - name: Free up disk space for Vespa
-      run: |
-        echo "🧹 Cleaning up disk space for Vespa (needs <75% disk usage)..."
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo docker image prune -af
-        df -h
-
-    - name: Pre-pull Vespa Docker image
-      run: |
-        docker pull vespaengine/vespa:latest
-        df -h
-
-    - name: Run all integration tests
-      run: |
-        # Tests manage their own Vespa containers via VespaDockerManager
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/backends/integration \
-          -m "integration" \
+          -m "integration and ci_fast" \
           -v --tb=short

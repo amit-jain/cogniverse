@@ -113,7 +113,7 @@ jobs:
         uv run python -c "import cogniverse_dashboard; print('Dashboard package import successful')"
         echo "All dashboard imports successful"
 
-  fast-integration-tests:
+  integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: unit-tests
@@ -136,12 +136,10 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
-    - name: Run integration tests (TestClient)
+    - name: Run integration tests
       timeout-minutes: 8
       run: |
-        echo "🧪 Running dashboard profile UI integration tests..."
-        # Tests use FastAPI TestClient with mocks, no external services needed
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
-          tests/dashboard/test_profile_ui_integration.py \
-          -m "integration" \
-          -v --tb=short || true
+          tests/dashboard/ \
+          -m "integration and ci_fast" \
+          -v --tb=short

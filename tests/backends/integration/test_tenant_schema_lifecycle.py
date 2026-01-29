@@ -76,6 +76,7 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestSchemaRegistryDeployment:
     """Test schema deployment via SchemaRegistry"""
 

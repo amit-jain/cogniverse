@@ -320,6 +320,8 @@ def synthetic_service(generator_config, backend_config, dspy_lm):
     )
 
 
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestSyntheticApprovalIntegration:
     """End-to-end integration tests for synthetic data approval workflow"""
 
@@ -587,6 +589,8 @@ class TestSyntheticApprovalIntegration:
         assert final.items[0].reviewed_at is not None
 
 
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestSyntheticServiceIntegration:
     """Integration tests for synthetic data service with real backends"""
 

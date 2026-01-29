@@ -88,6 +88,7 @@ def adapter_registry(adapter_store):
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestAdapterRegistryVespaIntegration:
     """Integration tests for AdapterRegistry with real Vespa."""
 
@@ -394,6 +395,7 @@ class TestAdapterRegistryVespaIntegration:
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestInferenceIntegration:
     """Integration tests for inference helper functions."""
 

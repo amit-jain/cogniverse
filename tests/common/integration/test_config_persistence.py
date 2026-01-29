@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
+@pytest.mark.ci_fast
 class TestConfigPersistence:
     """Test configuration persistence across restarts"""
 

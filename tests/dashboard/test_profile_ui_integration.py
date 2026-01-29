@@ -22,6 +22,7 @@ except ImportError:
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="cogniverse_runtime not installed")
 class TestDashboardProfileIntegration:
     """Integration tests for dashboard API helper functions"""

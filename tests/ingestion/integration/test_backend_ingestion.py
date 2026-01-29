@@ -34,6 +34,7 @@ except ImportError:
 
 @pytest.mark.integration
 @pytest.mark.ci_safe
+@pytest.mark.ci_fast
 class TestMockBackendIngestion:
     """Test ingestion pipeline with mock backend (CI-safe)."""
 

@@ -102,47 +102,10 @@ jobs:
         if-no-files-found: warn
 
 
-  fast-integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: unit-tests
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-
-    - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-    - name: Install dependencies
-      run: |
-        uv sync --all-packages --all-extras
-        uv pip install pytest-cov
-
-    - name: Run real integration tests (subset)
-      env:
-        MOCK_LLM_RESPONSES: "true"
-      run: |
-        echo "🧪 Running real integration tests (Docker containers managed by tests)..."
-        # Run subset of integration tests that use module-scoped Docker fixtures
-        # ~20% coverage: 13 tests across 2 files with real Vespa
-        uv run python -m pytest \
-          tests/routing/integration/test_routing_agent_with_advanced_features.py \
-          tests/routing/integration/test_modality_routing_integration.py \
-          -v --tb=short \
-          -m "integration and not local_only" || true
-
   integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: unit-tests
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
 
     steps:
     - uses: actions/checkout@v3
@@ -162,13 +125,24 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
+    - name: Free up disk space
+      run: |
+        echo "🧹 Cleaning up disk space..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
     - name: Run routing integration tests
+      timeout-minutes: 15
       env:
         MOCK_LLM_RESPONSES: "true"
         COVERAGE_FILE: .coverage
       run: |
-        # Run routing integration tests from proper directory structure
-        uv run python -m pytest tests/routing/integration -m "integration and not local_only" \
+        uv run python -m pytest tests/routing/integration \
+          -m "integration and ci_fast and not local_only" \
           --cov=libs/agents/cogniverse_agents/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
@@ -179,8 +153,7 @@ jobs:
         else
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
-    
-    
+
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
@@ -189,7 +162,7 @@ jobs:
         path: coverage_integration.dat
         retention-days: 1
         if-no-files-found: warn
-    
+
     - name: Upload coverage XML
       if: always()
       uses: actions/upload-artifact@v4

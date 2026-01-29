@@ -129,7 +129,7 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.training.sft_trainer import SFTFinetuner; print('SFTFinetuner import successful')"
         echo "All finetuning imports successful"
 
-  fast-integration-tests:
+  integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: unit-tests
@@ -159,7 +159,7 @@ jobs:
 
     - name: Free up disk space for Vespa
       run: |
-        echo "🧹 Cleaning up disk space for Vespa..."
+        echo "🧹 Cleaning up disk space for Vespa (needs <75% disk usage)..."
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -170,11 +170,12 @@ jobs:
     - name: Pre-pull Vespa Docker image
       run: |
         docker pull vespaengine/vespa:latest
+        df -h
 
-    - name: Run integration tests (Vespa Docker)
+    - name: Run integration tests
       timeout-minutes: 10
       run: |
-        echo "🧪 Running adapter registry integration tests with Vespa..."
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
-          tests/finetuning/integration/test_adapter_registry_vespa.py \
+          tests/finetuning/integration/ \
+          -m "integration and ci_fast" \
           -v --tb=short

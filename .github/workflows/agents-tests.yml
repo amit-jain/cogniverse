@@ -184,7 +184,17 @@ jobs:
       run: |
         uv sync --all-packages --all-extras
         uv pip install pytest-cov torch dspy-ai
-    
+
+    - name: Free up disk space
+      run: |
+        echo "🧹 Cleaning up disk space..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
     - name: Integration test info
       run: |
         echo "ℹ️ Running CI Fast integration tests (17/116 tests)"

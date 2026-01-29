@@ -112,7 +112,7 @@ jobs:
         uv run python -c "from cogniverse_synthetic.service import SyntheticDataService; print('SyntheticDataService import successful')"
         echo "All synthetic imports successful"
 
-  fast-integration-tests:
+  integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: unit-tests
@@ -135,9 +135,18 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
+    - name: Free up disk space
+      run: |
+        echo "🧹 Cleaning up disk space..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
     - name: Start Phoenix Docker
       run: |
-        echo "🚀 Starting Phoenix Docker container..."
         docker pull arizephoenix/phoenix:latest
         docker run -d --name phoenix-synthetic \
           -p 26006:6006 \
@@ -153,15 +162,13 @@ jobs:
           sleep 2
         done
 
-    - name: Run integration tests (Phoenix Docker, mocked LLM)
+    - name: Run integration tests
       timeout-minutes: 8
       run: |
-        echo "🧪 Running synthetic approval integration tests..."
-        # Tests use Phoenix Docker, skip tests requiring Ollama (not available in CI)
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
-          tests/synthetic/integration/test_synthetic_approval_integration.py \
-          -v --tb=short \
-          -k "phoenix" || true
+          tests/synthetic/integration/ \
+          -m "integration and ci_fast" \
+          -v --tb=short
 
     - name: Stop Phoenix
       if: always()
