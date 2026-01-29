@@ -75,8 +75,12 @@ skip_if_no_openai = pytest.mark.skipif(
 
 @pytest.fixture(scope="module", autouse=True)
 def phoenix_container():
-    """Start Phoenix Docker container on non-default ports for synthetic approval tests"""
+    """Start Phoenix Docker container on non-default ports for synthetic approval tests.
+
+    If Phoenix is already running (e.g., started by CI workflow), reuses it.
+    """
     import os
+    import urllib.request
 
     # Set environment variables BEFORE any TelemetryManager is created
     original_endpoint = os.environ.get("OTLP_ENDPOINT")
@@ -87,6 +91,20 @@ def phoenix_container():
 
     # Reset TelemetryManager singleton using reset() class method
     TelemetryManager.reset()
+
+    # Check if Phoenix is already running (e.g., started by CI workflow)
+    phoenix_already_running = False
+    try:
+        urllib.request.urlopen("http://localhost:26006", timeout=2)
+        phoenix_already_running = True
+        logger.info("Phoenix already running on port 26006, reusing existing instance")
+    except Exception:
+        pass
+
+    if phoenix_already_running:
+        # Phoenix is already running, just yield and don't manage container
+        yield "external"
+        return
 
     container_name = f"phoenix_synthetic_test_{int(time.time() * 1000)}"
 
@@ -112,7 +130,6 @@ def phoenix_container():
 
     try:
         # Create temporary directory for Phoenix data
-        import os
         import tempfile
 
         test_data_dir = os.path.join(
