@@ -395,11 +395,26 @@ curl https://your-app.modal.run/search \
 
 ## 🤝 Contributing
 
-1. Follow the coding standards in [CLAUDE.md](CLAUDE.md)
-2. Run the full test suite before committing
-3. Update documentation for significant changes
-4. Use `uv run` for all Python commands
-5. Never commit failing tests
+See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for detailed contribution guidelines.
+
+### Quick Reference
+
+**Code Standards:**
+- Use type hints for all function signatures
+- Add docstrings to public functions (Google style)
+- Follow PEP 8 with `ruff` for linting
+- Use `uv run` for all Python commands
+
+**Commit Standards:**
+- Use imperative mood: `Add`, `Fix`, `Update`, `Refactor`, `Remove`
+- Keep first line under 72 characters
+- Describe WHAT changed, not WHY or HOW
+
+**Pre-Commit Checklist:**
+- Run `uv run pytest` and ensure 100% pass rate
+- Run `uv run ruff check` with no errors
+- Update documentation for significant changes
+- Never commit failing tests or skip markers
 
 ## 📝 License
 
@@ -414,6 +429,6 @@ curl https://your-app.modal.run/search \
 ---
 
 **Version**: 2.0.0
-**Architecture**: UV Workspace (10 Packages - Layered Architecture)
-**Last Updated**: 2025-10-15
+**Architecture**: UV Workspace (11 Packages - Layered Architecture)
+**Last Updated**: 2026-01-29
 **Status**: Production Ready with Complete Multi-Tenant Isolation

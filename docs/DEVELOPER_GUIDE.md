@@ -640,24 +640,28 @@ Brief description of changes
 
 ### Commit Message Guidelines
 
-**Format**: `<type>: <subject>`
+**Format**: Imperative mood, describe WHAT changed
 
-**Types**:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `refactor`: Code refactoring
-- `test`: Test additions/changes
-- `chore`: Maintenance tasks
+**Rules**:
+- Start with a verb: `Add`, `Fix`, `Update`, `Refactor`, `Remove`
+- Keep first line under 72 characters
+- Describe the change, not meta-commentary
+- No test counts, phase numbers, or "all tests pass"
 
 **Examples**:
 ```
-feat: Add BM25 rerank search strategy
-fix: Resolve tensor encoding issue in ColPali embeddings
-docs: Update architecture overview with 11-package structure
-refactor: Extract tenant context logic to middleware
-test: Add integration tests for routing agent
+Add BM25 rerank search strategy
+Fix tensor encoding issue in ColPali embeddings
+Update architecture overview with 11-package structure
+Refactor tenant context logic to middleware
+Add integration tests for routing agent
 ```
+
+**Pre-Commit Checklist**:
+- Run `uv run pytest` - 100% pass rate required
+- Run `uv run ruff check` - no lint errors
+- Fix implementation to satisfy tests, never weaken tests
+- Update documentation for significant changes
 
 ---
 
