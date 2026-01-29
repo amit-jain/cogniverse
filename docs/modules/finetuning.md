@@ -439,7 +439,8 @@ The Adapter Registry provides complete lifecycle management for trained adapters
 |-----------|------|-------------|
 | `AdapterRegistry` | `adapter_registry.py` | Main interface for adapter lifecycle management |
 | `AdapterMetadata` | `models.py` | Data model for adapter metadata |
-| `VespaAdapterStore` | `libs/vespa/.../adapter_store.py` | Vespa-backed storage for adapter metadata |
+| `AdapterStoreRegistry` | `libs/core/.../adapter_store_registry.py` | Registry for discovering adapter stores via entry points |
+| `VespaAdapterStore` | `libs/vespa/.../adapter_store.py` | Vespa-backed storage (discovered via registry) |
 | `LocalStorage` | `storage.py` | Local filesystem storage backend |
 | `HuggingFaceStorage` | `storage.py` | HuggingFace Hub storage backend |
 | Inference Helpers | `inference.py` | vLLM integration utilities |

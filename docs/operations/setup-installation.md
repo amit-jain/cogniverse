@@ -544,7 +544,8 @@ from cogniverse_evaluation.datasets.loader import DatasetLoader
 
 # Telemetry Phoenix - Phoenix Provider (Plugin)
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import PhoenixEvaluationProvider
+# Note: Use EvaluationRegistry to get evaluation providers
+from cogniverse_evaluation.providers.registry import EvaluationRegistry
 
 # ===== IMPLEMENTATION LAYER =====
 # Agents - Routing and Search

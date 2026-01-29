@@ -1121,9 +1121,9 @@ async def log_session_evaluation(
 
 **Example:**
 ```python
-from cogniverse_telemetry_phoenix import PhoenixEvaluationProvider
+from cogniverse_evaluation.providers.registry import EvaluationRegistry
 
-provider = PhoenixEvaluationProvider()
+provider = EvaluationRegistry.get_evaluation_provider("phoenix", tenant_id="default")
 
 await provider.log_session_evaluation(
     session_id="sess_abc123",
