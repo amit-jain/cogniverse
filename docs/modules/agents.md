@@ -2739,7 +2739,7 @@ rlm_opts = RLMOptions(
     enabled=True,              # Explicitly enable RLM
     auto_detect=False,         # Or auto-enable based on context size
     context_threshold=50_000,  # Threshold for auto_detect (chars)
-    max_depth=3,               # Maximum recursion depth (1-10)
+    max_iterations=3,          # Maximum REPL iterations (1-10)
     max_llm_calls=30,          # Maximum LLM sub-calls (1-100)
     timeout_seconds=300,       # Timeout for RLM processing (10-1800s)
     backend="openai",          # LLM backend (openai, anthropic, litellm)
@@ -2755,7 +2755,7 @@ from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
 rlm = RLMInference(
     backend="openai",
     model="gpt-4o",
-    max_iterations=10,      # Maps to RLMOptions.max_depth
+    max_iterations=10,      # Maximum REPL iterations
     max_llm_calls=30,
     timeout_seconds=300,
 )
@@ -2809,7 +2809,7 @@ input_a = SearchInput(query="machine learning tutorials", rlm=None)
 # Group B: RLM-enabled search
 input_b = SearchInput(
     query="machine learning tutorials",
-    rlm=RLMOptions(enabled=True, max_depth=3),
+    rlm=RLMOptions(enabled=True, max_iterations=3),
 )
 
 # Auto-detect mode: Enable RLM only for large context
@@ -2860,6 +2860,78 @@ except RLMTimeoutError as e:
 except Exception as e:
     # Handle other errors
     logger.error(f"RLM failed: {e}")
+```
+
+### Real-Time Progress with EventQueue
+
+RLM operations can be long-running (up to 5 minutes). Use `InstrumentedRLM` with EventQueue for real-time progress tracking and cancellation support.
+
+#### InstrumentedRLM
+
+`InstrumentedRLM` subclasses `dspy.RLM` to emit events at each iteration:
+
+```python
+from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError
+from cogniverse_core.events import EventQueue
+
+# Create event queue for real-time progress
+event_queue = EventQueue(tenant_id="tenant_1")
+
+# InstrumentedRLM emits events automatically
+rlm = InstrumentedRLM(
+    "context, query -> answer",
+    max_iterations=10,
+    event_queue=event_queue,
+    task_id="task_123",
+    tenant_id="tenant_1",
+)
+
+# Events emitted during processing:
+# - StatusEvent(WORKING, phase="rlm_start")
+# - ProgressEvent(current=0, total=10, step="iteration_1")
+# - ProgressEvent(current=1, total=10, step="iteration_2")
+# - ...
+# - StatusEvent(COMPLETED, phase="rlm_complete")
+
+result = rlm(context=large_context, query="Summarize this")
+```
+
+#### Cancellation Support
+
+Users can cancel RLM operations mid-execution via the CancellationToken:
+
+```python
+# Cancel from another coroutine
+await event_queue.cancellation_token.cancel(reason="User requested")
+
+# RLM raises RLMCancelledError when cancelled
+try:
+    result = rlm(context=context, query=query)
+except RLMCancelledError as e:
+    logger.info(f"RLM cancelled: {e.reason}")
+```
+
+#### Integration with RLMInference
+
+`RLMInference` automatically uses `InstrumentedRLM` when `event_queue` is provided:
+
+```python
+from cogniverse_agents.inference import RLMInference
+from cogniverse_core.events import EventQueue
+
+event_queue = EventQueue(tenant_id="tenant_1")
+
+rlm = RLMInference(
+    backend="openai",
+    model="gpt-4o",
+    max_iterations=10,
+    event_queue=event_queue,  # Enables InstrumentedRLM
+    task_id="task_123",
+    tenant_id="tenant_1",
+)
+
+# Progress events are emitted automatically
+result = rlm.process(query="Summarize", context=large_context)
 ```
 
 ### High-Value Use Cases
