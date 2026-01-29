@@ -19,6 +19,7 @@ from cogniverse_core.agents.base import (
     InputT,
     OutputT,
 )
+from cogniverse_core.agents.rlm_options import RLMOptions
 
 __all__ = [
     # Base classes
@@ -34,4 +35,6 @@ __all__ = [
     # A2A Agent
     "A2AAgent",
     "A2AAgentConfig",
+    # RLM Configuration
+    "RLMOptions",
 ]

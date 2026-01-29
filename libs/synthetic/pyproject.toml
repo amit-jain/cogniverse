@@ -21,7 +21,7 @@ dependencies = [
     "fastapi>=0.100.0",
 
     # DSPy for LLM-driven query generation
-    "dspy-ai>=2.4.0",
+    "dspy-ai>=3.1.2",
 ]
 
 [tool.uv.sources]

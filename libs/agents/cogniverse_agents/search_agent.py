@@ -28,6 +28,7 @@ import uvicorn
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -47,19 +48,44 @@ logger = logging.getLogger(__name__)
 
 
 class SearchInput(AgentInput):
-    """Type-safe input for search operations"""
+    """Type-safe input for search operations.
+
+    The `rlm` field enables optional RLM (Recursive Language Model) inference
+    for A/B testing. When set, RLM will be used to process large result sets.
+
+    Example A/B Testing:
+        # Group A: Standard search (no RLM)
+        input_a = SearchInput(query="...", rlm=None)
+
+        # Group B: RLM-enabled search
+        input_b = SearchInput(query="...", rlm=RLMOptions(enabled=True))
+    """
 
     query: str = Field(..., description="Search query")
-    modality: str = Field("video", description="Content modality (video/image/text/audio/document)")
+    modality: str = Field(
+        "video", description="Content modality (video/image/text/audio/document)"
+    )
     top_k: int = Field(10, description="Number of results to return")
-    profiles: Optional[List[str]] = Field(None, description="List of profiles for ensemble search")
+    profiles: Optional[List[str]] = Field(
+        None, description="List of profiles for ensemble search"
+    )
     rrf_k: int = Field(60, description="RRF constant for fusion")
-    video_data: Optional[bytes] = Field(None, description="Video data for video-based search")
+    video_data: Optional[bytes] = Field(
+        None, description="Video data for video-based search"
+    )
     video_filename: Optional[str] = Field(None, description="Video filename")
-    image_data: Optional[bytes] = Field(None, description="Image data for image-based search")
+    image_data: Optional[bytes] = Field(
+        None, description="Image data for image-based search"
+    )
     image_filename: Optional[str] = Field(None, description="Image filename")
     start_date: Optional[str] = Field(None, description="Start date filter")
     end_date: Optional[str] = Field(None, description="End date filter")
+
+    # RLM configuration for A/B testing
+    rlm: Optional[RLMOptions] = Field(
+        None,
+        description="RLM configuration. None=disabled, set RLMOptions to enable RLM inference for A/B testing",
+    )
 
 
 class SearchOutput(AgentOutput):
