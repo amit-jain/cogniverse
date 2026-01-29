@@ -193,6 +193,21 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
+    - name: Free up disk space for Vespa
+      run: |
+        echo "🧹 Cleaning up disk space for Vespa (needs <75% disk usage)..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:latest
+        df -h
+
     - name: Run all integration tests
       run: |
         # Tests manage their own Vespa containers via VespaDockerManager
