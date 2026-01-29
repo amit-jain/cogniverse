@@ -101,7 +101,6 @@ class RLMInference:
         model: str = "gpt-4o",
         max_iterations: int = 10,
         max_llm_calls: int = 30,
-        sandbox: str = "local",
         api_key: Optional[str] = None,
         timeout_seconds: Optional[int] = 300,
         event_queue: Optional["EventQueue"] = None,
@@ -115,7 +114,6 @@ class RLMInference:
             model: Model name to use
             max_iterations: Maximum REPL interaction loops (default: 10)
             max_llm_calls: Limit on sub-LLM queries (default: 30)
-            sandbox: Execution sandbox (local only for now)
             api_key: Optional API key for the backend
             timeout_seconds: Maximum time for RLM processing (default: 300s/5min)
             event_queue: Optional EventQueue for real-time progress events
@@ -126,7 +124,6 @@ class RLMInference:
         self.model = model
         self.max_iterations = max_iterations
         self.max_llm_calls = max_llm_calls
-        self.sandbox = sandbox
         self._api_key = api_key
         self.timeout_seconds = timeout_seconds
         self._event_queue = event_queue
@@ -134,10 +131,6 @@ class RLMInference:
         self._tenant_id = tenant_id or "default"
         self._rlm = None  # Lazy initialization
 
-    @property
-    def max_depth(self) -> int:
-        """Alias for max_iterations for backward compatibility."""
-        return self.max_iterations
 
     def _create_lm(self):
         """Create DSPy LM based on backend."""

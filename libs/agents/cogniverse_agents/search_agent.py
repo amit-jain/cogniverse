@@ -1705,8 +1705,11 @@ class SearchAgent(
                 )
             except Exception as e:
                 logger.error(f"RLM processing failed: {e}")
-                # Continue without RLM synthesis - don't fail the entire search
-                rlm_telemetry = {"rlm_enabled": True, "rlm_error": str(e)}
+                rlm_telemetry = {
+                    "rlm_enabled": False,
+                    "rlm_attempted": True,
+                    "rlm_error": str(e),
+                }
 
         return SearchOutput(
             query=query,

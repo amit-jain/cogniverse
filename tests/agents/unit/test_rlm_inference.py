@@ -4,6 +4,7 @@ Tests RLMOptions, RLMInference, and RLMAwareMixin for A/B testing support.
 """
 
 import pytest
+
 from cogniverse_core.agents.rlm_options import RLMOptions
 
 
@@ -47,7 +48,7 @@ class TestRLMOptions:
         assert opts.enabled is False
         assert opts.auto_detect is False
         assert opts.context_threshold == 50_000
-        assert opts.max_depth == 3
+        assert opts.max_iterations == 3
         assert opts.backend == "openai"
         assert opts.model is None
 
@@ -55,32 +56,31 @@ class TestRLMOptions:
         """Custom configuration should be preserved."""
         opts = RLMOptions(
             enabled=True,
-            max_depth=5,
+            max_iterations=5,
             backend="anthropic",
             model="claude-3-opus",
             context_threshold=100_000,
         )
         assert opts.enabled is True
-        assert opts.max_depth == 5
+        assert opts.max_iterations == 5
         assert opts.backend == "anthropic"
         assert opts.model == "claude-3-opus"
         assert opts.context_threshold == 100_000
 
-    def test_max_depth_bounds(self):
-        """Max depth should be bounded between 1 and 10."""
-        # Valid depths
-        opts = RLMOptions(max_depth=1)
-        assert opts.max_depth == 1
+    def test_max_iterations_bounds(self):
+        """max_iterations should be bounded between 1 and 10."""
+        opts = RLMOptions(max_iterations=1)
+        assert opts.max_iterations == 1
 
-        opts = RLMOptions(max_depth=10)
-        assert opts.max_depth == 10
+        opts = RLMOptions(max_iterations=10)
+        assert opts.max_iterations == 10
 
         # Invalid depths should raise validation errors
         with pytest.raises(ValueError):
-            RLMOptions(max_depth=0)
+            RLMOptions(max_iterations=0)
 
         with pytest.raises(ValueError):
-            RLMOptions(max_depth=11)
+            RLMOptions(max_iterations=11)
 
     def test_enabled_overrides_auto_detect(self):
         """Explicit enabled=True should work even with auto_detect=False."""
@@ -208,16 +208,13 @@ class TestRLMInference:
         rlm = RLMInference(
             backend="anthropic",
             model="claude-3-opus",
-            sandbox="docker",
             max_iterations=5,
             max_llm_calls=20,
         )
 
         assert rlm.backend == "anthropic"
         assert rlm.model == "claude-3-opus"
-        assert rlm.sandbox == "docker"
         assert rlm.max_iterations == 5
-        assert rlm.max_depth == 5  # Backward compat property
         assert rlm.max_llm_calls == 20
         assert rlm._rlm is None  # Lazy initialization
 
@@ -245,12 +242,12 @@ class TestSearchInputWithRLM:
         """SearchInput should accept RLMOptions."""
         from cogniverse_agents.search_agent import SearchInput
 
-        rlm_opts = RLMOptions(enabled=True, max_depth=5)
+        rlm_opts = RLMOptions(enabled=True, max_iterations=5)
         input_data = SearchInput(query="test query", rlm=rlm_opts)
 
         assert input_data.rlm is not None
         assert input_data.rlm.enabled is True
-        assert input_data.rlm.max_depth == 5
+        assert input_data.rlm.max_iterations == 5
 
     def test_search_input_serialization(self):
         """SearchInput with RLM should serialize correctly."""

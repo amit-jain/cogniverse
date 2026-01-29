@@ -160,7 +160,7 @@ class RLMAwareMixin:
         rlm = self.get_rlm(
             backend=rlm_options.backend,
             model=rlm_options.model or "gpt-4o",
-            max_iterations=rlm_options.max_depth,
+            max_iterations=rlm_options.max_iterations,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
@@ -169,7 +169,7 @@ class RLMAwareMixin:
         )
 
         logger.info(
-            f"Using RLM inference (max_iterations={rlm_options.max_depth}, "
+            f"Using RLM inference (max_iterations={rlm_options.max_iterations}, "
             f"max_llm_calls={rlm_options.max_llm_calls}, "
             f"timeout={rlm_options.timeout_seconds}s, context={len(context)} chars, "
             f"events={'enabled' if event_queue else 'disabled'})"
@@ -205,7 +205,7 @@ class RLMAwareMixin:
         rlm = self.get_rlm(
             backend=rlm_options.backend,
             model=rlm_options.model or "gpt-4o",
-            max_iterations=rlm_options.max_depth,
+            max_iterations=rlm_options.max_iterations,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
@@ -215,7 +215,7 @@ class RLMAwareMixin:
 
         logger.info(
             f"Using RLM for result aggregation ({len(results)} results, "
-            f"max_iterations={rlm_options.max_depth}, timeout={rlm_options.timeout_seconds}s, "
+            f"max_iterations={rlm_options.max_iterations}, timeout={rlm_options.timeout_seconds}s, "
             f"events={'enabled' if event_queue else 'disabled'})"
         )
 

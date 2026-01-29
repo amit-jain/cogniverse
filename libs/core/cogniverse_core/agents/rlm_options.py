@@ -28,13 +28,13 @@ class RLMOptions(BaseModel):
         enabled: Explicitly enable RLM inference for this query
         auto_detect: Auto-enable RLM when context exceeds threshold
         context_threshold: Context size (chars) threshold for auto_detect mode
-        max_depth: Maximum recursion depth for RLM (1-10)
+        max_iterations: Maximum REPL iterations for RLM (1-10)
         backend: LLM backend for RLM (openai, anthropic, litellm)
         model: Model override for RLM (defaults to agent's model)
 
     Usage:
         # Explicit enable (A/B test group B)
-        rlm = RLMOptions(enabled=True, max_depth=3)
+        rlm = RLMOptions(enabled=True, max_iterations=3)
 
         # Auto-detect based on context size
         rlm = RLMOptions(auto_detect=True, context_threshold=50_000)
@@ -63,8 +63,8 @@ class RLMOptions(BaseModel):
         default=50_000,
         description="Context size (chars) threshold for auto_detect mode",
     )
-    max_depth: int = Field(
-        default=3, ge=1, le=10, description="Maximum recursion depth for RLM (1-10)"
+    max_iterations: int = Field(
+        default=3, ge=1, le=10, description="Maximum REPL iterations for RLM (1-10)"
     )
     max_llm_calls: int = Field(
         default=30, ge=1, le=100, description="Maximum LLM sub-calls for RLM (1-100)"

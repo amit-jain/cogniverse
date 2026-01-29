@@ -141,7 +141,6 @@ class InstrumentedRLM(dspy.RLM):
         """
         self._validate_inputs(input_args)
 
-        # Emit start event
         self._emit_sync(
             create_status_event(
                 self._task_id,
@@ -160,10 +159,8 @@ class InstrumentedRLM(dspy.RLM):
             history: REPLHistory = REPLHistory()
 
             for iteration in range(self.max_iterations):
-                # Check cancellation before each iteration
                 self._check_cancelled()
 
-                # Emit progress event
                 self._emit_sync(
                     create_progress_event(
                         self._task_id,
@@ -175,14 +172,11 @@ class InstrumentedRLM(dspy.RLM):
                     )
                 )
 
-                # Execute iteration (calls parent's implementation)
                 result = self._execute_iteration(
                     repl, variables, history, iteration, input_args, output_field_names
                 )
 
-                # Emit artifact with iteration details (if enabled and has reasoning)
                 if self._emit_artifacts:
-                    # REPLHistory entries have reasoning attribute
                     if isinstance(result, REPLHistory) and len(result) > 0:
                         last_entry = result[-1]
                         if hasattr(last_entry, "reasoning"):
@@ -201,7 +195,6 @@ class InstrumentedRLM(dspy.RLM):
                             )
 
                 if isinstance(result, Prediction):
-                    # Emit completion
                     self._emit_sync(
                         create_status_event(
                             self._task_id,
@@ -215,7 +208,6 @@ class InstrumentedRLM(dspy.RLM):
 
                 history = result
 
-            # Max iterations reached - fallback extraction
             self._emit_sync(
                 create_status_event(
                     self._task_id,
@@ -228,7 +220,6 @@ class InstrumentedRLM(dspy.RLM):
 
             result = self._extract_fallback(variables, history, output_field_names)
 
-            # Emit final completion after extraction
             self._emit_sync(
                 create_status_event(
                     self._task_id,
