@@ -59,8 +59,9 @@ class TestDashboardProfileIntegration:
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
         from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
 
@@ -68,8 +69,10 @@ class TestDashboardProfileIntegration:
         BackendRegistry._instance = None
         SchemaRegistry._instance = None
 
-        # Create config manager with backend store
-        config_manager = create_default_config_manager()
+        # Create config manager with SQLite store (no Vespa required)
+        db_path = tmp_path / "test_config.db"
+        store = SQLiteConfigStore(db_path=str(db_path))
+        config_manager = ConfigManager(store=store)
 
         # Set up system config
         system_config = SystemConfig(
