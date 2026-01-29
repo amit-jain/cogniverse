@@ -66,6 +66,15 @@ class RLMOptions(BaseModel):
     max_depth: int = Field(
         default=3, ge=1, le=10, description="Maximum recursion depth for RLM (1-10)"
     )
+    max_llm_calls: int = Field(
+        default=30, ge=1, le=100, description="Maximum LLM sub-calls for RLM (1-100)"
+    )
+    timeout_seconds: int = Field(
+        default=300,
+        ge=10,
+        le=1800,
+        description="Timeout for RLM processing (10-1800 seconds)",
+    )
     backend: str = Field(
         default="openai", description="LLM backend for RLM (openai, anthropic, litellm)"
     )

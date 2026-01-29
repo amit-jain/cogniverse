@@ -23,8 +23,9 @@
 5. [Multi-Tenant Integration](#multi-tenant-integration)
 6. [Usage Examples](#usage-examples)
 7. [Streaming API](#streaming-api)
-8. [Testing](#testing)
-9. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
+8. [RLM Inference (Recursive Language Models)](#rlm-inference-recursive-language-models)
+9. [Testing](#testing)
+10. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
 
 ---
 
@@ -2700,6 +2701,175 @@ All streaming events are plain dicts with a `type` field:
 {"type": "final", "data": {"results": [...], "total": 10}}
 {"type": "error", "message": "Search backend unavailable"}
 ```
+
+---
+
+## RLM Inference (Recursive Language Models)
+
+RLM (Recursive Language Models) enables agents to handle near-infinite context by programmatically examining, decomposing, and recursively calling LLMs. This is useful for processing large result sets, long transcripts, or multi-document analysis.
+
+**Reference**: [RLM Paper (arXiv:2512.24601)](https://arxiv.org/abs/2512.24601)
+
+### Architecture
+
+RLM is implemented using DSPy's built-in `dspy.RLM` module (requires `dspy-ai>=3.1.0`):
+
+```
+libs/agents/cogniverse_agents/
+├── inference/
+│   ├── __init__.py
+│   └── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
+├── mixins/
+│   ├── __init__.py
+│   └── rlm_aware_mixin.py        # RLMAwareMixin for agents
+
+libs/core/cogniverse_core/agents/
+└── rlm_options.py                # RLMOptions schema for query-level config
+```
+
+### Key Components
+
+#### RLMOptions (Query-Level Configuration)
+
+```python
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+# Configuration for A/B testing
+rlm_opts = RLMOptions(
+    enabled=True,              # Explicitly enable RLM
+    auto_detect=False,         # Or auto-enable based on context size
+    context_threshold=50_000,  # Threshold for auto_detect (chars)
+    max_depth=3,               # Maximum recursion depth (1-10)
+    max_llm_calls=30,          # Maximum LLM sub-calls (1-100)
+    timeout_seconds=300,       # Timeout for RLM processing (10-1800s)
+    backend="openai",          # LLM backend (openai, anthropic, litellm)
+    model="gpt-4o",            # Model override
+)
+```
+
+#### RLMInference (Core Wrapper)
+
+```python
+from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
+
+rlm = RLMInference(
+    backend="openai",
+    model="gpt-4o",
+    max_iterations=10,      # Maps to RLMOptions.max_depth
+    max_llm_calls=30,
+    timeout_seconds=300,
+)
+
+result: RLMResult = rlm.process(
+    query="Summarize the main findings",
+    context=large_context_string,  # Can be 100K+ chars
+)
+
+print(f"Answer: {result.answer}")
+print(f"Depth: {result.depth_reached}, Calls: {result.total_calls}")
+print(f"Latency: {result.latency_ms}ms")
+```
+
+#### RLMAwareMixin (Agent Integration)
+
+Agents inherit from `RLMAwareMixin` to gain RLM capabilities:
+
+```python
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+
+class SearchAgent(RLMAwareMixin, MemoryAwareMixin, A2AAgent[...]):
+    async def _process_impl(self, input: SearchInput) -> SearchOutput:
+        # ... perform search ...
+
+        # Check if RLM should be used for this query
+        if self.should_use_rlm_for_query(input.rlm, results_context):
+            rlm_result = self.process_with_rlm(
+                query=input.query,
+                context=results_context,
+                rlm_options=input.rlm,
+            )
+            return SearchOutput(
+                results=results,
+                rlm_synthesis=rlm_result.answer,
+                rlm_telemetry=self.get_rlm_telemetry(rlm_result, len(results_context)),
+            )
+```
+
+### A/B Testing with RLM
+
+RLM is **query-level configurable** to enable A/B testing:
+
+```python
+from cogniverse_agents.search_agent import SearchInput
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+# Group A: Standard search (no RLM)
+input_a = SearchInput(query="machine learning tutorials", rlm=None)
+
+# Group B: RLM-enabled search
+input_b = SearchInput(
+    query="machine learning tutorials",
+    rlm=RLMOptions(enabled=True, max_depth=3),
+)
+
+# Auto-detect mode: Enable RLM only for large context
+input_c = SearchInput(
+    query="machine learning tutorials",
+    rlm=RLMOptions(auto_detect=True, context_threshold=50_000),
+)
+```
+
+### Telemetry Metrics
+
+RLM results include telemetry for comparison in Phoenix dashboard:
+
+| Metric | Description |
+|--------|-------------|
+| `rlm_enabled` | Boolean flag indicating RLM was used |
+| `rlm_depth_reached` | Actual recursion depth achieved |
+| `rlm_total_calls` | Number of LLM sub-calls made |
+| `rlm_tokens_used` | Total tokens (if available) |
+| `rlm_latency_ms` | End-to-end RLM processing time |
+| `context_size_chars` | Input context size |
+
+### SearchOutput with RLM
+
+When RLM is enabled, `SearchOutput` includes:
+
+```python
+class SearchOutput(AgentOutput):
+    # ... standard fields ...
+    results: List[Dict[str, Any]]
+    total_results: int
+
+    # RLM fields (populated when RLM enabled)
+    rlm_synthesis: Optional[str]           # Synthesized answer
+    rlm_telemetry: Optional[Dict[str, Any]] # Telemetry metrics
+```
+
+### Timeout and Error Handling
+
+```python
+from cogniverse_agents.inference.rlm_inference import RLMTimeoutError
+
+try:
+    result = rlm.process(query=query, context=large_context)
+except RLMTimeoutError as e:
+    # Handle timeout (default: 300 seconds)
+    logger.error(f"RLM timed out: {e}")
+except Exception as e:
+    # Handle other errors
+    logger.error(f"RLM failed: {e}")
+```
+
+### High-Value Use Cases
+
+| Use Case | Description |
+|----------|-------------|
+| **Video Analysis** | Process large frame counts recursively |
+| **Multi-Document Search** | Aggregate results from many sources |
+| **Transcript Analysis** | Process long video/audio transcripts |
+| **Cross-Modal Fusion** | Combine results from multiple modalities |
 
 ---
 

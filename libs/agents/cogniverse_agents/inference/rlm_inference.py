@@ -13,6 +13,7 @@ References:
     - DSPy: https://github.com/stanfordnlp/dspy
 """
 
+import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass, field
@@ -21,6 +22,12 @@ from typing import Any, Dict, Optional
 import dspy
 
 logger = logging.getLogger(__name__)
+
+
+class RLMTimeoutError(TimeoutError):
+    """Raised when RLM processing exceeds the configured timeout."""
+
+    pass
 
 
 @dataclass
@@ -86,6 +93,7 @@ class RLMInference:
         max_llm_calls: int = 30,
         sandbox: str = "local",
         api_key: Optional[str] = None,
+        timeout_seconds: Optional[int] = 300,
     ):
         """Initialize RLM inference wrapper.
 
@@ -96,6 +104,7 @@ class RLMInference:
             max_llm_calls: Limit on sub-LLM queries (default: 30)
             sandbox: Execution sandbox (local only for now)
             api_key: Optional API key for the backend
+            timeout_seconds: Maximum time for RLM processing (default: 300s/5min)
         """
         self.backend = backend
         self.model = model
@@ -103,6 +112,7 @@ class RLMInference:
         self.max_llm_calls = max_llm_calls
         self.sandbox = sandbox
         self._api_key = api_key
+        self.timeout_seconds = timeout_seconds
         self._rlm = None  # Lazy initialization
 
     @property
@@ -139,6 +149,14 @@ class RLMInference:
             )
         return self._rlm
 
+    def _execute_rlm(self, rlm, full_query: str, context: str) -> Any:
+        """Execute RLM in a thread-safe manner.
+
+        This is separated for timeout handling via ThreadPoolExecutor.
+        """
+        with dspy.context(lm=self._lm):
+            return rlm(context=context, query=full_query)
+
     def process(
         self,
         query: str,
@@ -155,6 +173,9 @@ class RLMInference:
 
         Returns:
             RLMResult with answer and telemetry metadata
+
+        Raises:
+            RLMTimeoutError: If processing exceeds timeout_seconds
         """
         start_time = time.time()
 
@@ -164,9 +185,22 @@ class RLMInference:
         full_query = f"{system_prompt}\n\n{query}" if system_prompt else query
 
         try:
-            # Execute RLM with dspy.context() for async safety
-            with dspy.context(lm=self._lm):
-                result = rlm(context=context, query=full_query)
+            # Execute RLM with timeout protection
+            if self.timeout_seconds:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        self._execute_rlm, rlm, full_query, context
+                    )
+                    try:
+                        result = future.result(timeout=self.timeout_seconds)
+                    except concurrent.futures.TimeoutError:
+                        raise RLMTimeoutError(
+                            f"RLM processing exceeded timeout of {self.timeout_seconds}s"
+                        )
+            else:
+                # No timeout - execute directly
+                result = self._execute_rlm(rlm, full_query, context)
+
             answer = result.answer if hasattr(result, "answer") else str(result)
 
             # Extract trajectory info for telemetry
@@ -174,6 +208,8 @@ class RLMInference:
             depth_reached = len(trajectory) if trajectory else 1
             total_calls = len(trajectory) if trajectory else 1
 
+        except RLMTimeoutError:
+            raise
         except Exception as e:
             logger.warning(f"RLM execution failed: {e}")
             raise
@@ -196,6 +232,7 @@ class RLMInference:
                 "query": query[:100],
                 "backend": self.backend,
                 "model": self.model,
+                "timeout_seconds": self.timeout_seconds,
             },
         )
 

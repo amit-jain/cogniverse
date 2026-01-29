@@ -54,6 +54,8 @@ class RLMAwareMixin:
         backend: str = "openai",
         model: str = "gpt-4o",
         max_iterations: int = 10,
+        max_llm_calls: int = 30,
+        timeout_seconds: int = 300,
     ) -> RLMInference:
         """Get or create RLM inference instance with specified config.
 
@@ -61,6 +63,8 @@ class RLMAwareMixin:
             backend: LLM backend (openai, anthropic, litellm)
             model: Model name
             max_iterations: Maximum REPL iteration loops
+            max_llm_calls: Maximum LLM sub-calls
+            timeout_seconds: Timeout for RLM processing
 
         Returns:
             RLMInference instance
@@ -71,11 +75,15 @@ class RLMAwareMixin:
             or self._rlm_instance.backend != backend
             or self._rlm_instance.model != model
             or self._rlm_instance.max_iterations != max_iterations
+            or self._rlm_instance.max_llm_calls != max_llm_calls
+            or self._rlm_instance.timeout_seconds != timeout_seconds
         ):
             self._rlm_instance = RLMInference(
                 backend=backend,
                 model=model,
                 max_iterations=max_iterations,
+                max_llm_calls=max_llm_calls,
+                timeout_seconds=timeout_seconds,
             )
         return self._rlm_instance
 
@@ -121,12 +129,15 @@ class RLMAwareMixin:
         rlm = self.get_rlm(
             backend=rlm_options.backend,
             model=rlm_options.model or "gpt-4o",
-            max_iterations=rlm_options.max_depth,  # RLMOptions.max_depth maps to max_iterations
+            max_iterations=rlm_options.max_depth,
+            max_llm_calls=rlm_options.max_llm_calls,
+            timeout_seconds=rlm_options.timeout_seconds,
         )
 
         logger.info(
             f"Using RLM inference (max_iterations={rlm_options.max_depth}, "
-            f"context={len(context)} chars)"
+            f"max_llm_calls={rlm_options.max_llm_calls}, "
+            f"timeout={rlm_options.timeout_seconds}s, context={len(context)} chars)"
         )
 
         return rlm.process(
@@ -155,12 +166,14 @@ class RLMAwareMixin:
         rlm = self.get_rlm(
             backend=rlm_options.backend,
             model=rlm_options.model or "gpt-4o",
-            max_iterations=rlm_options.max_depth,  # RLMOptions.max_depth maps to max_iterations
+            max_iterations=rlm_options.max_depth,
+            max_llm_calls=rlm_options.max_llm_calls,
+            timeout_seconds=rlm_options.timeout_seconds,
         )
 
         logger.info(
             f"Using RLM for result aggregation ({len(results)} results, "
-            f"max_iterations={rlm_options.max_depth})"
+            f"max_iterations={rlm_options.max_depth}, timeout={rlm_options.timeout_seconds}s)"
         )
 
         return rlm.process_search_results(

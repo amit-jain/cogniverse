@@ -33,6 +33,7 @@ from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_agents.query.encoders import QueryEncoderFactory
 
 # Enhanced query support from DSPy routing system
@@ -94,12 +95,26 @@ class SearchOutput(AgentOutput):
     query: str = Field(..., description="Original query")
     enhanced_query: Optional[str] = Field(None, description="DSPy-enhanced query")
     modality: str = Field("video", description="Content modality")
-    search_mode: str = Field("single_profile", description="Search mode: single_profile, ensemble")
+    search_mode: str = Field(
+        "single_profile", description="Search mode: single_profile, ensemble"
+    )
     profile: Optional[str] = Field(None, description="Active profile (for single mode)")
-    profiles: Optional[List[str]] = Field(None, description="Profiles used (for ensemble mode)")
+    profiles: Optional[List[str]] = Field(
+        None, description="Profiles used (for ensemble mode)"
+    )
     rrf_k: Optional[int] = Field(None, description="RRF constant (for ensemble mode)")
-    results: List[Dict[str, Any]] = Field(default_factory=list, description="Search results")
+    results: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Search results"
+    )
     total_results: int = Field(0, description="Total number of results")
+
+    # RLM synthesis (when RLM is enabled via input.rlm)
+    rlm_synthesis: Optional[str] = Field(
+        None, description="RLM-synthesized answer from results (only when RLM enabled)"
+    )
+    rlm_telemetry: Optional[Dict[str, Any]] = Field(
+        None, description="RLM telemetry metrics for A/B testing"
+    )
 
 
 class SearchAgentDeps(AgentDeps):
@@ -113,7 +128,9 @@ class SearchAgentDeps(AgentDeps):
     profile: Optional[str] = Field(None, description="Active profile")
     backend_type: str = Field("vespa", description="Backend type")
     model_name: Optional[str] = Field(None, description="Model name")
-    auto_create_memory_schema: bool = Field(True, description="Auto-create memory schema")
+    auto_create_memory_schema: bool = Field(
+        True, description="Auto-create memory schema"
+    )
 
 
 # DSPy Module for Generic Search
@@ -121,7 +138,9 @@ class GenericSearchSignature(dspy.Signature):
     """DSPy signature for generic search operations"""
 
     query: str = dspy.InputField(desc="Search query")
-    modality: str = dspy.InputField(desc="Content modality to search (video/image/text/audio/document)")
+    modality: str = dspy.InputField(
+        desc="Content modality to search (video/image/text/audio/document)"
+    )
     top_k: int = dspy.InputField(desc="Number of results to return")
 
     search_strategy: str = dspy.OutputField(desc="Recommended search strategy")
@@ -146,9 +165,7 @@ class GenericSearchModule(dspy.Module):
             logger.warning(f"DSPy search optimization failed: {e}, using defaults")
             # Fallback to simple prediction
             return dspy.Prediction(
-                search_strategy="hybrid",
-                enhanced_query=query,
-                confidence=0.5
+                search_strategy="hybrid", enhanced_query=query, confidence=0.5
             )
 
 
@@ -168,7 +185,9 @@ class RelationshipAwareSearchParams(BaseModel):
     """Enhanced search parameters with relationship context"""
 
     query: str = Field(..., description="Search query (may be enhanced)")
-    modality: str = Field("video", description="Content modality (video/image/text/audio/document)")
+    modality: str = Field(
+        "video", description="Content modality (video/image/text/audio/document)"
+    )
     original_query: Optional[str] = Field(None, description="Original user query")
     enhanced_query: Optional[str] = Field(
         None, description="Relationship-enhanced query"
@@ -180,7 +199,9 @@ class RelationshipAwareSearchParams(BaseModel):
         default_factory=list, description="Extracted relationships"
     )
     top_k: int = Field(10, description="Number of results to return")
-    ranking_strategy: Optional[str] = Field(None, description="Backend ranking strategy")
+    ranking_strategy: Optional[str] = Field(
+        None, description="Backend ranking strategy"
+    )
     start_date: Optional[str] = Field(None, description="Start date filter")
     end_date: Optional[str] = Field(None, description="End date filter")
     confidence_threshold: float = Field(0.0, description="Minimum confidence score")
@@ -342,7 +363,11 @@ class ContentProcessor:
 
 
 # --- Generic Multi-Modal Search Agent ---
-class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAgentDeps]):
+class SearchAgent(
+    RLMAwareMixin,
+    MemoryAwareMixin,
+    A2AAgent[SearchInput, SearchOutput, SearchAgentDeps],
+):
     """
     Type-safe generic multi-modal search agent with full A2A protocol support.
 
@@ -386,12 +411,21 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         # Debug: Log config_manager state
         logger_temp = logging.getLogger(__name__)
         if config_manager is None:
-            logger_temp.warning("⚠️  SearchAgent received config_manager=None, creating default")
+            logger_temp.warning(
+                "⚠️  SearchAgent received config_manager=None, creating default"
+            )
             from cogniverse_foundation.config.utils import create_default_config_manager
+
             config_manager = create_default_config_manager()
         else:
-            db_path = getattr(config_manager.store, 'db_path', 'unknown') if hasattr(config_manager, 'store') else 'no store'
-            logger_temp.warning(f"✅ SearchAgent received config_manager with DB: {db_path}")
+            db_path = (
+                getattr(config_manager.store, "db_path", "unknown")
+                if hasattr(config_manager, "store")
+                else "no store"
+            )
+            logger_temp.warning(
+                f"✅ SearchAgent received config_manager with DB: {db_path}"
+            )
 
         # Store dependencies for use in initialization
         self.schema_loader = schema_loader
@@ -461,7 +495,10 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
         # Load tenant-specific configuration (separate from A2AAgentConfig in self.config)
         from cogniverse_foundation.config.utils import get_config
-        self.search_config = get_config(tenant_id=deps.tenant_id, config_manager=config_manager)
+
+        self.search_config = get_config(
+            tenant_id=deps.tenant_id, config_manager=config_manager
+        )
 
         # Initialize memory for search agent
         memory_initialized = self.initialize_memory(
@@ -475,7 +512,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             schema_loader=self.schema_loader,
         )
         if memory_initialized:
-            logger.info(f"✅ Memory initialized for search_agent (tenant: {deps.tenant_id})")
+            logger.info(
+                f"✅ Memory initialized for search_agent (tenant: {deps.tenant_id})"
+            )
         else:
             logger.info("ℹ️  Memory disabled or not configured for search_agent")
 
@@ -489,9 +528,15 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
         # Ensure active_profile is a string (config may return dict)
         if isinstance(active_profile_raw, dict):
-            active_profile = active_profile_raw.get("name", "video_colpali_smol500_mv_frame")
+            active_profile = active_profile_raw.get(
+                "name", "video_colpali_smol500_mv_frame"
+            )
         else:
-            active_profile = str(active_profile_raw) if active_profile_raw else "video_colpali_smol500_mv_frame"
+            active_profile = (
+                str(active_profile_raw)
+                if active_profile_raw
+                else "video_colpali_smol500_mv_frame"
+            )
 
         self.active_profile = active_profile
 
@@ -503,7 +548,11 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             profiles = profiles_raw
         elif isinstance(profiles_raw, list):
             # Convert list of profile dicts to dict keyed by name
-            profiles = {p.get("name", f"profile_{i}"): p for i, p in enumerate(profiles_raw) if isinstance(p, dict)}
+            profiles = {
+                p.get("name", f"profile_{i}"): p
+                for i, p in enumerate(profiles_raw)
+                if isinstance(p, dict)
+            }
         else:
             profiles = {}
 
@@ -518,7 +567,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             model_name = deps.model_name or "vidore/colsmol-500m"
             self.embedding_type = "frame_based"
 
-        backend_type = deps.backend_type or self.search_config.get("backend_type", "vespa")
+        backend_type = deps.backend_type or self.search_config.get(
+            "backend_type", "vespa"
+        )
 
         # Initialize search backend via backend registry
         try:
@@ -542,9 +593,11 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
             registry = get_backend_registry()
             self.search_backend = registry.get_search_backend(
-                backend_type, deps.tenant_id, backend_config,
+                backend_type,
+                deps.tenant_id,
+                backend_config,
                 config_manager=self.config_manager,
-                schema_loader=self.schema_loader
+                schema_loader=self.schema_loader,
             )
 
             logger.info(
@@ -574,7 +627,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         self,
         profile_results: Dict[str, List[Dict[str, Any]]],
         k: int = 60,
-        top_k: int = 10
+        top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Fuse results from multiple profiles using Reciprocal Rank Fusion (RRF).
@@ -589,7 +642,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         Returns:
             Fused and re-ranked results
         """
-        logger.info(f"Fusing results from {len(profile_results)} profiles using RRF (k={k})")
+        logger.info(
+            f"Fusing results from {len(profile_results)} profiles using RRF (k={k})"
+        )
 
         # Accumulate RRF scores by document ID
         doc_scores = {}  # doc_id -> {score, result_data}
@@ -610,7 +665,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
                 doc_scores[doc_id]["score"] += rrf_score
                 doc_scores[doc_id]["profile_ranks"][profile_name] = rank
-                doc_scores[doc_id]["profile_scores"][profile_name] = result.get("score", 0.0)
+                doc_scores[doc_id]["profile_scores"][profile_name] = result.get(
+                    "score", 0.0
+                )
 
         # Sort by RRF score
         fused_results = []
@@ -638,7 +695,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         modality: str = "video",
         top_k: int = 10,
         rrf_k: int = 60,
-        **kwargs
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Execute parallel search across multiple profiles and fuse with RRF.
@@ -667,12 +724,16 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 profiles_config = backend_config_data.get("profiles", {})
 
                 if profile_name not in profiles_config:
-                    logger.warning(f"Profile {profile_name} not found in config, using active profile encoder")
+                    logger.warning(
+                        f"Profile {profile_name} not found in config, using active profile encoder"
+                    )
                     return profile_name, self.query_encoder.encode(query)
 
                 # Create encoder for this profile
                 profile_config = profiles_config[profile_name]
-                model_name = profile_config.get("embedding_model", "vidore/colsmol-500m")
+                model_name = profile_config.get(
+                    "embedding_model", "vidore/colsmol-500m"
+                )
 
                 # Reuse active encoder if same model
                 if profile_name == self.active_profile:
@@ -680,12 +741,15 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 else:
                     # Create temporary encoder for this profile
                     from cogniverse_agents.query.encoders import QueryEncoderFactory
+
                     encoder = QueryEncoderFactory.create_encoder(
                         profile_name, model_name, config=self.search_config
                     )
                     embeddings = encoder.encode(query)
 
-                logger.debug(f"Encoded query for profile {profile_name}: shape {embeddings.shape}")
+                logger.debug(
+                    f"Encoded query for profile {profile_name}: shape {embeddings.shape}"
+                )
                 return profile_name, embeddings
 
             except Exception as e:
@@ -704,10 +768,13 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         if not valid_embeddings:
             raise ValueError("Failed to encode query for any profile")
 
-        logger.info(f"Encoded query for {len(valid_embeddings)}/{len(profiles)} profiles")
+        logger.info(
+            f"Encoded query for {len(valid_embeddings)}/{len(profiles)} profiles"
+        )
 
         # Execute searches in parallel using shared thread pool
         import concurrent.futures
+
         loop = asyncio.get_event_loop()
 
         async def search_profile(profile_name: str, query_embeddings, executor):
@@ -734,7 +801,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                     result_dict = {
                         "id": sr.document.id,
                         "score": sr.score,
-                        **sr.document.metadata
+                        **sr.document.metadata,
                     }
                     results.append(result_dict)
 
@@ -746,7 +813,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 return profile_name, []
 
         # Create shared thread pool and run searches in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_embeddings)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(valid_embeddings)
+        ) as executor:
             search_tasks = [
                 search_profile(profile, embeddings, executor)
                 for profile, embeddings in valid_embeddings.items()
@@ -754,7 +823,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             profile_results_list = await asyncio.gather(*search_tasks)
 
         # Convert to dict
-        profile_results = {profile: results for profile, results in profile_results_list if results}
+        profile_results = {
+            profile: results for profile, results in profile_results_list if results
+        }
 
         if not profile_results:
             logger.warning("No results from any profile")
@@ -813,7 +884,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
             # Execute search with backend
             if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning("Date filters (start_date/end_date) not yet supported by backend")
+                logger.warning(
+                    "Date filters (start_date/end_date) not yet supported by backend"
+                )
 
             query_dict = {
                 "query": query,
@@ -833,7 +906,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 result_dict = {
                     "id": sr.document.id,
                     "score": sr.score,
-                    **sr.document.metadata
+                    **sr.document.metadata,
                 }
                 results.append(result_dict)
 
@@ -866,7 +939,11 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 self.remember_failure(
                     query=query,
                     error=str(e),
-                    metadata={"search_type": "text", "modality": modality, "top_k": top_k},
+                    metadata={
+                        "search_type": "text",
+                        "modality": modality,
+                        "top_k": top_k,
+                    },
                 )
                 logger.debug("💾 Stored search failure in memory")
 
@@ -890,7 +967,12 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         return self._search_by_text(query, modality=modality, top_k=top_k, **kwargs)
 
     def _search_by_video(
-        self, video_data: bytes, filename: str, modality: str = "video", top_k: int = 10, **kwargs
+        self,
+        video_data: bytes,
+        filename: str,
+        modality: str = "video",
+        top_k: int = 10,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Internal: Search content using video query.
@@ -905,7 +987,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         Returns:
             List of search results
         """
-        logger.info(f"Video-to-{modality} search with file: '{filename}' (top_k={top_k})")
+        logger.info(
+            f"Video-to-{modality} search with file: '{filename}' (top_k={top_k})"
+        )
 
         try:
             # Extract embeddings from uploaded video
@@ -915,7 +999,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
             # Execute search with backend
             if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning("Date filters (start_date/end_date) not yet supported by backend")
+                logger.warning(
+                    "Date filters (start_date/end_date) not yet supported by backend"
+                )
 
             query_dict = {
                 "query": f"Video similarity search for {filename}",
@@ -935,7 +1021,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 result_dict = {
                     "id": sr.document.id,
                     "score": sr.score,
-                    **sr.document.metadata
+                    **sr.document.metadata,
                 }
                 results.append(result_dict)
 
@@ -981,7 +1067,12 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             raise
 
     def _search_by_image(
-        self, image_data: bytes, filename: str, modality: str = "video", top_k: int = 10, **kwargs
+        self,
+        image_data: bytes,
+        filename: str,
+        modality: str = "video",
+        top_k: int = 10,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Internal: Search content using image query.
@@ -996,7 +1087,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         Returns:
             List of search results
         """
-        logger.info(f"Image-to-{modality} search with file: '{filename}' (top_k={top_k})")
+        logger.info(
+            f"Image-to-{modality} search with file: '{filename}' (top_k={top_k})"
+        )
 
         try:
             # Extract embeddings from uploaded image
@@ -1006,7 +1099,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
             # Execute search with backend
             if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning("Date filters (start_date/end_date) not yet supported by backend")
+                logger.warning(
+                    "Date filters (start_date/end_date) not yet supported by backend"
+                )
 
             query_dict = {
                 "query": f"Image similarity search for {filename}",
@@ -1026,7 +1121,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 result_dict = {
                     "id": sr.document.id,
                     "score": sr.score,
-                    **sr.document.metadata
+                    **sr.document.metadata,
                 }
                 results.append(result_dict)
 
@@ -1133,7 +1228,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             elif isinstance(part, TextPart):
                 # Simple text search
                 search_type = "text"
-                text_results = self._search_by_text(query=part.text, modality="video", top_k=10)
+                text_results = self._search_by_text(
+                    query=part.text, modality="video", top_k=10
+                )
                 results.extend(text_results)
 
         if not results:
@@ -1214,7 +1311,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             query_embeddings = self.query_encoder.encode(search_query)
 
             if search_params.start_date or search_params.end_date:
-                logger.warning("Date filters (start_date/end_date) not yet supported by backend")
+                logger.warning(
+                    "Date filters (start_date/end_date) not yet supported by backend"
+                )
 
             query_dict = {
                 "query": search_query,
@@ -1234,7 +1333,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 result_dict = {
                     "id": sr.document.id,
                     "score": sr.score,
-                    **sr.document.metadata
+                    **sr.document.metadata,
                 }
                 raw_results.append(result_dict)
 
@@ -1492,7 +1591,9 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def _process_impl(self, input: Union[SearchInput, Dict[str, Any]]) -> SearchOutput:
+    async def _process_impl(
+        self, input: Union[SearchInput, Dict[str, Any]]
+    ) -> SearchOutput:
         """
         Process search request with typed input/output.
 
@@ -1510,9 +1611,20 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         modality = input.modality
         top_k = input.top_k
 
+        # Track search mode and profile info for output
+        search_mode = "single_profile"
+        profile = self.active_profile
+        profiles_used = None
+        rrf_k_used = None
+        enhanced_query = None
+
         # Check for ensemble mode (multiple profiles)
         if input.profiles and len(input.profiles) > 1:
             logger.info(f"Ensemble mode detected: {len(input.profiles)} profiles")
+            search_mode = "ensemble"
+            profile = None
+            profiles_used = input.profiles
+            rrf_k_used = input.rrf_k
 
             results = await self._search_ensemble(
                 query=query,
@@ -1523,21 +1635,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 start_date=input.start_date,
                 end_date=input.end_date,
             )
-            return SearchOutput(
-                query=query,
-                enhanced_query=None,
-                modality=modality,
-                search_mode="ensemble",
-                profile=None,
-                profiles=input.profiles,
-                rrf_k=input.rrf_k,
-                results=results,
-                total_results=len(results),
-            )
-
-        # Route based on input type
-        enhanced_query = None
-        if input.video_data:
+        elif input.video_data:
             # Video-based search
             results = self._search_by_video(
                 video_data=input.video_data,
@@ -1557,9 +1655,13 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             # Text-based search with optional DSPy optimization
             search_query = query
             try:
-                dspy_result = self.search_module.forward(query=query, modality=modality, top_k=top_k)
+                dspy_result = self.search_module.forward(
+                    query=query, modality=modality, top_k=top_k
+                )
                 # Use enhanced query from DSPy if confidence is high
-                if hasattr(dspy_result, "enhanced_query") and hasattr(dspy_result, "confidence"):
+                if hasattr(dspy_result, "enhanced_query") and hasattr(
+                    dspy_result, "confidence"
+                ):
                     if dspy_result.confidence > 0.7:
                         search_query = dspy_result.enhanced_query
                         enhanced_query = search_query
@@ -1575,16 +1677,49 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
                 end_date=input.end_date,
             )
 
+        # RLM Processing: Synthesize answer from results if RLM is enabled
+        rlm_synthesis = None
+        rlm_telemetry = None
+
+        # Build context from results for RLM decision
+        results_context = "\n".join(
+            [
+                f"Result {i+1}: {r.get('summary', r.get('title', str(r)))}"
+                for i, r in enumerate(results[:20])
+            ]
+        )
+
+        if self.should_use_rlm_for_query(input.rlm, results_context):
+            logger.info(f"RLM enabled for query: {query[:50]}...")
+            try:
+                rlm_result = self.process_with_rlm(
+                    query=query,
+                    context=results_context,
+                    rlm_options=input.rlm,
+                )
+                rlm_synthesis = rlm_result.answer
+                rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(results_context))
+                logger.info(
+                    f"RLM synthesis complete: depth={rlm_result.depth_reached}, "
+                    f"calls={rlm_result.total_calls}, latency={rlm_result.latency_ms:.0f}ms"
+                )
+            except Exception as e:
+                logger.error(f"RLM processing failed: {e}")
+                # Continue without RLM synthesis - don't fail the entire search
+                rlm_telemetry = {"rlm_enabled": True, "rlm_error": str(e)}
+
         return SearchOutput(
             query=query,
             enhanced_query=enhanced_query,
             modality=modality,
-            search_mode="single_profile",
-            profile=self.active_profile,
-            profiles=None,
-            rrf_k=None,
+            search_mode=search_mode,
+            profile=profile,
+            profiles=profiles_used,
+            rrf_k=rrf_k_used,
             results=results,
             total_results=len(results),
+            rlm_synthesis=rlm_synthesis,
+            rlm_telemetry=rlm_telemetry,
         )
 
     # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
@@ -1613,7 +1748,9 @@ async def startup_event():
         if not os.getenv("PYTEST_CURRENT_TEST"):
             raise ValueError(error_msg)
         else:
-            logger.warning("PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id")
+            logger.warning(
+                "PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id"
+            )
             tenant_id = "test_tenant"
 
     try:
@@ -1627,6 +1764,7 @@ async def startup_event():
         # Note: schema_loader is required for SearchAgent
         # In production, inject via proper dependency container
         from cogniverse_core.schemas.schema_loader import SchemaLoader
+
         schema_loader = SchemaLoader()
 
         search_agent = SearchAgent(deps=deps, schema_loader=schema_loader)
@@ -1695,7 +1833,9 @@ async def process_task(task: Dict[str, Any]):
 
 
 @app.post("/upload/video")
-async def upload_video_search(file: UploadFile = File(...), top_k: int = 10, modality: str = "video"):
+async def upload_video_search(
+    file: UploadFile = File(...), top_k: int = 10, modality: str = "video"
+):
     """Upload video file and search for similar content"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -1724,7 +1864,9 @@ async def upload_video_search(file: UploadFile = File(...), top_k: int = 10, mod
 
 
 @app.post("/upload/image")
-async def upload_image_search(file: UploadFile = File(...), top_k: int = 10, modality: str = "video"):
+async def upload_image_search(
+    file: UploadFile = File(...), top_k: int = 10, modality: str = "video"
+):
     """Upload image file and search for similar content"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -1858,7 +2000,9 @@ async def handle_enhanced_a2a_task(task: dict):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generic Multi-Modal Search Agent Server")
+    parser = argparse.ArgumentParser(
+        description="Generic Multi-Modal Search Agent Server"
+    )
     parser.add_argument(
         "--port", type=int, default=8002, help="Port to run the server on"
     )

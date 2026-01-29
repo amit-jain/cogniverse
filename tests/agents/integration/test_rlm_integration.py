@@ -849,3 +849,75 @@ class TestRLMRealInferenceIntegration:
         logger.info(
             f"RLMAwareMixin.process_with_rlm completed: {result.answer[:100]}..."
         )
+
+
+@pytest.mark.integration
+class TestSearchAgentRLMIntegration:
+    """
+    Integration tests for SearchAgent with RLM integration.
+
+    Tests verify that SearchOutput includes RLM fields when RLM is enabled.
+    """
+
+    def test_search_output_has_rlm_fields(self):
+        """SearchOutput should have rlm_synthesis and rlm_telemetry fields."""
+        from cogniverse_agents.search_agent import SearchOutput
+
+        # Create output with RLM fields
+        output = SearchOutput(
+            query="test query",
+            modality="video",
+            search_mode="single_profile",
+            results=[{"id": "1", "score": 0.9}],
+            total_results=1,
+            rlm_synthesis="Synthesized answer from RLM",
+            rlm_telemetry={"rlm_enabled": True, "rlm_depth_reached": 2},
+        )
+
+        assert output.rlm_synthesis == "Synthesized answer from RLM"
+        assert output.rlm_telemetry["rlm_enabled"] is True
+        assert output.rlm_telemetry["rlm_depth_reached"] == 2
+
+    def test_search_output_rlm_fields_optional(self):
+        """SearchOutput RLM fields should be optional (None by default)."""
+        from cogniverse_agents.search_agent import SearchOutput
+
+        output = SearchOutput(
+            query="test query",
+            modality="video",
+            search_mode="single_profile",
+            results=[],
+            total_results=0,
+        )
+
+        assert output.rlm_synthesis is None
+        assert output.rlm_telemetry is None
+
+    def test_search_agent_inherits_rlm_aware_mixin(self):
+        """SearchAgent should inherit from RLMAwareMixin."""
+        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+        from cogniverse_agents.search_agent import SearchAgent
+
+        assert issubclass(SearchAgent, RLMAwareMixin)
+
+    def test_search_input_rlm_with_new_options(self):
+        """SearchInput should accept RLMOptions with new fields."""
+        from cogniverse_agents.search_agent import SearchInput
+
+        rlm_opts = RLMOptions(
+            enabled=True,
+            max_depth=5,
+            max_llm_calls=50,
+            timeout_seconds=600,
+            backend="anthropic",
+            model="claude-3-sonnet",
+        )
+
+        input_data = SearchInput(query="test", rlm=rlm_opts)
+
+        assert input_data.rlm.enabled is True
+        assert input_data.rlm.max_depth == 5
+        assert input_data.rlm.max_llm_calls == 50
+        assert input_data.rlm.timeout_seconds == 600
+        assert input_data.rlm.backend == "anthropic"
+        assert input_data.rlm.model == "claude-3-sonnet"

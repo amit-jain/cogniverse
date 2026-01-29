@@ -7,12 +7,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
-from cogniverse_agents.tools.a2a_utils import DataPart
 from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_agents.tools.a2a_utils import Task
+from cogniverse_agents.tools.a2a_utils import DataPart, Task
 
 logger = logging.getLogger(__name__)
 
