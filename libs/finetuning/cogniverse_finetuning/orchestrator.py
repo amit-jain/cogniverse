@@ -21,7 +21,10 @@ from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
-from cogniverse_finetuning.dataset.trace_converter import TraceToInstructionConverter
+from cogniverse_finetuning.dataset.trace_converter import (
+    TraceToInstructionConverter,
+    TraceToTrajectoryConverter,
+)
 from cogniverse_finetuning.evaluation.adapter_evaluator import AdapterEvaluator
 from cogniverse_finetuning.training.backend import (
     LocalTrainingBackend,
@@ -136,6 +139,11 @@ class OrchestrationConfig:
     min_dpo_pairs: int = 20
     min_triplets: int = 100  # For embeddings
 
+    # Multi-turn conversation fine-tuning
+    multi_turn: bool = False
+    min_turns_per_session: int = 2
+    system_prompt: str = "You are a helpful assistant."
+
     # Training config
     epochs: int = 3
     batch_size: int = 4
@@ -179,7 +187,7 @@ class OrchestrationResult:
     """Result from orchestration."""
 
     model_type: Literal["llm", "embedding"]
-    training_method: Literal["sft", "dpo", "embedding"]
+    training_method: Literal["sft", "dpo", "embedding", "sft_multi_turn"]
     adapter_path: str
     metrics: Dict
     base_model: str
@@ -521,9 +529,13 @@ class FinetuningOrchestrator:
     async def _run_llm_finetuning(
         self, config: OrchestrationConfig
     ) -> OrchestrationResult:
-        """Run LLM fine-tuning (SFT or DPO)."""
+        """Run LLM fine-tuning (SFT, DPO, or multi-turn SFT)."""
         if not config.agent_type:
             raise ValueError("agent_type required for LLM fine-tuning")
+
+        # Multi-turn bypasses method selection entirely — always SFT
+        if config.multi_turn:
+            return await self._run_multi_turn_sft(config)
 
         # 1. Analyze data and select method
         logger.info("Step 1: Analyzing available data...")
@@ -747,6 +759,133 @@ class FinetuningOrchestrator:
                 f"Analysis: {analysis}"
             )
 
+    async def _run_multi_turn_sft(
+        self, config: OrchestrationConfig
+    ) -> OrchestrationResult:
+        """
+        Run multi-turn conversation SFT.
+
+        Extracts conversation trajectories from telemetry, formats them as
+        ChatML text, and trains using the standard SFT backend.
+
+        Args:
+            config: OrchestrationConfig with multi_turn=True
+
+        Returns:
+            OrchestrationResult with training_method="sft_multi_turn"
+        """
+        # 1. Extract conversation trajectories
+        logger.info("Step 1: Extracting conversation trajectories...")
+        converter = TraceToTrajectoryConverter(self.provider)
+        trajectory_dataset = await converter.convert(
+            project=config.project,
+            agent_type=config.agent_type,
+            min_turns_per_session=config.min_turns_per_session,
+        )
+
+        trajectories = trajectory_dataset.trajectories
+        total_turns = sum(len(t.turns) for t in trajectories)
+        logger.info(
+            f"Extracted {len(trajectories)} trajectories ({total_turns} total turns)"
+        )
+
+        if not trajectories:
+            raise ValueError(
+                f"No multi-turn trajectories found with at least "
+                f"{config.min_turns_per_session} turns per session."
+            )
+
+        # 2. Format as ChatML text for SFT
+        logger.info("Step 2: Formatting trajectories as ChatML...")
+        formatted_dataset = InstructionFormatter.format_trajectory_chatml(
+            trajectories, config.system_prompt
+        )
+
+        # 3. Validate dataset
+        validate_sft_dataset(formatted_dataset)
+        logger.info(f"Dataset validation passed: {len(formatted_dataset)} examples")
+
+        # 4. Train with backend
+        logger.info("Step 3: Training with SFT backend...")
+        backend = self._create_backend(config)
+
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        output_dir = (
+            f"{config.output_dir}/sft_multi_turn_{config.agent_type}_{timestamp}"
+        )
+        training_config = {
+            "use_lora": config.use_lora,
+            "epochs": config.epochs,
+            "batch_size": config.batch_size,
+            "learning_rate": config.learning_rate,
+            "dataset_text_field": "text",
+        }
+
+        result = await backend.train_sft(
+            dataset=formatted_dataset,
+            base_model=config.base_model,
+            output_dir=output_dir,
+            config=training_config,
+        )
+
+        orchestration_result = OrchestrationResult(
+            model_type="llm",
+            training_method="sft_multi_turn",
+            adapter_path=result.adapter_path,
+            metrics=result.metrics,
+            base_model=config.base_model,
+            lora_config={"use_lora": config.use_lora},
+            used_synthetic=False,
+        )
+
+        # 5. Evaluate adapter
+        if config.evaluate_after_training:
+            logger.info("Running post-training evaluation...")
+            evaluator = AdapterEvaluator(
+                telemetry_provider=self.provider,
+                agent_type=config.agent_type,
+            )
+
+            try:
+                evaluation_result = await evaluator.evaluate(
+                    base_model=config.base_model,
+                    adapter_path=result.adapter_path,
+                    project=config.project,
+                    test_size=config.test_set_size,
+                )
+
+                self._log_evaluation_to_phoenix(
+                    config=config,
+                    adapter_path=result.adapter_path,
+                    evaluation_result=evaluation_result,
+                )
+
+                orchestration_result.evaluation_result = evaluation_result
+
+                logger.info(
+                    f"Evaluation complete: accuracy improvement="
+                    f"{evaluation_result.accuracy_improvement:.2%}"
+                )
+
+            except Exception as e:
+                logger.error(f"Evaluation failed: {e}", exc_info=True)
+
+        # 6. Log experiment to Phoenix
+        run_id = f"run_{datetime.utcnow().isoformat()}"
+        self._log_experiment_to_phoenix(
+            config=config,
+            result=orchestration_result,
+            analysis=None,
+            approved_batch=None,
+            formatted_dataset=formatted_dataset,
+        )
+
+        # 7. Register adapter in registry
+        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        orchestration_result.adapter_id = adapter_id
+
+        return orchestration_result
+
     async def _run_embedding_finetuning(
         self, config: OrchestrationConfig
     ) -> OrchestrationResult:
@@ -855,6 +994,10 @@ async def finetune(
     cpu: int = 4,
     memory: int = 16384,
     timeout: int = 3600,  # seconds
+    # Multi-turn conversation fine-tuning
+    multi_turn: bool = False,
+    min_turns_per_session: int = 2,
+    system_prompt: str = "You are a helpful assistant.",
     # Synthetic and approval
     synthetic_service: Optional[any] = None,
     approval_orchestrator: Optional[any] = None,
@@ -884,6 +1027,9 @@ async def finetune(
         backend: "local" (local GPU/CPU) or "remote" (cloud GPU)
         backend_provider: Remote provider when backend="remote" (modal, sagemaker, azure_ml, etc.)
         gpu: GPU type for remote backend (T4, A10G, A100-40GB, etc.)
+        multi_turn: Enable multi-turn conversation fine-tuning (bypasses method selection)
+        min_turns_per_session: Minimum conversation turns to include a trajectory
+        system_prompt: System prompt prepended to each ChatML conversation
         synthetic_service: Optional SyntheticDataService
         approval_orchestrator: Optional ApprovalOrchestrator
 
@@ -898,22 +1044,19 @@ async def finetune(
         ...     project="cogniverse-tenant1",
         ...     model_type="llm",
         ...     agent_type="routing",
-        ...     backend="local"  # Train locally
+        ...     backend="local"
         ... )
 
-    Example (Remote GPU Training):
+    Example (Multi-Turn Conversation Fine-Tuning):
         >>> result = await finetune(
         ...     telemetry_provider=provider,
         ...     tenant_id="tenant1",
         ...     project="cogniverse-tenant1",
         ...     model_type="llm",
         ...     agent_type="routing",
-        ...     backend="remote",  # Train on remote GPU
-        ...     backend_provider="modal",  # Use Modal
-        ...     gpu="A100-40GB",  # Choose GPU type
-        ...     epochs=5,
-        ...     batch_size=8,
-        ...     learning_rate=1e-4
+        ...     multi_turn=True,
+        ...     min_turns_per_session=3,
+        ...     system_prompt="You are a video search assistant."
         ... )
     """
     # Create orchestration config with all parameters
@@ -934,6 +1077,9 @@ async def finetune(
         cpu=cpu,
         memory=memory,
         timeout=timeout,
+        multi_turn=multi_turn,
+        min_turns_per_session=min_turns_per_session,
+        system_prompt=system_prompt,
         output_dir=output_dir,
     )
 
@@ -1052,7 +1198,7 @@ async def list_experiments(
     telemetry_provider: TelemetryProvider,
     project: str,
     agent_type: Optional[str] = None,
-    method: Optional[Literal["sft", "dpo", "embedding"]] = None,
+    method: Optional[Literal["sft", "dpo", "embedding", "sft_multi_turn"]] = None,
     limit: int = 50,
 ) -> pd.DataFrame:
     """
@@ -1235,6 +1381,6 @@ async def compare_experiments(
 
     # Transpose for side-by-side view
     comparison_df = comparison_df.T
-    comparison_df.columns = [f"Run {i+1}" for i in range(len(comparison_df.columns))]
+    comparison_df.columns = [f"Run {i + 1}" for i in range(len(comparison_df.columns))]
 
     return comparison_df

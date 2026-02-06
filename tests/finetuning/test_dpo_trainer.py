@@ -97,7 +97,6 @@ class TestValidationSplit:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             try:
                 await finetuner._train_local(dataset, config)
             except Exception:
@@ -166,7 +165,6 @@ class TestValidationSplit:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             try:
                 await finetuner._train_local(dataset, config)
             except Exception:
@@ -243,7 +241,6 @@ class TestLoRAFallback:
             patch("trl.DPOTrainer", return_value=mock_trainer),
             patch("pathlib.Path.mkdir"),
         ):
-
             try:
                 await finetuner._train_local(dataset, config)
             except Exception:
@@ -307,7 +304,6 @@ class TestLoRAFallback:
             patch("pathlib.Path.mkdir"),
             caplog.at_level("WARNING"),
         ):
-
             try:
                 await finetuner._train_local(dataset, config)
             except Exception:
@@ -376,7 +372,6 @@ class TestLoRAFallback:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             try:
                 await finetuner._train_local(dataset, config)
             except Exception:

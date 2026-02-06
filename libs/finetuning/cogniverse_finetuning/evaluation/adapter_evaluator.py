@@ -264,13 +264,11 @@ class AdapterEvaluator:
                     ) == expected_json.get("selected_profiles")
                     confidence = pred_json.get("confidence", 0.5)
                 elif self.agent_type == "entity_extraction":
-                    correct_prediction, confidence = (
-                        self._check_entity_prediction(pred_json, expected_json)
+                    correct_prediction, confidence = self._check_entity_prediction(
+                        pred_json, expected_json
                     )
                 else:
-                    raise ValueError(
-                        f"Unsupported agent_type: {self.agent_type}"
-                    )
+                    raise ValueError(f"Unsupported agent_type: {self.agent_type}")
 
                 if correct_prediction:
                     correct += 1
@@ -305,9 +303,7 @@ class AdapterEvaluator:
         )
 
     @staticmethod
-    def _check_entity_prediction(
-        pred_json: Dict, expected_json: Dict
-    ) -> tuple:
+    def _check_entity_prediction(pred_json: Dict, expected_json: Dict) -> tuple:
         """
         Check entity extraction prediction using set-based F1.
 
@@ -325,9 +321,7 @@ class AdapterEvaluator:
         pred_entities = pred_json.get("entities", [])
         expected_entities = expected_json.get("entities", [])
 
-        pred_set = {
-            (e["text"].lower(), e["type"].upper()) for e in pred_entities
-        }
+        pred_set = {(e["text"].lower(), e["type"].upper()) for e in pred_entities}
         expected_set = {
             (e["text"].lower(), e["type"].upper()) for e in expected_entities
         }

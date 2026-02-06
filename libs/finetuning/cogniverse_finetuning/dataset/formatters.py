@@ -9,7 +9,10 @@ import logging
 from typing import Dict, List
 
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePair
-from cogniverse_finetuning.dataset.trace_converter import InstructionExample
+from cogniverse_finetuning.dataset.trace_converter import (
+    ConversationTrajectory,
+    InstructionExample,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +213,75 @@ class InstructionFormatter:
         logger.info(f"Formatted {len(formatted)} pairs in DPO format")
         return formatted
 
+    @staticmethod
+    def format_trajectory_chatml(
+        trajectories: List[ConversationTrajectory],
+        system_prompt: str = "You are a helpful assistant.",
+    ) -> List[Dict]:
+        """
+        Format multi-turn conversation trajectories as ChatML text for SFT.
+
+        Each trajectory becomes one training example with all turns concatenated
+        into a single ChatML-formatted string. This is compatible with TRL
+        SFTTrainer using `dataset_text_field="text"`.
+
+        ChatML format per trajectory:
+        <|im_start|>system
+        {system_prompt}<|im_end|>
+        <|im_start|>user
+        {turn1_query}<|im_end|>
+        <|im_start|>assistant
+        {turn1_response}<|im_end|>
+        <|im_start|>user
+        {turn2_query}<|im_end|>
+        <|im_start|>assistant
+        {turn2_response}<|im_end|>
+
+        Args:
+            trajectories: List of ConversationTrajectory objects
+            system_prompt: System prompt prepended to each conversation
+
+        Returns:
+            List of dicts with "text" field for SFT training
+
+        Raises:
+            ValueError: If any trajectory has empty turns, or a turn has
+                        empty query or response
+        """
+        formatted = []
+        for traj in trajectories:
+            if not traj.turns:
+                raise ValueError(
+                    f"Trajectory {traj.session_id} has no turns. "
+                    "Cannot format empty conversation for training."
+                )
+
+            # Build ChatML string: system + alternating user/assistant turns
+            parts = [f"<|im_start|>system\n{system_prompt}<|im_end|>"]
+
+            for turn in traj.turns:
+                if not turn.query:
+                    raise ValueError(
+                        f"Turn {turn.turn_id} in trajectory {traj.session_id} "
+                        "has empty query."
+                    )
+                if not turn.response:
+                    raise ValueError(
+                        f"Turn {turn.turn_id} in trajectory {traj.session_id} "
+                        "has empty response."
+                    )
+
+                parts.append(f"<|im_start|>user\n{turn.query}<|im_end|>")
+                parts.append(f"<|im_start|>assistant\n{turn.response}<|im_end|>")
+
+            formatted.append({"text": "\n".join(parts)})
+
+        logger.info(
+            f"Formatted {len(formatted)} trajectories in ChatML format "
+            f"({sum(len(t.turns) for t in trajectories)} total turns)"
+        )
+        return formatted
+
 
 # Convenience functions for common use cases
 def format_for_sft(
@@ -257,3 +329,23 @@ def format_for_dpo(pairs: List[PreferencePair]) -> List[Dict]:
     """
     formatter = InstructionFormatter()
     return formatter.format_dpo(pairs)
+
+
+def format_trajectories_for_sft(
+    trajectories: List[ConversationTrajectory],
+    system_prompt: str = "You are a helpful assistant.",
+) -> List[Dict]:
+    """
+    Format multi-turn trajectories for supervised fine-tuning (SFT).
+
+    Args:
+        trajectories: List of ConversationTrajectory
+        system_prompt: System prompt for each conversation
+
+    Returns:
+        List of dicts with "text" field in ChatML format
+
+    Raises:
+        ValueError: If trajectories contain invalid data
+    """
+    return InstructionFormatter.format_trajectory_chatml(trajectories, system_prompt)

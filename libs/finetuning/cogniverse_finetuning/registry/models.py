@@ -45,7 +45,7 @@ class AdapterMetadata:
     base_model: str
     model_type: Literal["llm", "embedding"]
     agent_type: Optional[str]
-    training_method: Literal["sft", "dpo", "embedding"]
+    training_method: Literal["sft", "dpo", "embedding", "sft_multi_turn"]
     adapter_path: str
     adapter_uri: Optional[str] = None  # Cloud storage URI for production
     status: Literal["active", "inactive", "deprecated"] = "inactive"

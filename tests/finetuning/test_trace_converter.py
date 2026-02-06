@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock
 import pandas as pd
 import pytest
 
+from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.trace_converter import (
     ConversationTrajectory,
     ConversationTurn,
@@ -21,6 +22,7 @@ from cogniverse_finetuning.dataset.trace_converter import (
     TraceToTrajectoryConverter,
     TrajectoryDataset,
 )
+from cogniverse_finetuning.orchestrator import validate_sft_dataset
 
 
 @pytest.mark.unit
@@ -766,3 +768,97 @@ class TestTraceToTrajectoryConverterAsync:
         # Should have only 1 trajectory (session1 which is annotated)
         assert len(result.trajectories) == 1
         assert result.trajectories[0].session_id == "session1"
+
+
+# ============================================================================
+# Trajectory ChatML Formatter Tests
+# ============================================================================
+
+
+def _make_trajectory(
+    session_id: str, turns_data: list[tuple[str, str]]
+) -> ConversationTrajectory:
+    """Helper to create a trajectory from (query, response) pairs."""
+    turns = [
+        ConversationTurn(
+            turn_id=i + 1,
+            query=q,
+            response=r,
+            timestamp=datetime(2025, 1, 1, 12, i, 0),
+            span_id=f"span_{session_id}_{i}",
+        )
+        for i, (q, r) in enumerate(turns_data)
+    ]
+    return ConversationTrajectory(session_id=session_id, turns=turns)
+
+
+@pytest.mark.unit
+class TestTrajectoryFormatter:
+    """Test ChatML formatting for multi-turn trajectories."""
+
+    def test_single_trajectory_formatting(self):
+        """Test formatting a single trajectory with two turns."""
+        traj = _make_trajectory(
+            "s1",
+            [("What is RAG?", "RAG is..."), ("How does it work?", "It works by...")],
+        )
+        result = InstructionFormatter.format_trajectory_chatml([traj])
+
+        assert len(result) == 1
+        text = result[0]["text"]
+        # System prompt present
+        assert "<|im_start|>system\nYou are a helpful assistant.<|im_end|>" in text
+        # Both turns present
+        assert "<|im_start|>user\nWhat is RAG?<|im_end|>" in text
+        assert "<|im_start|>assistant\nRAG is...<|im_end|>" in text
+        assert "<|im_start|>user\nHow does it work?<|im_end|>" in text
+        assert "<|im_start|>assistant\nIt works by...<|im_end|>" in text
+
+    def test_custom_system_prompt(self):
+        """Test that custom system prompt is used."""
+        traj = _make_trajectory("s1", [("query", "response")])
+        result = InstructionFormatter.format_trajectory_chatml(
+            [traj], system_prompt="You are a video search assistant."
+        )
+
+        text = result[0]["text"]
+        assert "You are a video search assistant." in text
+        assert "You are a helpful assistant." not in text
+
+    def test_multiple_trajectories(self):
+        """Test formatting multiple trajectories produces one example each."""
+        trajs = [
+            _make_trajectory("s1", [("q1", "r1"), ("q2", "r2")]),
+            _make_trajectory("s2", [("q3", "r3")]),
+        ]
+        result = InstructionFormatter.format_trajectory_chatml(trajs)
+
+        assert len(result) == 2
+        assert "q1" in result[0]["text"]
+        assert "q3" in result[1]["text"]
+
+    def test_empty_turns_raises_value_error(self):
+        """Test that a trajectory with no turns raises ValueError."""
+        traj = ConversationTrajectory(session_id="empty", turns=[])
+        with pytest.raises(ValueError, match="has no turns"):
+            InstructionFormatter.format_trajectory_chatml([traj])
+
+    def test_empty_query_raises_value_error(self):
+        """Test that a turn with empty query raises ValueError."""
+        traj = _make_trajectory("s1", [("", "response")])
+        with pytest.raises(ValueError, match="empty query"):
+            InstructionFormatter.format_trajectory_chatml([traj])
+
+    def test_empty_response_raises_value_error(self):
+        """Test that a turn with empty response raises ValueError."""
+        traj = _make_trajectory("s1", [("query", "")])
+        with pytest.raises(ValueError, match="empty response"):
+            InstructionFormatter.format_trajectory_chatml([traj])
+
+    def test_output_passes_sft_validation(self):
+        """Test that formatted output passes validate_sft_dataset."""
+        traj = _make_trajectory("s1", [("q1", "r1"), ("q2", "r2")])
+        result = InstructionFormatter.format_trajectory_chatml([traj])
+
+        # Should not raise — all items have "text" field
+        validate_sft_dataset(result)

@@ -6,9 +6,13 @@ from cogniverse_finetuning.dataset.preference_extractor import (
     PreferencePairExtractor,
 )
 from cogniverse_finetuning.dataset.trace_converter import (
+    ConversationTrajectory,
+    ConversationTurn,
     InstructionDataset,
     InstructionExample,
     TraceToInstructionConverter,
+    TraceToTrajectoryConverter,
+    TrajectoryDataset,
 )
 
 __all__ = [
@@ -16,6 +20,11 @@ __all__ = [
     "TraceToInstructionConverter",
     "InstructionDataset",
     "InstructionExample",
+    # Multi-turn trajectory extraction
+    "TraceToTrajectoryConverter",
+    "TrajectoryDataset",
+    "ConversationTrajectory",
+    "ConversationTurn",
     # Preference learning (DPO)
     "PreferencePairExtractor",
     "PreferenceDataset",

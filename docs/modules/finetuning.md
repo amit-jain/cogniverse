@@ -159,6 +159,9 @@ async def finetune(
     cpu: int = 4,
     memory: int = 16384,
     timeout: int = 3600,
+    multi_turn: bool = False,
+    min_turns_per_session: int = 2,
+    system_prompt: str = "You are a helpful assistant.",
     synthetic_service: Optional[any] = None,
     approval_orchestrator: Optional[any] = None,
     output_dir: str = "outputs/adapters"
@@ -799,6 +802,11 @@ class OrchestrationConfig:
     min_dpo_pairs: int = 20
     min_triplets: int = 100  # For embeddings
 
+    # Multi-turn conversation fine-tuning
+    multi_turn: bool = False
+    min_turns_per_session: int = 2
+    system_prompt: str = "You are a helpful assistant."
+
     # Training hyperparameters
     epochs: int = 3
     batch_size: int = 4
@@ -1043,11 +1051,31 @@ print(f"Total turns: {sum(len(t.turns) for t in dataset.trajectories)}")
 
 Data models: `ConversationTurn`, `ConversationTrajectory`, `TrajectoryDataset` (with `.to_dataframe()`, `.save()`)
 
-**Not yet integrated with training**:
+**Training with `finetune()`**:
 
-- `multi_turn: bool` and `min_turns_per_session: int` parameters in `OrchestrationConfig`
-- SFT formatter that includes conversation history as context per turn
-- `finetune()` orchestrator wiring for multi-turn mode
+The `finetune()` function supports multi-turn via `multi_turn=True`. This extracts trajectories,
+formats them as ChatML text (system + alternating user/assistant turns with `<|im_start|>`/`<|im_end|>` tokens),
+and trains using the existing SFT backend:
+
+```python
+from cogniverse_finetuning.orchestrator import finetune
+
+result = await finetune(
+    telemetry_provider=provider,
+    tenant_id="tenant1",
+    project="cogniverse-tenant1",
+    model_type="llm",
+    agent_type="routing",
+    multi_turn=True,
+    min_turns_per_session=3,
+    system_prompt="You are a video search assistant.",
+)
+
+print(f"Adapter: {result.adapter_path}")
+print(f"Method: {result.training_method}")  # "sft_multi_turn"
+```
+
+Multi-turn mode bypasses `TrainingMethodSelector` entirely — it always uses SFT with ChatML formatting.
 
 **Future Enhancements**:
 

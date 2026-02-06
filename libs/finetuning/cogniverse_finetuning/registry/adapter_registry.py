@@ -75,7 +75,7 @@ class AdapterRegistry:
         version: str,
         base_model: str,
         model_type: Literal["llm", "embedding"],
-        training_method: Literal["sft", "dpo", "embedding"],
+        training_method: Literal["sft", "dpo", "embedding", "sft_multi_turn"],
         adapter_path: str,
         agent_type: Optional[str] = None,
         adapter_uri: Optional[str] = None,

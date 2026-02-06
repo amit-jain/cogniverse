@@ -85,7 +85,6 @@ class TestValidationSplit:
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
             mock_dataset_cls.from_list.return_value = mock_dataset
@@ -142,7 +141,6 @@ class TestValidationSplit:
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
             mock_dataset_cls.from_list.side_effect = [
@@ -215,7 +213,6 @@ class TestLoRAFallback:
             patch("trl.SFTTrainer", return_value=mock_trainer),
             patch("pathlib.Path.mkdir"),
         ):
-
             mock_model_cls.from_pretrained.return_value = mock_base_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
             mock_dataset_cls.from_list.return_value = mock_dataset
@@ -271,7 +268,6 @@ class TestLoRAFallback:
             patch("pathlib.Path.mkdir"),
             caplog.at_level("WARNING"),
         ):
-
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
             mock_dataset_cls.from_list.return_value = mock_dataset
@@ -331,7 +327,6 @@ class TestLoRAFallback:
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
             mock_dataset_cls.from_list.return_value = mock_dataset

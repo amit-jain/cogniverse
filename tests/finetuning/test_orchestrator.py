@@ -191,7 +191,6 @@ class TestOrchestrationFlows:
             ) as mock_formatter,
             patch.object(orchestrator, "_create_backend") as mock_create_backend,
         ):
-
             # Setup mocks
             mock_selector = MagicMock()
             mock_selector.analyze_and_prepare = AsyncMock(
@@ -292,7 +291,6 @@ class TestOrchestrationFlows:
             ) as mock_formatter,
             patch.object(orchestrator, "_create_backend") as mock_create_backend,
         ):
-
             # Setup mocks
             mock_selector = MagicMock()
             mock_selector.analyze_and_prepare = AsyncMock(
@@ -385,7 +383,6 @@ class TestOrchestrationFlows:
             ) as mock_extractor_cls,
             patch.object(orchestrator, "_create_backend") as mock_create_backend,
         ):
-
             # Setup mocks
             mock_extractor = MagicMock()
             mock_extractor.extract = AsyncMock(return_value=mock_triplets)
@@ -514,3 +511,187 @@ class TestOrchestrationFlows:
             mock_remote_backend.assert_called_once()
             call_args = mock_remote_backend.call_args
             assert call_args[1]["provider"] == "modal"
+
+
+@pytest.mark.unit
+class TestMultiTurnOrchestrationFlow:
+    """Test multi-turn conversation fine-tuning orchestration."""
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_sft_flow(self):
+        """Test full multi-turn SFT flow uses TraceToTrajectoryConverter and train_sft."""
+        from datetime import datetime
+
+        from cogniverse_finetuning.dataset.trace_converter import (
+            ConversationTrajectory,
+            ConversationTurn,
+            TrajectoryDataset,
+        )
+
+        mock_provider = MagicMock()
+        orchestrator = FinetuningOrchestrator(
+            telemetry_provider=mock_provider,
+            synthetic_service=None,
+            approval_orchestrator=None,
+        )
+
+        config = OrchestrationConfig(
+            tenant_id="tenant1",
+            project="cogniverse-tenant1",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            backend="local",
+            multi_turn=True,
+            min_turns_per_session=2,
+            system_prompt="You are a video search assistant.",
+        )
+
+        # Build mock trajectory dataset
+        turns = [
+            ConversationTurn(
+                turn_id=1,
+                query="Find sports videos",
+                response="Here are sports videos...",
+                timestamp=datetime(2025, 1, 1, 12, 0, 0),
+                span_id="span1",
+            ),
+            ConversationTurn(
+                turn_id=2,
+                query="Show basketball dunks",
+                response="Here are dunk videos...",
+                timestamp=datetime(2025, 1, 1, 12, 1, 0),
+                span_id="span2",
+            ),
+        ]
+        mock_trajectory_dataset = TrajectoryDataset(
+            trajectories=[ConversationTrajectory(session_id="session1", turns=turns)]
+        )
+
+        mock_backend_result = MagicMock()
+        mock_backend_result.adapter_path = "/tmp/adapters/sft_multi_turn_routing_123"
+        mock_backend_result.metrics = {"train_loss": 0.4}
+
+        with (
+            patch(
+                "cogniverse_finetuning.orchestrator.TraceToTrajectoryConverter"
+            ) as mock_converter_cls,
+            patch.object(orchestrator, "_create_backend") as mock_create_backend,
+        ):
+            mock_converter = MagicMock()
+            mock_converter.convert = AsyncMock(return_value=mock_trajectory_dataset)
+            mock_converter_cls.return_value = mock_converter
+
+            mock_backend = MagicMock()
+            mock_backend.train_sft = AsyncMock(return_value=mock_backend_result)
+            mock_create_backend.return_value = mock_backend
+
+            result = await orchestrator.run(config)
+
+            # Verify result
+            assert result.training_method == "sft_multi_turn"
+            assert result.adapter_path == "/tmp/adapters/sft_multi_turn_routing_123"
+            assert result.metrics["train_loss"] == 0.4
+            assert result.used_synthetic is False
+
+            # Verify TraceToTrajectoryConverter was used (not TraceToInstructionConverter)
+            mock_converter_cls.assert_called_once_with(mock_provider)
+            mock_converter.convert.assert_called_once()
+
+            # Verify backend.train_sft was called (reuses existing SFT trainer)
+            mock_backend.train_sft.assert_called_once()
+            call_kwargs = mock_backend.train_sft.call_args[1]
+            assert call_kwargs["config"]["dataset_text_field"] == "text"
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_bypasses_method_selector(self):
+        """Test that multi_turn=True completely bypasses TrainingMethodSelector."""
+        from datetime import datetime
+
+        from cogniverse_finetuning.dataset.trace_converter import (
+            ConversationTrajectory,
+            ConversationTurn,
+            TrajectoryDataset,
+        )
+
+        mock_provider = MagicMock()
+        orchestrator = FinetuningOrchestrator(
+            telemetry_provider=mock_provider,
+            synthetic_service=None,
+            approval_orchestrator=None,
+        )
+
+        config = OrchestrationConfig(
+            tenant_id="tenant1",
+            project="cogniverse-tenant1",
+            model_type="llm",
+            agent_type="routing",
+            multi_turn=True,
+        )
+
+        turns = [
+            ConversationTurn(
+                turn_id=1,
+                query="q1",
+                response="r1",
+                timestamp=datetime(2025, 1, 1),
+                span_id="s1",
+            ),
+            ConversationTurn(
+                turn_id=2,
+                query="q2",
+                response="r2",
+                timestamp=datetime(2025, 1, 1),
+                span_id="s2",
+            ),
+        ]
+        mock_trajectory_dataset = TrajectoryDataset(
+            trajectories=[ConversationTrajectory(session_id="session1", turns=turns)]
+        )
+
+        mock_backend_result = MagicMock()
+        mock_backend_result.adapter_path = "/tmp/adapter"
+        mock_backend_result.metrics = {"train_loss": 0.5}
+
+        with (
+            patch(
+                "cogniverse_finetuning.orchestrator.TraceToTrajectoryConverter"
+            ) as mock_converter_cls,
+            patch(
+                "cogniverse_finetuning.orchestrator.TrainingMethodSelector"
+            ) as mock_selector_cls,
+            patch.object(orchestrator, "_create_backend") as mock_create_backend,
+        ):
+            mock_converter = MagicMock()
+            mock_converter.convert = AsyncMock(return_value=mock_trajectory_dataset)
+            mock_converter_cls.return_value = mock_converter
+
+            mock_backend = MagicMock()
+            mock_backend.train_sft = AsyncMock(return_value=mock_backend_result)
+            mock_create_backend.return_value = mock_backend
+
+            await orchestrator.run(config)
+
+            # TrainingMethodSelector should NEVER be instantiated
+            mock_selector_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_requires_agent_type(self):
+        """Test that multi_turn still requires agent_type."""
+        mock_provider = MagicMock()
+        orchestrator = FinetuningOrchestrator(
+            telemetry_provider=mock_provider,
+            synthetic_service=None,
+            approval_orchestrator=None,
+        )
+
+        config = OrchestrationConfig(
+            tenant_id="tenant1",
+            project="cogniverse-tenant1",
+            model_type="llm",
+            agent_type=None,  # Missing!
+            multi_turn=True,
+        )
+
+        with pytest.raises(ValueError, match="agent_type required"):
+            await orchestrator.run(config)
