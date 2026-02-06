@@ -29,7 +29,6 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.query.encoders import QueryEncoderFactory
 
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingDecision
@@ -38,6 +37,7 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
 
 logger = logging.getLogger(__name__)
@@ -303,8 +303,6 @@ class ContentProcessor:
         """Extract embeddings from image file using the query encoder"""
         if hasattr(self.query_encoder, "encode_image"):
             return self.query_encoder.encode_image(str(image_path))
-        elif hasattr(self.query_encoder, "encode"):
-            raise NotImplementedError("Query encoder does not support image encoding")
         else:
             raise NotImplementedError("Query encoder does not support image encoding")
 
@@ -740,7 +738,7 @@ class SearchAgent(
                     embeddings = self.query_encoder.encode(query)
                 else:
                     # Create temporary encoder for this profile
-                    from cogniverse_agents.query.encoders import QueryEncoderFactory
+                    from cogniverse_core.query.encoders import QueryEncoderFactory
 
                     encoder = QueryEncoderFactory.create_encoder(
                         profile_name, model_name, config=self.search_config

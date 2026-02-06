@@ -10,8 +10,12 @@ This module provides Vespa integration for Cogniverse, including:
 
 # Import backend to trigger self-registration
 from .backend import VespaBackend
+from .ingestion_client import VespaPyClient
+from .vespa_search_client import VespaVideoSearchClient
 
 # Export main classes
 __all__ = [
     "VespaBackend",
+    "VespaPyClient",
+    "VespaVideoSearchClient",
 ]

@@ -134,9 +134,9 @@ jobs:
 
       - name: Verify package imports
         run: |
-          uv run python -c "from cogniverse_core.config import SystemConfig"
-          uv run python -c "from cogniverse_agents.agents import RoutingAgent"
-          uv run python -c "from cogniverse_vespa.backends import VespaBackend"
+          uv run python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
+          uv run python -c "from cogniverse_agents.routing_agent import RoutingAgent"
+          uv run python -c "from cogniverse_vespa import VespaBackend"
           echo "All packages imported successfully"
 
       - name: Run package tests
@@ -261,7 +261,7 @@ jobs:
         run: |
           sleep 60  # Wait for packages to be available
           pip install cogniverse-core
-          python -c "from cogniverse_core.config import SystemConfig; print('Successfully installed from PyPI')"
+          python -c "from cogniverse_foundation.config.unified_config import SystemConfig; print('Successfully installed from PyPI')"
 
   # Create GitHub Release
   create-release:

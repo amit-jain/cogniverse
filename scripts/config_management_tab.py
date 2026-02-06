@@ -10,7 +10,8 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from cogniverse_sdk.interfaces.config_store import ConfigScope
+from backend_profile_tab import render_backend_profile_tab
+
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
@@ -18,14 +19,13 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
-    TelemetryConfigUnified,
 )
-
-from backend_profile_tab import render_backend_profile_tab
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
 def render_config_management_tab():
@@ -143,12 +143,12 @@ def render_system_config_ui(manager, tenant_id: str):
             )
 
         with col2:
-            vespa_url = st.text_input("Vespa URL", value=system_config.backend_url)
+            backend_url = st.text_input("Backend URL", value=system_config.backend_url)
 
         with col3:
-            vespa_port = st.number_input(
-                "Vespa Port",
-                value=system_config.vespa_port,
+            backend_port = st.number_input(
+                "Backend Port",
+                value=system_config.backend_port,
                 min_value=1,
                 max_value=65535,
             )
@@ -206,8 +206,8 @@ def render_system_config_ui(manager, tenant_id: str):
                 summarizer_agent_url=summarizer_agent_url,
                 text_analysis_agent_url=text_analysis_agent_url,
                 search_backend=search_backend,
-                vespa_url=vespa_url,
-                vespa_port=vespa_port,
+                backend_url=backend_url,
+                backend_port=backend_port,
                 llm_model=llm_model,
                 base_url=base_url,
                 llm_api_key=llm_api_key if llm_api_key else None,
@@ -487,22 +487,22 @@ def render_telemetry_config_ui(manager, tenant_id: str):
         telemetry_config = manager.get_telemetry_config(tenant_id)
     except Exception:
         st.warning(f"No telemetry config found for tenant '{tenant_id}'. Create a new one below.")
-        telemetry_config = TelemetryConfigUnified(tenant_id=tenant_id)
+        telemetry_config = TelemetryConfig()
 
     with st.form("telemetry_config_form"):
-        st.markdown("### Phoenix Configuration")
+        st.markdown("### OTLP Configuration")
         col1, col2 = st.columns(2)
 
         with col1:
-            phoenix_enabled = st.checkbox(
-                "Enable Phoenix",
-                value=telemetry_config.phoenix_enabled,
+            otlp_enabled = st.checkbox(
+                "Enable OTLP Export",
+                value=telemetry_config.otlp_enabled,
             )
 
         with col2:
-            phoenix_endpoint = st.text_input(
-                "Phoenix Endpoint",
-                value=telemetry_config.phoenix_endpoint,
+            otlp_endpoint = st.text_input(
+                "OTLP Endpoint",
+                value=telemetry_config.otlp_endpoint,
             )
 
         col1, col2 = st.columns(2)
@@ -517,23 +517,24 @@ def render_telemetry_config_ui(manager, tenant_id: str):
             telemetry_level = st.selectbox(
                 "Telemetry Level",
                 options=["disabled", "basic", "detailed", "verbose"],
-                index=["disabled", "basic", "detailed", "verbose"].index(telemetry_config.level),
+                index=["disabled", "basic", "detailed", "verbose"].index(telemetry_config.level.value),
             )
 
         # Submit
         submitted = st.form_submit_button("💾 Save Telemetry Configuration")
 
         if submitted:
-            updated_config = TelemetryConfigUnified(
-                tenant_id=tenant_id,
+            from cogniverse_foundation.telemetry.config import TelemetryLevel
+
+            updated_config = TelemetryConfig(
                 enabled=telemetry_enabled,
-                level=telemetry_level,
-                phoenix_enabled=phoenix_enabled,
-                phoenix_endpoint=phoenix_endpoint,
+                level=TelemetryLevel(telemetry_level),
+                otlp_enabled=otlp_enabled,
+                otlp_endpoint=otlp_endpoint,
             )
 
             try:
-                manager.set_telemetry_config(updated_config)
+                manager.set_telemetry_config(updated_config, tenant_id=tenant_id)
                 st.success("✅ Telemetry configuration saved successfully!")
                 st.rerun()
             except Exception as e:

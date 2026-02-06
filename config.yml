@@ -71,7 +71,7 @@ video_processing_profiles:
     num_crops: 4
     chunking_strategy: "frame_based"
     chunk_size_frames: 1
-    embedding_dimension: 1152
+    embedding_dimension: 128
     use_binary_quantization: true
 
   # ColQwen Omni (Multi-View Chunk 30s)
@@ -80,7 +80,7 @@ video_processing_profiles:
     embedding_model: "vidore/colqwen2-v1.0"
     chunking_strategy: "time_based"
     chunk_duration_seconds: 30
-    embedding_dimension: 1152
+    embedding_dimension: 128
     use_binary_quantization: true
 
   # VideoPrism Base (Multi-View Chunk 30s)
@@ -89,7 +89,7 @@ video_processing_profiles:
     embedding_model: "google/videoprism-base"
     chunking_strategy: "time_based"
     chunk_duration_seconds: 30
-    embedding_dimension: 1024
+    embedding_dimension: 768
 
   # VideoPrism LVT Base (Single-View Chunk 6s)
   video_videoprism_lvt_base_sv_chunk_6s:

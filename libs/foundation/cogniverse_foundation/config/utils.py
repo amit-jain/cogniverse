@@ -322,6 +322,15 @@ class ConfigUtils:
         """Support 'in' operator (dict-like interface)"""
         return key in self.keys()
 
+    def get_all(self) -> dict[str, Any]:
+        """
+        Return all configuration as a dictionary.
+
+        Returns:
+            Dict containing all config key-value pairs
+        """
+        return {key: self.get(key) for key in self.keys()}
+
 
 def get_config(tenant_id: str, config_manager: ConfigManager) -> ConfigUtils:
     """

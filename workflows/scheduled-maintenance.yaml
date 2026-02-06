@@ -126,7 +126,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
-  name: weekly-optimization
+  name: weekly-dspy-optimization
   namespace: cogniverse
 spec:
   schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
@@ -160,7 +160,7 @@ spec:
         args:
           - |
             set -e
-            echo "Running weekly optimization for tenant {{inputs.parameters.tenant-id}}..."
+            echo "Running weekly DSPy optimization for tenant {{inputs.parameters.tenant-id}}..."
 
             cd /app
             JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
@@ -208,6 +208,8 @@ spec:
           template: cleanup-temp-files
       - - name: vacuum-databases
           template: vacuum-databases
+      - - name: cleanup-expired-memories
+          template: cleanup-expired-memories
       - - name: notify-cleanup
           template: notify-cleanup
 
@@ -262,6 +264,39 @@ spec:
 
             # Add database vacuum/optimize commands here
             echo "Database maintenance completed"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+
+    - name: cleanup-expired-memories
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Cleaning up expired agent memories (retention: 30 days)..."
+
+            cd /app
+            uv run python -c "
+            from cogniverse_core.memory.manager import Mem0MemoryManager
+            tenants = ['default', 'acme_corp', 'globex_inc']
+            max_age = 30 * 24 * 3600  # 30 days
+            for tid in tenants:
+                mgr = Mem0MemoryManager(tid)
+                mgr.initialize()
+                deleted = mgr.cleanup_expired_memories(max_age)
+                print(f'Tenant {tid}: deleted {deleted} expired memories')
+            "
+
+            echo "Memory cleanup completed"
+        env:
+        - name: VESPA_URL
+          value: "http://cogniverse-vespa:8080"
         resources:
           requests:
             memory: "2Gi"

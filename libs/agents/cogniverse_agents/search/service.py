@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_agents.query_encoders import QueryEncoderFactory
+from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
 
 from .base import SearchResult
@@ -94,7 +94,7 @@ class SearchService:
             f"Creating query encoder for profile: {self.profile} with model: {model_name}"
         )
         self.query_encoder = QueryEncoderFactory.create_encoder(
-            self.profile, model_name
+            self.profile, model_name, config=self.config
         )
         logger.info(
             f"Initialized query encoder type: {type(self.query_encoder).__name__} for profile: {self.profile}"

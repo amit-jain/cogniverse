@@ -240,7 +240,7 @@ class VespaVideoSearchClient:
     def _init_query_encoder(self):
         """Initialize query encoder based on the Vespa schema"""
         try:
-            from cogniverse_agents.query.encoders import QueryEncoderFactory
+            from cogniverse_core.query.encoders import QueryEncoderFactory
 
             profile = self.vespa_schema
 
@@ -466,11 +466,11 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
 
-            # Check if this is a global embedding schema (single vector)
-            is_global_schema = "global" in search_schema.lower()
+            # Check if this is a single-vector embedding schema (_sv_ in name)
+            is_single_vector_schema = "_sv_" in search_schema.lower()
 
-            if is_global_schema and embeddings.ndim == 1:
-                # Global embedding - single vector
+            if is_single_vector_schema and embeddings.ndim == 1:
+                # Single-vector embedding
                 body.update(
                     {"ranking": strategy.value, "input.query(qt)": embeddings.tolist()}
                 )
@@ -506,11 +506,11 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
 
-            # Check if this is a global embedding schema (single vector)
-            is_global_schema = "global" in search_schema.lower()
+            # Check if this is a single-vector embedding schema (_sv_ in name)
+            is_single_vector_schema = "_sv_" in search_schema.lower()
 
-            if is_global_schema and embeddings.ndim == 1:
-                # Global embedding - single vector, convert to binary hex string
+            if is_single_vector_schema and embeddings.ndim == 1:
+                # Single-vector embedding, convert to binary hex string
                 from binascii import hexlify
 
                 binary_vector = np.packbits(
@@ -548,11 +548,11 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
 
-            # Check if this is a global embedding schema (single vector)
-            is_global_schema = "global" in search_schema.lower()
+            # Check if this is a single-vector embedding schema (_sv_ in name)
+            is_single_vector_schema = "_sv_" in search_schema.lower()
 
-            if is_global_schema and embeddings.ndim == 1:
-                # Global embedding - float_binary needs both qtb for search and qt for reranking
+            if is_single_vector_schema and embeddings.ndim == 1:
+                # Single-vector embedding - float_binary needs both qtb for search and qt for reranking
                 # Based on ingestion, we store binary as list of int8, so let's use list format
                 binary_vector = np.packbits(
                     np.where(embeddings > 0, 1, 0), axis=0
@@ -580,11 +580,11 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
 
-            # Check if this is a global embedding schema (single vector)
-            is_global_schema = "global" in search_schema.lower()
+            # Check if this is a single-vector embedding schema (_sv_ in name)
+            is_single_vector_schema = "_sv_" in search_schema.lower()
 
-            if is_global_schema and embeddings.ndim == 1:
-                # Global embedding - single vector for both float and binary
+            if is_single_vector_schema and embeddings.ndim == 1:
+                # Single-vector embedding for both float and binary
                 from binascii import hexlify
 
                 binary_vector = np.packbits(
@@ -681,30 +681,30 @@ class VespaVideoSearchClient:
         yql = f"select {', '.join(fields)} from {target_schema}"
 
         # Add WHERE clause
-        # For visual strategies, use nearestNeighbor if this is a global embedding schema
-        is_global_schema = "global" in target_schema.lower()
+        # For visual strategies, use nearestNeighbor if this is a single-vector schema
+        is_single_vector_schema = "_sv_" in target_schema.lower()
 
         if strategy == RankingStrategy.FLOAT_FLOAT:
-            if is_global_schema:
-                # Use nearestNeighbor for global embeddings with float field
+            if is_single_vector_schema:
+                # Use nearestNeighbor for single-vector embeddings with float field
                 yql += " where ({targetHits:100}nearestNeighbor(embedding, qt))"
             else:
                 yql += " where true"
         elif strategy == RankingStrategy.FLOAT_BINARY:
-            if is_global_schema:
+            if is_single_vector_schema:
                 # float_binary searches on binary field but reranks with float
                 yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
             else:
                 yql += " where true"
         elif strategy == RankingStrategy.PHASED:
-            if is_global_schema:
+            if is_single_vector_schema:
                 # Phased uses binary for first phase
                 yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
             else:
                 yql += " where true"
         elif strategy in [RankingStrategy.BINARY_BINARY]:
-            if is_global_schema:
-                # Use nearestNeighbor for global embeddings
+            if is_single_vector_schema:
+                # Use nearestNeighbor for single-vector embeddings
                 yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
             else:
                 yql += " where true"
@@ -712,7 +712,7 @@ class VespaVideoSearchClient:
             RankingStrategy.HYBRID_FLOAT_BM25,
             RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC,
         ]:
-            if is_global_schema:
+            if is_single_vector_schema:
                 # Hybrid with float embeddings - use nearestNeighbor
                 yql += " where ({targetHits:100}nearestNeighbor(embedding, qt))"
             else:
@@ -721,7 +721,7 @@ class VespaVideoSearchClient:
             RankingStrategy.HYBRID_BINARY_BM25,
             RankingStrategy.HYBRID_BINARY_BM25_NO_DESC,
         ]:
-            if is_global_schema:
+            if is_single_vector_schema:
                 # Hybrid with binary embeddings - use nearestNeighbor
                 yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
             else:

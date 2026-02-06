@@ -15,8 +15,8 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     RoutingConfigUnified,
     SystemConfig,
-    TelemetryConfigUnified,
 )
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_sdk.interfaces.config_store import ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
@@ -269,7 +269,7 @@ class ConfigManager:
 
     def get_telemetry_config(
         self, tenant_id: str = "default", service: str = "telemetry"
-    ) -> TelemetryConfigUnified:
+    ) -> TelemetryConfig:
         """
         Get telemetry configuration.
 
@@ -278,7 +278,7 @@ class ConfigManager:
             service: Service name
 
         Returns:
-            TelemetryConfigUnified instance
+            TelemetryConfig instance
         """
         entry = self.store.get_config(
             tenant_id=tenant_id,
@@ -291,39 +291,36 @@ class ConfigManager:
             logger.warning(
                 f"No telemetry config found for {tenant_id}:{service}, using defaults"
             )
-            return TelemetryConfigUnified(tenant_id=tenant_id)
+            return TelemetryConfig()
 
-        return TelemetryConfigUnified.from_dict(entry.config_value)
+        return TelemetryConfig.from_dict(entry.config_value)
 
     def set_telemetry_config(
         self,
-        telemetry_config: TelemetryConfigUnified,
-        tenant_id: Optional[str] = None,
+        telemetry_config: TelemetryConfig,
+        tenant_id: str = "default",
         service: str = "telemetry",
-    ) -> TelemetryConfigUnified:
+    ) -> TelemetryConfig:
         """
         Set telemetry configuration.
 
         Args:
-            telemetry_config: TelemetryConfigUnified instance
-            tenant_id: Optional tenant override
+            telemetry_config: TelemetryConfig instance
+            tenant_id: Tenant identifier
             service: Service name
 
         Returns:
-            Updated TelemetryConfigUnified
+            Updated TelemetryConfig
         """
-        if tenant_id:
-            telemetry_config.tenant_id = tenant_id
-
         self.store.set_config(
-            tenant_id=telemetry_config.tenant_id,
+            tenant_id=tenant_id,
             scope=ConfigScope.TELEMETRY,
             service=service,
             config_key="telemetry_config",
             config_value=telemetry_config.to_dict(),
         )
 
-        logger.info(f"Set telemetry config for {telemetry_config.tenant_id}:{service}")
+        logger.info(f"Set telemetry config for {tenant_id}:{service}")
         return telemetry_config
 
     # ========== Backend Configuration ==========

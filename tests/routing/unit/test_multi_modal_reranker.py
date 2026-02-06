@@ -12,7 +12,7 @@ import pytest
 from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
-    SearchResult,
+    RerankerSearchResult,
 )
 
 
@@ -29,7 +29,7 @@ class TestMultiModalReranker:
     def sample_results(self):
         """Create sample search results"""
         return [
-            SearchResult(
+            RerankerSearchResult(
                 id="video_1",
                 title="Machine Learning Tutorial",
                 content="Comprehensive ML tutorial covering basics",
@@ -38,7 +38,7 @@ class TestMultiModalReranker:
                 metadata={},
                 timestamp=datetime.now() - timedelta(days=10),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="image_1",
                 title="Neural Network Diagram",
                 content="Visual representation of neural network architecture",
@@ -47,7 +47,7 @@ class TestMultiModalReranker:
                 metadata={},
                 timestamp=datetime.now() - timedelta(days=5),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="doc_1",
                 title="ML Research Paper",
                 content="Latest research in machine learning algorithms",
@@ -102,7 +102,7 @@ class TestMultiModalReranker:
 
     def test_cross_modal_score(self, reranker):
         """Test cross-modal relevance scoring"""
-        result = SearchResult(
+        result = RerankerSearchResult(
             id="test",
             title="Test",
             content="Test content",

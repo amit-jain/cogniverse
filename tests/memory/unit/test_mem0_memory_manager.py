@@ -2,6 +2,7 @@
 Unit tests for Mem0MemoryManager
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -278,3 +279,126 @@ class TestMem0MemoryManager:
         )
         assert stats["total_memories"] == 0
         assert stats["enabled"] is False
+
+    # --- cleanup_expired_memories ---
+
+    @patch("cogniverse_core.memory.manager.time")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_cleanup_expired_memories(self, mock_memory_class, mock_time, manager):
+        """Deletes expired memories (epoch timestamps), keeps recent ones."""
+        now = 1700000000
+        mock_time.time.return_value = now
+        max_age = 3600  # 1 hour
+
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = {
+            "results": [
+                {"id": "old1", "created_at": now - 7200},  # 2 hours ago → expired
+                {"id": "old2", "created_at": now - 5000},  # ~83 min ago → expired
+                {"id": "recent", "created_at": now - 100},  # 100s ago → kept
+            ]
+        }
+        manager.memory = mock_memory
+
+        deleted = manager.cleanup_expired_memories(max_age)
+
+        assert deleted == 2
+        assert mock_memory.delete.call_count == 2
+        mock_memory.delete.assert_any_call("old1")
+        mock_memory.delete.assert_any_call("old2")
+
+    @patch("cogniverse_core.memory.manager.time")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_cleanup_expired_memories_iso_ts(
+        self, mock_memory_class, mock_time, manager
+    ):
+        """Correctly parses ISO string timestamps and deletes expired."""
+        now = 1700000000
+        mock_time.time.return_value = now
+        max_age = 3600
+
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = {
+            "results": [
+                {
+                    "id": "iso_old",
+                    "created_at": "2023-11-14T14:00:00+00:00",  # epoch ~1699970400
+                },
+                {
+                    "id": "iso_recent",
+                    "created_at": "2023-11-14T22:30:00+00:00",  # epoch ~1700001000
+                },
+            ]
+        }
+        manager.memory = mock_memory
+
+        deleted = manager.cleanup_expired_memories(max_age)
+
+        # iso_old is well before cutoff, iso_recent is within 1h
+        assert deleted == 1
+        mock_memory.delete.assert_called_once_with("iso_old")
+
+    @patch("cogniverse_core.memory.manager.time")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_cleanup_expired_memories_none_expired(
+        self, mock_memory_class, mock_time, manager
+    ):
+        """No expired memories → deletes 0."""
+        now = 1700000000
+        mock_time.time.return_value = now
+
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = {
+            "results": [
+                {"id": "recent1", "created_at": now - 10},
+                {"id": "recent2", "created_at": now - 60},
+            ]
+        }
+        manager.memory = mock_memory
+
+        deleted = manager.cleanup_expired_memories(3600)
+
+        assert deleted == 0
+        mock_memory.delete.assert_not_called()
+
+    def test_cleanup_expired_memories_not_initialized(self, manager):
+        """Raises RuntimeError when memory is None."""
+        manager.memory = None
+
+        with pytest.raises(RuntimeError, match="not initialized"):
+            manager.cleanup_expired_memories(3600)
+
+    def test_cleanup_expired_memories_invalid_max_age(self, manager):
+        """Raises ValueError when max_age_seconds <= 0."""
+        manager.memory = MagicMock()
+
+        with pytest.raises(ValueError, match="must be positive"):
+            manager.cleanup_expired_memories(0)
+
+        with pytest.raises(ValueError, match="must be positive"):
+            manager.cleanup_expired_memories(-100)
+
+    @patch("cogniverse_core.memory.manager.time")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_cleanup_expired_memories_missing_fields(
+        self, mock_memory_class, mock_time, manager
+    ):
+        """Memories with missing id or created_at are skipped."""
+        now = 1700000000
+        mock_time.time.return_value = now
+
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = {
+            "results": [
+                {"id": "no_ts"},  # Missing created_at → skipped
+                {"created_at": now - 7200},  # Missing id → skipped
+                {"id": "valid_old", "created_at": now - 7200},  # Expired → deleted
+                "not_a_dict",  # Not a dict → skipped
+            ]
+        }
+        manager.memory = mock_memory
+
+        deleted = manager.cleanup_expired_memories(3600)
+
+        assert deleted == 1
+        mock_memory.delete.assert_called_once_with("valid_old")

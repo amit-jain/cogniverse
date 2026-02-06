@@ -111,7 +111,7 @@ services:
       - "4318:4318"  # OTLP HTTP
       - "8888:8888"  # Prometheus metrics
     volumes:
-      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./configs/otel-collector-config.yaml:/etc/otel-collector-config.yaml
     networks:
       - cogniverse
     restart: unless-stopped

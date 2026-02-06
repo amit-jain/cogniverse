@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from cogniverse_evaluation.dataset_manager import DatasetManager
+from cogniverse_evaluation.data import DatasetManager
 
 
 async def main():

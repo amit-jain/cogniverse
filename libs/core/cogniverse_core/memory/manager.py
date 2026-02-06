@@ -8,6 +8,7 @@ Each tenant gets dedicated Vespa schema for memory isolation.
 
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 # Disable Mem0's telemetry BEFORE importing mem0
@@ -472,6 +473,68 @@ class Mem0MemoryManager:
         except Exception as e:
             logger.error(f"Failed to clear agent memory: {e}")
             return False
+
+    def cleanup_expired_memories(self, max_age_seconds: int) -> int:
+        """
+        Delete memories older than max_age_seconds for this tenant.
+
+        Args:
+            max_age_seconds: Maximum age in seconds. Memories older than this are deleted.
+
+        Returns:
+            Number of memories deleted.
+
+        Raises:
+            RuntimeError: If not initialized.
+            ValueError: If max_age_seconds <= 0.
+        """
+        if not self.memory:
+            raise RuntimeError("Mem0MemoryManager not initialized")
+        if max_age_seconds <= 0:
+            raise ValueError("max_age_seconds must be positive")
+
+        cutoff = int(time.time()) - max_age_seconds
+
+        # Get all memories for this tenant (across all agents)
+        result = self.memory.get_all(user_id=self.tenant_id)
+        memories = result.get("results", []) if isinstance(result, dict) else result
+
+        deleted_count = 0
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            memory_id = memory.get("id")
+            created_at = memory.get("created_at")
+            if not memory_id or not created_at:
+                continue
+
+            # Parse created_at (may be ISO string from Vespa conversion or epoch int)
+            if isinstance(created_at, str):
+                from datetime import datetime
+
+                try:
+                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    created_epoch = int(dt.timestamp())
+                except (ValueError, TypeError):
+                    continue
+            elif isinstance(created_at, (int, float)):
+                created_epoch = int(created_at)
+            else:
+                continue
+
+            if created_epoch < cutoff:
+                self.memory.delete(memory_id)
+                deleted_count += 1
+                logger.debug(
+                    f"Deleted expired memory {memory_id} "
+                    f"(age: {int(time.time()) - created_epoch}s)"
+                )
+
+        logger.info(
+            f"Cleaned up {deleted_count} expired memories "
+            f"for tenant {self.tenant_id}"
+        )
+        return deleted_count
 
     def update_memory(
         self,

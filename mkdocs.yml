@@ -6,8 +6,9 @@ repo_name: amit-jain/cogniverse
 repo_url: https://github.com/amit-jain/cogniverse
 edit_uri: edit/main/docs/
 
-# Copyright
-copyright: Copyright &copy; 2024-2025 Cogniverse Team
+# Exclude local planning docs from build
+exclude_docs: |
+  plan/
 
 # Theme Configuration
 theme:

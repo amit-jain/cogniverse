@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from litellm import arerank, rerank
 
-from cogniverse_agents.search.multi_modal_reranker import SearchResult
+from cogniverse_agents.search.multi_modal_reranker import RerankerSearchResult
 from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
@@ -101,9 +101,9 @@ class LearnedReranker:
     async def rerank(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         top_n: Optional[int] = None,
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Rerank results using learned model via LiteLLM
 
@@ -145,7 +145,7 @@ class LearnedReranker:
 
             response = await arerank(**kwargs)
 
-            # Map LiteLLM response back to SearchResult objects
+            # Map LiteLLM response back to RerankerSearchResult objects
             reranked = []
             for result_item in response.results:
                 original_result = results[result_item.index]
@@ -166,9 +166,9 @@ class LearnedReranker:
     def rerank_sync(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         top_n: Optional[int] = None,
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Synchronous version of rerank
 
@@ -208,7 +208,7 @@ class LearnedReranker:
 
             response = rerank(**kwargs)
 
-            # Map response back to SearchResult objects
+            # Map response back to RerankerSearchResult objects
             reranked = []
             for result_item in response.results:
                 original_result = results[result_item.index]

@@ -52,7 +52,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.prod.yml:/app/config.yml:ro
+      - ./config.yml:/app/config.yml:ro
       - runtime-data:/data
       - runtime-logs:/logs
     env_file:
@@ -112,7 +112,7 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./config.prod.yml:/app/config.yml:ro
+      - ./config.yml:/app/config.yml:ro
       - runtime-data:/data:ro
       - runtime-logs:/app/outputs:ro
     env_file:
@@ -196,7 +196,7 @@ services:
       - "8888:8888"  # Prometheus metrics
       - "13133:13133"  # Health check
     volumes:
-      - ./config/otel-collector-config.prod.yaml:/etc/otel-collector-config.yaml:ro
+      - ./configs/otel-collector-config.prod.yaml:/etc/otel-collector-config.yaml:ro
     deploy:
       resources:
         limits:
@@ -268,9 +268,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./configs/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
       - nginx-logs:/var/log/nginx
     depends_on:
       - runtime

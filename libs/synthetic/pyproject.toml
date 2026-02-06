@@ -11,6 +11,7 @@ authors = [
 
 dependencies = [
     "cogniverse-sdk",
+    "cogniverse-foundation",
     # Data validation
     "pydantic>=2.0.0",
 
@@ -26,6 +27,7 @@ dependencies = [
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
+cogniverse-foundation = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

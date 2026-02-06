@@ -20,8 +20,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
-    TelemetryConfigUnified,
 )
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.async_polling import wait_for_vespa_indexing
@@ -123,22 +123,20 @@ class TestConfigPersistence:
 
     def test_telemetry_config_persistence(self, config_manager):
         """Test telemetry configuration persists and loads"""
-        telemetry_config = TelemetryConfigUnified(
-            tenant_id="test_tenant",
+        telemetry_config = TelemetryConfig(
             enabled=False,
-            level="verbose",
-            phoenix_enabled=False,
+            level=TelemetryLevel.VERBOSE,
+            otlp_enabled=False,
             service_name="test-service",
         )
 
-        config_manager.set_telemetry_config(telemetry_config)
+        config_manager.set_telemetry_config(telemetry_config, tenant_id="test_tenant")
 
         loaded_config = config_manager.get_telemetry_config("test_tenant")
 
-        assert loaded_config.tenant_id == "test_tenant"
         assert loaded_config.enabled is False
-        assert loaded_config.level == "verbose"
-        assert loaded_config.phoenix_enabled is False
+        assert loaded_config.level == TelemetryLevel.VERBOSE
+        assert loaded_config.otlp_enabled is False
         assert loaded_config.service_name == "test-service"
 
     def test_agent_config_persistence(self, config_manager):
@@ -286,7 +284,7 @@ class TestConfigPersistence:
             RoutingConfigUnified(tenant_id=tenant_id, routing_mode="hybrid")
         )
         config_manager.set_telemetry_config(
-            TelemetryConfigUnified(tenant_id=tenant_id, service_name="test")
+            TelemetryConfig(service_name="test"), tenant_id=tenant_id
         )
 
         # Get all configs

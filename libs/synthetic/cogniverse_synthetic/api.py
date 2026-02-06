@@ -32,29 +32,26 @@ def get_service() -> SyntheticDataService:
 
 
 def configure_service(
-    vespa_client: Optional[any] = None,
-    backend_config: Optional[dict] = None,
+    backend: Optional[any] = None,
+    backend_config: Optional[any] = None,
+    generator_config: Optional[any] = None,
     llm_client: Optional[any] = None,
-    vespa_url: str = "http://localhost",
-    vespa_port: int = 8080,
 ) -> None:
     """
     Configure the global service instance
 
     Args:
-        vespa_client: Optional Vespa client
-        backend_config: Optional backend configuration
+        backend: Backend interface instance (None for mock mode)
+        backend_config: Backend configuration with profiles
+        generator_config: Synthetic generator configuration
         llm_client: Optional LLM client for profile selection
-        vespa_url: Vespa URL
-        vespa_port: Vespa port
     """
     global _service
     _service = SyntheticDataService(
-        vespa_client=vespa_client,
+        backend=backend,
         backend_config=backend_config,
+        generator_config=generator_config,
         llm_client=llm_client,
-        vespa_url=vespa_url,
-        vespa_port=vespa_port,
     )
     logger.info("Configured SyntheticDataService")
 

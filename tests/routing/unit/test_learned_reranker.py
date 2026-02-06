@@ -3,7 +3,7 @@ Unit tests for LiteLLM-based learned reranker:
 - Configuration loading
 - LiteLLM integration
 - Error handling
-- SearchResult processing
+- RerankerSearchResult processing
 """
 
 from unittest.mock import Mock, patch
@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from cogniverse_agents.search.learned_reranker import LearnedReranker
-from cogniverse_agents.search.multi_modal_reranker import SearchResult
+from cogniverse_agents.search.multi_modal_reranker import RerankerSearchResult
 
 
 class TestLearnedReranker:
@@ -27,7 +27,7 @@ class TestLearnedReranker:
     def sample_results(self):
         """Create sample search results"""
         return [
-            SearchResult(
+            RerankerSearchResult(
                 id="doc-1",
                 title="Machine Learning",
                 content="Introduction to ML",
@@ -35,7 +35,7 @@ class TestLearnedReranker:
                 score=0.8,
                 metadata={},
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="doc-2",
                 title="Deep Learning",
                 content="Neural networks guide",

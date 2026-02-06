@@ -20,7 +20,7 @@ from vespa.package import ApplicationPackage
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.backends.vespa.json_schema_parser import JsonSchemaParser
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 
 def deploy_json_schema(schema_file: str, vespa_host: str = "localhost",

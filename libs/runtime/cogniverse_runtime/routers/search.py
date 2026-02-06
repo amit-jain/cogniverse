@@ -4,17 +4,46 @@ import json
 import logging
 from typing import Any, Dict, Optional, Union
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_runtime.search.service import SearchService
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
+def get_config_manager_dependency() -> ConfigManager:
+    """
+    FastAPI dependency for ConfigManager.
+
+    This function should be overridden in main.py using app.dependency_overrides.
+    If not overridden, it raises an error to fail fast.
+    """
+    raise RuntimeError(
+        "ConfigManager dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides."
+    )
+
+
+def get_schema_loader_dependency() -> SchemaLoader:
+    """
+    FastAPI dependency for SchemaLoader.
+
+    This function should be overridden in main.py using app.dependency_overrides.
+    If not overridden, it raises an error to fail fast.
+    """
+    raise RuntimeError(
+        "SchemaLoader dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides."
+    )
 
 
 class SearchRequest(BaseModel):
@@ -43,7 +72,11 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/", response_model=None)
-async def search(request: SearchRequest) -> Union[StreamingResponse, SearchResponse]:
+async def search(
+    request: SearchRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
+) -> Union[StreamingResponse, SearchResponse]:
     """Execute a search query. Returns SSE stream if stream=True, else JSON."""
     tenant_id = request.tenant_id or "default"
 
@@ -78,13 +111,15 @@ async def search(request: SearchRequest) -> Union[StreamingResponse, SearchRespo
 
     with context_manager as span:
         try:
-            config_manager = create_default_config_manager()
             config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
-            # Create search service
+            # Create search service with required dependencies
             search_service = SearchService(
                 config=config,
                 profile=request.profile or config.get("default_profile", "default"),
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
             )
 
             if request.stream:
@@ -98,7 +133,7 @@ async def search(request: SearchRequest) -> Union[StreamingResponse, SearchRespo
                         results = search_service.search(
                             query=request.query,
                             top_k=request.top_k,
-                            strategy=request.strategy,
+                            ranking_strategy=request.strategy,
                             filters=request.filters,
                             tenant_id=request.tenant_id,
                             org_id=request.org_id,
@@ -135,7 +170,7 @@ async def search(request: SearchRequest) -> Union[StreamingResponse, SearchRespo
                 results = search_service.search(
                     query=request.query,
                     top_k=request.top_k,
-                    strategy=request.strategy,
+                    ranking_strategy=request.strategy,
                     filters=request.filters,
                     tenant_id=request.tenant_id,
                     org_id=request.org_id,
@@ -146,7 +181,7 @@ async def search(request: SearchRequest) -> Union[StreamingResponse, SearchRespo
                 return SearchResponse(
                     query=request.query,
                     profile=request.profile,
-                    strategy=request.strategy,
+                    ranking_strategy=request.strategy,
                     results_count=len(results),
                     results=[r.to_dict() for r in results],
                     session_id=request.session_id,
@@ -175,9 +210,10 @@ async def list_strategies() -> Dict[str, Any]:
 
 
 @router.get("/profiles")
-async def list_profiles() -> Dict[str, Any]:
+async def list_profiles(
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
     """List available search profiles."""
-    config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
 
     backend_config = config.get("backend", {})

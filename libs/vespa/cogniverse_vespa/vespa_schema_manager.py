@@ -27,7 +27,6 @@ class VespaSchemaManager:
         self,
         backend_endpoint: str,
         backend_port: int,
-        config_manager=None,
         schema_loader=None,
         schema_registry=None,
     ):
@@ -37,7 +36,6 @@ class VespaSchemaManager:
         Args:
             backend_endpoint: Backend endpoint URL (REQUIRED)
             backend_port: Backend port number (REQUIRED)
-            config_manager: ConfigManager instance (DEPRECATED - no longer used)
             schema_loader: SchemaLoader instance (optional, needed for tenant schema operations)
             schema_registry: SchemaRegistry instance (optional, needed for tenant schema operations)
 

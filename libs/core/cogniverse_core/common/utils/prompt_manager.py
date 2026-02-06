@@ -20,7 +20,6 @@ class PromptManager:
 
     def __init__(
         self,
-        config_path: str = "config.json",
         artifacts_path: Optional[str] = None,
         config_manager: "ConfigManager" = None,
         tenant_id: str = "default",
@@ -29,7 +28,6 @@ class PromptManager:
         Initialize the prompt manager.
 
         Args:
-            config_path: Path to configuration file (deprecated, kept for compatibility)
             artifacts_path: Optional path to optimization artifacts
             config_manager: ConfigManager instance for dependency injection
             tenant_id: Tenant identifier for config retrieval

@@ -302,7 +302,7 @@ class TestAnnotationSystemIntegration:
         # STEP 2: Verify spans exist in Phoenix
         logger.info("\n=== STEP 2: Verifying spans in Phoenix ===")
 
-        config = TelemetryConfig.from_env()
+        config = TelemetryConfig()
         project_name = config.get_project_name(test_tenant_id)
 
         end_time = datetime.now(timezone.utc)
@@ -534,7 +534,7 @@ class TestAnnotationSystemIntegration:
         wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Try to retrieve
-        config = TelemetryConfig.from_env()
+        config = TelemetryConfig()
         project_name = config.get_project_name(test_tenant_id)
 
         # Verify the span exists

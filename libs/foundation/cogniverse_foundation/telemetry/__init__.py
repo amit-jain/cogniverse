@@ -10,6 +10,6 @@ This module provides:
 """
 
 from .config import TelemetryConfig
-from .manager import TelemetryManager
+from .manager import TelemetryManager, get_telemetry_manager
 
-__all__ = ["TelemetryManager", "TelemetryConfig"]
+__all__ = ["TelemetryManager", "TelemetryConfig", "get_telemetry_manager"]

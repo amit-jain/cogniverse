@@ -27,9 +27,13 @@ class QueryModality(Enum):
 
 
 @dataclass
-class SearchResult:
+class RerankerSearchResult:
     """
-    Generic search result from any modality
+    Search result for reranking operations.
+
+    Note: This is distinct from cogniverse_agents.search.base.SearchResult
+    which uses Document objects for API responses. This dataclass is used
+    internally by rerankers for scoring and comparison.
 
     Attributes:
         id: Unique result identifier
@@ -99,11 +103,11 @@ class MultiModalReranker:
 
     async def rerank_results(
         self,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         query: str,
         modalities: List[QueryModality],
         context: Optional[Dict] = None,
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Rerank results based on multi-modal factors
 
@@ -162,7 +166,7 @@ class MultiModalReranker:
 
     def _calculate_cross_modal_score(
         self,
-        result: SearchResult,
+        result: RerankerSearchResult,
         query: str,
         modalities: List[QueryModality],
     ) -> float:
@@ -205,7 +209,7 @@ class MultiModalReranker:
 
     def _calculate_temporal_score(
         self,
-        result: SearchResult,
+        result: RerankerSearchResult,
         context: Dict,
     ) -> float:
         """
@@ -252,8 +256,8 @@ class MultiModalReranker:
 
     def _calculate_complementarity_score(
         self,
-        result: SearchResult,
-        all_results: List[SearchResult],
+        result: RerankerSearchResult,
+        all_results: List[RerankerSearchResult],
     ) -> float:
         """
         Calculate how well this result complements others
@@ -293,7 +297,7 @@ class MultiModalReranker:
 
     def _calculate_diversity_score(
         self,
-        result: SearchResult,
+        result: RerankerSearchResult,
         selected_results: List[tuple],
     ) -> float:
         """
@@ -326,7 +330,9 @@ class MultiModalReranker:
         else:
             return 0.2
 
-    def get_modality_distribution(self, results: List[SearchResult]) -> Dict[str, int]:
+    def get_modality_distribution(
+        self, results: List[RerankerSearchResult]
+    ) -> Dict[str, int]:
         """
         Get distribution of modalities in results
 
@@ -342,7 +348,9 @@ class MultiModalReranker:
             distribution[modality] = distribution.get(modality, 0) + 1
         return distribution
 
-    def analyze_ranking_quality(self, results: List[SearchResult]) -> Dict[str, Any]:
+    def analyze_ranking_quality(
+        self, results: List[RerankerSearchResult]
+    ) -> Dict[str, Any]:
         """
         Analyze quality metrics of ranked results
 
@@ -481,10 +489,10 @@ class ConfigurableMultiModalReranker:
     async def rerank(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         modalities: List[QueryModality],
         context: Optional[Dict] = None,
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Rerank using configured strategy
 

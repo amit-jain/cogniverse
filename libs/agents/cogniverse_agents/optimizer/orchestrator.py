@@ -276,6 +276,11 @@ class OptimizationOrchestrator:
     """Main orchestrator for the optimization process."""
 
     def __init__(self, config_path: str = "config.json"):
+        # TODO: config_path is stored for logging but actual config is loaded via
+        # create_default_config_manager() which uses COGNIVERSE_CONFIG_PATH env var
+        # or defaults to configs/config.json. Consider removing this parameter or
+        # implementing custom config path support.
+        self.config_path = config_path
         self.config_instance = get_config(
             tenant_id="default", config_manager=create_default_config_manager()
         )

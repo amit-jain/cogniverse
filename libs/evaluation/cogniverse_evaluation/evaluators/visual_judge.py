@@ -14,10 +14,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from cogniverse_agents.query_encoders import ColPaliQueryEncoder
-
 # Use existing model infrastructure
 from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.query.encoders import ColPaliQueryEncoder
 
 from .base import Evaluator, create_evaluation_result
 

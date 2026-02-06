@@ -100,3 +100,5 @@ failing_test_files.txt
 # MLflow
 mlruns/
 workflow_intelligence.db
+.osgrep/
+.playwright-mcp/

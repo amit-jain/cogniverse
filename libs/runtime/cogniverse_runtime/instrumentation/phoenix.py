@@ -240,7 +240,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_query_encoders(self):
         """Add tracing to query encoding operations"""
         try:
-            from cogniverse_agents.query.encoders import (
+            from cogniverse_core.query.encoders import (
                 ColPaliQueryEncoder,
                 ColQwenQueryEncoder,
                 VideoPrismQueryEncoder,

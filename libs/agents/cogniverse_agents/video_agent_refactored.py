@@ -2,13 +2,14 @@
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 from fastapi import FastAPI, HTTPException
 
+from cogniverse_agents.search.base import SearchResult
 from cogniverse_agents.search.service import SearchService
 from cogniverse_agents.tools.a2a_utils import DataPart, Task
 from cogniverse_foundation.config.utils import get_config
@@ -74,7 +75,7 @@ class VideoSearchAgent:
         top_k: int = 10,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[SearchResult]:
         """
         Search for videos.
 

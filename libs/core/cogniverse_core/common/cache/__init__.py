@@ -4,7 +4,8 @@ Cache module for Cogniverse - Plugin-based caching with multiple backends
 
 from .backends.structured_filesystem import StructuredFilesystemBackend
 from .base import BackendConfig, CacheBackend, CacheConfig, CacheManager
-from .pipeline_cache import PipelineArtifactCache
+from .embedding_cache import EmbeddingCache
+from .pipeline_cache import PipelineArtifactCache, VideoArtifacts
 from .registry import CacheBackendRegistry
 
 __all__ = [
@@ -12,7 +13,9 @@ __all__ = [
     "CacheConfig",
     "CacheManager",
     "BackendConfig",
+    "EmbeddingCache",
     "StructuredFilesystemBackend",
     "PipelineArtifactCache",
+    "VideoArtifacts",
     "CacheBackendRegistry",
 ]

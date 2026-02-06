@@ -539,8 +539,8 @@ class VespaSearchBackend(SearchBackend):
                             }
                         )
                 return {"cells": cells}
-        # For global profiles, embeddings are 1D
-        elif "global" in profile:
+        # For single-vector profiles, embeddings are 1D
+        elif "_sv_" in profile.lower():
             # Convert to tensor cells format for Vespa
             cells = [
                 {"address": {"v": str(i)}, "value": float(val)}

@@ -14,10 +14,10 @@ import torch
 from PIL import Image
 from pydantic import Field
 
-from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
+from cogniverse_core.query.encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 

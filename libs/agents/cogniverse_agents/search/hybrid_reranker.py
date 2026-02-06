@@ -19,7 +19,7 @@ from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
-    SearchResult,
+    RerankerSearchResult,
 )
 from cogniverse_foundation.config.utils import get_config_value
 
@@ -117,10 +117,10 @@ class HybridReranker:
     async def rerank_hybrid(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         modalities: List[QueryModality],
         context: Optional[Dict] = None,
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Hybrid reranking combining heuristic and learned approaches
 
@@ -148,10 +148,10 @@ class HybridReranker:
     async def _weighted_ensemble(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         modalities: List[QueryModality],
         context: Optional[Dict],
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Combine scores from both rerankers with weights
 
@@ -195,10 +195,10 @@ class HybridReranker:
     async def _cascade(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         modalities: List[QueryModality],
         context: Optional[Dict],
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Use heuristic for filtering, learned for final ranking
 
@@ -224,10 +224,10 @@ class HybridReranker:
     async def _consensus(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[RerankerSearchResult],
         modalities: List[QueryModality],
         context: Optional[Dict],
-    ) -> List[SearchResult]:
+    ) -> List[RerankerSearchResult]:
         """
         Require agreement between both methods
 

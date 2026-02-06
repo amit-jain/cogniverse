@@ -50,7 +50,12 @@ class TelemetryManager:
         if self._initialized:
             return
 
-        self.config = config or TelemetryConfig.from_env()
+        if config is None:
+            raise ValueError(
+                "TelemetryConfig is required. Use get_telemetry_manager() "
+                "which loads config from ConfigManager automatically."
+            )
+        self.config = config
         self.config.validate()
 
         # Thread-safe caches
@@ -679,9 +684,27 @@ class NoOpSpan:
 _telemetry_manager: Optional[TelemetryManager] = None
 
 
-def get_telemetry_manager() -> TelemetryManager:
-    """Get global telemetry manager instance."""
+def get_telemetry_manager(
+    config_manager=None, tenant_id: str = "default"
+) -> TelemetryManager:
+    """
+    Get global telemetry manager instance.
+
+    On first call, creates TelemetryManager with config loaded from ConfigManager.
+
+    Args:
+        config_manager: Optional ConfigManager to load config from.
+            If None on first call, creates one via create_default_config_manager().
+        tenant_id: Tenant ID for loading telemetry config.
+    """
     global _telemetry_manager
     if _telemetry_manager is None:
-        _telemetry_manager = TelemetryManager()
+        if config_manager is None:
+            from cogniverse_foundation.config.utils import (
+                create_default_config_manager,
+            )
+
+            config_manager = create_default_config_manager()
+        config = config_manager.get_telemetry_config(tenant_id)
+        _telemetry_manager = TelemetryManager(config)
     return _telemetry_manager

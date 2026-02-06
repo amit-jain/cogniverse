@@ -14,7 +14,7 @@ from cogniverse_agents.search.multi_modal_reranker import (
     ConfigurableMultiModalReranker,
     MultiModalReranker,
     QueryModality,
-    SearchResult,
+    RerankerSearchResult,
 )
 
 
@@ -27,8 +27,8 @@ def mock_config_manager():
         BackendConfig,
         RoutingConfigUnified,
         SystemConfig,
-        TelemetryConfigUnified,
     )
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
 
     mock_cm = Mock()
 
@@ -52,7 +52,7 @@ def mock_config_manager():
     mock_cm.get_routing_config.return_value = mock_routing_config
 
     # Mock get_telemetry_config
-    mock_telemetry_config = TelemetryConfigUnified(tenant_id="default")
+    mock_telemetry_config = TelemetryConfig()
     mock_cm.get_telemetry_config.return_value = mock_telemetry_config
 
     return mock_cm
@@ -62,7 +62,7 @@ def mock_config_manager():
 def sample_results():
     """Create sample search results for testing"""
     return [
-        SearchResult(
+        RerankerSearchResult(
             id="doc-1",
             title="Machine Learning Tutorial",
             content="Introduction to machine learning concepts and algorithms",
@@ -70,7 +70,7 @@ def sample_results():
             score=0.8,
             metadata={"original_score": 0.8},
         ),
-        SearchResult(
+        RerankerSearchResult(
             id="doc-2",
             title="Deep Learning Guide",
             content="Comprehensive guide to neural networks and deep learning",
@@ -78,7 +78,7 @@ def sample_results():
             score=0.7,
             metadata={"original_score": 0.7},
         ),
-        SearchResult(
+        RerankerSearchResult(
             id="doc-3",
             title="Python Programming",
             content="Learn Python programming from basics to advanced",

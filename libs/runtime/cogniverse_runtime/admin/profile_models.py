@@ -4,9 +4,12 @@ Pydantic Models for Profile Management API
 Request/response models for backend profile CRUD operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# Valid embedding types - must match ProfileValidator.VALID_EMBEDDING_TYPES
+EmbeddingType = Literal["frame_based", "video_chunks", "direct_video_segment", "single_vector"]
 
 
 class ProfileCreateRequest(BaseModel):
@@ -42,7 +45,7 @@ class ProfileCreateRequest(BaseModel):
         default_factory=dict,
         description="Processing strategy configurations (segmentation, embedding, etc.)",
     )
-    embedding_type: str = Field(
+    embedding_type: EmbeddingType = Field(
         ...,
         description="Embedding type (frame_based, video_chunks, direct_video_segment, single_vector)",
     )

@@ -257,19 +257,24 @@ class AdapterEvaluator:
                     correct_prediction = pred_json.get(
                         "recommended_agent"
                     ) == expected_json.get("recommended_agent")
+                    confidence = pred_json.get("confidence", 0.5)
                 elif self.agent_type == "profile_selection":
                     correct_prediction = pred_json.get(
                         "selected_profiles"
                     ) == expected_json.get("selected_profiles")
+                    confidence = pred_json.get("confidence", 0.5)
+                elif self.agent_type == "entity_extraction":
+                    correct_prediction, confidence = (
+                        self._check_entity_prediction(pred_json, expected_json)
+                    )
                 else:
-                    # Exact match fallback
-                    correct_prediction = pred_json == expected_json
+                    raise ValueError(
+                        f"Unsupported agent_type: {self.agent_type}"
+                    )
 
                 if correct_prediction:
                     correct += 1
 
-                # Get confidence
-                confidence = pred_json.get("confidence", 0.5)
                 total_confidence += confidence
 
             except (json.JSONDecodeError, KeyError):
@@ -298,6 +303,55 @@ class AdapterEvaluator:
             hallucination_rate=hallucination_rate,
             avg_latency_ms=avg_latency_ms,
         )
+
+    @staticmethod
+    def _check_entity_prediction(
+        pred_json: Dict, expected_json: Dict
+    ) -> tuple:
+        """
+        Check entity extraction prediction using set-based F1.
+
+        Extracts (text.lower(), type.upper()) tuples from both predicted and expected
+        entity lists, then computes precision, recall, and F1.
+
+        Args:
+            pred_json: Predicted JSON with "entities" key
+            expected_json: Expected JSON with "entities" key
+
+        Returns:
+            Tuple of (correct: bool, f1: float)
+            correct is True when F1 >= 0.5
+        """
+        pred_entities = pred_json.get("entities", [])
+        expected_entities = expected_json.get("entities", [])
+
+        pred_set = {
+            (e["text"].lower(), e["type"].upper()) for e in pred_entities
+        }
+        expected_set = {
+            (e["text"].lower(), e["type"].upper()) for e in expected_entities
+        }
+
+        # Both empty = correct prediction (no entities to extract)
+        if not pred_set and not expected_set:
+            return True, 1.0
+
+        # Predicted empty but expected non-empty
+        if not pred_set:
+            return False, 0.0
+
+        # Compute precision, recall, F1
+        intersection = pred_set & expected_set
+        precision = len(intersection) / len(pred_set)
+        recall = len(intersection) / len(expected_set) if expected_set else 0.0
+
+        if precision + recall > 0:
+            f1 = 2 * precision * recall / (precision + recall)
+        else:
+            f1 = 0.0
+
+        correct = f1 >= 0.5
+        return correct, f1
 
     def _compare_metrics(
         self,

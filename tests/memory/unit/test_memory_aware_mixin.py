@@ -36,8 +36,8 @@ class TestMemoryAwareMixin:
     def test_initialization(self, agent):
         """Test mixin initialization"""
         assert agent.memory_manager is None
-        assert agent.agent_name is None
-        assert agent.tenant_id is None
+        assert agent._memory_agent_name is None
+        assert agent._memory_tenant_id is None
         assert agent._memory_initialized is False
 
     def test_is_memory_enabled_false_by_default(self, agent):
@@ -56,8 +56,8 @@ class TestMemoryAwareMixin:
         success = agent.initialize_memory("test_agent", "test_tenant")
 
         assert success is True
-        assert agent.agent_name == "test_agent"
-        assert agent.tenant_id == "test_tenant"
+        assert agent._memory_agent_name == "test_agent"
+        assert agent._memory_tenant_id == "test_tenant"
         assert agent._memory_initialized is True
 
     @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")

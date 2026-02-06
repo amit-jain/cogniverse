@@ -699,7 +699,7 @@ class TestContentTypeVespaSchemas:
 
         import requests
 
-        from cogniverse_agents.query_encoders import ColPaliQueryEncoder
+        from cogniverse_core.query.encoders import ColPaliQueryEncoder
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")

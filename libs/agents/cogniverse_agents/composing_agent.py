@@ -15,12 +15,13 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
+from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
-from cogniverse_core.common.tools.video_player_tool import VideoPlayerTool
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Initialize configuration
-config = get_config(tenant_id="default", config_manager=create_default_config_manager())
+_config_manager = create_default_config_manager()
+config = get_config(tenant_id="default", config_manager=_config_manager)
 
 
 # --- Enhanced A2A Tool for Specialist Agents ---
@@ -410,7 +411,7 @@ video_search_tool = EnhancedA2AClientTool(
     result_type="video",
 )
 
-video_player_tool = VideoPlayerTool()
+video_player_tool = VideoPlayerTool(tenant_id="default", config_manager=_config_manager)
 
 # --- Enhanced Composing Agent ---
 composing_agent = LlmAgent(

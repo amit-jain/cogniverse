@@ -63,8 +63,8 @@ spec:
           # Check if tenant already exists
           cd /app
           TENANT_EXISTS=$(uv run python -c "
-          from cogniverse_vespa.backends import VespaBackend
-          from cogniverse_core.config import SystemConfig
+          from cogniverse_vespa import VespaBackend
+          from cogniverse_foundation.config import SystemConfig
           config = SystemConfig(tenant_id='{{workflow.parameters.tenant-id}}')
           backend = VespaBackend(config)
           # Check if any schemas exist for this tenant
@@ -115,8 +115,7 @@ spec:
 
             cd /app
             uv run python scripts/deploy_json_schema.py \
-              "configs/schemas/${profile}.json" \
-              --tenant-id {{workflow.parameters.tenant-id}}
+              "configs/schemas/${profile}.json"
 
             echo "Schema $profile deployed successfully"
           done
@@ -152,8 +151,8 @@ spec:
           # We'll send a test trace to initialize the project
           cd /app
           uv run python -c "
-          from cogniverse_core.config import SystemConfig
-          from cogniverse_core.telemetry import TelemetryManager
+          from cogniverse_foundation.config import SystemConfig
+          from cogniverse_foundation.telemetry import TelemetryManager
 
           config = SystemConfig(
               tenant_id='{{workflow.parameters.tenant-id}}',
@@ -227,8 +226,8 @@ spec:
 
           cd /app
           uv run python -c "
-          from cogniverse_core.config import SystemConfig
-          from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
+          from cogniverse_foundation.config import SystemConfig
+          from cogniverse_core.memory.manager import Mem0MemoryManager
 
           config = SystemConfig(
               tenant_id='{{workflow.parameters.tenant-id}}',

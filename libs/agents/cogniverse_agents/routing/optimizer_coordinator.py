@@ -7,6 +7,7 @@ specialized optimizer without requiring callers to know which optimizer to use.
 
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,8 @@ class OptimizerCoordinator:
             )
 
             self._routing_optimizer = AdvancedRoutingOptimizer(
-                optimization_dir=self.optimization_dir, tenant_id=self.tenant_id
+                tenant_id=self.tenant_id,
+                base_storage_dir=self.optimization_dir,
             )
         return self._routing_optimizer
 
@@ -89,8 +91,8 @@ class OptimizerCoordinator:
             from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 
             self._modality_optimizer = ModalityOptimizer(
-                model_dir=f"{self.optimization_dir}/modality_models",
                 tenant_id=self.tenant_id,
+                model_dir=Path(self.optimization_dir) / "modality_models",
             )
         return self._modality_optimizer
 
@@ -102,7 +104,8 @@ class OptimizerCoordinator:
             )
 
             self._cross_modal_optimizer = CrossModalOptimizer(
-                optimization_dir=self.optimization_dir
+                tenant_id=self.tenant_id,
+                model_dir=Path(self.optimization_dir) / "cross_modal_models",
             )
         return self._cross_modal_optimizer
 
@@ -110,9 +113,15 @@ class OptimizerCoordinator:
         """Lazy-load UnifiedOptimizer"""
         if self._unified_optimizer is None:
             from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+            from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+
+            # UnifiedOptimizer requires routing_optimizer and workflow_intelligence
+            routing_optimizer = self._get_routing_optimizer()
+            workflow_intelligence = WorkflowIntelligence()
 
             self._unified_optimizer = UnifiedOptimizer(
-                optimization_dir=self.optimization_dir
+                routing_optimizer=routing_optimizer,
+                workflow_intelligence=workflow_intelligence,
             )
         return self._unified_optimizer
 
@@ -146,7 +155,7 @@ class OptimizerCoordinator:
 
         elif type == OptimizationType.MODALITY:
             optimizer = self._get_modality_optimizer()
-            modality = kwargs.get("modality")
+            modality = kwargs.pop("modality", None)
             if not modality:
                 raise ValueError(
                     "modality parameter required for MODALITY optimization"

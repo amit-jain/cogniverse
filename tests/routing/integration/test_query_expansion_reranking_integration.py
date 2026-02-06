@@ -23,7 +23,7 @@ from cogniverse_agents.routing.query_expansion import QueryExpander
 from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
-    SearchResult,
+    RerankerSearchResult,
 )
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
@@ -224,12 +224,12 @@ class TestQueryExpansionIntegration:
 class TestMultiModalRerankingIntegration:
     """Integration tests for multi-modal reranking with real-like data"""
 
-    def create_mock_search_results(self) -> list[SearchResult]:
+    def create_mock_search_results(self) -> list[RerankerSearchResult]:
         """Create realistic multi-modal search results"""
         now = datetime.now()
 
         return [
-            SearchResult(
+            RerankerSearchResult(
                 id="video_ml_tutorial",
                 title="Machine Learning Crash Course",
                 content="Comprehensive ML tutorial covering supervised and unsupervised learning",
@@ -238,7 +238,7 @@ class TestMultiModalRerankingIntegration:
                 metadata={"duration": 3600, "views": 50000},
                 timestamp=now - timedelta(days=5),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="doc_ml_paper",
                 title="Introduction to Machine Learning",
                 content="Academic paper covering ML fundamentals and algorithms",
@@ -247,7 +247,7 @@ class TestMultiModalRerankingIntegration:
                 metadata={"pages": 25, "citations": 150},
                 timestamp=now - timedelta(days=30),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="image_nn_diagram",
                 title="Neural Network Architecture Diagram",
                 content="Visual representation of deep neural network layers and connections",
@@ -256,7 +256,7 @@ class TestMultiModalRerankingIntegration:
                 metadata={"resolution": "1920x1080", "format": "png"},
                 timestamp=now - timedelta(days=10),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="audio_ml_podcast",
                 title="Machine Learning Podcast Episode",
                 content="Discussion about recent developments in machine learning",
@@ -265,7 +265,7 @@ class TestMultiModalRerankingIntegration:
                 metadata={"duration": 2400, "speakers": 2},
                 timestamp=now - timedelta(days=2),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="video_nn_basics",
                 title="Neural Networks Explained",
                 content="Step-by-step explanation of how neural networks work",
@@ -486,7 +486,7 @@ class TestEndToEndMultiModalFlow:
         # Step 3: Simulate multi-modal search results
         now = datetime.now()
         search_results = [
-            SearchResult(
+            RerankerSearchResult(
                 id="video_recent",
                 title="Neural Networks 2024 Tutorial",
                 content="Latest neural network techniques",
@@ -495,7 +495,7 @@ class TestEndToEndMultiModalFlow:
                 metadata={},
                 timestamp=now - timedelta(days=3),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="doc_classic",
                 title="Classic Neural Networks Paper",
                 content="Foundational neural network research",
@@ -504,7 +504,7 @@ class TestEndToEndMultiModalFlow:
                 metadata={},
                 timestamp=now - timedelta(days=365),
             ),
-            SearchResult(
+            RerankerSearchResult(
                 id="video_tutorial",
                 title="NN Tutorial Series",
                 content="Comprehensive neural network tutorial",

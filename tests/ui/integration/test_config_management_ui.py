@@ -24,8 +24,8 @@ from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
 from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
-    TelemetryConfigUnified,
 )
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
@@ -227,24 +227,23 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Simulate UI form submission
-        telemetry_config = TelemetryConfigUnified(
-            tenant_id=tenant_id,
+        telemetry_config = TelemetryConfig(
             enabled=True,
-            phoenix_enabled=True,
-            phoenix_endpoint="localhost:4317",
+            otlp_enabled=True,
+            otlp_endpoint="localhost:4317",
             service_name="test_project",
-            level="detailed",
+            level=TelemetryLevel.DETAILED,
         )
 
         # Save via ConfigManager
-        config_manager.set_telemetry_config(telemetry_config)
+        config_manager.set_telemetry_config(telemetry_config, tenant_id=tenant_id)
 
         # Verify
         retrieved = config_manager.get_telemetry_config(tenant_id)
-        assert retrieved.phoenix_enabled is True
+        assert retrieved.otlp_enabled is True
         assert retrieved.service_name == "test_project"
         assert retrieved.enabled is True
-        assert retrieved.level == "detailed"
+        assert retrieved.level == TelemetryLevel.DETAILED
 
     def test_config_history_workflow(self, config_manager):
         """Test configuration history viewer workflow"""
@@ -410,7 +409,7 @@ class TestConfigManagementUI:
                     "config_value": {
                         "tenant_id": tenant_id,
                         "llm_model": "imported-model",
-                        "vespa_port": 7070,
+                        "backend_port": 7070,
                     },
                 },
                 {
@@ -448,7 +447,7 @@ class TestConfigManagementUI:
         # Create multiple configs
         config_manager.set_system_config(SystemConfig(tenant_id=tenant_id))
         config_manager.set_routing_config(RoutingConfigUnified(tenant_id=tenant_id))
-        config_manager.set_telemetry_config(TelemetryConfigUnified(tenant_id=tenant_id))
+        config_manager.set_telemetry_config(TelemetryConfig(), tenant_id=tenant_id)
 
         # Get stats (simulates UI stats display)
         stats = config_manager.store.get_stats()

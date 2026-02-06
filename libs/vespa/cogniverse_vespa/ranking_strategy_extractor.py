@@ -58,7 +58,7 @@ class RankingStrategyExtractor:
             schema_json = json.load(f)
 
         schema_name = schema_json.get("schema", schema_json.get("name", ""))
-        is_global = "global" in schema_name
+        is_single_vector = "_sv_" in schema_name.lower()
 
         # Extract field information
         fields = {f["name"]: f for f in schema_json["document"]["fields"]}
@@ -69,7 +69,7 @@ class RankingStrategyExtractor:
             "rank-profiles", schema_json.get("rank_profiles", [])
         ):
             strategy_info = self._parse_ranking_profile(
-                profile, fields, is_global, schema_json
+                profile, fields, is_single_vector, schema_json
             )
             strategies[strategy_info.name] = strategy_info
 
@@ -79,7 +79,7 @@ class RankingStrategyExtractor:
         self,
         profile: Dict[str, Any],
         fields: Dict[str, Dict],
-        is_global: bool,
+        is_single_vector: bool,
         schema_json: Dict[str, Any],
     ) -> RankingStrategyInfo:
         """Parse a single ranking profile"""
@@ -127,16 +127,15 @@ class RankingStrategyExtractor:
             strategy_type = SearchStrategyType.HYBRID
 
         # Determine if uses nearestNeighbor based on schema and strategy
+        # Single-vector schemas (containing _sv_ in name) use nearestNeighbor
+        # for efficient ANN search, unlike multi-vector patch-based schemas
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
 
-        # Check for video_chunks schema specifically
         schema_name = schema_json.get("schema", "")
-        is_video_chunks = schema_name == "video_chunks"
 
-        # For global schemas OR video_chunks, visual strategies use nearestNeighbor
-        if (is_global or is_video_chunks) and strategy_type in [
+        if is_single_vector and strategy_type in [
             SearchStrategyType.PURE_VISUAL,
             SearchStrategyType.HYBRID,
         ]:
@@ -150,12 +149,8 @@ class RankingStrategyExtractor:
             ]:
                 use_nearestneighbor = True
 
-                # Determine field and tensor based on profile AND schema
-                if profile_name == "float_binary" and is_video_chunks:
-                    # Special case: video_chunks float_binary uses float embeddings
-                    nearestneighbor_field = "embedding"
-                    nearestneighbor_tensor = "qt"
-                elif profile_name == "float_float":
+                # Determine field and tensor based on profile
+                if profile_name == "float_float":
                     nearestneighbor_field = "embedding"
                     nearestneighbor_tensor = "qt"
                 elif profile_name in ["binary_binary", "phased"]:

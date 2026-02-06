@@ -25,6 +25,8 @@ class OptimizerType(Enum):
     BOOTSTRAP_FEW_SHOT_WITH_RANDOM_SEARCH = "bootstrap_few_shot_with_random_search"
     COPRO = "copro"
     MIPRO_V2 = "mipro_v2"
+    GEPA = "gepa"
+    SIMBA = "simba"
 
 
 @dataclass
