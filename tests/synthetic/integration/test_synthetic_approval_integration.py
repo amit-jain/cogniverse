@@ -280,10 +280,17 @@ def backend_config():
 def telemetry_manager(phoenix_container):
     """TelemetryManager configured for approval tests"""
     # phoenix_container fixture ensures env vars are set and TelemetryManager singleton is reset
-    # Create TelemetryManager which will read OTLP_ENDPOINT and TELEMETRY_SYNC_EXPORT
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
-    manager = TelemetryManager()
+    config = TelemetryConfig(
+        otlp_endpoint="localhost:24317",
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    manager = TelemetryManager(config)
     yield manager
 
     # Cleanup

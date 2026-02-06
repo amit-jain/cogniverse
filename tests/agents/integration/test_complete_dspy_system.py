@@ -34,67 +34,66 @@ class TestCompleteDSPySystem:
             with patch(
                 "cogniverse_vespa.tenant_aware_search_client.TenantAwareVespaSearchClient"
             ):
-                with patch("cogniverse_agents.query.encoders.QueryEncoderFactory"):
-                    # Initialize routing agent
-                    deps = RoutingDeps(
-                        tenant_id="test_tenant",
-                        telemetry_config=telemetry_manager_without_phoenix.config,
+                # Initialize routing agent
+                deps = RoutingDeps(
+                    tenant_id="test_tenant",
+                    telemetry_config=telemetry_manager_without_phoenix.config,
+                )
+                routing_agent = RoutingAgent(deps=deps)
+
+                # Test that it can process a query
+                query = "Find videos of robots playing soccer"
+
+                # Mock the routing decision
+                routing_agent._make_routing_decision = AsyncMock(
+                    return_value={
+                        "search_modality": SearchModality.VIDEO,
+                        "generation_type": GenerationType.RAW_RESULTS,
+                        "confidence_score": 0.85,
+                        "entities": [{"text": "robots", "label": "ENTITY"}],
+                        "relationships": [
+                            {
+                                "subject": "robots",
+                                "relation": "playing",
+                                "object": "soccer",
+                            }
+                        ],
+                    }
+                )
+
+                routing_agent._extract_relationships = AsyncMock(
+                    return_value=(
+                        [{"text": "robots", "label": "ENTITY"}],
+                        [
+                            {
+                                "subject": "robots",
+                                "relation": "playing",
+                                "object": "soccer",
+                            }
+                        ],
                     )
-                    routing_agent = RoutingAgent(deps=deps)
+                )
 
-                    # Test that it can process a query
-                    query = "Find videos of robots playing soccer"
-
-                    # Mock the routing decision
-                    routing_agent._make_routing_decision = AsyncMock(
-                        return_value={
-                            "search_modality": SearchModality.VIDEO,
-                            "generation_type": GenerationType.RAW_RESULTS,
-                            "confidence_score": 0.85,
-                            "entities": [{"text": "robots", "label": "ENTITY"}],
-                            "relationships": [
-                                {
-                                    "subject": "robots",
-                                    "relation": "playing",
-                                    "object": "soccer",
-                                }
-                            ],
-                        }
+                routing_agent._enhance_query = AsyncMock(
+                    return_value=(
+                        "Find videos of robots playing soccer with artificial intelligence",
+                        {"enhancement_method": "relationship_context"},
                     )
+                )
 
-                    routing_agent._extract_relationships = AsyncMock(
-                        return_value=(
-                            [{"text": "robots", "label": "ENTITY"}],
-                            [
-                                {
-                                    "subject": "robots",
-                                    "relation": "playing",
-                                    "object": "soccer",
-                                }
-                            ],
-                        )
-                    )
+                # Test the routing
+                result = await routing_agent.route_query(query)
 
-                    routing_agent._enhance_query = AsyncMock(
-                        return_value=(
-                            "Find videos of robots playing soccer with artificial intelligence",
-                            {"enhancement_method": "relationship_context"},
-                        )
-                    )
-
-                    # Test the routing
-                    result = await routing_agent.route_query(query)
-
-                    # Verify the system works
+                # Verify the system works
+                assert result is not None
+                # RoutingDecision is a dict-like object, check for key
+                if hasattr(result, "search_modality"):
+                    assert result.search_modality is not None
+                elif isinstance(result, dict) and "search_modality" in result:
+                    assert result["search_modality"] is not None
+                else:
+                    # Result should be a RoutingDecision or dict with routing info
                     assert result is not None
-                    # RoutingDecision is a dict-like object, check for key
-                    if hasattr(result, "search_modality"):
-                        assert result.search_modality is not None
-                    elif isinstance(result, dict) and "search_modality" in result:
-                        assert result["search_modality"] is not None
-                    else:
-                        # Result should be a RoutingDecision or dict with routing info
-                        assert result is not None
 
     @pytest.mark.ci_fast
     def test_routing_system_components_integration(self):

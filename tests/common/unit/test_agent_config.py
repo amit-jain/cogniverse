@@ -50,6 +50,8 @@ class TestOptimizerType:
             "bootstrap_few_shot_with_random_search",
             "copro",
             "mipro_v2",
+            "gepa",
+            "simba",
         }
         actual_types = {t.value for t in OptimizerType}
         assert actual_types == expected_types
