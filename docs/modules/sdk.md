@@ -29,12 +29,14 @@
 The **cogniverse-sdk** package is the **pure foundation** of the Cogniverse system, providing core interfaces and data models with **zero internal Cogniverse dependencies**. It defines the contracts that all backend implementations must follow.
 
 **Key Responsibilities:**
+
 - **Backend Interface**: Abstract base classes for search and ingestion backends
 - **Document Model**: Universal document representation across all content types
 - **Configuration Interface**: Config storage abstraction for multi-tenancy
 - **Schema Loading**: Template loading interface for schema management
 
 **Design Philosophy:**
+
 - **Zero Dependencies**: Only depends on standard library and numpy
 - **Pure Interfaces**: Abstract base classes with no implementation
 - **Content-Agnostic**: Generic models that work for video, audio, text, images
@@ -43,21 +45,23 @@ The **cogniverse-sdk** package is the **pure foundation** of the Cogniverse syst
 ### Position in Architecture
 
 ```mermaid
-graph TB
-    SDK[cogniverse-sdk<br/>Pure Interfaces<br/>Zero Dependencies]
-    Foundation[cogniverse-foundation]
-    Core[cogniverse-core]
-    Evaluation[cogniverse-evaluation]
-    Implementations[Implementation Layer<br/>agents, vespa, synthetic]
+flowchart TB
+    SDK["<span style='color:#000'>cogniverse-sdk<br/>Pure Interfaces<br/>Zero Dependencies</span>"]
+    Foundation["<span style='color:#000'>cogniverse-foundation</span>"]
+    Core["<span style='color:#000'>cogniverse-core</span>"]
+    Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
+    Implementations["<span style='color:#000'>Implementation Layer<br/>agents, vespa, synthetic</span>"]
 
-    SDK --> Foundation
-    SDK --> Core
-    SDK --> Evaluation
-    SDK --> Implementations
+    Foundation --> SDK
+    Core --> SDK
+    Evaluation --> SDK
+    Implementations --> SDK
 
-    style SDK fill:#d0e8f2
-    style Foundation fill:#e8f2d0
-    style Core fill:#ffe1f5
+    style SDK fill:#90caf9,stroke:#1565c0,color:#000
+    style Foundation fill:#64b5f6,stroke:#1565c0,color:#000
+    style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Evaluation fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Implementations fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 **SDK is the foundation** - all other packages depend on it, but it depends on nothing (except numpy).
@@ -70,11 +74,20 @@ graph TB
 
 #### 1. **Interface Segregation**
 Separate interfaces for different concerns:
+
 - `Backend`: General backend interface (combined search + ingestion)
+
 - `SearchBackend`: Search-specific operations
+
 - `IngestionBackend`: Ingestion-specific operations
-- `ConfigStore`: Configuration storage
-- `SchemaLoader`: Schema template loading
+
+- `ConfigStore`: Configuration storage with versioning and scoping
+
+- `SchemaLoader`: Schema loading and ranking strategies
+
+- `WorkflowStore`: Workflow execution records and agent performance
+
+- `AdapterStore`: Adapter registry and activation management
 
 #### 2. **Abstract Base Classes**
 All interfaces use ABC (Abstract Base Class) pattern:
@@ -83,16 +96,27 @@ from abc import ABC, abstractmethod
 
 class SearchBackend(ABC):
     @abstractmethod
-    def search(self, query: str, top_k: int) -> List[Document]:
+    def search(
+        self,
+        query_embeddings: Optional[np.ndarray],
+        query_text: Optional[str],
+        top_k: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        ranking_strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Search implementation must be provided by subclass"""
         pass
 ```
 
 #### 3. **Generic Document Model**
 Single `Document` class for all content types:
+
 - Uses `ContentType` enum (VIDEO, AUDIO, IMAGE, TEXT, DOCUMENT)
+
 - Flexible metadata dictionary
+
 - Extensible embeddings storage
+
 - No content-specific fields
 
 ---
@@ -117,10 +141,12 @@ class Backend(ABC):
     @abstractmethod
     def search(
         self,
-        query: Union[str, np.ndarray],
-        top_k: int,
-        schema_name: str
-    ) -> List[Document]:
+        query_embeddings: Optional[np.ndarray],
+        query_text: Optional[str],
+        top_k: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        ranking_strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Search for documents"""
         pass
 
@@ -135,6 +161,7 @@ class Backend(ABC):
 ```
 
 **Benefits:**
+
 - **Swappable Backends**: Easy to switch from Vespa to Qdrant or other backends
 - **Consistent API**: All backends expose the same interface
 - **Type Safety**: Clear type hints for all methods
@@ -155,91 +182,401 @@ class Document:
 
     # Content information
     content_path: Optional[Path] = None
-    content_data: Optional[Union[str, bytes]] = None
+    content_id: Optional[str] = None
+    title: Optional[str] = None
 
-    # Metadata (flexible)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    # Generic content data
+    text_content: Optional[str] = None
+    description: Optional[str] = None
 
-    # Embeddings
+    # Embeddings - flexible storage for any embedding type
     embeddings: Dict[str, Any] = field(default_factory=dict)
 
-    # Processing
+    # Processing metadata
     status: ProcessingStatus = ProcessingStatus.PENDING
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
+    processing_time: Optional[float] = None
+    error_message: Optional[str] = None
+
+    # Flexible metadata for any additional fields
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # System metadata (Unix timestamps as int)
+    created_at: int = field(default_factory=lambda: int(time.time()))
+    updated_at: int = field(default_factory=lambda: int(time.time()))
 ```
 
 **Features:**
+
 - **Content-Agnostic**: Works for video, audio, image, text, dataframes
 - **Flexible Metadata**: Store any metadata as dict
 - **Multiple Embeddings**: Store different embedding types (ColPali, VideoPrism, etc.)
-- **Processing Status**: Track document lifecycle
-- **Timestamps**: Automatic creation and update tracking
+- **Processing Status**: Track document lifecycle with error messages
+- **Timestamps**: Automatic creation and update tracking (Unix int timestamps)
+- **Auto-Detection**: Content type auto-detected from file extension
 
 ### 3. Configuration Interface
 
-Abstract config storage for multi-tenancy:
+Abstract config storage for multi-tenancy with versioning and scoping:
 
 ```python
-from cogniverse_sdk.interfaces.config_store import ConfigStore
+from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigScope, ConfigEntry
 
 class ConfigStore(ABC):
-    """Interface for configuration storage"""
+    """Interface for configuration storage with versioning"""
 
     @abstractmethod
-    def get_config(self, tenant_id: str, config_key: str) -> Optional[Any]:
-        """Get configuration value for tenant"""
+    def initialize(self) -> None:
+        """Initialize the configuration store."""
         pass
 
     @abstractmethod
-    def set_config(self, tenant_id: str, config_key: str, value: Any) -> None:
-        """Set configuration value for tenant"""
+    def set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        """Store or update a configuration entry. Returns ConfigEntry with version."""
         pass
 
     @abstractmethod
-    def delete_config(self, tenant_id: str, config_key: str) -> None:
-        """Delete configuration value"""
+    def get_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        version: Optional[int] = None,
+    ) -> Optional[ConfigEntry]:
+        """Retrieve configuration, optionally by specific version."""
+        pass
+
+    @abstractmethod
+    def get_config_history(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        limit: int = 10,
+    ) -> List[ConfigEntry]:
+        """Get configuration version history."""
+        pass
+
+    @abstractmethod
+    def list_configs(
+        self,
+        tenant_id: str,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+    ) -> List[ConfigEntry]:
+        """List all configurations matching criteria."""
+        pass
+
+    @abstractmethod
+    def delete_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+    ) -> bool:
+        """Delete all versions of a configuration entry."""
+        pass
+
+    @abstractmethod
+    def export_configs(self, tenant_id: str, include_history: bool = False) -> Dict[str, Any]:
+        """Export all configurations for a tenant."""
+        pass
+
+    @abstractmethod
+    def import_configs(self, tenant_id: str, configs: Dict[str, Any]) -> int:
+        """Import configurations for a tenant. Returns count imported."""
+        pass
+
+    @abstractmethod
+    def list_all_configs(
+        self,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+    ) -> List[ConfigEntry]:
+        """List all configurations across all tenants."""
+        pass
+
+    @abstractmethod
+    def get_stats(self) -> Dict[str, Any]:
+        """Get storage statistics."""
+        pass
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        """Check if storage backend is healthy."""
         pass
 ```
 
+**ConfigScope Enum:**
+```python
+class ConfigScope(Enum):
+    SYSTEM = "system"
+    AGENT = "agent"
+    ROUTING = "routing"
+    TELEMETRY = "telemetry"
+    SCHEMA = "schema"
+    BACKEND = "backend"
+```
+
+**ConfigEntry Dataclass:**
+```python
+@dataclass
+class ConfigEntry:
+    tenant_id: str
+    scope: ConfigScope
+    service: str
+    config_key: str
+    config_value: Dict[str, Any]
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+    def get_config_id(self) -> str:
+        """Generate unique config ID: tenant_id:scope:service:config_key"""
+        return f"{self.tenant_id}:{self.scope.value}:{self.service}:{self.config_key}"
+```
+
 **Benefits:**
-- **Storage-Agnostic**: Can use SQLite, PostgreSQL, Redis, etc.
-- **Tenant-Scoped**: Configuration isolated per tenant
-- **Type-Safe**: Clear method signatures
+
+- **Storage-Agnostic**: Pluggable backend via `ConfigStore` interface (e.g., Vespa, SQLite)
+- **Versioned**: All updates are versioned with history retrieval
+- **Scoped**: Configuration organized by scope (system, agent, routing, etc.)
+- **Service-Aware**: Configuration tied to specific services
 
 ### 4. Schema Loading Interface
 
-Template loading for multi-tenant schema deployment:
+Schema loading for backend schema definitions:
 
 ```python
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
+from pathlib import Path
 
 class SchemaLoader(ABC):
-    """Interface for loading schema templates"""
+    """Interface for loading backend schema definitions"""
 
     @abstractmethod
-    def load_schema_template(self, schema_name: str) -> Dict[str, Any]:
-        """Load schema template from storage"""
+    def load_schema(self, schema_name: str) -> Dict[str, Any]:
+        """Load a schema definition by name."""
         pass
 
     @abstractmethod
-    def render_schema(
-        self,
-        template: Dict[str, Any],
-        tenant_id: str
-    ) -> Dict[str, Any]:
-        """Render template with tenant-specific values"""
+    def list_available_schemas(self) -> List[str]:
+        """List all available schema names."""
+        pass
+
+    @abstractmethod
+    def schema_exists(self, schema_name: str) -> bool:
+        """Check if a schema exists."""
+        pass
+
+    @abstractmethod
+    def load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
+        """Load ranking strategies configuration."""
         pass
 ```
 
 **Use Case:**
 ```python
-# Load base schema template
-template = loader.load_schema_template("video_frames")
+# Load schema definition
+schema = loader.load_schema("video_frames")
 
-# Render for specific tenant
-schema = loader.render_schema(template, tenant_id="acme_corp")
-# Result: schema name becomes "video_frames_acme_corp"
+# List available schemas
+schemas = loader.list_available_schemas()  # ["video_frames", "audio_chunks", ...]
+
+# Check if schema exists
+if loader.schema_exists("video_frames"):
+    schema = loader.load_schema("video_frames")
+
+# Load ranking strategies
+strategies = loader.load_ranking_strategies()
+# Returns: {"strategy_name": {"ranking_profile": "...", "parameters": {...}}}
+```
+
+### 5. Workflow Store Interface
+
+Storage for workflow execution records and agent performance:
+
+```python
+from cogniverse_sdk.interfaces.workflow_store import WorkflowStore, ExecutionRecord, AgentStats
+
+class WorkflowStore(ABC):
+    """Interface for workflow intelligence storage"""
+
+    @abstractmethod
+    def initialize(self) -> None:
+        """Initialize the workflow store."""
+        pass
+
+    @abstractmethod
+    def record_execution(
+        self,
+        tenant_id: str,
+        workflow_name: str,
+        status: str,
+        metrics: Dict[str, Any],
+    ) -> str:
+        """Record workflow execution. Returns execution_id."""
+        pass
+
+    @abstractmethod
+    def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
+        """Get execution by ID."""
+        pass
+
+    @abstractmethod
+    def list_executions(
+        self,
+        tenant_id: str,
+        workflow_name: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[ExecutionRecord]:
+        """List executions with optional filters."""
+        pass
+
+    @abstractmethod
+    def record_agent_performance(
+        self,
+        tenant_id: str,
+        agent_type: str,
+        duration_ms: float,
+        success: bool,
+        metrics: Dict[str, Any],
+    ) -> str:
+        """Record agent performance. Returns performance_id."""
+        pass
+
+    @abstractmethod
+    def get_agent_stats(
+        self,
+        tenant_id: str,
+        agent_type: str,
+    ) -> Optional[AgentStats]:
+        """Get aggregated agent statistics."""
+        pass
+
+    @abstractmethod
+    def save_template(
+        self,
+        tenant_id: str,
+        template_name: str,
+        config: Dict[str, Any],
+    ) -> str:
+        """Save workflow template. Returns template_id."""
+        pass
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        """Check if storage backend is healthy."""
+        pass
+```
+
+**Data Classes:**
+```python
+@dataclass
+class ExecutionRecord:
+    execution_id: str
+    tenant_id: str
+    workflow_name: str
+    status: str
+    metrics: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+@dataclass
+class AgentStats:
+    agent_type: str
+    tenant_id: str
+    total_executions: int
+    avg_duration_ms: float
+    success_rate: float
+    last_execution: Optional[datetime]
+```
+
+### 6. Adapter Store Interface
+
+Storage for adapter metadata and activation management:
+
+```python
+from cogniverse_sdk.interfaces.adapter_store import AdapterStore
+
+class AdapterStore(ABC):
+    """Interface for adapter metadata storage"""
+
+    @abstractmethod
+    def initialize(self) -> None:
+        """Initialize the adapter store."""
+        pass
+
+    @abstractmethod
+    def save_adapter(self, metadata: Dict[str, Any]) -> str:
+        """Save adapter metadata. Returns adapter_id."""
+        pass
+
+    @abstractmethod
+    def get_adapter(self, adapter_id: str) -> Optional[Dict[str, Any]]:
+        """Get adapter metadata by ID."""
+        pass
+
+    @abstractmethod
+    def list_adapters(
+        self,
+        tenant_id: Optional[str] = None,
+        agent_type: Optional[str] = None,
+        model_type: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """List adapters with optional filters."""
+        pass
+
+    @abstractmethod
+    def get_active_adapter(
+        self,
+        tenant_id: str,
+        agent_type: str,
+        model_type: str = "llm",
+    ) -> Optional[Dict[str, Any]]:
+        """Get the active adapter for a tenant/agent/model combination."""
+        pass
+
+    @abstractmethod
+    def set_active(self, adapter_id: str, tenant_id: str, agent_type: str) -> None:
+        """Set an adapter as active for a tenant/agent combination."""
+        pass
+
+    @abstractmethod
+    def deactivate_adapter(self, adapter_id: str) -> None:
+        """Deactivate an adapter."""
+        pass
+
+    @abstractmethod
+    def deprecate_adapter(self, adapter_id: str) -> None:
+        """Deprecate an adapter (marks as deprecated and deactivates)."""
+        pass
+
+    @abstractmethod
+    def delete_adapter(self, adapter_id: str) -> bool:
+        """Delete an adapter. Returns True if deleted."""
+        pass
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        """Check if the store is healthy."""
+        pass
+
+    @abstractmethod
+    def get_stats(self) -> Dict[str, Any]:
+        """Get storage statistics."""
+        pass
 ```
 
 ---
@@ -248,7 +585,7 @@ schema = loader.render_schema(template, tenant_id="acme_corp")
 
 ### Directory Layout
 
-```
+```text
 cogniverse_sdk/
 ├── __init__.py                    # Package exports
 ├── document.py                    # Universal Document model
@@ -256,7 +593,9 @@ cogniverse_sdk/
     ├── __init__.py                # Interface exports
     ├── backend.py                 # Backend interfaces (Search, Ingestion, Combined)
     ├── config_store.py            # Config storage interface
-    └── schema_loader.py           # Schema loading interface
+    ├── schema_loader.py           # Schema loading interface
+    ├── workflow_store.py          # Workflow execution and agent performance
+    └── adapter_store.py           # Adapter registry interface
 ```
 
 ### File Descriptions
@@ -265,6 +604,7 @@ cogniverse_sdk/
 **Purpose**: Universal document model for all content types
 
 **Key Classes:**
+
 - `ContentType`: Enum for content types supporting **multi-modal content**:
   - `VIDEO`: Video files with frame-based or chunk-based processing
   - `AUDIO`: Audio files and speech content
@@ -274,55 +614,127 @@ cogniverse_sdk/
   - `DATAFRAME`: Tabular data (CSV, Excel, Pandas DataFrames)
 - `ProcessingStatus`: Enum for processing status (PENDING, PROCESSING, COMPLETED, FAILED, SKIPPED)
 - `Document`: Main document class with metadata, embeddings, and status
-- `DocumentMetadata`: Helper for structured metadata
+- `SearchResult`: Represents a search result with document and score
 
-**Lines of Code**: ~300
+**Lines of Code**: ~267
 
 #### `interfaces/backend.py`
 **Purpose**: Backend interface definitions
 
 **Key Classes:**
+
 - `Backend`: Combined search + ingestion interface
 - `SearchBackend`: Search-only operations
 - `IngestionBackend`: Ingestion-only operations
 
 **Methods:**
+
 - `initialize(config)`: Initialize backend
-- `search(query, top_k, schema_name)`: Search documents
+- `search(query_embeddings, query_text, top_k, filters, ranking_strategy)`: Search documents
 - `ingest_documents(documents, schema_name)`: Ingest documents
 - `health_check()`: Check backend health
-- `count_documents(schema_name)`: Count indexed documents
+- `get_statistics()`: Get search backend statistics
+- `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
+- `delete_schema(schema_name, tenant_id)`: Delete tenant schema
+- `schema_exists(schema_name, tenant_id)`: Check if schema exists
+- `get_tenant_schema_name(tenant_id, base_schema_name)`: Get tenant-specific schema name
 
-**Lines of Code**: ~400
+**Lines of Code**: ~494
 
 #### `interfaces/config_store.py`
-**Purpose**: Configuration storage interface
+**Purpose**: Configuration storage interface with versioning
 
 **Key Classes:**
-- `ConfigStore`: Abstract config storage
-- `ConfigScope`: Enum for config scope (SYSTEM, TENANT, USER)
+
+- `ConfigStore`: Abstract config storage with version history
+- `ConfigScope`: Enum for config scope (SYSTEM, AGENT, ROUTING, TELEMETRY, SCHEMA, BACKEND)
+- `ConfigEntry`: Dataclass for configuration entry with version
 
 **Methods:**
-- `get_config(tenant_id, key)`: Get config value
-- `set_config(tenant_id, key, value)`: Set config value
-- `list_configs(tenant_id)`: List all configs for tenant
-- `delete_config(tenant_id, key)`: Delete config
 
-**Lines of Code**: ~250
+- `initialize()`: Initialize the configuration store
+- `set_config(tenant_id, scope, service, config_key, config_value)`: Set config with versioning
+- `get_config(tenant_id, scope, service, config_key, version)`: Get config (optionally by version)
+- `get_config_history(tenant_id, scope, service, config_key, limit)`: Get version history
+- `list_configs(tenant_id, scope, service)`: List configs with filters
+- `list_all_configs(scope, service)`: List all configurations across all tenants
+- `delete_config(tenant_id, scope, service, config_key)`: Delete all versions
+- `export_configs(tenant_id, include_history)`: Export tenant configs
+- `import_configs(tenant_id, configs)`: Import configs
+- `get_stats()`: Get storage statistics
+- `health_check()`: Check storage health
+
+**Lines of Code**: ~290
 
 #### `interfaces/schema_loader.py`
-**Purpose**: Schema template loading
+**Purpose**: Schema loading and ranking strategies
 
 **Key Classes:**
+
 - `SchemaLoader`: Abstract schema loader
-- `SchemaFormat`: Enum for schema formats (JSON, YAML, VESPA_SD)
+- `SchemaNotFoundException`: Raised when schema not found
+- `SchemaLoadError`: Raised when schema fails to load/parse
 
 **Methods:**
-- `load_schema_template(name)`: Load template
-- `render_schema(template, tenant_id)`: Render with tenant values
-- `validate_schema(schema)`: Validate schema structure
 
-**Lines of Code**: ~200
+- `load_schema(schema_name)`: Load schema definition by name
+- `list_available_schemas()`: List all available schema names
+- `schema_exists(schema_name)`: Check if schema exists
+- `load_ranking_strategies()`: Load ranking strategies configuration
+
+**Lines of Code**: ~103
+
+#### `interfaces/workflow_store.py`
+**Purpose**: Workflow execution and agent performance storage
+
+**Key Classes:**
+
+- `WorkflowStore`: Abstract workflow storage
+- `ExecutionRecord`: Dataclass for workflow execution records
+- `AgentPerformanceRecord`: Dataclass for agent performance records
+- `AgentStats`: Dataclass for aggregated agent statistics
+- `WorkflowTemplate`: Dataclass for workflow template configuration
+
+**Methods:**
+
+- `initialize()`: Initialize the workflow store
+- `record_execution(tenant_id, workflow_name, status, metrics)`: Record workflow execution
+- `get_execution(execution_id)`: Get execution by ID
+- `list_executions(tenant_id, workflow_name, limit)`: List executions
+- `record_agent_performance(tenant_id, agent_type, duration_ms, success, metrics)`: Record agent performance
+- `get_agent_stats(tenant_id, agent_type)`: Get aggregated agent statistics
+- `list_agent_performance(tenant_id, agent_type, limit)`: List agent performance records
+- `save_template(tenant_id, template_name, config)`: Save workflow template
+- `get_template(tenant_id, template_name)`: Get template by name
+- `list_templates(tenant_id)`: List all templates for tenant
+- `delete_template(tenant_id, template_name)`: Delete a template
+- `health_check()`: Check storage health
+- `get_stats()`: Get storage statistics
+
+**Lines of Code**: ~368
+
+#### `interfaces/adapter_store.py`
+**Purpose**: Adapter registry and activation management
+
+**Key Classes:**
+
+- `AdapterStore`: Abstract adapter storage
+
+**Methods:**
+
+- `initialize()`: Initialize the adapter store
+- `save_adapter(metadata)`: Save adapter metadata
+- `get_adapter(adapter_id)`: Get adapter by ID
+- `list_adapters(tenant_id, agent_type, model_type, status, limit)`: List adapters with filters
+- `get_active_adapter(tenant_id, agent_type, model_type)`: Get active adapter
+- `set_active(adapter_id, tenant_id, agent_type)`: Set adapter as active
+- `deactivate_adapter(adapter_id)`: Deactivate adapter
+- `deprecate_adapter(adapter_id)`: Deprecate adapter
+- `delete_adapter(adapter_id)`: Delete adapter
+- `health_check()`: Check storage health
+- `get_stats()`: Get storage statistics
+
+**Lines of Code**: ~159
 
 ---
 
@@ -355,28 +767,49 @@ doc = Document(
 doc.id                  # str: Unique document ID
 doc.content_type        # ContentType: Type of content
 doc.content_path        # Optional[Path]: Path to content file
-doc.content_data        # Optional[Union[str, bytes]]: Raw content data
+doc.content_id          # Optional[str]: Content identifier
+doc.title               # Optional[str]: Document title
+doc.text_content        # Optional[str]: Text content
+doc.description         # Optional[str]: Document description
 doc.metadata            # Dict[str, Any]: Flexible metadata
 doc.embeddings          # Dict[str, Any]: Multiple embeddings
 doc.status              # ProcessingStatus: Current status
-doc.created_at          # float: Unix timestamp
-doc.updated_at          # float: Unix timestamp
+doc.processing_time     # Optional[float]: Processing duration
+doc.error_message       # Optional[str]: Error message if failed
+doc.created_at          # int: Unix timestamp
+doc.updated_at          # int: Unix timestamp
 ```
 
 #### Methods
 
 ```python
-# Update status
-doc.set_status(ProcessingStatus.COMPLETED)
+# Update processing status
+doc.set_processing_status(ProcessingStatus.COMPLETED)
+doc.set_processing_status(ProcessingStatus.FAILED, error_message="Error details")
+
+# Mark as completed
+doc.mark_completed(processing_time=1.5)
+
+# Mark as failed
+doc.mark_failed("Error message")
 
 # Add metadata
 doc.add_metadata("author", "John Doe")
 
-# Add embedding
-doc.add_embedding("colpali", embedding_array)
+# Get metadata
+author = doc.get_metadata("author", default="Unknown")
 
-# Get embedding
+# Add embedding with optional metadata
+doc.add_embedding("colpali", embedding_array, metadata={"model": "colpali-v1"})
+
+# Get embedding data
 embedding = doc.get_embedding("colpali")
+
+# Get embedding metadata
+emb_meta = doc.get_embedding_metadata("colpali")
+
+# Convert to backend document format
+backend_doc = doc.to_backend_document(schema_name="video_frames")
 
 # To dict
 doc_dict = doc.to_dict()
@@ -391,23 +824,22 @@ doc = Document.from_dict(doc_dict)
 
 ```python
 results = backend.search(
-    query="machine learning",       # str or np.ndarray
-    top_k=10,                       # int: number of results
-    schema_name="video_frames",     # str: schema to search
-    filters={"duration_min": 60},   # Optional[Dict]: filters
-    strategy="hybrid"               # Optional[str]: search strategy
+    query_embeddings=None,           # Optional[np.ndarray]: query embeddings
+    query_text="machine learning",   # Optional[str]: text query
+    top_k=10,                        # int: number of results
+    filters={"duration_min": 60},    # Optional[Dict]: filters
+    ranking_strategy="hybrid"        # Optional[str]: ranking strategy
 )
 ```
 
-**Returns**: `List[Document]` with score in metadata
+**Returns**: `List[Dict[str, Any]]` with search results and scores
 
 #### Ingest Method
 
 ```python
 result = backend.ingest_documents(
     documents=[doc1, doc2, doc3],
-    schema_name="video_frames",
-    batch_size=100                  # Optional: batch size
+    schema_name="video_frames"
 )
 ```
 
@@ -423,45 +855,93 @@ result = backend.ingest_documents(
 
 ### ConfigStore Interface
 
-#### Get Config
-
-```python
-value = config_store.get_config(
-    tenant_id="acme_corp",
-    config_key="embedding_model"
-)
-```
-
 #### Set Config
 
 ```python
-config_store.set_config(
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+entry = config_store.set_config(
     tenant_id="acme_corp",
+    scope=ConfigScope.AGENT,
+    service="video_search_agent",
     config_key="embedding_model",
-    value="vidore/colsmol-500m"
+    config_value={"model": "vidore/colsmol-500m", "dimension": 768}
 )
+# Returns ConfigEntry with version number
+```
+
+#### Get Config
+
+```python
+entry = config_store.get_config(
+    tenant_id="acme_corp",
+    scope=ConfigScope.AGENT,
+    service="video_search_agent",
+    config_key="embedding_model",
+    version=None  # None = latest, or specific version number
+)
+# Returns ConfigEntry or None
+```
+
+#### Get Config History
+
+```python
+history = config_store.get_config_history(
+    tenant_id="acme_corp",
+    scope=ConfigScope.AGENT,
+    service="video_search_agent",
+    config_key="embedding_model",
+    limit=10
+)
+# Returns List[ConfigEntry] sorted by version (newest first)
+```
+
+#### List Configs
+
+```python
+configs = config_store.list_configs(
+    tenant_id="acme_corp",
+    scope=ConfigScope.AGENT,  # Optional filter
+    service="video_search_agent"  # Optional filter
+)
+# Returns List[ConfigEntry] (latest versions only)
 ```
 
 ### SchemaLoader Interface
 
-#### Load Template
+#### Load Schema
 
 ```python
-template = schema_loader.load_schema_template("video_frames")
+schema = schema_loader.load_schema("video_frames")
 ```
 
-**Returns**: `Dict[str, Any]` with template variables like `{tenant_id}`
+**Returns**: `Dict[str, Any]` containing the complete schema definition
 
-#### Render Schema
+**Raises**: `SchemaNotFoundException` if schema doesn't exist, `SchemaLoadError` on parse error
+
+#### List Available Schemas
 
 ```python
-schema = schema_loader.render_schema(
-    template=template,
-    tenant_id="acme_corp"
-)
+schemas = schema_loader.list_available_schemas()
+# Returns: ["video_frames", "audio_chunks", "text_documents", ...]
 ```
 
-**Returns**: `Dict[str, Any]` with `{tenant_id}` replaced by `acme_corp`
+#### Check Schema Exists
+
+```python
+if schema_loader.schema_exists("video_frames"):
+    schema = schema_loader.load_schema("video_frames")
+```
+
+#### Load Ranking Strategies
+
+```python
+strategies = schema_loader.load_ranking_strategies()
+# Returns: {
+#     "hybrid_search": {"ranking_profile": "hybrid", "parameters": {...}},
+#     "semantic_only": {"ranking_profile": "semantic", "parameters": {...}}
+# }
+```
 
 ---
 
@@ -470,16 +950,17 @@ schema = schema_loader.render_schema(
 ### Example 1: Creating a Custom Backend
 
 ```python
-from cogniverse_sdk.interfaces.backend import Backend
-from cogniverse_sdk.document import Document
-from typing import List, Dict, Any
+from cogniverse_sdk.interfaces.backend import SearchBackend
+from cogniverse_sdk.document import Document, ContentType
+from typing import List, Dict, Any, Optional
 import numpy as np
 
-class MyCustomBackend(Backend):
-    """Custom backend implementation"""
+class MyCustomSearchBackend(SearchBackend):
+    """Custom search backend implementation (simplified example)"""
 
     def __init__(self):
         self.documents = {}
+        self.endpoint = None
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """Initialize with config"""
@@ -488,47 +969,54 @@ class MyCustomBackend(Backend):
 
     def search(
         self,
-        query: Union[str, np.ndarray],
-        top_k: int,
-        schema_name: str,
-        **kwargs
-    ) -> List[Document]:
+        query_embeddings: Optional[np.ndarray],
+        query_text: Optional[str],
+        top_k: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        ranking_strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Implement search"""
-        # Your search logic here
-        results = self._perform_search(query, top_k)
+        # Simple keyword search example
+        results = []
+        if query_text:
+            for doc_id, doc in list(self.documents.items())[:top_k]:
+                results.append({
+                    "id": doc_id,
+                    "score": 0.5,
+                    "fields": {"title": doc.title}
+                })
         return results
 
-    def ingest_documents(
-        self,
-        documents: List[Document],
-        schema_name: str
-    ) -> Dict[str, Any]:
-        """Implement ingestion"""
-        success_count = 0
-        for doc in documents:
-            self.documents[doc.id] = doc
-            success_count += 1
+    def get_document(self, document_id: str) -> Optional[Document]:
+        """Get document by ID"""
+        return self.documents.get(document_id)
 
-        return {
-            "success_count": success_count,
-            "failure_count": 0,
-            "errors": []
-        }
+    def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
+        """Get multiple documents by IDs"""
+        return [self.documents.get(doc_id) for doc_id in document_ids]
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get backend statistics"""
+        return {"document_count": len(self.documents)}
 
     def health_check(self) -> bool:
         """Check backend health"""
-        return True
+        return self.endpoint is not None
+
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """Get embedding requirements for schema"""
+        return {"dimension": 768, "type": "float"}
 
 # Usage
-backend = MyCustomBackend()
+backend = MyCustomSearchBackend()
 backend.initialize({"endpoint": "http://localhost:9200"})
 
-# Ingest
-doc = Document(content_type=ContentType.VIDEO)
-result = backend.ingest_documents([doc], "video_frames")
+# Add a document to the in-memory store
+doc = Document(content_type=ContentType.VIDEO, title="Tutorial Video")
+backend.documents[doc.id] = doc
 
 # Search
-results = backend.search("tutorial", top_k=10, schema_name="video_frames")
+results = backend.search(query_embeddings=None, query_text="tutorial", top_k=10)
 ```
 
 ### Example 2: Working with Multi-Modal Documents
@@ -556,9 +1044,9 @@ video_doc = Document(
 colpali_embeddings = np.random.randn(100, 768)  # 100 frames, 768 dims
 video_doc.add_embedding("colpali_frame", colpali_embeddings)
 
-# Add chunk-based embeddings (VideoPrism)
+# Add global embeddings (VideoPrism)
 videoprism_embedding = np.random.randn(768)  # Global video embedding
-video_doc.add_embedding("videoprism_chunk", videoprism_embedding)
+video_doc.add_embedding("videoprism_global", videoprism_embedding)
 
 # ===== AUDIO CONTENT =====
 audio_doc = Document(
@@ -606,7 +1094,7 @@ document_doc = Document(
 text_doc = Document(
     id="text_202",
     content_type=ContentType.TEXT,
-    content_data="This is a text document about machine learning.",
+    text_content="This is a text document about machine learning.",
     metadata={
         "title": "ML Introduction",
         "word_count": 1500,
@@ -640,7 +1128,7 @@ dataframe_doc.add_embedding("text", df_text_embedding)
 
 # ===== COMMON OPERATIONS =====
 # Update status
-video_doc.set_status(ProcessingStatus.COMPLETED)
+video_doc.set_processing_status(ProcessingStatus.COMPLETED)
 
 # Serialize to dict
 doc_dict = video_doc.to_dict()
@@ -660,105 +1148,144 @@ elif loaded_doc.content_type == ContentType.DATAFRAME:
     print(f"Processing dataframe with {loaded_doc.metadata.get('rows')} rows")
 ```
 
-### Example 3: Config Store Implementation
+### Example 3: Config Store Interface
 
+The `ConfigStore` interface defines the contract for configuration persistence. The default implementation uses Vespa via `VespaConfigStore`.
+
+**Interface (cogniverse_sdk):**
 ```python
-from cogniverse_sdk.interfaces.config_store import ConfigStore
-from typing import Optional, Any
-import sqlite3
+from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigScope, ConfigEntry
+from abc import ABC, abstractmethod
+from typing import Optional, List, Dict, Any
 
-class SQLiteConfigStore(ConfigStore):
-    """SQLite-based config storage"""
+class ConfigStore(ABC):
+    """Abstract interface for configuration storage."""
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._initialize_db()
+    @abstractmethod
+    def initialize(self) -> None:
+        """Initialize the config store."""
+        pass
 
-    def _initialize_db(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS configs (
-                tenant_id TEXT,
-                config_key TEXT,
-                config_value TEXT,
-                PRIMARY KEY (tenant_id, config_key)
-            )
-        """)
-        conn.commit()
-        conn.close()
+    @abstractmethod
+    def set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        """Store configuration with versioning."""
+        pass
 
-    def get_config(self, tenant_id: str, config_key: str) -> Optional[Any]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute(
-            "SELECT config_value FROM configs WHERE tenant_id=? AND config_key=?",
-            (tenant_id, config_key)
-        )
-        row = cursor.fetchone()
-        conn.close()
+    @abstractmethod
+    def get_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        version: Optional[int] = None,
+    ) -> Optional[ConfigEntry]:
+        """Retrieve configuration, optionally by version."""
+        pass
 
-        if row:
-            return json.loads(row[0])
-        return None
+    @abstractmethod
+    def get_config_history(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        limit: int = 10,
+    ) -> List[ConfigEntry]:
+        """Get version history for a configuration."""
+        pass
+```
 
-    def set_config(self, tenant_id: str, config_key: str, value: Any) -> None:
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            "INSERT OR REPLACE INTO configs VALUES (?, ?, ?)",
-            (tenant_id, config_key, json.dumps(value))
-        )
-        conn.commit()
-        conn.close()
+**Example Implementation (VespaConfigStore):**
+```python
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
-# Usage
-store = SQLiteConfigStore("configs.db")
-store.set_config("acme_corp", "embedding_model", "vidore/colsmol-500m")
-model = store.get_config("acme_corp", "embedding_model")
+# VespaConfigStore implements ConfigStore using Vespa's config_metadata schema
+store = VespaConfigStore(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    schema_name="config_metadata"
+)
+store.initialize()
+
+# For typical usage, use the factory function:
+from cogniverse_foundation.config.utils import create_default_config_manager
+config_manager = create_default_config_manager()
 ```
 
 ### Example 4: Schema Loader Implementation
 
 ```python
-from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
+from cogniverse_sdk.interfaces.schema_loader import (
+    SchemaLoader,
+    SchemaNotFoundException,
+    SchemaLoadError
+)
 from pathlib import Path
 import json
+from typing import Any, Dict, List
 
-class JSONSchemaLoader(SchemaLoader):
-    """JSON-based schema template loader"""
+class FilesystemSchemaLoader(SchemaLoader):
+    """Filesystem-based schema loader"""
 
-    def __init__(self, template_dir: Path):
-        self.template_dir = template_dir
+    def __init__(self, schema_dir: Path):
+        self.schema_dir = schema_dir
 
-    def load_schema_template(self, schema_name: str) -> Dict[str, Any]:
-        """Load JSON schema template"""
-        template_path = self.template_dir / f"{schema_name}.json"
-        with open(template_path) as f:
+    def load_schema(self, schema_name: str) -> Dict[str, Any]:
+        """Load schema definition by name"""
+        schema_path = self.schema_dir / f"{schema_name}_schema.json"
+        if not schema_path.exists():
+            raise SchemaNotFoundException(f"Schema not found: {schema_name}")
+        try:
+            with open(schema_path) as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            raise SchemaLoadError(f"Failed to parse schema: {e}")
+
+    def list_available_schemas(self) -> List[str]:
+        """List all available schema names"""
+        schemas = []
+        for path in self.schema_dir.glob("*_schema.json"):
+            name = path.stem.replace("_schema", "")
+            schemas.append(name)
+        return schemas
+
+    def schema_exists(self, schema_name: str) -> bool:
+        """Check if schema exists"""
+        schema_path = self.schema_dir / f"{schema_name}_schema.json"
+        return schema_path.exists()
+
+    def load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
+        """Load ranking strategies configuration"""
+        strategies_path = self.schema_dir / "ranking_strategies.json"
+        if not strategies_path.exists():
+            return {}
+        with open(strategies_path) as f:
             return json.load(f)
 
-    def render_schema(
-        self,
-        template: Dict[str, Any],
-        tenant_id: str
-    ) -> Dict[str, Any]:
-        """Render template with tenant values"""
-        schema = json.dumps(template)
-
-        # Replace template variables
-        schema = schema.replace("{tenant_id}", tenant_id)
-        schema = schema.replace("{TENANT_ID}", tenant_id.upper())
-
-        return json.loads(schema)
-
 # Usage
-loader = JSONSchemaLoader(Path("schemas/templates"))
+loader = FilesystemSchemaLoader(Path("schemas/"))
 
-# Load template
-template = loader.load_schema_template("video_frames")
+# List available schemas
+available = loader.list_available_schemas()
+print(f"Available schemas: {available}")
 
-# Render for tenant
-schema = loader.render_schema(template, tenant_id="acme_corp")
+# Check and load schema
+if loader.schema_exists("video_frames"):
+    schema = loader.load_schema("video_frames")
+    print(f"Loaded schema with {len(schema.get('fields', []))} fields")
 
-# Deploy schema to backend
-backend.deploy_schema(schema)
+# Load ranking strategies
+strategies = loader.load_ranking_strategies()
+for name, config in strategies.items():
+    print(f"Strategy '{name}': profile={config['ranking_profile']}")
 ```
 
 ---
@@ -788,75 +1315,34 @@ dependencies = [
 
 ### Running Tests
 
-```bash
-# Install dev dependencies
-cd libs/sdk
-uv pip install -e ".[dev]"
+The SDK package contains only interface definitions and has no dedicated test suite. Interface implementations and their integration with the SDK are tested in their respective packages:
 
-# Run tests
+```bash
+# Test Vespa backend implementation (implements Backend, ConfigStore, etc.)
+cd libs/vespa
 uv run pytest tests/ -v
 
-# Run with coverage
-uv run pytest tests/ --cov=cogniverse_sdk --cov-report=html
+# Test core functionality (implements SchemaLoader, etc.)
+cd libs/core
+uv run pytest tests/ -v
+
+# Test foundation functionality (Document usage, etc.)
+cd libs/foundation
+uv run pytest tests/ -v
 ```
 
 ### Test Structure
 
-```
-tests/
-├── test_document.py           # Document model tests
-├── test_backend_interface.py  # Backend interface tests
-├── test_config_store.py       # ConfigStore interface tests
-└── test_schema_loader.py      # SchemaLoader interface tests
-```
+Note: The SDK package currently does not have a dedicated test suite, as it only defines interfaces. Interface implementations are tested in their respective packages (e.g., cogniverse-vespa, cogniverse-core).
 
 ### Example Tests
 
-```python
-# tests/test_document.py
-import pytest
-from cogniverse_sdk.document import Document, ContentType, ProcessingStatus
-import numpy as np
+The SDK package defines interfaces only. Testing examples can be found in implementation packages:
 
-def test_document_creation():
-    """Test document creation with defaults"""
-    doc = Document(content_type=ContentType.VIDEO)
-
-    assert doc.id is not None
-    assert doc.content_type == ContentType.VIDEO
-    assert doc.status == ProcessingStatus.PENDING
-    assert isinstance(doc.metadata, dict)
-    assert isinstance(doc.embeddings, dict)
-
-def test_document_with_embeddings():
-    """Test adding embeddings"""
-    doc = Document(content_type=ContentType.VIDEO)
-
-    # Add embedding
-    embedding = np.random.randn(768)
-    doc.add_embedding("colpali", embedding)
-
-    # Retrieve embedding
-    retrieved = doc.get_embedding("colpali")
-    assert np.array_equal(retrieved, embedding)
-
-def test_document_serialization():
-    """Test document to/from dict"""
-    doc = Document(
-        content_type=ContentType.VIDEO,
-        metadata={"title": "Test Video"}
-    )
-
-    # Serialize
-    doc_dict = doc.to_dict()
-    assert doc_dict["content_type"] == "video"
-    assert doc_dict["metadata"]["title"] == "Test Video"
-
-    # Deserialize
-    loaded_doc = Document.from_dict(doc_dict)
-    assert loaded_doc.id == doc.id
-    assert loaded_doc.metadata["title"] == "Test Video"
-```
+- **Document tests**: See `libs/foundation/tests/` for Document model tests
+- **Backend interface tests**: See `libs/vespa/tests/` for VespaBackend implementation tests
+- **ConfigStore tests**: See `libs/vespa/tests/` for VespaConfigStore tests
+- **SchemaLoader tests**: See `libs/core/tests/` for FilesystemSchemaLoader tests
 
 ---
 
@@ -933,11 +1419,10 @@ uv publish --token $PYPI_TOKEN
 
 ### Package Stats
 
-- **Total Lines**: ~1,200
-- **Files**: 6 Python files
-- **Interfaces**: 4 main interfaces (Backend, ConfigStore, SchemaLoader, Document)
+- **Total Lines**: ~1,729
+- **Files**: 8 Python files
+- **Interfaces**: 6 main interfaces (Backend, ConfigStore, SchemaLoader, WorkflowStore, AdapterStore, Document)
 - **Dependencies**: 1 external (numpy)
-- **Test Coverage**: 95%+
 
 ### Next Steps
 
@@ -945,9 +1430,3 @@ uv publish --token $PYPI_TOKEN
 - **Usage**: See `cogniverse-core` for how SDK is used
 - **Foundation**: See `cogniverse-foundation` for config base classes
 
----
-
-**Version**: 0.1.0
-**Layer**: Foundation Layer
-**Dependencies**: Zero internal dependencies
-**Last Updated**: 2026-01-25

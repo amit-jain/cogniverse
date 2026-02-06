@@ -1,10 +1,7 @@
 # Cogniverse Study Guide: UI/Dashboard Module
 
-**Last Updated:** 2026-01-25
 **Module Path:** `scripts/*_tab.py`
-**Architecture:** 11-package layered architecture
 **SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)
-**Purpose:** Interactive Streamlit dashboards for system monitoring, configuration management, optimization, and visualization
 
 ---
 
@@ -12,9 +9,8 @@
 1. [Module Overview](#module-overview)
 2. [Dashboard Architecture](#dashboard-architecture)
 3. [Core Components](#core-components)
-4. [Tab Implementations](#tab-implementations)
-5. [Usage Examples](#usage-examples)
-6. [Production Considerations](#production-considerations)
+4. [Usage Examples](#usage-examples)
+5. [Production Considerations](#production-considerations)
 
 ---
 
@@ -22,18 +18,27 @@
 
 ### Purpose
 The UI/Dashboard module provides interactive web-based interfaces for:
+
 - **Analytics**: Phoenix telemetry visualization and performance monitoring
+
 - **Optimization Framework**: Comprehensive optimization dashboard with annotation, golden dataset building, and model training
+
 - **Configuration Management**: Full CRUD for multi-tenant system configuration
+
 - **Memory Management**: Mem0 conversation memory inspection and management
+
 - **Embedding Visualization**: 2D/3D embedding atlas with clustering
+
 - **Routing Evaluation**: Routing decision analysis with golden datasets
+
 - **Orchestration Annotation**: Multi-agent workflow visualization
+
 - **Quick Setup**: Fast tenant creation and video ingestion from sidebar
-- **Interactive Search**: Multi-turn conversation tracking with session-level evaluation
+
+- **Interactive Search**: Live search testing with multiple ranking strategies
 
 ### Technology Stack
-- **Framework**: Streamlit 1.30+ (dashboard package - application layer)
+- **Framework**: Streamlit (dashboard package - application layer)
 - **Visualization**: Plotly (interactive charts), Pandas (data manipulation)
 - **Data Sources**:
   - Phoenix telemetry (telemetry-phoenix package - implementation layer)
@@ -45,15 +50,20 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 
 ### Dashboard Structure
 
-```
+```text
 scripts/
 ├── phoenix_dashboard_standalone.py  # Main dashboard entry point
-├── enhanced_optimization_tab.py     # Optimization framework (NEW)
+├── enhanced_optimization_tab.py     # Optimization framework
 ├── config_management_tab.py         # Configuration CRUD UI
 ├── memory_management_tab.py         # Memory inspection UI
 ├── embedding_atlas_tab.py           # Embedding visualization
 ├── routing_evaluation_tab.py        # Routing analysis UI
-└── orchestration_annotation_tab.py  # Multi-agent workflow UI
+├── orchestration_annotation_tab.py  # Multi-agent workflow UI
+├── interactive_search_tab.py        # Interactive search interface
+├── ingestion_testing_tab.py         # Ingestion testing UI
+├── multi_modal_chat_tab.py          # Multi-modal chat interface
+├── approval_queue_tab.py            # Approval queue management
+└── backend_profile_tab.py           # Backend profile configuration
 ```
 
 ---
@@ -63,69 +73,69 @@ scripts/
 ### 1. Main Dashboard Structure
 
 ```mermaid
-graph TB
-    Dashboard[phoenix_dashboard_standalone.py]
+flowchart TB
+    Dashboard["<span style='color:#000'>phoenix_dashboard_standalone.py</span>"]
 
-    Sidebar[Sidebar Controls<br/>• Time Range Selection 1h 24h 7d 30d<br/>• Auto-refresh Toggle 30s interval<br/>• Tenant/Project Selector<br/>• Data Export Options]
+    Sidebar["<span style='color:#000'>Sidebar Controls<br/>• Time Range Selection 1h 24h 7d 30d<br/>• Auto-refresh Toggle 30s interval<br/>• Tenant/Project Selector<br/>• Data Export Options</span>"]
 
-    Tabs[Tab Navigation<br/>Analytics | Evaluation | Config | Memory | Atlas | Routing]
+    Tabs["<span style='color:#000'>Tab Navigation<br/>Analytics | Evaluation | Config | Memory | Atlas | Routing</span>"]
 
-    Content[Active Tab Content<br/>• Metrics & Charts Plotly<br/>• Data Tables Pandas<br/>• Interactive Controls Streamlit widgets<br/>• Real-time Updates cache + refresh]
+    Content["<span style='color:#000'>Active Tab Content<br/>• Metrics & Charts Plotly<br/>• Data Tables Pandas<br/>• Interactive Controls Streamlit widgets<br/>• Real-time Updates cache + refresh</span>"]
 
     Dashboard --> Sidebar
     Dashboard --> Tabs
     Tabs --> Content
 
-    style Dashboard fill:#e1f5ff
-    style Sidebar fill:#fff4e1
-    style Tabs fill:#fff4e1
-    style Content fill:#e1ffe1
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Sidebar fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Tabs fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Content fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Tab Architecture Pattern
 
 ```mermaid
-graph TB
-    Entry[render_TABNAME_tab<br/>Main entry point]
+flowchart TB
+    Entry["<span style='color:#000'>render_TABNAME_tab<br/>Main entry point</span>"]
 
-    Init[Initialize State<br/>• st.session_state checks<br/>• Manager initialization<br/>• Cache setup]
+    Init["<span style='color:#000'>Initialize State<br/>• st.session_state checks<br/>• Manager initialization<br/>• Cache setup</span>"]
 
-    Controls[Render Controls<br/>• Input widgets text_input selectbox slider<br/>• Action buttons button form_submit_button<br/>• Display options columns expander]
+    Controls["<span style='color:#000'>Render Controls<br/>• Input widgets text_input selectbox slider<br/>• Action buttons button form_submit_button<br/>• Display options columns expander</span>"]
 
-    Data[Data Operations<br/>• @st.cache_data for expensive ops<br/>• API calls Phoenix Vespa Mem0<br/>• Data transformation Pandas]
+    Data["<span style='color:#000'>Data Operations<br/>• @st.cache_data for expensive ops<br/>• API calls Phoenix Vespa Mem0<br/>• Data transformation Pandas</span>"]
 
-    Viz[Visualization<br/>• Plotly charts st.plotly_chart<br/>• Metrics st.metric<br/>• Tables st.dataframe<br/>• JSON display st.json]
+    Viz["<span style='color:#000'>Visualization<br/>• Plotly charts st.plotly_chart<br/>• Metrics st.metric<br/>• Tables st.dataframe<br/>• JSON display st.json</span>"]
 
     Entry --> Init
     Init --> Controls
     Controls --> Data
     Data --> Viz
 
-    style Entry fill:#e1f5ff
-    style Init fill:#fff4e1
-    style Controls fill:#fff4e1
-    style Data fill:#fff4e1
-    style Viz fill:#e1ffe1
+    style Entry fill:#90caf9,stroke:#1565c0,color:#000
+    style Init fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Controls fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Data fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Viz fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Data Flow Architecture
 
 ```mermaid
-graph TB
-    User[User Interaction]
+flowchart TB
+    User["<span style='color:#000'>User Interaction</span>"]
 
-    Widget[Widget Change]
-    Button[Button Click]
-    Auto[Auto-refresh]
+    Widget["<span style='color:#000'>Widget Change</span>"]
+    Button["<span style='color:#000'>Button Click</span>"]
+    Auto["<span style='color:#000'>Auto-refresh</span>"]
 
-    UpdateState[Update Session State<br/>• st.session_state.key = value<br/>• Trigger rerun if needed]
-    InvalidateCache[Invalidate Cache if necessary<br/>• @st.cache_data ttl=300<br/>• Force refresh button]
+    UpdateState["<span style='color:#000'>Update Session State<br/>• st.session_state.key = value<br/>• Trigger rerun if needed</span>"]
+    InvalidateCache["<span style='color:#000'>Invalidate Cache if necessary<br/>• @st.cache_data ttl=300<br/>• Force refresh button</span>"]
 
-    Execute[Execute Action<br/>• API call create/update/delete<br/>• Data processing<br/>• File I/O]
-    Display[Display Result<br/>• st.success st.error st.warning<br/>• Update visualization]
+    Execute["<span style='color:#000'>Execute Action<br/>• API call create/update/delete<br/>• Data processing<br/>• File I/O</span>"]
+    Display["<span style='color:#000'>Display Result<br/>• st.success st.error st.warning<br/>• Update visualization</span>"]
 
-    Timer[Check Timer<br/>• Every 30s configurable<br/>• time.sleep or st.experimental_rerun]
-    Refresh[Refresh Data<br/>• Invalidate caches<br/>• Re-query backends<br/>• Update displays]
+    Timer["<span style='color:#000'>Check Timer<br/>• Every 30s configurable<br/>• time.sleep or st.rerun</span>"]
+    Refresh["<span style='color:#000'>Refresh Data<br/>• Invalidate caches<br/>• Re-query backends<br/>• Update displays</span>"]
 
     User --> Widget
     User --> Button
@@ -140,16 +150,16 @@ graph TB
     Auto --> Timer
     Timer --> Refresh
 
-    style User fill:#e1f5ff
-    style Widget fill:#fff4e1
-    style Button fill:#fff4e1
-    style Auto fill:#fff4e1
-    style UpdateState fill:#fff4e1
-    style Execute fill:#fff4e1
-    style Timer fill:#fff4e1
-    style InvalidateCache fill:#e1ffe1
-    style Display fill:#e1ffe1
-    style Refresh fill:#e1ffe1
+    style User fill:#90caf9,stroke:#1565c0,color:#000
+    style Widget fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Button fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Auto fill:#ffcc80,stroke:#ef6c00,color:#000
+    style UpdateState fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Execute fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Timer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style InvalidateCache fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Display fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Refresh fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -163,6 +173,7 @@ graph TB
 **Location**: `scripts/config_management_tab.py`
 
 **Features**:
+
 - System config (agent URLs, search backend, Vespa settings)
 - Agent configs (DSPy modules, optimizers, prompts)
 - Routing config (strategies, thresholds, cache settings)
@@ -175,7 +186,8 @@ graph TB
 def render_config_management_tab():
     """Main entry point"""
     # Initialize ConfigManager
-    manager = get_config_manager()
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    manager = create_default_config_manager()
 
     # Tenant selector
     tenant_id = st.text_input("Tenant ID", value="default")
@@ -186,6 +198,7 @@ def render_config_management_tab():
         "🤖 Agent Configs",
         "🔀 Routing Config",
         "📊 Telemetry Config",
+        "🔧 Backend Profiles",
         "📜 History",
         "💾 Import/Export"
     ])
@@ -214,11 +227,12 @@ def render_system_config_ui(manager, tenant_id):
                 routing_agent_url=routing_agent_url,
                 # ... other fields
             )
-            manager.save_system_config(updated_config)
+            manager.set_system_config(updated_config)
             st.success("✅ Configuration saved!")
 ```
 
 **UI Elements**:
+
 - Text inputs for URLs and string values
 - Number inputs for ports and numeric settings
 - Selectboxes for enum values (backend types, optimizer types)
@@ -234,6 +248,7 @@ def render_system_config_ui(manager, tenant_id):
 **Location**: `scripts/memory_management_tab.py`
 
 **Features**:
+
 - Search memories (semantic search)
 - Add new memories (with metadata)
 - View all memories (paginated)
@@ -245,13 +260,25 @@ def render_system_config_ui(manager, tenant_id):
 ```python
 def render_memory_management_tab():
     """Main entry point"""
-    # Initialize Mem0MemoryManager
-    manager = Mem0MemoryManager()
-    manager.initialize()
-
     # Tenant and agent selection
     tenant_id = st.text_input("Tenant ID", value="default")
     agent_name = st.text_input("Agent Name", value="routing_agent")
+
+    # Initialize Mem0MemoryManager with tenant_id
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from pathlib import Path
+
+    manager = Mem0MemoryManager(tenant_id=tenant_id)
+
+    # Initialize with dependencies
+    config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    manager.initialize(
+        config_manager=config_manager,
+        schema_loader=schema_loader
+    )
 
     # Memory stats
     if st.button("📈 Refresh Stats"):
@@ -280,12 +307,13 @@ def render_memory_management_tab():
                 limit=5
             )
             for i, result in enumerate(results, 1):
-                with st.expander(f"Memory {i} - Score: {result['score']:.3f}"):
-                    st.write("**Memory:**", result["memory"])
+                with st.expander(f"Memory {i} - Score: {result.get('score', 0):.3f}"):
+                    st.write("**Memory:**", result.get("memory", ""))
                     st.json(result.get("metadata", {}))
 ```
 
 **UI Elements**:
+
 - Text areas for search queries and memory content
 - Sliders for result limits
 - Expanders for individual memory display
@@ -301,6 +329,7 @@ def render_memory_management_tab():
 **Location**: `scripts/embedding_atlas_tab.py`
 
 **Features**:
+
 - Export embeddings from Vespa
 - Dimensionality reduction (UMAP, t-SNE, PCA)
 - 2D/3D scatter plots with Plotly
@@ -313,7 +342,16 @@ def render_memory_management_tab():
 @st.cache_data(ttl=300)
 def get_available_videos():
     """Query Vespa for available videos"""
-    backend = SearchBackend(url=vespa_url, port=vespa_port)
+    from cogniverse_vespa.search_backend import VespaSearchBackend
+    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
+    backend = VespaSearchBackend(
+        vespa_url=config.get("backend_url", "http://localhost"),
+        vespa_port=config.get("backend_port", 8080)
+        # Note: schema_name is deprecated - schema is determined at query time
+    )
 
     # Query for video metadata
     yql = """
@@ -344,35 +382,48 @@ def render_embedding_atlas_tab():
 
     # Export embeddings
     if st.button("📥 Export Embeddings"):
-        # Run export script
-        subprocess.run([
-            "python", "scripts/export_vespa_embeddings.py",
-            "--video_id", selected_video,
-            "--output", "embeddings.npz"
-        ])
-        st.success("✅ Embeddings exported!")
+        # Run export script (must be run from project root directory)
+        import subprocess
+        from pathlib import Path
+        try:
+            project_root = Path(__file__).parent.parent
+            subprocess.run([
+                "python", str(project_root / "scripts/export_vespa_embeddings.py"),
+                "--video_id", selected_video,
+                "--output", "embeddings.npz"
+            ], check=True, cwd=str(project_root))
+            st.success("✅ Embeddings exported!")
+        except subprocess.CalledProcessError as e:
+            st.error(f"❌ Export failed: {e}")
 
     # Load and visualize
     if os.path.exists("embeddings.npz"):
+        import numpy as np
+        import plotly.express as px
         data = np.load("embeddings.npz")
         embeddings = data["embeddings"]
         metadata = data["metadata"]
 
         # Dimensionality reduction
-        from sklearn.manifold import TSNE
-        reduced = TSNE(n_components=2).fit_transform(embeddings)
+        # Note: Requires sklearn to be installed - add to dependencies if using this feature
+        try:
+            from sklearn.manifold import TSNE
+            reduced = TSNE(n_components=2).fit_transform(embeddings)
 
-        # Plot with Plotly
-        fig = px.scatter(
-            x=reduced[:, 0],
-            y=reduced[:, 1],
-            hover_data=metadata,
-            title="Embedding Atlas Visualization"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            # Plot with Plotly
+            fig = px.scatter(
+                x=reduced[:, 0],
+                y=reduced[:, 1],
+                hover_data=metadata,
+                title="Embedding Atlas Visualization"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except ImportError:
+            st.error("sklearn not installed. Add to dependencies for dimensionality reduction.")
 ```
 
 **UI Elements**:
+
 - Selectboxes for video/strategy selection
 - Radio buttons for dimensionality reduction method
 - Sliders for clustering parameters
@@ -388,6 +439,7 @@ def render_embedding_atlas_tab():
 **Location**: `scripts/routing_evaluation_tab.py`
 
 **Features**:
+
 - Load golden datasets
 - Compare routing decisions
 - Confusion matrix visualization
@@ -413,10 +465,16 @@ def render_routing_evaluation_tab():
 
         # Run evaluation
         if st.button("▶️ Run Evaluation"):
+            # Note: This example assumes a routing agent is available
+            # In practice, you would initialize the routing agent like:
+            # from cogniverse_agents.routing.agent import RoutingAgent
+            # routing_agent = RoutingAgent(...)
+
             results = []
             for _, row in df.iterrows():
-                # Route query
-                routing_result = route_query(row["query"])
+                # Route query (placeholder - replace with actual routing call)
+                # Example: routing_result = routing_agent.route(row["query"])
+                routing_result = {"modality": "video"}  # Placeholder
 
                 # Compare with ground truth
                 results.append({
@@ -438,21 +496,26 @@ def render_routing_evaluation_tab():
             with col3:
                 st.metric("Errors", sum(~results_df["correct"]))
 
-            # Confusion matrix
-            from sklearn.metrics import confusion_matrix
-            cm = confusion_matrix(
-                results_df["actual"],
-                results_df["predicted"]
-            )
-            fig = px.imshow(
-                cm,
-                labels=dict(x="Predicted", y="Actual"),
-                title="Routing Confusion Matrix"
-            )
-            st.plotly_chart(fig)
+            # Confusion matrix (requires sklearn to be installed)
+            # Note: Add sklearn to dependencies if using this feature
+            try:
+                from sklearn.metrics import confusion_matrix
+                cm = confusion_matrix(
+                    results_df["actual"],
+                    results_df["predicted"]
+                )
+                fig = px.imshow(
+                    cm,
+                    labels=dict(x="Predicted", y="Actual"),
+                    title="Routing Confusion Matrix"
+                )
+                st.plotly_chart(fig)
+            except ImportError:
+                st.warning("sklearn not installed. Confusion matrix not available.")
 ```
 
 **UI Elements**:
+
 - File pickers for dataset selection
 - Run buttons for evaluation
 - Metric displays (accuracy, error rate)
@@ -468,16 +531,22 @@ def render_routing_evaluation_tab():
 **Location**: `scripts/enhanced_optimization_tab.py`
 
 **Features**:
-The Optimization tab provides 9 sub-tabs covering the complete optimization lifecycle:
+The Optimization tab provides 8 sub-tabs covering the complete optimization lifecycle:
 
 #### 5.1 Overview Tab
 
 Quick dashboard showing:
+
 - **Total Annotations**: Count of user feedback collected
+
 - **Golden Dataset Size**: Number of queries with ground truth
+
 - **Optimization Runs**: Historical optimization job count
+
 - **Last Optimization**: Time since last training run
+
 - **Workflow Diagram**: Visual representation of optimization process
+
 - **Recent History**: Table of last 10 optimization jobs
 
 #### 5.2 Search Annotations Tab
@@ -518,11 +587,17 @@ for span in search_spans:
 ```
 
 **Storage**: Annotations stored in Phoenix as `SpanEvaluations` with:
+
 - `label`: positive/negative/neutral
+
 - `score`: 0-1 rating
+
 - `explanation`: User notes
+
 - `annotation_type`: thumbs/stars/relevance
+
 - `annotator`: human/llm
+
 - `timestamp`: When annotated
 
 #### 5.3 Golden Dataset Builder Tab
@@ -530,6 +605,7 @@ for span in search_spans:
 Build ground truth datasets from high-quality annotations:
 
 **Configuration**:
+
 - **Min Rating Threshold**: Only include annotations above this score (default 0.8)
 - **Lookback Days**: How far back to query annotations (default 30)
 - **Tenant ID**: Which tenant's data to use
@@ -579,6 +655,7 @@ Generate training data for all optimizers by sampling from Vespa backend:
 5. **Unified Optimizer**: Combined routing and workflow planning
 
 **Configuration**:
+
 - **Optimizer Type**: Which optimizer to generate data for
 - **Examples to Generate**: Number of training examples (10-10,000)
 - **Vespa Sample Size**: Documents to sample from backend (10-10,000)
@@ -625,16 +702,19 @@ json.dump(result, open("synthetic_data.json", "w"))
 ```
 
 **Profile Selection**:
+
 - **LLM-based**: Uses reasoning to match profile characteristics to optimizer needs
 - **Rule-based**: Heuristic scoring with diversity selection (fallback)
 
 **Output Schemas**:
+
 - `ModalityExampleSchema`: Query, modality, agent mapping
 - `FusionHistorySchema`: Fusion context, improvement metrics
 - `RoutingExperienceSchema`: Query, entities, relationships, agent
 - `WorkflowExecutionSchema`: Multi-step workflow patterns
 
 **Integration with Optimizers**:
+
 - `modality` → Routing Optimization Tab
 - `cross_modal` → Reranking Optimization Tab
 - `routing` → Routing Optimization Tab
@@ -648,6 +728,7 @@ json.dump(result, open("synthetic_data.json", "w"))
 Optimize routing/workflow modules with automatic DSPy optimizer selection:
 
 **What Gets Optimized (Modules)**:
+
 - `modality` - Per-modality routing (VIDEO/DOCUMENT/IMAGE/AUDIO)
 - `cross_modal` - Multi-modal fusion decisions
 - `routing` - Entity-based advanced routing
@@ -655,6 +736,7 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 - `unified` - Combined routing + workflow planning
 
 **How They Get Optimized (Auto DSPy Optimizer Selection)**:
+
 - System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
 - < 100 examples → Bootstrap
 - 100-500 examples → SIMBA
@@ -662,12 +744,14 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 - \> 1000 examples → GEPA
 
 **Features**:
+
 - ✅ **Batch Optimization**: Submit Argo Workflows for long-running optimizations
 - ✅ **Synthetic Data**: Auto-generate training data from backend storage using DSPy modules
 - ✅ **Automatic Execution**: CronWorkflows check Phoenix traces and optimize when criteria met
 - ✅ **Manual Execution**: Submit workflows on-demand from UI
 
 **Configuration**:
+
 - **Tenant ID**: Target tenant for optimization
 - **Module to Optimize**: Which module to optimize (modality/cross_modal/routing/workflow/unified)
 - **Max Iterations**: Maximum DSPy training iterations (10-500)
@@ -714,125 +798,7 @@ argo logs <workflow-name> -n cogniverse --follow
 5. Evaluates performance and saves optimized module
 6. Returns metrics (baseline score, optimized score, improvement %)
 
-#### 5.6 DSPy Module Optimization Tab
-
-DSPy module optimization with teacher-student distillation and batch processing:
-
-**Methodology: Teacher-Student Distillation**
-
-Use expensive models (GPT-4/Claude) to train cheap local models (SmolLM/Qwen):
-
-**Configuration**:
-- **Teacher Model**: GPT-4, Claude-3 Opus, Claude-3 Sonnet
-- **Student Model**: Llama3.2 (1B/3B), Qwen2.5 (0.5B/3B), SmolLM (1.7B)
-- **Target Module**: Routing Classifier, Query Rewriter, Result Summarizer, Relevance Scorer
-- **Training Examples**: 10-1000
-- **Iterations**: 1-10
-- **Eval Split**: 0.1-0.5
-
-**Benefits**:
-- Use expensive models (GPT-4) to generate training data, then train cheap models (SmolLM)
-- Run locally without API costs after initial training data generation
-- Faster inference (40-60% latency reduction)
-- Maintain 85-95% of teacher accuracy
-
-**Process**:
-```python
-# 1. Generate training data with teacher model
-teacher_examples = teacher_model.generate_examples(
-    module=target_module,
-    num_examples=num_examples
-)
-
-# 2. Train student model
-student_model = train_student_with_bootstrap(
-    examples=teacher_examples,
-    student=student_model,
-    num_iterations=num_iterations
-)
-
-# 3. Evaluate on validation set
-metrics = evaluate_student(
-    model=student_model,
-    eval_set=validation_split
-)
-
-# 4. Compare performance
-st.metric("Initial Accuracy", "72%")
-st.metric("Final Accuracy", "89%", delta="+17%")
-st.metric("Latency Reduction", "-40%")
-```
-
-**Execution: Batch Optimization with Argo Workflows**
-
-For long-running optimizations, submit Argo Workflows:
-
-**Features**:
-- ✅ **Batch Processing**: Run DSPy optimization as Kubernetes workflows
-- ✅ **Multiple Optimizers**: GEPA, Bootstrap, SIMBA, MIPRO
-- ✅ **Golden Datasets**: Use evaluation datasets from data/testset/evaluation/
-- ✅ **Synthetic Data**: DSPy-driven data generation via cogniverse-synthetic module
-
-**Configuration**:
-- **Tenant ID**: Target tenant for optimization
-- **DSPy Optimizer**: GEPA/Bootstrap/SIMBA/MIPRO (auto-selected based on dataset size)
-- **Dataset Name**: Golden evaluation dataset (e.g., golden_eval_v1)
-- **Backend Profiles**: Comma-separated list of profiles to use
-- **Max Iterations**: Optimization iterations (10-500)
-- **Learning Rate**: Learning rate for optimization (0.0001-0.1)
-
-**Workflow Submission**:
-```bash
-# Dashboard generates and submits YAML like:
-apiVersion: argoproj.io/v1alpha1
-kind: Workflow
-metadata:
-  generateName: dspy-opt-gepa-
-  namespace: cogniverse
-spec:
-  workflowTemplateRef:
-    name: batch-optimization
-  arguments:
-    parameters:
-    - name: tenant-id
-      value: "default"
-    - name: optimizer-category
-      value: "dspy"
-    - name: optimizer-type
-      value: "GEPA"
-    - name: dataset-name
-      value: "golden_eval_v1"
-    - name: profiles
-      value: "video_colpali_smol500_mv_frame"
-    - name: max-iterations
-      value: "100"
-    - name: learning-rate
-      value: "0.001"
-    - name: use-synthetic-data
-      value: "false"
-```
-
-**Workflow Pipeline**:
-1. Validates configuration and dataset existence
-2. Prepares evaluation dataset
-3. Runs DSPy optimization with selected algorithm
-4. Evaluates results and deploys if improvement > 5%
-5. Sends completion notification
-
-**Monitor Progress**:
-```bash
-argo list -n cogniverse
-argo get <workflow-name> -n cogniverse
-argo logs <workflow-name> -n cogniverse --follow
-```
-
-**Algorithm Selection** (auto-selected based on data size):
-- **Bootstrap**: < 100 examples
-- **SIMBA**: 100-500 examples
-- **MIPRO**: 500-1000 examples
-- **GEPA**: > 1000 examples
-
-#### 5.7 Reranking Optimization Tab
+#### 5.6 Reranking Optimization Tab
 
 Learn optimal ranking from user feedback:
 
@@ -868,14 +834,17 @@ st.metric("MRR", "0.65 → 0.78", delta="+0.13")
 
 **Metrics**: NDCG@10, MRR, P@K, Recall@K
 
-#### 5.8 Profile Selection Optimization Tab
+#### 5.7 Profile Selection Optimization Tab
 
 Learn which processing profile works best for query types:
 
 **Performance Matrix**:
 Heatmap showing profile performance by query type:
+
 - Rows: 6 video processing profiles (ColPali, ColQwen, VideoPrism variants)
+
 - Columns: Query types (Temporal, Object, Activity, Scene, Abstract)
+
 - Values: NDCG@10 scores
 
 **Training**:
@@ -899,17 +868,19 @@ for new_query in queries:
 ```
 
 **Query Features**:
+
 - Temporal words (when, duration, timestamp)
 - Object words (person, car, building)
 - Activity words (running, cooking, talking)
 - Scene descriptors (outdoor, kitchen, office)
 - Abstract concepts (emotion, atmosphere, style)
 
-#### 5.9 Metrics Dashboard Tab
+#### 5.8 Metrics Dashboard Tab
 
 Unified view of optimization improvements:
 
 **Overall Metrics**:
+
 - Routing Accuracy: 77% → 89% (+12%)
 - Search NDCG@10: 0.69 → 0.84 (+0.15)
 - Avg Latency: 323ms → 245ms (-78ms)
@@ -924,6 +895,7 @@ Unified view of optimization improvements:
 | Profile Selection | 3 | +10% | 5d ago |
 
 **Time Series Charts**:
+
 - Routing accuracy over time
 - Search NDCG@10 over time
 - Latency trends
@@ -935,7 +907,7 @@ Unified view of optimization improvements:
 
 **Purpose**: Streamlined tenant creation and video ingestion
 
-**Location**: `phoenix_dashboard_standalone.py` sidebar (lines 205-364)
+**Location**: `phoenix_dashboard_standalone.py` sidebar
 
 **Features**:
 
@@ -982,94 +954,6 @@ GET /ingestion/status/{job_id}
 4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
 6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
-
----
-
-### 7. Interactive Search with Session Tracking
-
-**Purpose**: Multi-turn conversation tracking with unified session-level evaluation
-
-**Location**: `libs/dashboard/cogniverse_dashboard/app.py` (Interactive Search tab)
-
-**Features**:
-- **Conversation History Tracking**: Maintains `st.session_state.conversation_history` across turns
-- **Session ID Management**: Auto-generated UUIDs with "New Session" button
-- **Session-Aware Search**: Passes `session_id` to search API for Phoenix span grouping
-- **Per-Result Annotation**: Thumbs up/down relevance annotation for individual results
-- **Session-Level Evaluation**: Unified UI for both single and multi-turn conversations
-
-**Session State Management**:
-```python
-# Initialize conversation history on first load
-if 'conversation_history' not in st.session_state:
-    st.session_state.conversation_history = []
-
-# Initialize session ID
-if 'session_id' not in st.session_state:
-    import uuid
-    st.session_state.session_id = str(uuid.uuid4())
-```
-
-**Session Info Display**:
-```python
-# Display current session info
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.caption(f"Session ID: {st.session_state.session_id}")
-with col2:
-    if st.button("New Session"):
-        st.session_state.session_id = str(uuid.uuid4())
-        st.session_state.conversation_history = []
-        st.rerun()
-```
-
-**Conversation History Tracking**:
-```python
-# After each search, add to history
-if search_results:
-    st.session_state.conversation_history.append({
-        "query": query,
-        "response": f"Found {len(search_results)} results"
-    })
-```
-
-**Session-Level Evaluation UI**:
-```python
-# Show after ANY search (single or multi-turn)
-if st.session_state.conversation_history:
-    st.subheader("Session Evaluation")
-
-    # Outcome selection
-    session_outcome = st.selectbox(
-        "Session Outcome",
-        ["Not Rated", "Success", "Partial", "Failure"]
-    )
-
-    # Quality score
-    session_score = st.slider(
-        "Session Quality",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.1
-    )
-
-    # Log evaluation
-    if st.button("Log Session Evaluation"):
-        await evaluation_provider.log_session_evaluation(
-            session_id=st.session_state.session_id,
-            conversation=st.session_state.conversation_history,
-            outcome=session_outcome.lower(),
-            score=session_score
-        )
-        st.success("Session evaluation logged!")
-```
-
-**Phoenix Integration**:
-- All spans within a session share the same `session.id` attribute
-- Spans are grouped in Phoenix Sessions view
-- Enables trajectory extraction for fine-tuning
-- Supports session-level evaluation logging
 
 ---
 
@@ -1252,26 +1136,33 @@ audio            2     1      4
 ```python
 # Cache expensive data fetches
 @st.cache_data(ttl=300)  # 5 minute TTL
-def get_phoenix_metrics(time_range):
+def get_phoenix_metrics(start_time, end_time):
     """Fetch metrics from Phoenix"""
-    # Import from evaluation package (core layer)
-    from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+    # Import from evaluation package (implementation layer)
+    from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     analytics = PhoenixAnalytics()
-    # Expensive API call
-    return analytics.get_performance_metrics(time_range)
+    # Expensive API call - get traces for the specified time range
+    return analytics.get_traces(start_time=start_time, end_time=end_time)
 
 # Cache resource initialization
 @st.cache_resource
 def get_vespa_client():
     """Singleton Vespa client"""
     # Import from vespa package (implementation layer)
-    from cogniverse_vespa.backends import VespaSearchBackend
-    return VespaSearchBackend(url=vespa_url, port=vespa_port)
+    from cogniverse_vespa.search_backend import VespaSearchBackend
+    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
+    return VespaSearchBackend(
+        vespa_url=config.get("backend_url", "http://localhost"),
+        vespa_port=config.get("backend_port", 8080)
+        # Schema is determined at query time, not initialization
+    )
 
 # Manual cache invalidation
 if st.button("🔄 Force Refresh"):
     st.cache_data.clear()  # Clear all caches
-    st.experimental_rerun()
+    st.rerun()
 ```
 
 **Pagination**:
@@ -1308,10 +1199,14 @@ if "embeddings" in st.session_state:
 ```python
 try:
     # Attempt Phoenix connection
-    # Import from evaluation package (core layer)
-    from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+    # Import from evaluation package (implementation layer)
+    from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+    from datetime import datetime, timedelta
     analytics = PhoenixAnalytics()
-    metrics = analytics.get_performance_metrics("24h")
+    # Get traces for the last 24 hours
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=24)
+    metrics = analytics.get_traces(start_time=start_time, end_time=end_time)
     plot_metrics(metrics)
 except ConnectionError:
     st.warning("⚠️ Phoenix unavailable. Showing cached data.")
@@ -1353,7 +1248,7 @@ def check_authentication():
         if st.button("Login"):
             if verify_password(password):
                 st.session_state.authenticated = True
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Invalid password")
         st.stop()  # Halt execution if not authenticated
@@ -1480,10 +1375,12 @@ progress.empty()  # Remove progress bar when done
 
 ## Summary
 
-The UI/Dashboard module provides comprehensive web-based interfaces leveraging the 11-package layered architecture:
+The UI/Dashboard module provides comprehensive web-based interfaces leveraging the layered architecture:
 
 **Layer Integration:**
+
 - **Foundation Layer**: Telemetry foundations from `cogniverse-foundation`
+
 - **Core Layer**:
   - Business logic and configuration from `cogniverse-core`
   - Evaluation metrics and Phoenix analytics from `cogniverse-evaluation`
@@ -1494,15 +1391,23 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 - **Application Layer**: UI components from `cogniverse-dashboard`
 
 **Dashboard Capabilities:**
+
 1. **Analytics**: Phoenix telemetry visualization with performance metrics (evaluation + telemetry-phoenix)
+
 2. **Configuration**: Full CRUD for multi-tenant system configuration (core)
+
 3. **Memory**: Mem0 agent memory inspection and management (core)
+
 4. **Embeddings**: High-dimensional embedding visualization in 2D/3D (vespa + evaluation)
+
 5. **Routing**: Routing decision analysis and evaluation (agents + evaluation)
+
 6. **Orchestration**: Multi-agent workflow visualization (agents)
+
 7. **Optimization**: Comprehensive optimization framework (agents + evaluation + synthetic)
 
 **Key Features**:
+
 - Interactive Streamlit dashboards with real-time updates
 - Multi-tenant support with tenant isolation
 - Plotly visualizations for metrics and embeddings
@@ -1511,6 +1416,7 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 - Export/import capabilities for data portability
 
 **Production Features**:
+
 - Health checks for all backend services across all layers
 - Error handling with graceful degradation per layer
 - Authentication and authorization (optional)
@@ -1522,24 +1428,30 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 ```python
 # Foundation layer
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Core layer
-from cogniverse_core.config import SystemConfig
-from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 # Implementation layer
-from cogniverse_telemetry_phoenix import PhoenixClient
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
-from cogniverse_vespa.backends import VespaSearchBackend
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-# Application layer (dashboard package itself)
-from cogniverse_dashboard.ui.components import render_metrics_tab
+# Application layer
+# Dashboard tabs are implemented as standalone scripts in scripts/ directory
+# No cogniverse_dashboard.ui.components module exists
 ```
 
-This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the 11-package layered architecture.
+This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the layered architecture.
 
 ---
 
 **Next Study Guides:**
+
 - **16_SYSTEM_INTEGRATION.md**: End-to-end system integration tests
+
 - **17_INSTRUMENTATION.md**: Phoenix telemetry and observability

@@ -4,7 +4,7 @@ REST API documentation for managing backend profiles (video processing configura
 
 ## Base URL
 
-```
+```text
 http://localhost:8000/admin
 ```
 
@@ -39,16 +39,20 @@ Or for validation errors:
     "message": "Invalid request",
     "errors": [
       "Field 'profile_name' is required",
-      "Field 'embedding_type' must be one of: frame_based, chunk_based, global"
+      "Field 'embedding_type' must be one of: frame_based, video_chunks, direct_video_segment, single_vector"
     ]
   }
 }
 ```
 
 Common status codes:
+
 - `400`: Bad request (validation error)
+
 - `404`: Resource not found
+
 - `409`: Conflict (duplicate profile name)
+
 - `500`: Internal server error
 
 ---
@@ -66,19 +70,22 @@ Create a new backend profile for a tenant.
 ```json
 {
   "profile_name": "string (required)",
-  "tenant_id": "string (required)",
-  "type": "string (required)",
+  "tenant_id": "string (optional, default: 'default')",
+  "type": "string (optional, default: 'video')",
   "schema_name": "string (required)",
   "embedding_model": "string (required)",
-  "embedding_type": "string (required, enum: frame_based|chunk_based|global)",
-  "description": "string (optional)",
-  "strategies": [
-    {
-      "name": "string",
-      "type": "string",
-      "ranking": "string"
+  "embedding_type": "string (required, enum: frame_based|video_chunks|direct_video_segment|single_vector)",
+  "description": "string (optional, default: '')",
+  "strategies": {
+    "segmentation": {
+      "class": "string",
+      "params": {}
+    },
+    "embedding": {
+      "class": "string",
+      "params": {}
     }
-  ],
+  },
   "pipeline_config": {
     "frame_extraction": {
       "fps": 1,
@@ -87,7 +94,8 @@ Create a new backend profile for a tenant.
   },
   "model_specific": {
     "quantization": "int8"
-  }
+  },
+  "deploy_schema": "boolean (optional, default: false)"
 }
 ```
 
@@ -100,17 +108,20 @@ curl -X POST http://localhost:8000/admin/profiles \
     "profile_name": "video_colpali_mv_frame",
     "tenant_id": "acme_corp",
     "type": "video",
-    "schema_name": "video_colpali_base",
-    "embedding_model": "vidore/colpali",
+    "schema_name": "video_colpali_smol500_mv_frame",
+    "embedding_model": "vidore/colsmol-500m",
     "embedding_type": "frame_based",
     "description": "ColPali model with frame-based embedding for video search",
-    "strategies": [
-      {
-        "name": "multimodal_fusion",
-        "type": "multimodal",
-        "ranking": "bm25_semantic_fusion"
+    "strategies": {
+      "segmentation": {
+        "class": "FrameSegmentationStrategy",
+        "params": {"fps": 1.0, "max_frames": 100}
+      },
+      "embedding": {
+        "class": "MultiVectorEmbeddingStrategy",
+        "params": {}
       }
-    ],
+    },
     "pipeline_config": {
       "frame_extraction": {
         "fps": 1,
@@ -126,40 +137,25 @@ curl -X POST http://localhost:8000/admin/profiles \
 {
   "profile_name": "video_colpali_mv_frame",
   "tenant_id": "acme_corp",
-  "type": "video",
-  "schema_name": "video_colpali_base",
-  "embedding_model": "vidore/colpali",
-  "embedding_type": "frame_based",
-  "description": "ColPali model with frame-based embedding for video search",
-  "strategies": [
-    {
-      "name": "multimodal_fusion",
-      "type": "multimodal",
-      "ranking": "bm25_semantic_fusion"
-    }
-  ],
-  "pipeline_config": {
-    "frame_extraction": {
-      "fps": 1,
-      "max_frames": 100
-    }
-  },
-  "model_specific": null,
+  "schema_deployed": false,
+  "tenant_schema_name": null,
+  "created_at": "2024-01-15T10:00:00.000Z",
   "version": 1
 }
 ```
 
 **Validation Rules:**
 
-- `profile_name`: Must be unique within tenant, alphanumeric + underscore
-- `tenant_id`: Required, non-empty
-- `type`: Required, typically "video", "image", or "audio"
+- `profile_name`: Must be unique within tenant, alphanumeric + underscore + hyphen
+- `tenant_id`: Optional (defaults to "default"), non-empty if provided
+- `type`: Optional (defaults to "video"), typically "video", "image", "audio", or "text"
 - `schema_name`: Must exist in schema directory
 - `embedding_model`: Format `org/model` or `model-name`
-- `embedding_type`: Must be `frame_based`, `chunk_based`, or `global`
-- `strategies`: Optional, must be valid JSON array
-- `pipeline_config`: Optional, must be valid JSON object
-- `model_specific`: Optional, must be valid JSON object
+- `embedding_type`: Must be `frame_based`, `video_chunks`, `direct_video_segment`, or `single_vector`
+- `strategies`: Optional (defaults to empty dict), must be valid JSON object
+- `pipeline_config`: Optional (defaults to empty dict), must be valid JSON object
+- `model_specific`: Optional (defaults to null), must be valid JSON object
+- `deploy_schema`: Optional (defaults to false), boolean flag
 
 ---
 
@@ -183,40 +179,35 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
 
 ```json
 {
-  "tenant_id": "acme_corp",
   "profiles": [
     {
       "profile_name": "video_colpali_mv_frame",
-      "tenant_id": "acme_corp",
       "type": "video",
-      "schema_name": "video_colpali_base",
-      "embedding_model": "vidore/colpali",
-      "embedding_type": "frame_based",
+      "schema_name": "video_colpali_smol500_mv_frame",
+      "embedding_model": "vidore/colsmol-500m",
       "description": "ColPali model with frame-based embedding",
-      "strategies": [...],
-      "pipeline_config": {...},
-      "model_specific": null,
-      "version": 1
+      "schema_deployed": true,
+      "created_at": "2024-01-15T10:00:00.000Z"
     },
     {
       "profile_name": "video_videoprism_global",
-      "tenant_id": "acme_corp",
       "type": "video",
-      "schema_name": "video_videoprism_base",
-      "embedding_model": "videoprism-base",
-      "embedding_type": "global",
+      "schema_name": "video_videoprism_base_mv_chunk_30s",
+      "embedding_model": "videoprism_public_v1_base_hf",
       "description": "VideoPrism global embeddings",
-      "strategies": [...],
-      "pipeline_config": {...},
-      "model_specific": null,
-      "version": 1
+      "schema_deployed": false,
+      "created_at": "2024-01-15T11:00:00.000Z"
     }
-  ]
+  ],
+  "total_count": 2,
+  "tenant_id": "acme_corp"
 }
 ```
 
 **Notes:**
+
 - Returns empty array if no profiles exist for tenant
+
 - Profiles are tenant-isolated (cannot see other tenants' profiles)
 
 ---
@@ -248,27 +239,32 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
   "profile_name": "video_colpali_mv_frame",
   "tenant_id": "acme_corp",
   "type": "video",
-  "schema_name": "video_colpali_base",
-  "embedding_model": "vidore/colpali",
+  "schema_name": "video_colpali_smol500_mv_frame",
+  "embedding_model": "vidore/colsmol-500m",
   "embedding_type": "frame_based",
   "description": "ColPali model with frame-based embedding for video search",
-  "strategies": [
-    {
-      "name": "multimodal_fusion",
-      "type": "multimodal",
-      "ranking": "bm25_semantic_fusion"
+  "strategies": {
+    "segmentation": {
+      "class": "FrameSegmentationStrategy",
+      "params": {"fps": 1.0, "max_frames": 100}
+    },
+    "embedding": {
+      "class": "MultiVectorEmbeddingStrategy",
+      "params": {}
     }
-  ],
+  },
   "pipeline_config": {
     "frame_extraction": {
       "fps": 1,
       "max_frames": 100
     }
   },
+  "schema_config": {},
   "model_specific": null,
-  "version": 1,
   "schema_deployed": false,
-  "tenant_schema_name": null
+  "tenant_schema_name": null,
+  "created_at": "2024-01-15T10:00:00.000Z",
+  "version": 1
 }
 ```
 
@@ -298,23 +294,32 @@ Update mutable fields of an existing profile.
 {
   "tenant_id": "string (required)",
   "description": "string (optional)",
-  "strategies": [...] (optional),
+  "strategies": {...} (optional),
   "pipeline_config": {...} (optional),
   "model_specific": {...} (optional)
 }
 ```
 
 **Mutable Fields:**
+
 - `description`
-- `strategies`
-- `pipeline_config`
+
+- `strategies` (Dict[str, Any])
+
+- `pipeline_config` (Dict[str, Any])
+
 - `model_specific`
 
 **Immutable Fields** (cannot be updated, create new profile instead):
+
 - `profile_name`
+
 - `type`
+
 - `schema_name`
+
 - `embedding_model`
+
 - `embedding_type`
 
 **Example Request:**
@@ -359,15 +364,18 @@ curl -X PUT http://localhost:8000/admin/profiles/video_colpali_mv_frame \
 ```
 
 **Concurrency:**
+
 - Uses optimistic concurrency control
+
 - Version number increments on each update
+
 - Concurrent updates are serialized via database locks
 
 ---
 
 ### 5. Delete Profile
 
-Delete a backend profile and optionally its Vespa schema.
+Delete a backend profile and optionally its backend schema.
 
 **Endpoint:** `DELETE /admin/profiles/{profile_name}`
 
@@ -378,7 +386,7 @@ Delete a backend profile and optionally its Vespa schema.
 **Query Parameters:**
 
 - `tenant_id` (required): Tenant identifier
-- `delete_schema` (optional, default=false): Also delete Vespa schema
+- `delete_schema` (optional, default=false): Also delete backend schema
 
 **Example Request (profile only):**
 
@@ -398,9 +406,8 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tena
 {
   "profile_name": "video_colpali_mv_frame",
   "tenant_id": "acme_corp",
-  "deleted": true,
   "schema_deleted": true,
-  "tenant_schema_name": "acme_corp_video_colpali_mv_frame"
+  "deleted_at": "2024-01-15T10:30:00.000Z"
 }
 ```
 
@@ -413,15 +420,18 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tena
 ```
 
 **Notes:**
+
 - Deletion is permanent - no undo
+
 - If `delete_schema=true` but schema doesn't exist, operation still succeeds
+
 - Cannot delete other tenants' profiles
 
 ---
 
 ### 6. Deploy Schema
 
-Deploy Vespa schema for a profile to the configured backend.
+Deploy backend schema for a profile to the configured backend.
 
 **Endpoint:** `POST /admin/profiles/{profile_name}/deploy`
 
@@ -439,6 +449,7 @@ Deploy Vespa schema for a profile to the configured backend.
 ```
 
 **Parameters:**
+
 - `force`: If true, redeploy even if already deployed
 
 **Example Request:**
@@ -458,32 +469,42 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 {
   "profile_name": "video_colpali_mv_frame",
   "tenant_id": "acme_corp",
-  "success": true,
-  "tenant_schema_name": "acme_corp_video_colpali_mv_frame",
-  "message": "Schema deployed successfully"
+  "schema_name": "video_colpali_smol500_mv_frame",
+  "tenant_schema_name": "video_colpali_smol500_mv_frame_acme_corp",
+  "deployment_status": "success",
+  "deployed_at": "2024-01-15T10:30:00.000Z"
 }
 ```
 
-**Error Response:** `500 Internal Server Error`
+**Error Response:** `200 OK` (with failed status)
 
 ```json
 {
-  "detail": "Schema deployment failed: Connection to Vespa refused"
+  "profile_name": "video_colpali_mv_frame",
+  "tenant_id": "acme_corp",
+  "schema_name": "video_colpali_smol500_mv_frame",
+  "tenant_schema_name": "",
+  "deployment_status": "failed",
+  "deployed_at": "2024-01-15T10:30:00.000Z",
+  "error_message": "Connection to Vespa refused"
 }
 ```
 
 **Deployment Process:**
 
-1. Generate tenant-specific schema name: `{tenant_id}_{profile_name}`
-2. Load schema template from `{schema_name}_schema.json`
-3. Apply profile-specific configurations
-4. Submit to Vespa backend via deployment API
-5. Wait for deployment confirmation (timeout: 30s)
+1. Check if schema already exists (skip if exists and force=false)
+2. Call backend.schema_registry.deploy_schema() with tenant_id, base_schema_name, and optional force parameter
+3. Generate tenant-specific schema name: `{base_schema_name}_{tenant_id}`
+4. Return deployment status ("success", "failed", or "already_deployed")
 
 **Prerequisites:**
+
 - Profile must exist
+
 - Schema template must exist in configured schema directory
-- Vespa backend must be accessible
+
+- Backend must be accessible
+
 - System config must have valid `backend_url`
 
 ---
@@ -495,19 +516,45 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 ```typescript
 {
   profile_name: string,        // Required, unique within tenant
-  tenant_id: string,           // Required
-  type: string,                // Required (e.g., "video", "image")
+  tenant_id?: string,          // Optional (default: "default")
+  type?: string,               // Optional (default: "video")
   schema_name: string,         // Required, must exist in schema dir
   embedding_model: string,     // Required (e.g., "vidore/colpali")
-  embedding_type: "frame_based" | "chunk_based" | "global",  // Required
-  description?: string,        // Optional
-  strategies?: Strategy[],     // Optional
-  pipeline_config?: object,    // Optional
-  model_specific?: object      // Optional
+  embedding_type: "frame_based" | "video_chunks" | "direct_video_segment" | "single_vector",  // Required
+  description?: string,        // Optional (default: "")
+  strategies?: object,         // Optional (default: {}, Dict[str, Any])
+  pipeline_config?: object,    // Optional (default: {}, Dict[str, Any])
+  model_specific?: object,     // Optional (default: null, Dict[str, Any])
+  schema_config?: object,      // Optional (default: {}, Dict[str, Any])
+  deploy_schema?: boolean      // Optional (default: false)
 }
 ```
 
-### ProfileResponse
+### ProfileSummary
+
+```typescript
+{
+  profile_name: string,
+  type: string,
+  description: string,
+  schema_name: string,
+  embedding_model: string,
+  schema_deployed: boolean,
+  created_at: string               // ISO 8601 timestamp
+}
+```
+
+### ProfileListResponse
+
+```typescript
+{
+  profiles: ProfileSummary[],      // List of profile summaries
+  total_count: number,
+  tenant_id: string
+}
+```
+
+### ProfileDetail
 
 ```typescript
 {
@@ -517,13 +564,15 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   schema_name: string,
   embedding_model: string,
   embedding_type: string,
-  description: string | null,
-  strategies: Strategy[] | null,
-  pipeline_config: object | null,
+  description: string,
+  strategies: object,              // Dict[str, Any]
+  pipeline_config: object,         // Dict[str, Any]
+  schema_config: object,           // Dict[str, Any]
   model_specific: object | null,
-  version: number,
-  schema_deployed?: boolean,        // Only in GET single profile
-  tenant_schema_name?: string | null // Only in GET single profile
+  schema_deployed: boolean,
+  tenant_schema_name: string | null,
+  created_at: string,              // ISO 8601 timestamp
+  version: number
 }
 ```
 
@@ -533,9 +582,9 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 {
   tenant_id: string,           // Required
   description?: string,        // Optional
-  strategies?: Strategy[],     // Optional
-  pipeline_config?: object,    // Optional
-  model_specific?: object      // Optional
+  strategies?: object,         // Optional (Dict[str, Any])
+  pipeline_config?: object,    // Optional (Dict[str, Any])
+  model_specific?: object      // Optional (Dict[str, Any])
 }
 ```
 
@@ -556,9 +605,8 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 {
   profile_name: string,
   tenant_id: string,
-  deleted: boolean,
   schema_deleted: boolean,
-  tenant_schema_name: string | null
+  deleted_at: string             // ISO 8601 timestamp
 }
 ```
 
@@ -571,25 +619,17 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 }
 ```
 
-### ProfileDeployResponse
+### SchemaDeploymentResponse
 
 ```typescript
 {
   profile_name: string,
   tenant_id: string,
-  success: boolean,
+  schema_name: string,
   tenant_schema_name: string,
-  message: string
-}
-```
-
-### Strategy
-
-```typescript
-{
-  name: string,       // Strategy identifier
-  type: string,       // Strategy type
-  ranking: string     // Ranking method
+  deployment_status: string,      // "success" | "failed" | "already_deployed"
+  deployed_at: string,            // ISO 8601 timestamp
+  error_message?: string          // Only present if deployment_status is "failed"
 }
 ```
 
@@ -606,8 +646,8 @@ curl -X POST http://localhost:8000/admin/profiles \
     "profile_name": "video_test_profile",
     "tenant_id": "test_tenant",
     "type": "video",
-    "schema_name": "video_test",
-    "embedding_model": "vidore/colpali",
+    "schema_name": "video_colpali_smol500_mv_frame",
+    "embedding_model": "vidore/colsmol-500m",
     "embedding_type": "frame_based",
     "description": "Test profile for development"
   }'
@@ -663,8 +703,11 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_test_profile?tenant_i
 ## Rate Limiting
 
 Currently no rate limiting. Future versions will implement:
+
 - Per-tenant request limits
+
 - Burst protection
+
 - Deployment throttling
 
 ---
@@ -682,33 +725,37 @@ Breaking changes will be introduced in new API versions (`/v2/admin/profiles`).
 ### Python
 
 ```python
-import httpx
+import requests
 
 class ProfileClient:
     def __init__(self, base_url: str = "http://localhost:8000"):
         self.base_url = base_url
-        self.client = httpx.Client(timeout=30.0)
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
 
     def create_profile(self, profile: dict) -> dict:
-        response = self.client.post(
+        response = self.session.post(
             f"{self.base_url}/admin/profiles",
-            json=profile
+            json=profile,
+            timeout=30.0
         )
         response.raise_for_status()
         return response.json()
 
     def list_profiles(self, tenant_id: str) -> list:
-        response = self.client.get(
+        response = self.session.get(
             f"{self.base_url}/admin/profiles",
-            params={"tenant_id": tenant_id}
+            params={"tenant_id": tenant_id},
+            timeout=30.0
         )
         response.raise_for_status()
         return response.json()["profiles"]
 
     def deploy_schema(self, profile_name: str, tenant_id: str, force: bool = False) -> dict:
-        response = self.client.post(
+        response = self.session.post(
             f"{self.base_url}/admin/profiles/{profile_name}/deploy",
-            json={"tenant_id": tenant_id, "force": force}
+            json={"tenant_id": tenant_id, "force": force},
+            timeout=30.0
         )
         response.raise_for_status()
         return response.json()
@@ -719,8 +766,8 @@ profile = client.create_profile({
     "profile_name": "video_test",
     "tenant_id": "my_tenant",
     "type": "video",
-    "schema_name": "video_test",
-    "embedding_model": "vidore/colpali",
+    "schema_name": "video_colpali_smol500_mv_frame",
+    "embedding_model": "vidore/colsmol-500m",
     "embedding_type": "frame_based"
 })
 ```
@@ -772,8 +819,8 @@ const profile = await client.createProfile({
   profile_name: "video_test",
   tenant_id: "my_tenant",
   type: "video",
-  schema_name: "video_test",
-  embedding_model: "vidore/colpali",
+  schema_name: "video_colpali_smol500_mv_frame",
+  embedding_model: "vidore/colsmol-500m",
   embedding_type: "frame_based"
 });
 ```

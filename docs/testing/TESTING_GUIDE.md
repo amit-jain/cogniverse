@@ -1,7 +1,4 @@
 # Testing Guide
-
-**Last Updated:** 2026-01-25
-
 Comprehensive guide to testing practices in Cogniverse.
 
 ---
@@ -34,7 +31,7 @@ Comprehensive guide to testing practices in Cogniverse.
 - **pytest**: Test framework
 - **pytest-asyncio**: Async test support
 - **pytest-cov**: Coverage reporting
-- **pytest-xdist**: Parallel execution
+- **pytest-mock**: Mocking support
 
 ---
 
@@ -42,29 +39,60 @@ Comprehensive guide to testing practices in Cogniverse.
 
 ### Directory Structure
 
-```
+```text
 tests/
 ├── agents/
 │   ├── unit/
 │   │   ├── test_routing_agent.py
 │   │   ├── test_search_agent.py
-│   │   └── test_workflow_checkpointing_integration.py
-│   └── integration/
-│       └── test_multi_agent_orchestrator.py
-├── foundation/
+│   │   └── ...
+│   ├── integration/
+│   │   ├── test_workflow_checkpointing_integration.py
+│   │   └── ...
+│   └── e2e/
+├── system/
+│   ├── test_real_system_integration.py
+│   ├── test_ensemble_search_e2e.py
+│   └── conftest.py
+├── ingestion/
 │   ├── unit/
-│   │   ├── test_config_manager.py
-│   │   └── test_telemetry_manager.py
-│   └── integration/
-│       └── test_config_persistence.py
-├── runtime/
-│   ├── unit/
-│   │   └── test_pipeline.py
-│   └── integration/
-│       └── test_search_api.py
+│   ├── integration/
+│   └── conftest.py
 ├── evaluation/
+│   ├── unit/
+│   ├── integration/
+│   └── conftest.py
+├── routing/
+│   ├── unit/
+│   ├── integration/
+│   └── conftest.py
+├── telemetry/
+│   ├── unit/
+│   └── integration/
+├── finetuning/
+│   ├── integration/
+│   └── conftest.py
+├── memory/
+│   ├── unit/
+│   ├── integration/
+│   └── conftest.py
+├── backends/
+│   ├── unit/
+│   └── integration/
+├── events/
+│   ├── unit/
+│   └── integration/
+├── admin/
 │   └── unit/
-│       └── test_metrics.py
+├── common/
+│   ├── unit/
+│   └── integration/
+├── dashboard/
+├── ui/
+│   └── integration/
+├── synthetic/
+│   └── integration/
+├── utils/
 └── conftest.py                      # Shared fixtures
 ```
 
@@ -80,12 +108,12 @@ tests/
 class TestSearchAgent:
     """Tests for SearchAgent."""
 
-    def test_process_returns_results_for_valid_query(self):
-        """Test that valid query returns search results."""
+    def test_search_by_text_returns_results(self):
+        """Test that search_by_text returns results for valid query."""
         ...
 
-    def test_empty_query_returns_error_output(self):
-        """Test that empty query returns error in output."""
+    def test_search_with_invalid_query(self):
+        """Test search with invalid query parameters."""
         ...
 
     @pytest.mark.asyncio
@@ -111,22 +139,29 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 uv run pytest tests/agents/unit/test_search_agent.py -v
 
 # Run specific test
-uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_process -v
+uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_search_by_text -v
 ```
 
 ### With Timeout
 
 ```bash
-# 30-minute timeout for long tests
+# 30-minute timeout for long tests (using system timeout command)
 JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/ -v
 
-# Per-test timeout
-uv run pytest tests/ -v --timeout=300
+# For per-test timeout, install pytest-timeout first:
+# uv pip install pytest-timeout
+# Then use:
+# uv run pytest tests/ -v --timeout=300
 ```
 
 ### Parallel Execution
 
+Note: pytest-xdist is not currently installed. For parallel execution, install it first:
+
 ```bash
+# Install pytest-xdist
+uv pip install pytest-xdist
+
 # Run with 4 workers
 JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n 4
 
@@ -164,64 +199,116 @@ find tests/agents -name "test_*.py" -exec grep -l "def test_" {} \;
 
 ```python
 import pytest
-from cogniverse_agents.search import SearchAgent, SearchInput, SearchDeps
+from pathlib import Path
+from cogniverse_agents.search_agent import SearchAgent, SearchInput, SearchOutput, SearchAgentDeps
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 class TestSearchAgent:
     """Tests for SearchAgent."""
 
     @pytest.fixture
-    def agent(self):
+    def config_manager(self):
+        """Create config manager for agent."""
+        return create_default_config_manager()
+
+    @pytest.fixture
+    def schema_loader(self):
+        """Create schema loader for agent."""
+        # FilesystemSchemaLoader requires path to schema directory
+        # Use relative path from project root (tests run from project root)
+        from pathlib import Path
+        schema_path = Path("configs/schemas")
+        return FilesystemSchemaLoader(base_path=schema_path)
+
+    @pytest.fixture
+    def agent(self, config_manager, schema_loader):
         """Create test agent instance."""
-        deps = SearchDeps()
-        return SearchAgent(deps=deps)
+        # Both config_manager and schema_loader are required for SearchAgent
+        deps = SearchAgentDeps(
+            tenant_id="test-tenant",
+            backend_url="http://localhost",
+            backend_port=8080
+        )
+        return SearchAgent(
+            deps=deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager,
+            port=8002  # A2A server port (optional, defaults to 8002)
+        )
 
     @pytest.fixture
     def valid_input(self):
         """Create valid test input."""
         return SearchInput(
             query="machine learning tutorial",
-            profile="default",
+            modality="video",
             top_k=10
         )
 
-    def test_agent_name_is_correct(self, agent):
-        """Test agent has correct name."""
-        assert agent.AGENT_NAME == "search_agent"
+    def test_search_by_text_returns_results(self, agent, valid_input):
+        """Test that search_by_text returns results."""
+        results = agent.search_by_text(
+            query=valid_input.query,
+            modality=valid_input.modality,
+            top_k=valid_input.top_k
+        )
 
-    @pytest.mark.asyncio
-    async def test_process_returns_output(self, agent, valid_input):
-        """Test that process returns SearchOutput."""
-        result = await agent.process(valid_input)
-
-        assert isinstance(result, SearchOutput)
-        assert result.error is None
+        assert isinstance(results, list)
+        # Results is a list of dicts, each with id, score, video_id, frame_id, etc.
+        if len(results) > 0:
+            assert "video_id" in results[0] or "id" in results[0]
 ```
 
 ### Async Tests
 
-Use `@pytest.mark.asyncio` for async tests:
+Use `@pytest.mark.asyncio` for async tests. Note that VideoSearchAgent.search() is synchronous:
 
 ```python
 import pytest
+from concurrent.futures import ThreadPoolExecutor
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_sdk.interfaces.config_store import ConfigStore
+from unittest.mock import MagicMock
 
-class TestAsyncOperations:
+class TestVideoSearchAgent:
 
-    @pytest.mark.asyncio
-    async def test_async_search(self, agent):
-        """Test async search operation."""
-        result = await agent.search("test query")
+    @pytest.fixture
+    def mock_config_store(self):
+        """Create mock ConfigStore."""
+        store = MagicMock(spec=ConfigStore)
+        store.get_config.return_value = None
+        return store
+
+    @pytest.fixture
+    def config_manager(self, mock_config_store):
+        """Create ConfigManager with mock store."""
+        return ConfigManager(store=mock_config_store)
+
+    @pytest.fixture
+    def agent(self, config_manager):
+        """Create VideoSearchAgent with config manager."""
+        return VideoSearchAgent(
+            profile="video_colpali_smol500_mv_frame",
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+    def test_search(self, agent):
+        """Test search operation (synchronous)."""
+        result = agent.search("test query", top_k=5)
         assert result is not None
 
-    @pytest.mark.asyncio
-    async def test_concurrent_operations(self, agent):
-        """Test concurrent operations."""
-        import asyncio
-
-        results = await asyncio.gather(
-            agent.search("query1"),
-            agent.search("query2"),
-            agent.search("query3")
-        )
+    def test_concurrent_searches(self, agent):
+        """Test concurrent search operations using threads."""
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(agent.search, "query1", 5),
+                executor.submit(agent.search, "query2", 5),
+                executor.submit(agent.search, "query3", 5)
+            ]
+            results = [f.result() for f in futures]
 
         assert len(results) == 3
 ```
@@ -233,15 +320,16 @@ import pytest
 
 class TestValidation:
 
-    @pytest.mark.parametrize("query,expected_error", [
-        ("", "Query cannot be empty"),
-        ("   ", "Query cannot be empty"),
-        ("a" * 10001, "Query too long"),
+    @pytest.mark.parametrize("query,expected_validation", [
+        ("", "empty"),
+        ("   ", "empty"),
+        ("a" * 10001, "too long"),
     ])
-    def test_invalid_queries(self, agent, query, expected_error):
+    def test_invalid_queries(self, agent, query, expected_validation):
         """Test validation of invalid queries."""
-        result = await agent.process(SearchInput(query=query))
-        assert result.error == expected_error
+        result = agent.search_by_text(query=query, modality="video", top_k=10)
+        # SearchAgent returns a list (may be empty for invalid queries)
+        assert isinstance(result, list)
 ```
 
 ### Testing Exceptions
@@ -253,11 +341,12 @@ from cogniverse_foundation.config.manager import ConfigManager
 class TestConfigManager:
 
     def test_missing_tenant_raises_error(self, config_manager):
-        """Test that missing tenant raises ConfigurationError."""
-        with pytest.raises(ConfigurationError) as exc_info:
-            config_manager.get_config(tenant_id="nonexistent")
+        """Test that missing tenant raises ValueError or KeyError."""
+        with pytest.raises((ValueError, KeyError)) as exc_info:
+            config_manager.get_system_config(tenant_id="nonexistent")
 
-        assert "not found" in str(exc_info.value)
+        # Error message should indicate the missing tenant
+        assert "nonexistent" in str(exc_info.value).lower() or "not found" in str(exc_info.value).lower()
 ```
 
 ---
@@ -269,24 +358,36 @@ class TestConfigManager:
 ```python
 # tests/conftest.py
 import pytest
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.sqlite.config_store import InMemoryConfigStore
 
 @pytest.fixture
-def config_manager():
-    """Create test config manager with in-memory store."""
+def config_manager(backend_config_env):
+    """Create ConfigManager with backend store for testing.
+    Requires backend_config_env fixture to set environment variables.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    return create_default_config_manager()
+
+@pytest.fixture
+def config_manager_memory():
+    """Create ConfigManager with in-memory store for unit testing.
+    Does not require any backend infrastructure (Vespa, etc.).
+    """
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
     store = InMemoryConfigStore()
+    store.initialize()
     return ConfigManager(store=store)
 
 @pytest.fixture
-def tenant_id():
-    """Standard test tenant ID."""
-    return "test-tenant"
-
-@pytest.fixture
-def sample_query():
-    """Sample search query."""
-    return "machine learning video tutorial"
+def workflow_store(backend_config_env):
+    """Create VespaWorkflowStore for testing."""
+    from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
+    store = VespaWorkflowStore(
+        vespa_url=os.environ.get("BACKEND_URL", "http://localhost"),
+        vespa_port=int(os.environ.get("BACKEND_PORT", "8080")),
+    )
+    store.initialize()
+    return store
 ```
 
 ### Mocking External Services
@@ -306,49 +407,73 @@ class TestSearchAgentWithMocks:
         ])
         return backend
 
-    @pytest.mark.asyncio
-    async def test_search_calls_backend(self, mock_backend):
+    def test_search_calls_backend(self, mock_backend, config_manager, schema_loader):
         """Test that search calls backend with correct params."""
-        deps = SearchDeps(backend=mock_backend)
-        agent = SearchAgent(deps=deps)
-
-        await agent.process(SearchInput(query="test", top_k=5))
-
-        mock_backend.search.assert_called_once_with(
-            query="test",
-            top_k=5
+        deps = SearchAgentDeps(
+            tenant_id="test-tenant",
+            backend_url="http://localhost",
+            backend_port=8080
+        )
+        agent = SearchAgent(
+            deps=deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager,
+            port=8002
         )
 
-    @pytest.mark.asyncio
-    async def test_handles_backend_error(self, mock_backend):
+        result = agent.search_by_text(query="test", modality="video", top_k=5)
+
+        # Verify backend was called (if using mock backend in deps)
+        # mock_backend.search.assert_called()
+
+    def test_handles_backend_error(self, mock_backend, config_manager, schema_loader):
         """Test graceful handling of backend error."""
         mock_backend.search.side_effect = ConnectionError("Backend down")
 
-        deps = SearchDeps(backend=mock_backend)
-        agent = SearchAgent(deps=deps)
+        deps = SearchAgentDeps(
+            tenant_id="test-tenant",
+            backend_url="http://localhost",
+            backend_port=8080
+        )
+        agent = SearchAgent(
+            deps=deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager,
+            port=8002
+        )
 
-        result = await agent.process(SearchInput(query="test"))
+        result = agent.search_by_text(query="test", modality="video", top_k=10)
 
-        assert result.error is not None
-        assert "Backend down" in result.error
+        # Result is a list (may be empty or contain error info depending on implementation)
+        assert isinstance(result, list)
 ```
 
 ### Patching
 
 ```python
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 class TestWithPatching:
 
-    @patch("cogniverse_agents.search.agent.VespaBackend")
-    def test_with_patched_backend(self, mock_backend_class):
-        """Test with patched backend class."""
-        mock_instance = MagicMock()
-        mock_backend_class.return_value = mock_instance
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    def test_with_patched_backend(self, mock_registry, config_manager, schema_loader):
+        """Test with patched backend registry."""
+        mock_backend = MagicMock()
+        mock_registry.return_value.get_backend.return_value = mock_backend
 
-        agent = SearchAgent()
+        deps = SearchAgentDeps(
+            tenant_id="test-tenant",
+            backend_url="http://localhost",
+            backend_port=8080
+        )
+        agent = SearchAgent(
+            deps=deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager
+        )
 
-        mock_backend_class.assert_called_once()
+        # Verify backend registry was accessed
+        assert agent is not None
 ```
 
 ---
@@ -365,18 +490,24 @@ class TestVespaIntegration:
     """Integration tests requiring Vespa."""
 
     @pytest.fixture
-    def vespa_client(self):
+    def vespa_client(self, config_manager):
         """Create real Vespa client."""
         import os
-        vespa_url = os.getenv("VESPA_URL", "http://localhost:8080")
-        return VespaClient(url=vespa_url)
+        from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+        vespa_url = os.getenv("BACKEND_URL", "http://localhost")
+        vespa_port = int(os.getenv("BACKEND_PORT", "8080"))
+        return VespaVideoSearchClient(
+            vespa_url=vespa_url,
+            vespa_port=vespa_port,
+            tenant_id="test-tenant",
+            config_manager=config_manager
+        )
 
-    @pytest.mark.asyncio
-    async def test_real_search(self, vespa_client):
+    def test_real_search(self, vespa_client):
         """Test search against real Vespa."""
-        results = await vespa_client.search(
-            query="test",
-            schema="test_schema"
+        # VespaVideoSearchClient.search() accepts query_params (str or dict)
+        results = vespa_client.search(
+            query_params="test"  # Can also pass dict with query, ranking, top_k
         )
         assert isinstance(results, list)
 ```
@@ -388,8 +519,8 @@ import pytest
 import os
 
 requires_vespa = pytest.mark.skipif(
-    os.getenv("VESPA_URL") is None,
-    reason="VESPA_URL not set"
+    os.getenv("BACKEND_URL") is None,
+    reason="BACKEND_URL not set"
 )
 
 @requires_vespa
@@ -398,30 +529,6 @@ class TestVespaRequired:
 
     def test_vespa_operation(self):
         ...
-```
-
-### Test Database Setup
-
-```python
-@pytest.fixture(scope="session")
-def test_database():
-    """Create test database for session."""
-    import tempfile
-    from pathlib import Path
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        yield str(db_path)
-
-@pytest.fixture
-def clean_database(test_database):
-    """Clean database before each test."""
-    # Clear tables before test
-    conn = sqlite3.connect(test_database)
-    conn.execute("DELETE FROM configs")
-    conn.commit()
-    conn.close()
-    return test_database
 ```
 
 ---
@@ -447,19 +554,17 @@ uv run pytest tests/ \
 
 ### Coverage Configuration
 
-**pyproject.toml**:
-```toml
-[tool.coverage.run]
-source = ["libs/"]
-omit = ["**/tests/*", "**/__pycache__/*"]
+**pytest.ini**:
+```ini
+[pytest]
+# Coverage configuration is handled per-module in pytest.ini
+# Not configured globally in pyproject.toml
 
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-]
+# Run tests with coverage:
+# uv run pytest tests/module/ --cov=libs/module/cogniverse_module
 ```
+
+Note: Coverage settings are not in pyproject.toml - they're specified per command.
 
 ### Coverage Targets
 
@@ -495,23 +600,24 @@ The project has **12 GitHub workflow files** organized by module:
 
 ### Workflow Structure
 
-Each test workflow has these jobs:
+Each test workflow typically has these jobs:
 
-1. **unit-tests** - Fast unit tests with mocked dependencies
-2. **fast-integration-tests** - Real integration tests (runs on every push)
-3. **integration-tests** - Full integration suite (main/develop only)
-4. **lint** - Code linting with ruff/black
-5. **test-imports** - Verify package imports work
-6. **coverage-report** - Combined coverage (if applicable)
+1. **unit-tests** - Fast unit tests with mocked dependencies (often with ci_fast marker)
+2. **integration-tests** - Integration tests (with ci_fast subset for quick feedback)
+3. **lint** - Code linting with ruff/black
+4. **test-cli** or **test-imports** - Verify package imports work
+5. **coverage-report** - Combined coverage (if applicable)
 
-### Fast Integration Tests
+Note: Workflows don't have separate "fast-integration-tests" jobs. Instead, integration-tests jobs use `-m ci_fast` to run essential tests quickly.
 
-Every workflow runs `fast-integration-tests` on every push to provide quick feedback with real Docker containers:
+### CI Fast Integration Tests
+
+Workflows run integration tests with the `ci_fast` marker on every push to provide quick feedback:
 
 ```yaml
-fast-integration-tests:
+integration-tests:
   runs-on: ubuntu-latest
-  timeout-minutes: 15
+  timeout-minutes: 60
   needs: unit-tests
 
   steps:
@@ -532,7 +638,7 @@ fast-integration-tests:
       uv sync --all-packages --all-extras
       uv pip install pytest-cov
 
-  - name: Free up disk space for Vespa
+  - name: Free up disk space for Vespa (if needed)
     run: |
       # Vespa requires <75% disk usage
       sudo rm -rf /usr/share/dotnet
@@ -541,15 +647,13 @@ fast-integration-tests:
       sudo rm -rf /opt/hostedtoolcache/CodeQL
       sudo docker image prune -af
 
-  - name: Pre-pull Vespa Docker image
-    run: docker pull vespaengine/vespa:latest
-
-  - name: Run integration tests
-    timeout-minutes: 10
+  - name: Run integration tests (CI Fast subset)
     run: |
       JAX_PLATFORM_NAME=cpu uv run python -m pytest \
         tests/module/integration/ \
-        -v --tb=short
+        -m ci_fast \
+        -v --tb=short \
+        --cov=libs/module/cogniverse_module
 ```
 
 ### Disk Cleanup for Vespa
@@ -572,24 +676,31 @@ Tests manage their own Docker containers via fixtures:
 **Vespa (VespaDockerManager):**
 ```python
 # tests/utils/vespa_docker.py
+from tests.utils.vespa_docker import VespaDockerManager
+
 @pytest.fixture(scope="module")
 def vespa_docker():
     """Start Vespa container for module tests."""
     manager = VespaDockerManager()
-    manager.start()
-    yield manager
-    manager.stop()
+    container_info = manager.start_container(
+        module_name="test_module",
+        use_module_ports=True
+    )
+    yield container_info
+    manager.stop_container(container_info)
 ```
 
 **Phoenix:**
 ```python
 @pytest.fixture(scope="module")
 def phoenix_container():
-    """Start Phoenix container for telemetry tests."""
-    container_name = f"phoenix_test_{int(time.time())}"
+    """Start Phoenix container for telemetry tests.
+    Uses non-default ports to avoid conflicts with local Phoenix instances.
+    """
+    container_name = f"phoenix_test_{int(time.time() * 1000)}"
     subprocess.run([
         "docker", "run", "-d", "--name", container_name,
-        "-p", "6006:6006", "-p", "4317:4317",
+        "-p", "16006:6006", "-p", "14317:4317",
         "arizephoenix/phoenix:latest"
     ])
     # Wait for ready...
@@ -635,10 +746,11 @@ os.environ["JAX_PLATFORM_NAME"] = "cpu"
 ```python
 # Ensure pytest-asyncio is installed and configured
 
-# In conftest.py
-pytest_plugins = ('pytest_asyncio',)
+# In pytest.ini (already configured):
+# asyncio_mode = auto
+# asyncio_default_fixture_loop_scope = function
 
-# Or use decorator
+# Use decorator for async tests
 @pytest.mark.asyncio
 async def test_async_function():
     ...
@@ -651,7 +763,7 @@ async def test_async_function():
 uv sync
 
 # Check import path
-python -c "import cogniverse_core; print(cogniverse_core.__file__)"
+uv run python -c "import cogniverse_core; print(cogniverse_core.__file__)"
 
 # Run from project root
 cd /path/to/cogniverse
@@ -660,13 +772,24 @@ uv run pytest tests/ -v
 
 ### Flaky Tests
 
+For retries or timeout decorators, install the required packages first:
+
+```bash
+# Install pytest-timeout for timeout decorator
+uv pip install pytest-timeout
+
+# Install pytest-rerunfailures for flaky test retries
+uv pip install pytest-rerunfailures
+```
+
+Then use:
 ```python
-# Use retries for network-dependent tests
+# Use retries for network-dependent tests (requires pytest-rerunfailures)
 @pytest.mark.flaky(reruns=3)
 def test_network_operation():
     ...
 
-# Or add explicit timeout
+# Or add explicit timeout (requires pytest-timeout)
 @pytest.mark.timeout(30)
 def test_slow_operation():
     ...
@@ -695,7 +818,7 @@ def database():
 
 ## Summary
 
-1. **Organize tests** by package (agents, foundation, runtime)
+1. **Organize tests** by package (agents, system, ingestion, evaluation, etc.)
 2. **Use fixtures** for common setup
 3. **Run with JAX_PLATFORM_NAME=cpu** to avoid GPU issues
 4. **100% pass rate required** before commit

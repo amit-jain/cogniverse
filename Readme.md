@@ -219,7 +219,7 @@ Application Layer:
 |-------|------|------------|----------|
 | **ColPali SmolVLM** | Frame-level | 768 | Visual document search |
 | **VideoPrism Base** | Global video | 768 | Semantic video understanding |
-| **VideoPrism LVT** | Temporal | 1152 | Action/motion search |
+| **VideoPrism LVT** | Temporal | 768/1024 | Action/motion search |
 | **ColQwen2 Omni** | Multi-modal | 768 | Text+visual fusion |
 
 ### Vespa Ranking Strategies
@@ -238,17 +238,16 @@ Application Layer:
 
 ### Multi-Tenant Setup
 ```python
-from cogniverse_core.config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.agents import VideoSearchAgent
 
 # Configure tenant with complete isolation
 config = SystemConfig(
     tenant_id="acme_corp",
     llm_model="gpt-4",
-    vespa_url="http://localhost:8080",
-    vespa_config_port=19071,
-    phoenix_project_name="acme_corp_project",  # Isolated Phoenix project
-    phoenix_enabled=True
+    backend_url="http://localhost",
+    backend_port=8080,
+    phoenix_url="http://localhost:6006",
 )
 
 # Create tenant-specific agent

@@ -170,7 +170,7 @@ def main():
     print("\n" + "=" * 60)
     print("🎉 Modal VLM setup completed!")
     print(f"📝 Endpoint URL: {endpoint_url}")
-    print("🚀 You can now run: python scripts/test_video_processing.py")
+    print("🚀 You can now run: uv run python tests/test_video_search.py")
     print("📚 For more details, see: deploy_modal_vlm.md")
 
 if __name__ == "__main__":

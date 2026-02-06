@@ -62,17 +62,15 @@ Application Layer (Light Blue/Purple)
 Automatically appends tenant suffixes to schema names:
 
 ```python
-from cogniverse_vespa.backends import VespaBackend
-from cogniverse_core.config import UnifiedConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
-config = UnifiedConfig(tenant_id="acme_corp")
-backend = VespaBackend(config)
-
-# Automatically uses: video_colpali_mv_frame_acme_corp
-await backend.feed_documents(
-    docs,
-    schema_name="video_colpali_mv_frame"
+config = SystemConfig(
+    tenant_id="acme_corp",
+    backend_url="http://localhost",
+    backend_port=8080,
 )
+
+# Tenant schema naming: video_colpali_mv_frame_acme_corp
 ```
 
 ### 2. Dynamic Schema Deployment
@@ -172,18 +170,14 @@ pip install cogniverse-vespa
 ### Basic Setup
 
 ```python
-from cogniverse_vespa.backends import VespaBackend
-from cogniverse_core.config import UnifiedConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Initialize config with tenant
-config = UnifiedConfig(
+config = SystemConfig(
     tenant_id="acme_corp",
-    vespa_url="http://localhost:8080",
-    vespa_config_url="http://localhost:19071"
+    backend_url="http://localhost",
+    backend_port=8080,
 )
-
-# Initialize backend
-backend = VespaBackend(config)
 ```
 
 ### Feed Documents
@@ -285,14 +279,15 @@ uv run mypy libs/vespa
 
 ## Configuration
 
-Configuration is provided via `UnifiedConfig` from `cogniverse-foundation`:
+Configuration is provided via `SystemConfig` from `cogniverse-foundation`:
 
 ```python
-config = UnifiedConfig(
-    tenant_id="acme_corp",           # Required: Tenant identifier
-    vespa_url="http://localhost:8080",  # Vespa query/feed endpoint
-    vespa_config_url="http://localhost:19071",  # Vespa config server
-    vespa_timeout=30,                # Request timeout (seconds)
+from cogniverse_foundation.config.unified_config import SystemConfig
+
+config = SystemConfig(
+    tenant_id="acme_corp",
+    backend_url="http://localhost",
+    backend_port=8080,
 )
 ```
 

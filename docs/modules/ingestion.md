@@ -3,32 +3,43 @@
 **Package:** `cogniverse_runtime` (Application Layer)
 **Module Location:** `libs/runtime/cogniverse_runtime/ingestion/`
 **Purpose**: Configurable video processing pipeline for multi-modal content extraction and indexing
-**Last Updated:** 2026-01-25
 
 ---
 
 ## Package Structure
 
-```
+```text
 libs/runtime/cogniverse_runtime/ingestion/
 ├── __init__.py                    # Package initialization
 ├── pipeline.py                    # Main VideoIngestionPipeline orchestrator
+├── pipeline_builder.py            # Pipeline construction utilities
 ├── strategy_factory.py            # Creates strategy sets from config
+├── strategy.py                    # Strategy base classes and interfaces
 ├── strategies.py                  # Strategy implementations (Frame, Chunk, SingleVector, etc.)
 ├── processing_strategy_set.py     # Strategy container with execution flow
 ├── processor_manager.py           # Manages processor instances
 ├── processor_base.py              # Base classes for processors and strategies
+├── exceptions.py                  # Pipeline-specific exceptions
 └── processors/
     ├── keyframe_processor.py      # Histogram-based keyframe extraction
+    ├── keyframe_extractor.py      # Keyframe extraction algorithms
+    ├── keyframe_extractor_fps.py  # FPS-based keyframe extraction
     ├── chunk_processor.py         # FFmpeg-based chunk extraction
+    ├── video_chunk_extractor.py   # Video chunk extraction utilities
     ├── audio_processor.py         # Whisper transcription
+    ├── audio_transcriber.py       # Audio transcription core logic
+    ├── audio_embedding_generator.py # Audio embedding generation
     ├── vlm_processor.py           # VLM description generation
+    ├── vlm_descriptor.py          # VLM description core logic
     ├── single_vector_processor.py # Sliding window segment processing
+    ├── embedding_processor.py     # Generic embedding processor
     └── embedding_generator/
-        ├── embedding_generator.py # Backend-agnostic embedding generation
-        ├── embedding_processors.py # Model inference (ColPali, VideoPrism, ColQwen)
-        ├── document_builders.py   # Vespa document construction
-        └── backend_factory.py     # Backend client creation
+        ├── embedding_generator.py      # Base classes and interfaces
+        ├── embedding_generator_impl.py # Backend-agnostic embedding implementation
+        ├── embedding_generator_factory.py # Factory for creating generators
+        ├── embedding_processors.py     # Model inference (ColPali, VideoPrism, ColQwen)
+        ├── document_builders.py        # Vespa document construction
+        └── backend_factory.py          # Backend client creation
 ```
 
 ---
@@ -74,94 +85,136 @@ The Ingestion Module transforms raw video files into searchable, multi-modal rep
 ### 1. Ingestion Pipeline Architecture
 
 ```mermaid
-graph TB
-    Start[Video Input] --> Entry[VideoIngestionPipeline]
+flowchart TB
+    Start["<span style='color:#000'>Video Input</span>"] --> Entry["<span style='color:#000'>VideoIngestionPipeline</span>"]
 
-    Entry --> ConfigRes[Configuration Resolution]
-    ConfigRes --> LoadProfile[Load Profile Config]
-    LoadProfile --> CreateStrategySet[Strategy Factory Creates ProcessingStrategySet]
-    CreateStrategySet --> InitProc[Processor Manager Initializes Required Processors]
+    Entry --> ConfigRes["<span style='color:#000'>Configuration Resolution</span>"]
+    ConfigRes --> LoadProfile["<span style='color:#000'>Load Profile Config</span>"]
+    LoadProfile --> CreateStrategySet["<span style='color:#000'>Strategy Factory Creates ProcessingStrategySet</span>"]
+    CreateStrategySet --> InitProc["<span style='color:#000'>Processor Manager Initializes Required Processors</span>"]
 
-    InitProc --> AsyncProc[Async Video Processing]
-    AsyncProc --> ConcurrentCache[Concurrent Cache Checks]
+    InitProc --> AsyncProc["<span style='color:#000'>Async Video Processing</span>"]
+    AsyncProc --> ConcurrentCache["<span style='color:#000'>Concurrent Cache Checks</span>"]
 
-    ConcurrentCache --> CheckKeyframes{Check Keyframes Cache}
-    ConcurrentCache --> CheckTranscript{Check Transcript Cache}
-    ConcurrentCache --> CheckDesc{Check Descriptions Cache}
+    ConcurrentCache --> CheckKeyframes{"<span style='color:#000'>Check Keyframes Cache</span>"}
+    ConcurrentCache --> CheckTranscript{"<span style='color:#000'>Check Transcript Cache</span>"}
+    ConcurrentCache --> CheckDesc{"<span style='color:#000'>Check Descriptions Cache</span>"}
 
-    CheckKeyframes -->|Cache Hit| LoadCachedKF[Load Cached Keyframes]
-    CheckKeyframes -->|Cache Miss| ProcessKF[Process Keyframes]
+    CheckKeyframes -->|Cache Hit| LoadCachedKF["<span style='color:#000'>Load Cached Keyframes</span>"]
+    CheckKeyframes -->|Cache Miss| ProcessKF["<span style='color:#000'>Process Keyframes</span>"]
 
-    CheckTranscript -->|Cache Hit| LoadCachedTrans[Load Cached Transcript]
-    CheckTranscript -->|Cache Miss| ProcessTrans[Process Transcript]
+    CheckTranscript -->|Cache Hit| LoadCachedTrans["<span style='color:#000'>Load Cached Transcript</span>"]
+    CheckTranscript -->|Cache Miss| ProcessTrans["<span style='color:#000'>Process Transcript</span>"]
 
-    CheckDesc -->|Cache Hit| LoadCachedDesc[Load Cached Descriptions]
-    CheckDesc -->|Cache Miss| ProcessDesc[Process Descriptions]
+    CheckDesc -->|Cache Hit| LoadCachedDesc["<span style='color:#000'>Load Cached Descriptions</span>"]
+    CheckDesc -->|Cache Miss| ProcessDesc["<span style='color:#000'>Process Descriptions</span>"]
 
-    LoadCachedKF --> StrategyExec[Strategy Orchestration]
+    LoadCachedKF --> StrategyExec["<span style='color:#000'>Strategy Orchestration</span>"]
     ProcessKF --> StrategyExec
     LoadCachedTrans --> StrategyExec
     ProcessTrans --> StrategyExec
     LoadCachedDesc --> StrategyExec
     ProcessDesc --> StrategyExec
 
-    StrategyExec --> Sequential[Sequential Strategy Execution]
+    StrategyExec --> Sequential["<span style='color:#000'>Sequential Strategy Execution</span>"]
 
-    Sequential --> Segment[1. Segmentation Strategy]
-    Segment --> SegmentType{Segmentation Type}
-    SegmentType -->|Frame-Based| ExtractFrames[Extract Keyframes]
-    SegmentType -->|Chunk-Based| ExtractChunks[Extract Video Chunks]
-    SegmentType -->|Single-Vector| ExtractSegments[Extract Sliding Window Segments]
+    Sequential --> Segment["<span style='color:#000'>1. Segmentation Strategy</span>"]
+    Segment --> SegmentType{"<span style='color:#000'>Segmentation Type</span>"}
+    SegmentType -->|Frame-Based| ExtractFrames["<span style='color:#000'>Extract Keyframes</span>"]
+    SegmentType -->|Chunk-Based| ExtractChunks["<span style='color:#000'>Extract Video Chunks</span>"]
+    SegmentType -->|Single-Vector| ExtractSegments["<span style='color:#000'>Extract Sliding Window Segments</span>"]
 
-    ExtractFrames --> Transcribe[2. Transcription Strategy]
+    ExtractFrames --> Transcribe["<span style='color:#000'>2. Transcription Strategy</span>"]
     ExtractChunks --> Transcribe
     ExtractSegments --> Transcribe
 
-    Transcribe --> TranscribeAudio[Whisper Audio Transcription]
-    TranscribeAudio --> Describe[3. Description Strategy]
+    Transcribe --> TranscribeAudio["<span style='color:#000'>Whisper Audio Transcription</span>"]
+    TranscribeAudio --> Describe["<span style='color:#000'>3. Description Strategy</span>"]
 
-    Describe --> DescType{Description Type}
-    DescType -->|VLM Description| GenerateDesc[Generate VLM Descriptions]
-    DescType -->|No Description| SkipDesc[Skip Descriptions]
+    Describe --> DescType{"<span style='color:#000'>Description Type</span>"}
+    DescType -->|VLM Description| GenerateDesc["<span style='color:#000'>Generate VLM Descriptions</span>"]
+    DescType -->|No Description| SkipDesc["<span style='color:#000'>Skip Descriptions</span>"]
 
-    GenerateDesc --> Embed[4. Embedding Strategy]
+    GenerateDesc --> Embed["<span style='color:#000'>4. Embedding Strategy</span>"]
     SkipDesc --> Embed
 
-    Embed --> EmbedGen[Embedding Generation & Backend Ingestion]
+    Embed --> EmbedGen["<span style='color:#000'>Embedding Generation & Backend Ingestion</span>"]
 
-    EmbedGen --> ModelInference[Model Inference]
-    ModelInference --> ModelType{Embedding Model}
-    ModelType -->|ColPali| ColPaliInfer[ColPali Multi-Vector]
-    ModelType -->|VideoPrism| VideoPrismInfer[VideoPrism Single-Vector]
-    ModelType -->|ColQwen| ColQwenInfer[ColQwen Multi-Vector]
+    EmbedGen --> ModelInference["<span style='color:#000'>Model Inference</span>"]
+    ModelInference --> ModelType{"<span style='color:#000'>Embedding Model</span>"}
+    ModelType -->|ColPali| ColPaliInfer["<span style='color:#000'>ColPali Multi-Vector</span>"]
+    ModelType -->|VideoPrism| VideoPrismInfer["<span style='color:#000'>VideoPrism Single-Vector</span>"]
+    ModelType -->|ColQwen| ColQwenInfer["<span style='color:#000'>ColQwen Multi-Vector</span>"]
 
-    ColPaliInfer --> DocBuild[Document Building]
+    ColPaliInfer --> DocBuild["<span style='color:#000'>Document Building</span>"]
     VideoPrismInfer --> DocBuild
     ColQwenInfer --> DocBuild
 
-    DocBuild --> StrategyAware[Strategy-Aware Document Construction]
-    StrategyAware --> FormatConvert[Format Conversion Binary/Float]
+    DocBuild --> StrategyAware["<span style='color:#000'>Strategy-Aware Document Construction</span>"]
+    StrategyAware --> FormatConvert["<span style='color:#000'>Format Conversion Binary/Float</span>"]
 
-    FormatConvert --> BackendFeed[Backend Feeding]
-    BackendFeed --> FeedType{Feed Type}
-    FeedType -->|Per-Document| SingleFeed[Single Document Upload]
-    FeedType -->|Batch| BatchFeed[Batch Upload feed_iterable]
+    FormatConvert --> BackendFeed["<span style='color:#000'>Backend Feeding</span>"]
+    BackendFeed --> FeedType{"<span style='color:#000'>Feed Type</span>"}
+    FeedType -->|Per-Document| SingleFeed["<span style='color:#000'>Single Document Upload</span>"]
+    FeedType -->|Batch| BatchFeed["<span style='color:#000'>Batch Upload feed_iterable</span>"]
 
-    SingleFeed --> Results[Pipeline Results]
+    SingleFeed --> Results["<span style='color:#000'>Pipeline Results</span>"]
     BatchFeed --> Results
 
-    Results --> Metadata[Video Metadata ID, duration, path]
-    Results --> ProcessingRes[Processing Results keyframes, chunks, segments, transcript]
-    Results --> EmbedStats[Embedding Stats documents processed, fed]
-    Results --> Timing[Timing Metrics per-stage timing]
+    Results --> Metadata["<span style='color:#000'>Video Metadata ID, duration, path</span>"]
+    Results --> ProcessingRes["<span style='color:#000'>Processing Results keyframes, chunks, segments, transcript</span>"]
+    Results --> EmbedStats["<span style='color:#000'>Embedding Stats documents processed, fed</span>"]
+    Results --> Timing["<span style='color:#000'>Timing Metrics per-stage timing</span>"]
 
-    style Start fill:#e1f5ff
-    style Entry fill:#fff4e1
-    style ConfigRes fill:#fff4e1
-    style AsyncProc fill:#fff4e1
-    style Sequential fill:#fff4e1
-    style EmbedGen fill:#fff4e1
-    style Results fill:#e1ffe1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Entry fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConfigRes fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadProfile fill:#b0bec5,stroke:#546e7a,color:#000
+    style CreateStrategySet fill:#ffcc80,stroke:#ef6c00,color:#000
+    style InitProc fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AsyncProc fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConcurrentCache fill:#b0bec5,stroke:#546e7a,color:#000
+    style CheckKeyframes fill:#b0bec5,stroke:#546e7a,color:#000
+    style CheckTranscript fill:#b0bec5,stroke:#546e7a,color:#000
+    style CheckDesc fill:#b0bec5,stroke:#546e7a,color:#000
+    style LoadCachedKF fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProcessKF fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadCachedTrans fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProcessTrans fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadCachedDesc fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProcessDesc fill:#ffcc80,stroke:#ef6c00,color:#000
+    style StrategyExec fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Sequential fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Segment fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SegmentType fill:#b0bec5,stroke:#546e7a,color:#000
+    style ExtractFrames fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExtractChunks fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExtractSegments fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Transcribe fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TranscribeAudio fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Describe fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DescType fill:#b0bec5,stroke:#546e7a,color:#000
+    style GenerateDesc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SkipDesc fill:#b0bec5,stroke:#546e7a,color:#000
+    style Embed fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EmbedGen fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ModelInference fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ModelType fill:#b0bec5,stroke:#546e7a,color:#000
+    style ColPaliInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VideoPrismInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ColQwenInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DocBuild fill:#ffcc80,stroke:#ef6c00,color:#000
+    style StrategyAware fill:#ffcc80,stroke:#ef6c00,color:#000
+    style FormatConvert fill:#ffcc80,stroke:#ef6c00,color:#000
+    style BackendFeed fill:#ffcc80,stroke:#ef6c00,color:#000
+    style FeedType fill:#b0bec5,stroke:#546e7a,color:#000
+    style SingleFeed fill:#a5d6a7,stroke:#388e3c,color:#000
+    style BatchFeed fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Results fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Metadata fill:#b0bec5,stroke:#546e7a,color:#000
+    style ProcessingRes fill:#b0bec5,stroke:#546e7a,color:#000
+    style EmbedStats fill:#b0bec5,stroke:#546e7a,color:#000
+    style Timing fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 ### 2. Strategy Resolution Flow
@@ -193,7 +246,7 @@ sequenceDiagram
         Config-->>Factory: {class: "FrameSegmentationStrategy", params: {...}}
 
         Factory->>Registry: Import class dynamically
-        Note over Registry: importlib.import_module<br/>("cogniverse_agents.ingestion.strategies")
+        Note over Registry: importlib.import_module<br/>("cogniverse_runtime.ingestion.strategies")
 
         Registry-->>Factory: StrategyClass
 
@@ -247,35 +300,35 @@ sequenceDiagram
 **Strategy Types Available:**
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph Segmentation Strategies
-        Frame[FrameSegmentationStrategy<br/>Keyframes extraction]
-        Chunk[ChunkSegmentationStrategy<br/>Video chunks]
-        Single[SingleVectorSegmentationStrategy<br/>Sliding windows]
+        Frame["<span style='color:#000'>FrameSegmentationStrategy<br/>Keyframes extraction</span>"]
+        Chunk["<span style='color:#000'>ChunkSegmentationStrategy<br/>Video chunks</span>"]
+        Single["<span style='color:#000'>SingleVectorSegmentationStrategy<br/>Sliding windows</span>"]
     end
 
     subgraph Transcription Strategies
-        Audio[AudioTranscriptionStrategy<br/>Whisper transcription]
+        Audio["<span style='color:#000'>AudioTranscriptionStrategy<br/>Whisper transcription</span>"]
     end
 
     subgraph Description Strategies
-        VLM[VLMDescriptionStrategy<br/>Qwen2-VL descriptions]
-        NoDesc[NoDescriptionStrategy<br/>Skip descriptions]
+        VLM["<span style='color:#000'>VLMDescriptionStrategy<br/>Qwen2-VL descriptions</span>"]
+        NoDesc["<span style='color:#000'>NoDescriptionStrategy<br/>Skip descriptions</span>"]
     end
 
     subgraph Embedding Strategies
-        MultiVec[MultiVectorEmbeddingStrategy<br/>ColPali, ColQwen]
-        SingleVec[SingleVectorEmbeddingStrategy<br/>VideoPrism]
+        MultiVec["<span style='color:#000'>MultiVectorEmbeddingStrategy<br/>ColPali, ColQwen</span>"]
+        SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>VideoPrism</span>"]
     end
 
-    style Frame fill:#e1f5ff
-    style Chunk fill:#e1f5ff
-    style Single fill:#e1f5ff
-    style Audio fill:#fff4e1
-    style VLM fill:#ffe1f5
-    style NoDesc fill:#ffe1f5
-    style MultiVec fill:#e1ffe1
-    style SingleVec fill:#e1ffe1
+    style Frame fill:#90caf9,stroke:#1565c0,color:#000
+    style Chunk fill:#90caf9,stroke:#1565c0,color:#000
+    style Single fill:#90caf9,stroke:#1565c0,color:#000
+    style Audio fill:#ffcc80,stroke:#ef6c00,color:#000
+    style VLM fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style NoDesc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MultiVec fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SingleVec fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Embedding Generation Flow
@@ -364,7 +417,7 @@ sequenceDiagram
         activate Model
         Model->>Model: process_full_video(video_path)
         Model->>Model: Generate global embedding
-        Note over Model: embedding.shape = [1024] (base)<br/>or [1152] (large)
+        Note over Model: embedding.shape = [768] (base)<br/>or [1024] (large)
         Model-->>Processor: video_embedding
         deactivate Model
 
@@ -391,7 +444,7 @@ sequenceDiagram
             Model->>Model: Extract frames from segment
             Model->>Model: process_segment_frames(frames)
             Model->>Model: Generate segment embedding
-            Note over Model: embedding.shape = [1152]
+            Note over Model: embedding.shape = [768] (base) or [1024] (large)
         end
         Model-->>Processor: segment_embeddings[]
         deactivate Model
@@ -436,6 +489,7 @@ sequenceDiagram
 ```
 
 **Embedding Processing Types:**
+
 - **Frame-Based**: ColPali multi-vector per frame (128×128 patches)
 - **Video Chunks**: ColQwen multi-vector per chunk
 - **Direct Video**: VideoPrism single global embedding
@@ -446,46 +500,46 @@ sequenceDiagram
 ### 4. Vespa Upload Pipeline
 
 ```mermaid
-graph TB
-    Start[Documents Ready for Upload] --> Builder[Document Builder]
+flowchart TB
+    Start["<span style='color:#000'>Documents Ready for Upload</span>"] --> Builder["<span style='color:#000'>Document Builder</span>"]
 
-    Builder --> DocType{Document Type}
+    Builder --> DocType{"<span style='color:#000'>Document Type</span>"}
 
-    DocType -->|Frame Documents| FrameDoc[Build Frame Documents]
-    DocType -->|Chunk Documents| ChunkDoc[Build Chunk Documents]
-    DocType -->|Video Documents| VideoDoc[Build Video Documents]
-    DocType -->|Segment Documents| SegmentDoc[Build Segment Documents]
+    DocType -->|Frame Documents| FrameDoc["<span style='color:#000'>Build Frame Documents</span>"]
+    DocType -->|Chunk Documents| ChunkDoc["<span style='color:#000'>Build Chunk Documents</span>"]
+    DocType -->|Video Documents| VideoDoc["<span style='color:#000'>Build Video Documents</span>"]
+    DocType -->|Segment Documents| SegmentDoc["<span style='color:#000'>Build Segment Documents</span>"]
 
-    FrameDoc --> FrameFields[Frame Document Fields]
-    FrameFields --> FVideoID[video_id: str]
-    FrameFields --> FFrameNum[frame_number: int]
-    FrameFields --> FTimestamp[timestamp: float]
-    FrameFields --> FPath[frame_path: str]
-    FrameFields --> FEmbed[embeddings: binary/float]
+    FrameDoc --> FrameFields["<span style='color:#000'>Frame Document Fields</span>"]
+    FrameFields --> FVideoID["<span style='color:#000'>video_id: str</span>"]
+    FrameFields --> FFrameNum["<span style='color:#000'>frame_number: int</span>"]
+    FrameFields --> FTimestamp["<span style='color:#000'>timestamp: float</span>"]
+    FrameFields --> FPath["<span style='color:#000'>frame_path: str</span>"]
+    FrameFields --> FEmbed["<span style='color:#000'>embeddings: binary/float</span>"]
 
-    ChunkDoc --> ChunkFields[Chunk Document Fields]
-    ChunkFields --> CVideoID[video_id: str]
-    ChunkFields --> CChunkNum[chunk_number: int]
-    ChunkFields --> CStart[start_time: float]
-    ChunkFields --> CEnd[end_time: float]
-    ChunkFields --> CPath[chunk_path: str]
-    ChunkFields --> CEmbed[embeddings: binary/float]
+    ChunkDoc --> ChunkFields["<span style='color:#000'>Chunk Document Fields</span>"]
+    ChunkFields --> CVideoID["<span style='color:#000'>video_id: str</span>"]
+    ChunkFields --> CChunkNum["<span style='color:#000'>chunk_number: int</span>"]
+    ChunkFields --> CStart["<span style='color:#000'>start_time: float</span>"]
+    ChunkFields --> CEnd["<span style='color:#000'>end_time: float</span>"]
+    ChunkFields --> CPath["<span style='color:#000'>chunk_path: str</span>"]
+    ChunkFields --> CEmbed["<span style='color:#000'>embeddings: binary/float</span>"]
 
-    VideoDoc --> VideoFields[Video Document Fields]
-    VideoFields --> VVideoID[video_id: str]
-    VideoFields --> VDuration[duration: float]
-    VideoFields --> VPath[video_path: str]
-    VideoFields --> VEmbed[embedding: float array]
+    VideoDoc --> VideoFields["<span style='color:#000'>Video Document Fields</span>"]
+    VideoFields --> VVideoID["<span style='color:#000'>video_id: str</span>"]
+    VideoFields --> VDuration["<span style='color:#000'>duration: float</span>"]
+    VideoFields --> VPath["<span style='color:#000'>video_path: str</span>"]
+    VideoFields --> VEmbed["<span style='color:#000'>embedding: float array</span>"]
 
-    SegmentDoc --> SegmentFields[Segment Document Fields]
-    SegmentFields --> SVideoID[video_id: str]
-    SegmentFields --> SSegmentID[segment_id: int]
-    SegmentFields --> SStart[start_time: float]
-    SegmentFields --> SEnd[end_time: float]
-    SegmentFields --> SText[text: str transcript]
-    SegmentFields --> SEmbed[embedding: float array]
+    SegmentDoc --> SegmentFields["<span style='color:#000'>Segment Document Fields</span>"]
+    SegmentFields --> SVideoID["<span style='color:#000'>video_id: str</span>"]
+    SegmentFields --> SSegmentID["<span style='color:#000'>segment_id: int</span>"]
+    SegmentFields --> SStart["<span style='color:#000'>start_time: float</span>"]
+    SegmentFields --> SEnd["<span style='color:#000'>end_time: float</span>"]
+    SegmentFields --> SText["<span style='color:#000'>text: str transcript</span>"]
+    SegmentFields --> SEmbed["<span style='color:#000'>embedding: float array</span>"]
 
-    FVideoID --> FormatConv[Format Conversion]
+    FVideoID --> FormatConv["<span style='color:#000'>Format Conversion</span>"]
     FFrameNum --> FormatConv
     FTimestamp --> FormatConv
     FPath --> FormatConv
@@ -510,71 +564,131 @@ graph TB
     SText --> FormatConv
     SEmbed --> FormatConv
 
-    FormatConv --> ConvType{Embedding Format}
-    ConvType -->|Binary| BinaryConv[Binary Conversion int8]
-    ConvType -->|Float| FloatConv[Float Conversion bfloat16]
+    FormatConv --> ConvType{"<span style='color:#000'>Embedding Format</span>"}
+    ConvType -->|Binary| BinaryConv["<span style='color:#000'>Binary Conversion int8</span>"]
+    ConvType -->|Float| FloatConv["<span style='color:#000'>Float Conversion bfloat16</span>"]
 
-    BinaryConv --> HexEncode[Hex Encoding for Binary]
-    FloatConv --> FloatArray[Float Array for Float]
+    BinaryConv --> HexEncode["<span style='color:#000'>Hex Encoding for Binary</span>"]
+    FloatConv --> FloatArray["<span style='color:#000'>Float Array for Float</span>"]
 
-    HexEncode --> Validate[Validate Documents]
+    HexEncode --> Validate["<span style='color:#000'>Validate Documents</span>"]
     FloatArray --> Validate
 
-    Validate --> CheckSchema[Check Vespa Schema Match]
-    CheckSchema --> CheckDims{Embedding Dimensions Match?}
+    Validate --> CheckSchema["<span style='color:#000'>Check Vespa Schema Match</span>"]
+    CheckSchema --> CheckDims{"<span style='color:#000'>Embedding Dimensions Match?</span>"}
 
-    CheckDims -->|Yes| BatchPrep[Batch Preparation]
-    CheckDims -->|No| Error[Throw Dimension Mismatch Error]
+    CheckDims -->|Yes| BatchPrep["<span style='color:#000'>Batch Preparation</span>"]
+    CheckDims -->|No| Error["<span style='color:#000'>Throw Dimension Mismatch Error</span>"]
 
-    BatchPrep --> BatchSize[Determine Batch Size]
-    BatchSize --> CreateBatches[Create Document Batches batch_size=50]
+    BatchPrep --> BatchSize["<span style='color:#000'>Determine Batch Size</span>"]
+    BatchSize --> CreateBatches["<span style='color:#000'>Create Document Batches batch_size=50</span>"]
 
-    CreateBatches --> Upload[Bulk Upload to Vespa]
+    CreateBatches --> Upload["<span style='color:#000'>Bulk Upload to Vespa</span>"]
 
-    Upload --> VespaClient[Vespa PyClient]
-    VespaClient --> FeedIterable[feed_iterable documents, batch_size]
+    Upload --> VespaClient["<span style='color:#000'>Vespa PyClient</span>"]
+    VespaClient --> FeedIterable["<span style='color:#000'>feed_iterable documents, batch_size</span>"]
 
-    FeedIterable --> UploadLoop[Upload Loop]
+    FeedIterable --> UploadLoop["<span style='color:#000'>Upload Loop</span>"]
 
-    UploadLoop --> Batch1{Batch 1}
-    Batch1 -->|POST| VespaAPI1[Vespa HTTP API]
-    VespaAPI1 --> Result1{Success?}
-    Result1 -->|Yes| TrackSuccess1[Track Success Count]
-    Result1 -->|No| TrackError1[Track Error Details]
+    UploadLoop --> Batch1{"<span style='color:#000'>Batch 1</span>"}
+    Batch1 -->|POST| VespaAPI1["<span style='color:#000'>Vespa HTTP API</span>"]
+    VespaAPI1 --> Result1{"<span style='color:#000'>Success?</span>"}
+    Result1 -->|Yes| TrackSuccess1["<span style='color:#000'>Track Success Count</span>"]
+    Result1 -->|No| TrackError1["<span style='color:#000'>Track Error Details</span>"]
 
-    TrackSuccess1 --> Batch2{Batch 2}
+    TrackSuccess1 --> Batch2{"<span style='color:#000'>Batch 2</span>"}
     TrackError1 --> Batch2
 
-    Batch2 -->|POST| VespaAPI2[Vespa HTTP API]
-    VespaAPI2 --> Result2{Success?}
-    Result2 -->|Yes| TrackSuccess2[Track Success Count]
-    Result2 -->|No| TrackError2[Track Error Details]
+    Batch2 -->|POST| VespaAPI2["<span style='color:#000'>Vespa HTTP API</span>"]
+    VespaAPI2 --> Result2{"<span style='color:#000'>Success?</span>"}
+    Result2 -->|Yes| TrackSuccess2["<span style='color:#000'>Track Success Count</span>"]
+    Result2 -->|No| TrackError2["<span style='color:#000'>Track Error Details</span>"]
 
-    TrackSuccess2 --> MoreBatches{More Batches?}
+    TrackSuccess2 --> MoreBatches{"<span style='color:#000'>More Batches?</span>"}
     TrackError2 --> MoreBatches
 
     MoreBatches -->|Yes| UploadLoop
-    MoreBatches -->|No| Verify[Verify Upload]
+    MoreBatches -->|No| Verify["<span style='color:#000'>Verify Upload</span>"]
 
-    Verify --> CheckCounts[Check Document Counts]
-    CheckCounts --> CountMatch{documents_fed == total_documents?}
+    Verify --> CheckCounts["<span style='color:#000'>Check Document Counts</span>"]
+    CheckCounts --> CountMatch{"<span style='color:#000'>documents_fed == total_documents?</span>"}
 
-    CountMatch -->|Yes| Success[Upload Success]
-    CountMatch -->|No| PartialSuccess[Partial Upload - Log Errors]
+    CountMatch -->|Yes| Success["<span style='color:#000'>Upload Success</span>"]
+    CountMatch -->|No| PartialSuccess["<span style='color:#000'>Partial Upload - Log Errors</span>"]
 
-    Success --> Complete[Upload Complete]
+    Success --> Complete["<span style='color:#000'>Upload Complete</span>"]
     PartialSuccess --> Complete
 
-    style Start fill:#e1f5ff
-    style Builder fill:#fff4e1
-    style FormatConv fill:#fff4e1
-    style Validate fill:#fff4e1
-    style Upload fill:#ffe1f5
-    style Complete fill:#e1ffe1
-    style Error fill:#ffe1e1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Builder fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DocType fill:#b0bec5,stroke:#546e7a,color:#000
+    style FrameDoc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ChunkDoc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VideoDoc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SegmentDoc fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FrameFields fill:#b0bec5,stroke:#546e7a,color:#000
+    style ChunkFields fill:#b0bec5,stroke:#546e7a,color:#000
+    style VideoFields fill:#b0bec5,stroke:#546e7a,color:#000
+    style SegmentFields fill:#b0bec5,stroke:#546e7a,color:#000
+    style FVideoID fill:#b0bec5,stroke:#546e7a,color:#000
+    style FFrameNum fill:#b0bec5,stroke:#546e7a,color:#000
+    style FTimestamp fill:#b0bec5,stroke:#546e7a,color:#000
+    style FPath fill:#b0bec5,stroke:#546e7a,color:#000
+    style FEmbed fill:#b0bec5,stroke:#546e7a,color:#000
+    style CVideoID fill:#b0bec5,stroke:#546e7a,color:#000
+    style CChunkNum fill:#b0bec5,stroke:#546e7a,color:#000
+    style CStart fill:#b0bec5,stroke:#546e7a,color:#000
+    style CEnd fill:#b0bec5,stroke:#546e7a,color:#000
+    style CPath fill:#b0bec5,stroke:#546e7a,color:#000
+    style CEmbed fill:#b0bec5,stroke:#546e7a,color:#000
+    style VVideoID fill:#b0bec5,stroke:#546e7a,color:#000
+    style VDuration fill:#b0bec5,stroke:#546e7a,color:#000
+    style VPath fill:#b0bec5,stroke:#546e7a,color:#000
+    style VEmbed fill:#b0bec5,stroke:#546e7a,color:#000
+    style SVideoID fill:#b0bec5,stroke:#546e7a,color:#000
+    style SSegmentID fill:#b0bec5,stroke:#546e7a,color:#000
+    style SStart fill:#b0bec5,stroke:#546e7a,color:#000
+    style SEnd fill:#b0bec5,stroke:#546e7a,color:#000
+    style SText fill:#b0bec5,stroke:#546e7a,color:#000
+    style SEmbed fill:#b0bec5,stroke:#546e7a,color:#000
+    style FormatConv fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConvType fill:#b0bec5,stroke:#546e7a,color:#000
+    style BinaryConv fill:#ffcc80,stroke:#ef6c00,color:#000
+    style FloatConv fill:#ffcc80,stroke:#ef6c00,color:#000
+    style HexEncode fill:#ffcc80,stroke:#ef6c00,color:#000
+    style FloatArray fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Validate fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckSchema fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckDims fill:#b0bec5,stroke:#546e7a,color:#000
+    style BatchPrep fill:#ffcc80,stroke:#ef6c00,color:#000
+    style BatchSize fill:#b0bec5,stroke:#546e7a,color:#000
+    style CreateBatches fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Upload fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaClient fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FeedIterable fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style UploadLoop fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Batch1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style VespaAPI1 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Result1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style TrackSuccess1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TrackError1 fill:#e53935,stroke:#c62828,color:#fff
+    style Batch2 fill:#b0bec5,stroke:#546e7a,color:#000
+    style VespaAPI2 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Result2 fill:#b0bec5,stroke:#546e7a,color:#000
+    style TrackSuccess2 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TrackError2 fill:#e53935,stroke:#c62828,color:#fff
+    style MoreBatches fill:#b0bec5,stroke:#546e7a,color:#000
+    style Verify fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckCounts fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CountMatch fill:#b0bec5,stroke:#546e7a,color:#000
+    style Success fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PartialSuccess fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Complete fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Error fill:#e53935,stroke:#c62828,color:#fff
 ```
 
 **Vespa Upload Key Features:**
+
 - **Batch Upload**: feed_iterable for efficient bulk ingestion
 - **Format Conversion**: Binary (hex-encoded int8) vs Float (bfloat16)
 - **Schema Validation**: Dimension checking before upload
@@ -585,7 +699,7 @@ graph TB
 
 ## Core Components
 
-### 1. VideoIngestionPipeline (pipeline.py:135-1055)
+### 1. VideoIngestionPipeline
 
 **Purpose**: Main orchestrator for video processing with async optimizations
 
@@ -593,18 +707,27 @@ graph TB
 ```python
 def __init__(
     self,
+    tenant_id: str,  # REQUIRED - no default
     config: PipelineConfig | None = None,
     app_config: dict[str, Any] | None = None,
+    config_manager=None,
+    schema_loader=None,
     schema_name: str | None = None,
     debug_mode: bool = False,
+    event_queue: Optional[EventQueue] = None,
 )
 ```
 
 **Parameters**:
+
+- `tenant_id`: Tenant identifier (**REQUIRED** - raises ValueError if not provided)
 - `config`: Pipeline configuration (steps, thresholds, paths)
 - `app_config`: Global application config
+- `config_manager`: ConfigManager instance (required if app_config not provided)
+- `schema_loader`: SchemaLoader instance (optional, for backend operations)
 - `schema_name`: Profile name (e.g., "video_colpali_smol500_mv_frame")
 - `debug_mode`: Enable detailed logging
+- `event_queue`: Optional EventQueue for real-time progress notifications
 
 **Key Methods**:
 
@@ -630,7 +753,7 @@ result = await pipeline.process_video_async(Path("video.mp4"))
 # }
 ```
 
-#### `async process_videos_concurrent(video_files: list[Path], max_concurrent: int = 3) -> list[dict[str, Any]]`
+#### `async process_videos_concurrent(video_files: list[Path], max_concurrent: int = 3) -> dict[str, Any]`
 
 Process multiple videos concurrently with resource control.
 
@@ -638,9 +761,11 @@ Process multiple videos concurrently with resource control.
 video_files = [Path("v1.mp4"), Path("v2.mp4"), Path("v3.mp4")]
 results = await pipeline.process_videos_concurrent(video_files, max_concurrent=2)
 # Process 2 videos at once, queue remaining
+# Returns: {"job_id": str, "results": [list of per-video results]}
 ```
 
 **Features**:
+
 - AsyncIO-based concurrent processing
 - Semaphore-controlled resource limits
 - Progress tracking per video
@@ -663,7 +788,7 @@ results = pipeline.process_directory(
 # }
 ```
 
-### 2. StrategyFactory (strategy_factory.py:15-86)
+### 2. StrategyFactory
 
 **Purpose**: Create strategy sets from explicit YAML configuration
 
@@ -697,11 +822,12 @@ strategy_set = StrategyFactory.create_from_profile_config(profile_config)
 ```
 
 **Design**:
+
 - Uses dynamic imports (`importlib`) to instantiate strategy classes
 - No hardcoded if/elif logic - fully config-driven
-- All strategy classes must be in `cogniverse_agents.ingestion.strategies`
+- All strategy classes must be in `cogniverse_runtime.ingestion.strategies`
 
-### 3. ProcessingStrategySet (processing_strategy_set.py:16-333)
+### 3. ProcessingStrategySet
 
 **Purpose**: Container for processing strategies with execution orchestration
 
@@ -766,13 +892,14 @@ audio_proc = manager.get_processor("audio")
 ```
 
 **Supported Processors**:
+
 - `keyframe`: KeyframeProcessor
 - `chunk`: ChunkProcessor
 - `audio`: AudioProcessor
 - `vlm`: VLMProcessor
-- `single_vector`: SingleVectorProcessor
+- `single_vector`: SingleVectorVideoProcessor
 
-### 5. EmbeddingGenerator (embedding_generator.py:51-649)
+### 5. EmbeddingGenerator
 
 **Purpose**: Backend-agnostic embedding generation and document feeding
 
@@ -821,6 +948,7 @@ result = generator.generate_embeddings(
 ```
 
 **Processing Methods Registry**:
+
 - `_generate_frame_based_embeddings()` - For ColPali frame-by-frame
 - `_generate_video_chunks_embeddings()` - For ColQwen chunks
 - `_generate_direct_video_embeddings()` - For VideoPrism direct encoding
@@ -830,11 +958,12 @@ result = generator.generate_embeddings(
 
 ## Processing Strategies
 
-### 1. FrameSegmentationStrategy (strategies.py:14-33)
+### 1. FrameSegmentationStrategy
 
 **Purpose**: Extract individual frames from video
 
 **Parameters**:
+
 - `fps`: Frames per second (default 1.0)
 - `threshold`: Histogram similarity threshold (default 0.999)
 - `max_frames`: Maximum frames to extract (default 3000)
@@ -848,29 +977,31 @@ requirements = strategy.get_required_processors()
 
 **Best For**: ColPali multi-vector frame embeddings
 
-### 2. ChunkSegmentationStrategy (strategies.py:35-56)
+### 2. ChunkSegmentationStrategy
 
-**Purpose**: Extract video chunks (segments) for processing
+**Purpose**: Extract video chunks for processing
 
 **Parameters**:
+
 - `chunk_duration`: Duration of each chunk in seconds (default 30.0)
 - `chunk_overlap`: Overlap between chunks in seconds (default 0.0)
 - `cache_chunks`: Cache extracted chunks (default True)
 
 **Usage**:
 ```python
-strategy = ChunkSegmentationStrategy(chunk_duration=30.0, chunk_overlap=5.0)
+strategy = ChunkSegmentationStrategy(chunk_duration=30.0, chunk_overlap=0.0)
 requirements = strategy.get_required_processors()
-# Returns: {"chunk": {"chunk_duration": 30.0, "chunk_overlap": 5.0, "cache_chunks": True}}
+# Returns: {"chunk": {"chunk_duration": 30.0, "chunk_overlap": 0.0, "cache_chunks": True}}
 ```
 
 **Best For**: ColQwen chunk-based video processing
 
-### 3. SingleVectorSegmentationStrategy (strategies.py:59-120)
+### 3. SingleVectorSegmentationStrategy
 
 **Purpose**: Process video with sliding windows for single-vector embeddings
 
 **Parameters**:
+
 - `strategy`: Segmentation strategy ("sliding_window", "uniform")
 - `segment_duration`: Segment duration in seconds (default 6.0)
 - `segment_overlap`: Overlap between segments in seconds (default 1.0)
@@ -905,11 +1036,12 @@ result = await strategy.segment(
 # Returns: {"single_vector_processing": {"segments": [...], "metadata": {...}}}
 ```
 
-### 4. AudioTranscriptionStrategy (strategies.py:122-132)
+### 4. AudioTranscriptionStrategy
 
 **Purpose**: Transcribe audio using Whisper
 
 **Parameters**:
+
 - `model`: Whisper model ("whisper-large-v3", "whisper-medium", etc.)
 - `language`: Language code or "auto" for detection
 
@@ -918,11 +1050,12 @@ result = await strategy.segment(
 strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 ```
 
-### 5. VLMDescriptionStrategy (strategies.py:134-144)
+### 5. VLMDescriptionStrategy
 
 **Purpose**: Generate descriptions using Vision-Language Models
 
 **Parameters**:
+
 - `model_name`: VLM model name (e.g., "Qwen/Qwen2-VL-2B-Instruct")
 - `batch_size`: Batch size for description generation (default 10)
 
@@ -934,11 +1067,12 @@ strategy = VLMDescriptionStrategy(
 )
 ```
 
-### 6. MultiVectorEmbeddingStrategy (strategies.py:154-184)
+### 6. MultiVectorEmbeddingStrategy
 
 **Purpose**: Generate multi-vector embeddings (frame-by-frame)
 
 **Parameters**:
+
 - `model_name`: Embedding model (e.g., "vidore/colsmol-500m")
 
 **Usage**:
@@ -959,11 +1093,12 @@ embeddings = await strategy.generate_embeddings_with_processor(
 )
 ```
 
-### 7. SingleVectorEmbeddingStrategy (strategies.py:186-224)
+### 7. SingleVectorEmbeddingStrategy
 
 **Purpose**: Generate single-vector embeddings (one per segment)
 
 **Parameters**:
+
 - `model_name`: Embedding model (e.g., "google/videoprism-base")
 
 **Usage**:
@@ -975,7 +1110,7 @@ strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-lvt-base"
 
 ## Processors
 
-### 1. KeyframeProcessor (keyframe_processor.py:19-256)
+### 1. KeyframeProcessor
 
 **Purpose**: Extract representative keyframes using histogram comparison
 
@@ -1004,14 +1139,16 @@ result = processor.extract_keyframes(
 ```
 
 **Extraction Modes**:
+
 - **FPS Mode**: Extract at regular intervals (e.g., 1 frame per second)
 - **Histogram Mode**: Extract when scene changes (correlation < threshold)
 
 **Output**:
+
 - Saved keyframes: `{output_dir}/keyframes/{video_id}/{video_id}_keyframe_0000.jpg`
 - Metadata JSON: `{output_dir}/metadata/{video_id}_keyframes.json`
 
-### 2. ChunkProcessor (chunk_processor.py:17-200)
+### 2. ChunkProcessor
 
 **Purpose**: Extract video chunks using FFmpeg
 
@@ -1022,7 +1159,7 @@ result = processor.extract_keyframes(
 Extract video chunks with optional overlap.
 
 ```python
-processor = ChunkProcessor(logger, chunk_duration=30.0, chunk_overlap=5.0)
+processor = ChunkProcessor(logger, chunk_duration=30.0, chunk_overlap=0.0)
 result = processor.extract_chunks(
     video_path=Path("video.mp4"),
     output_dir=Path("outputs/")
@@ -1031,7 +1168,7 @@ result = processor.extract_chunks(
 # {
 #   "chunks": [
 #     {"chunk_number": 0, "start_time": 0.0, "end_time": 30.0, "filename": "...", "path": "..."},
-#     {"chunk_number": 1, "start_time": 25.0, "end_time": 55.0, "filename": "...", "path": "..."}
+#     {"chunk_number": 1, "start_time": 30.0, "end_time": 60.0, "filename": "...", "path": "..."}
 #   ],
 #   "metadata": {...},
 #   "chunks_dir": "/path/to/chunks/",
@@ -1045,10 +1182,11 @@ ffmpeg -y -i video.mp4 -ss 0.0 -t 30.0 -c copy -avoid_negative_ts make_zero chun
 ```
 
 **Output**:
+
 - Saved chunks: `{output_dir}/chunks/{video_id}/{video_id}_chunk_0000.mp4`
 - Metadata JSON: `{output_dir}/metadata/{video_id}_chunks.json`
 
-### 3. AudioProcessor (audio_processor.py:17-181)
+### 3. AudioProcessor
 
 **Purpose**: Transcribe audio using Whisper
 
@@ -1081,14 +1219,16 @@ result = processor.transcribe_audio(
 ```
 
 **Model Mapping**:
+
 - `whisper-large-v3` → `large-v3`
 - `whisper-medium` → `medium`
 - `whisper-base` → `base`
 
 **Output**:
+
 - Transcript JSON: `{output_dir}/transcripts/{video_id}_transcript.json`
 
-### 4. SingleVectorProcessor (single_vector_processor.py)
+### 4. SingleVectorVideoProcessor (single_vector_processor.py)
 
 **Purpose**: Process videos with sliding window segmentation for single-vector embeddings
 
@@ -1099,7 +1239,7 @@ result = processor.transcribe_audio(
 Process video into segments with transcript alignment.
 
 ```python
-processor = SingleVectorProcessor(
+processor = SingleVectorVideoProcessor(
     logger,
     strategy="sliding_window",
     segment_duration=6.0,
@@ -1126,8 +1266,11 @@ class VideoSegment:
     segment_id: int
     start_time: float
     end_time: float
-    text: str                  # Transcript aligned to this segment
-    sampled_frames: list[int]  # Frame indices within segment
+    frames: list[np.ndarray]         # Actual frame data
+    frame_timestamps: list[float]    # Timestamps for each frame
+    transcript_segments: list[dict[str, Any]]  # Transcript segments
+    transcript_text: str = ""        # Combined transcript text
+    metadata: dict[str, Any] = None  # Additional metadata
 ```
 
 ---
@@ -1136,7 +1279,7 @@ class VideoSegment:
 
 ### End-to-End Ingestion Flow
 
-```
+```text
 1. VIDEO INPUT (video.mp4)
    ↓
 2. PIPELINE INITIALIZATION
@@ -1196,32 +1339,40 @@ class VideoSegment:
 
 ### Concurrent Multi-Video Processing
 
-```
+```text
 Videos: [v1.mp4, v2.mp4, v3.mp4, v4.mp4, v5.mp4]
 max_concurrent: 2
+```
 
-┌──────────────────────────────────────────────────────────────────┐
-│  Semaphore (limit=2)                                             │
-│                                                                   │
-│  ┌─────────────────────┐  ┌─────────────────────┐              │
-│  │  Process v1.mp4     │  │  Process v2.mp4     │  (Active)    │
-│  │  ├─ Segment         │  │  ├─ Segment         │              │
-│  │  ├─ Transcribe      │  │  ├─ Transcribe      │              │
-│  │  ├─ Embed           │  │  └─ Embed           │              │
-│  │  └─ Feed (45s)      │  │     (30s elapsed)   │              │
-│  └─────────────────────┘  └─────────────────────┘              │
-│                                                                   │
-│  ┌─────────────────────┐  ┌─────────────────────┐              │
-│  │  v3.mp4 (Queued)    │  │  v4.mp4 (Queued)    │              │
-│  └─────────────────────┘  └─────────────────────┘              │
-│                                                                   │
-│  ┌─────────────────────┐                                        │
-│  │  v5.mp4 (Queued)    │                                        │
-│  └─────────────────────┘                                        │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Semaphore["<span style='color:#000'>Semaphore (limit=2)</span>"]
+        subgraph Active["<span style='color:#000'>Active Processing</span>"]
+            V1["<span style='color:#000'>Process v1.mp4<br/>├─ Segment<br/>├─ Transcribe<br/>├─ Embed<br/>└─ Feed (45s)</span>"]
+            V2["<span style='color:#000'>Process v2.mp4<br/>├─ Segment<br/>├─ Transcribe<br/>└─ Embed (30s)</span>"]
+        end
+
+        subgraph Queued["<span style='color:#000'>Queued</span>"]
+            V3["<span style='color:#000'>v3.mp4</span>"]
+            V4["<span style='color:#000'>v4.mp4</span>"]
+            V5["<span style='color:#000'>v5.mp4</span>"]
+        end
+    end
+
+    V1 -->|completes| V3
+    V2 -->|completes| V4
+
+    style Semaphore fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Active fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Queued fill:#b0bec5,stroke:#546e7a,color:#000
+    style V1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style V2 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style V3 fill:#b0bec5,stroke:#546e7a,color:#000
+    style V4 fill:#b0bec5,stroke:#546e7a,color:#000
+    style V5 fill:#b0bec5,stroke:#546e7a,color:#000
+```
 
 When v1 or v2 completes → v3 starts immediately
-```
 
 ---
 
@@ -1230,26 +1381,32 @@ When v1 or v2 completes → v3 starts immediately
 ### Example 1: Basic Single Video Ingestion (ColPali)
 
 ```python
+import asyncio
 from pathlib import Path
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 
-# Create pipeline for ColPali frame-based processing
-pipeline = VideoIngestionPipeline(
-    schema_name="video_colpali_smol500_mv_frame",
-    debug_mode=True
-)
+async def ingest_video():
+    # Create pipeline for ColPali frame-based processing
+    pipeline = VideoIngestionPipeline(
+        tenant_id="default",  # Required parameter
+        schema_name="video_colpali_smol500_mv_frame",
+        debug_mode=True
+    )
 
-# Process single video
-result = await pipeline.process_video_async(Path("data/videos/demo.mp4"))
+    # Process single video
+    result = await pipeline.process_video_async(Path("data/videos/demo.mp4"))
 
-print(f"Status: {result['status']}")
-print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
-print(f"Processing time: {result['total_processing_time']:.1f}s")
+    print(f"Status: {result['status']}")
+    print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
+    print(f"Processing time: {result['total_processing_time']:.1f}s")
 
-# Output:
-# Status: completed
-# Documents fed: 150
-# Processing time: 85.3s
+    # Output:
+    # Status: completed
+    # Documents fed: 150
+    # Processing time: 85.3s
+
+# Run the async function
+asyncio.run(ingest_video())
 ```
 
 **Profile Configuration** (`configs/config.yaml`):
@@ -1280,10 +1437,13 @@ video_processing_profiles:
 
 ```python
 from pathlib import Path
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
 # Create pipeline
-pipeline = VideoIngestionPipeline(schema_name="video_colpali_smol500_mv_frame")
+pipeline = VideoIngestionPipeline(
+    tenant_id="default",
+    schema_name="video_colpali_smol500_mv_frame"
+)
 
 # Process directory with concurrent processing (3 videos at once)
 results = pipeline.process_directory(
@@ -1308,27 +1468,32 @@ print(f"Throughput: {results['total_videos'] / (results['total_processing_time']
 ### Example 3: VideoPrism Single-Vector Processing
 
 ```python
+import asyncio
 from pathlib import Path
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-# Create pipeline for VideoPrism single-vector embeddings
-pipeline = VideoIngestionPipeline(
-    schema_name="video_videoprism_lvt_base_sv_chunk_6s"
-)
+async def ingest_with_videoprism():
+    # Create pipeline for VideoPrism single-vector embeddings
+    pipeline = VideoIngestionPipeline(
+        tenant_id="default",
+        schema_name="video_videoprism_lvt_base_sv_chunk_6s"
+    )
 
-# Process video
-result = await pipeline.process_video_async(Path("data/videos/lecture.mp4"))
+    # Process video
+    result = await pipeline.process_video_async(Path("data/videos/lecture.mp4"))
 
-# Access single-vector processing results
-sv_data = result['results']['single_vector_processing']
-print(f"Segments: {len(sv_data['segments'])}")
-print(f"Document structure: {sv_data['document_structure']['type']}")
-print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
+    # Access single-vector processing results
+    sv_data = result['results']['single_vector_processing']
+    print(f"Segments: {len(sv_data['segments'])}")
+    print(f"Document structure: {sv_data['document_structure']['type']}")
+    print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
 
-# Output:
-# Segments: 20
-# Document structure: multi_document
-# Documents fed: 20
+    # Output:
+    # Segments: 20
+    # Document structure: multi_document
+    # Documents fed: 20
+
+asyncio.run(ingest_with_videoprism())
 ```
 
 **Profile Configuration**:
@@ -1360,31 +1525,36 @@ video_videoprism_lvt_base_sv_chunk_6s:
 ### Example 4: ColQwen Chunk-Based Processing
 
 ```python
+import asyncio
 from pathlib import Path
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-# Create pipeline for ColQwen chunk processing
-pipeline = VideoIngestionPipeline(
-    schema_name="video_colqwen_omni_mv_chunk_30s"
-)
+async def ingest_with_colqwen():
+    # Create pipeline for ColQwen chunk processing
+    pipeline = VideoIngestionPipeline(
+        tenant_id="default",
+        schema_name="video_colqwen_omni_mv_chunk_30s"
+    )
 
-# Process video
-result = await pipeline.process_video_async(Path("data/videos/tutorial.mp4"))
+    # Process video
+    result = await pipeline.process_video_async(Path("data/videos/tutorial.mp4"))
 
-# Access chunk processing results
-chunks = result['results']['video_chunks']['chunks']
-print(f"Chunks extracted: {len(chunks)}")
-for chunk in chunks[:3]:
-    print(f"  Chunk {chunk['chunk_number']}: {chunk['start_time']:.1f}s - {chunk['end_time']:.1f}s")
+    # Access chunk processing results
+    chunks = result['results']['video_chunks']['chunks']
+    print(f"Chunks extracted: {len(chunks)}")
+    for chunk in chunks[:3]:
+        print(f"  Chunk {chunk['chunk_number']}: {chunk['start_time']:.1f}s - {chunk['end_time']:.1f}s")
 
-print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
+    print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
 
-# Output:
-# Chunks extracted: 12
-#   Chunk 0: 0.0s - 30.0s
-#   Chunk 1: 30.0s - 60.0s
-#   Chunk 2: 60.0s - 90.0s
-# Documents fed: 12
+    # Output:
+    # Chunks extracted: 12
+    #   Chunk 0: 0.0s - 30.0s
+    #   Chunk 1: 30.0s - 60.0s
+    #   Chunk 2: 60.0s - 90.0s
+    # Documents fed: 12
+
+asyncio.run(ingest_with_colqwen())
 ```
 
 **Profile Configuration**:
@@ -1413,44 +1583,50 @@ video_colqwen_omni_mv_chunk_30s:
 ### Example 5: Custom Strategy Configuration
 
 ```python
-from cogniverse_agents.ingestion.strategy_factory import StrategyFactory
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+import asyncio
+from pathlib import Path
+from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-# Define custom profile config
-custom_profile = {
-    "strategies": {
-        "segmentation": {
-            "class": "FrameSegmentationStrategy",
-            "params": {"fps": 0.5, "max_frames": 500}  # Fewer frames, lower FPS
-        },
-        "transcription": {
-            "class": "AudioTranscriptionStrategy",
-            "params": {"model": "whisper-medium"}  # Faster model
-        },
-        "description": {
-            "class": "VLMDescriptionStrategy",
-            "params": {
-                "model_name": "Qwen/Qwen2-VL-2B-Instruct",
-                "batch_size": 20  # Larger batches
+async def ingest_with_custom_strategy():
+    # Define custom profile config
+    custom_profile = {
+        "strategies": {
+            "segmentation": {
+                "class": "FrameSegmentationStrategy",
+                "params": {"fps": 0.5, "max_frames": 500}  # Fewer frames, lower FPS
+            },
+            "transcription": {
+                "class": "AudioTranscriptionStrategy",
+                "params": {"model": "whisper-medium"}  # Faster model
+            },
+            "description": {
+                "class": "VLMDescriptionStrategy",
+                "params": {
+                    "model_name": "Qwen/Qwen2-VL-2B-Instruct",
+                    "batch_size": 20  # Larger batches
+                }
+            },
+            "embedding": {
+                "class": "MultiVectorEmbeddingStrategy",
+                "params": {"model_name": "vidore/colsmol-500m"}
             }
-        },
-        "embedding": {
-            "class": "MultiVectorEmbeddingStrategy",
-            "params": {"model_name": "vidore/colsmol-500m"}
         }
     }
-}
 
-# Create strategy set
-strategy_set = StrategyFactory.create_from_profile_config(custom_profile)
+    # Create strategy set
+    strategy_set = StrategyFactory.create_from_profile_config(custom_profile)
 
-# Use in pipeline (manual initialization)
-pipeline = VideoIngestionPipeline(app_config=app_config)
-pipeline.strategy_set = strategy_set
-pipeline.processor_manager.initialize_from_strategies(strategy_set)
+    # Use in pipeline (manual initialization)
+    pipeline = VideoIngestionPipeline(tenant_id="default", app_config=app_config)
+    pipeline.strategy_set = strategy_set
+    pipeline.processor_manager.initialize_from_strategies(strategy_set)
 
-# Process video
-result = await pipeline.process_video_async(Path("video.mp4"))
+    # Process video
+    result = await pipeline.process_video_async(Path("video.mp4"))
+    return result
+
+asyncio.run(ingest_with_custom_strategy())
 ```
 
 ### Example 6: Production Batch Processing Script
@@ -1463,7 +1639,7 @@ Production ingestion script with monitoring and error handling.
 
 import asyncio
 from pathlib import Path
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
 async def main():
     profiles = [
@@ -1479,7 +1655,7 @@ async def main():
         print(f"Processing with profile: {profile}")
         print(f"{'='*60}\n")
 
-        pipeline = VideoIngestionPipeline(schema_name=profile)
+        pipeline = VideoIngestionPipeline(tenant_id="default", schema_name=profile)
 
         results = pipeline.process_directory(
             video_dir=video_dir,
@@ -1514,6 +1690,7 @@ if __name__ == "__main__":
 ### 1. Performance Optimization
 
 **Concurrent Processing**:
+
 - Use `max_concurrent=2-3` for production to balance throughput and resource usage
 - Monitor memory usage (each video loads models + images into RAM)
 - Consider GPU availability when setting concurrency limits
@@ -1530,6 +1707,7 @@ pipeline_cache:
 ```
 
 **Model Loading**:
+
 - Load models lazily to reduce startup time
 - Consider model quantization for faster inference (e.g., int8 embeddings)
 - Use GPU when available (`export CUDA_VISIBLE_DEVICES=0`)
@@ -1538,7 +1716,7 @@ pipeline_cache:
 
 **Pipeline Exceptions**:
 ```python
-from cogniverse_agents.ingestion.exceptions import PipelineException
+from cogniverse_runtime.ingestion.exceptions import PipelineException
 
 try:
     result = await pipeline.process_video_async(video_path)
@@ -1549,6 +1727,7 @@ except PipelineException as e:
 ```
 
 **Per-Video Error Isolation**:
+
 - Concurrent processing isolates errors per video
 - Failed videos don't affect successful ones
 - All results include error details for debugging
@@ -1585,7 +1764,7 @@ outputs/logs/video_processing_{profile}_{timestamp}.log
 ### 4. Storage Management
 
 **Output Directory Structure**:
-```
+```text
 outputs/processing/
 ├── profile_video_colpali_smol500_mv_frame/
 │   ├── keyframes/
@@ -1605,6 +1784,7 @@ outputs/processing/
 ```
 
 **Disk Space Management**:
+
 - Keyframes: ~50KB per frame × 150 frames = ~7.5MB per video
 - Chunks: ~1MB per 30s chunk × 12 chunks = ~12MB per video
 - Cache: Enable compression to reduce storage (50% reduction typical)
@@ -1649,16 +1829,19 @@ for profile in profiles_gpu1:
 ### 6. Testing Strategy
 
 **Unit Tests**:
+
 - Test individual processors in isolation
 - Mock video files with fixtures
 - Verify output formats and metadata
 
 **Integration Tests**:
+
 - Test full pipeline with real videos (small samples)
 - Verify Vespa document feeding
 - Test cache functionality
 
 **End-to-End Tests**:
+
 - Test complete workflow: ingestion → search → retrieval
 - Verify embedding quality through search results
 - Test multiple profiles
@@ -1670,17 +1853,28 @@ for profile in profiles_gpu1:
 ### Key Test Files
 
 #### Unit Tests:
-- `tests/ingestion/unit/test_pipeline.py` - Pipeline orchestration
+
 - `tests/ingestion/unit/test_keyframe_processor.py` - Keyframe extraction
+
 - `tests/ingestion/unit/test_chunk_processor.py` - Chunk extraction
+
 - `tests/ingestion/unit/test_audio_processor.py` - Audio transcription
+
 - `tests/ingestion/unit/test_embedding_generator_impl.py` - Embedding generation
+
 - `tests/ingestion/unit/test_processor_base.py` - Base processor/strategy
 
+- `tests/ingestion/unit/test_processor_manager.py` - Processor manager
+
 #### Integration Tests:
-- `tests/ingestion/integration/test_real_ingestion_pipeline.py` - Full pipeline with real videos
+
+- `tests/ingestion/integration/test_real_ingestion_pipeline.py` - Real pipeline integration
+
 - `tests/ingestion/integration/test_backend_ingestion.py` - Vespa integration
+
 - `tests/ingestion/integration/test_pipeline_orchestration.py` - Strategy orchestration
+
+- `tests/ingestion/integration/test_end_to_end_processing.py` - End-to-end processing tests
 
 ### Example Test Scenarios
 
@@ -1697,7 +1891,7 @@ def test_keyframe_extraction_histogram():
 # Test concurrent processing
 @pytest.mark.asyncio
 async def test_concurrent_video_processing():
-    pipeline = VideoIngestionPipeline(schema_name="test_profile")
+    pipeline = VideoIngestionPipeline(tenant_id="test", schema_name="test_profile")
     video_files = [Path(f"test_video_{i}.mp4") for i in range(5)]
 
     results = await pipeline.process_videos_concurrent(video_files, max_concurrent=2)
@@ -1791,8 +1985,8 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 
 ## Related Modules
 
-- **Backends Module** (`04_BACKENDS_MODULE.md`): Vespa search integration, document feeding
-- **Common Module** (`03_COMMON_MODULE.md`): Model loading, configuration, output management
+- **Backends Module** (`backends.md`): Vespa search integration, document feeding
+- **Common Module** (`common.md`): Model loading, configuration, output management
 - **Events Module** (`events.md`): A2A EventQueue for real-time notifications
 - **System Integration** (`test_real_system_integration.py`): End-to-end ingestion → search testing
 
@@ -1801,6 +1995,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 **Study Tip**: Run the ingestion pipeline with `debug_mode=True` and follow the logs to understand each processing stage. Experiment with different profiles to see how strategies affect the output.
 
 **Production Checklist**:
+
 - ✅ Configure profiles for your video types
 - ✅ Test with sample videos before production batch
 - ✅ Enable caching to avoid reprocessing
@@ -1813,10 +2008,11 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 ---
 
 **File References**:
-- Pipeline: `libs/agents/cogniverse_agents/ingestion/pipeline.py`
-- StrategyFactory: `libs/agents/cogniverse_agents/ingestion/strategy_factory.py`
-- Strategies: `libs/agents/cogniverse_agents/ingestion/strategies.py`
-- EmbeddingGenerator: `libs/agents/cogniverse_agents/ingestion/processors/embedding_generator/embedding_generator.py`
-- KeyframeProcessor: `libs/agents/cogniverse_agents/ingestion/processors/keyframe_processor.py`
-- ChunkProcessor: `libs/agents/cogniverse_agents/ingestion/processors/chunk_processor.py`
-- AudioProcessor: `libs/agents/cogniverse_agents/ingestion/processors/audio_processor.py`
+
+- Pipeline: `libs/runtime/cogniverse_runtime/ingestion/pipeline.py`
+- StrategyFactory: `libs/runtime/cogniverse_runtime/ingestion/strategy_factory.py`
+- Strategies: `libs/runtime/cogniverse_runtime/ingestion/strategies.py`
+- EmbeddingGenerator: `libs/runtime/cogniverse_runtime/ingestion/processors/embedding_generator/embedding_generator.py`
+- KeyframeProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/keyframe_processor.py`
+- ChunkProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/chunk_processor.py`
+- AudioProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/audio_processor.py`

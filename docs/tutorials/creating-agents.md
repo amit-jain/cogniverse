@@ -22,7 +22,7 @@ This tutorial walks you through creating a custom agent from scratch, covering t
 
 Cogniverse agents are built on a type-safe foundation:
 
-```
+```text
 AgentBase[InputT, OutputT, DepsT]  # Generic base class
     └── A2AAgent[InputT, OutputT, DepsT]  # A2A protocol + DSPy
             └── YourCustomAgent  # Your implementation
@@ -32,59 +32,63 @@ AgentBase[InputT, OutputT, DepsT]  # Generic base class
 
 ```mermaid
 flowchart TB
-    Start([Start: New Agent Needed]) --> DefineTypes
+    Start(["<span style='color:#000'>Start: New Agent Needed</span>"]) --> DefineTypes
 
-    subgraph Types["Step 1: Define Types"]
-        DefineTypes[Define Input Type<br/>extends AgentInput] --> DefineOutput[Define Output Type<br/>extends AgentOutput]
-        DefineOutput --> DefineDeps[Define Dependencies<br/>extends AgentDeps]
+    subgraph Types["<span style='color:#000'>Step 1: Define Types</span>"]
+        DefineTypes["<span style='color:#000'>Define Input Type<br/>extends AgentInput</span>"] --> DefineOutput["<span style='color:#000'>Define Output Type<br/>extends AgentOutput</span>"]
+        DefineOutput --> DefineDeps["<span style='color:#000'>Define Dependencies<br/>extends AgentDeps</span>"]
     end
 
     DefineDeps --> CreateClass
 
-    subgraph Class["Step 2: Create Agent Class"]
-        CreateClass[Create Agent Class<br/>extends A2AAgent] --> SetMetadata[Set AGENT_NAME<br/>DESCRIPTION, CAPABILITIES]
-        SetMetadata --> ChooseMixins{Need Mixins?}
-        ChooseMixins -->|Memory| AddMemory[Add MemoryMixin]
-        ChooseMixins -->|Telemetry| AddTelemetry[Add TelemetryMixin]
-        ChooseMixins -->|Health| AddHealth[Add HealthCheckMixin]
-        ChooseMixins -->|None| SkipMixins[Skip]
+    subgraph Class["<span style='color:#000'>Step 2: Create Agent Class</span>"]
+        CreateClass["<span style='color:#000'>Create Agent Class<br/>extends A2AAgent</span>"] --> SetMetadata["<span style='color:#000'>Create A2AAgentConfig<br/>with name, capabilities</span>"]
+        SetMetadata --> ChooseMixins{"<span style='color:#000'>Need Mixins?</span>"}
+        ChooseMixins -->|Memory| AddMemory["<span style='color:#000'>Add MemoryAwareMixin</span>"]
+        ChooseMixins -->|DSPy| AddDSPy["<span style='color:#000'>Add DSPyIntegrationMixin</span>"]
+        ChooseMixins -->|Health| AddHealth["<span style='color:#000'>Add HealthCheckMixin</span>"]
+        ChooseMixins -->|None| SkipMixins["<span style='color:#000'>Skip</span>"]
         AddMemory --> ImplementProcess
-        AddTelemetry --> ImplementProcess
+        AddDSPy --> ImplementProcess
         AddHealth --> ImplementProcess
         SkipMixins --> ImplementProcess
     end
 
-    ImplementProcess --> DSPy
+    ImplementProcess["<span style='color:#000'>Implement Process</span>"] --> DSPy
 
-    subgraph Process["Step 3: Implement Process"]
-        DSPy{Use DSPy?}
-        DSPy -->|Yes| CreateSignature[Create DSPy Signature]
-        CreateSignature --> CreateModule[Create DSPy Module]
-        CreateModule --> CallModule[Call Module in process()]
-        DSPy -->|No| DirectImpl[Direct Implementation]
+    subgraph Process["<span style='color:#000'>Step 3: Implement Process</span>"]
+        DSPy{"<span style='color:#000'>Use DSPy?</span>"}
+        DSPy -->|Yes| CreateSignature["<span style='color:#000'>Create DSPy Signature</span>"]
+        CreateSignature --> CreateModule["<span style='color:#000'>Create DSPy Module</span>"]
+        CreateModule --> CallModule["<span style='color:#000'>Call Module in process()</span>"]
+        DSPy -->|No| DirectImpl["<span style='color:#000'>Direct Implementation</span>"]
         CallModule --> ReturnOutput
-        DirectImpl --> ReturnOutput[Return OutputT]
+        DirectImpl --> ReturnOutput["<span style='color:#000'>Return OutputT</span>"]
     end
 
     ReturnOutput --> Register
 
-    subgraph Deploy["Step 4: Register & Test"]
-        Register[Register in AgentRegistry] --> WriteTests[Write Unit Tests]
-        WriteTests --> Integration[Integration Test]
+    subgraph Deploy["<span style='color:#000'>Step 4: Register & Test</span>"]
+        Register["<span style='color:#000'>Register in AgentRegistry</span>"] --> WriteTests["<span style='color:#000'>Write Unit Tests</span>"]
+        WriteTests --> Integration["<span style='color:#000'>Integration Test</span>"]
     end
 
-    Integration --> Done([Agent Ready])
+    Integration --> Done(["<span style='color:#000'>Agent Ready</span>"])
 
-    style Types fill:#e1f5ff
-    style Class fill:#fff4e1
-    style Process fill:#f5e1ff
-    style Deploy fill:#e1ffe1
+    style Types fill:#90caf9,stroke:#1565c0,color:#000
+    style Class fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Process fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Deploy fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 By the end of this tutorial, you'll have created a `SummarizationAgent` that:
+
 - Accepts text content and summarization parameters
+
 - Uses a DSPy module for LLM-driven summarization
+
 - Returns structured summaries with confidence scores
+
 - Is fully type-safe with IDE autocomplete support
 
 ---
@@ -108,7 +112,6 @@ class SummarizationInput(AgentInput):
     style: str = Field(default="concise", description="Summary style: concise, detailed, bullet")
     focus_topics: Optional[List[str]] = Field(default=None, description="Topics to focus on")
 
-
 class SummarizationOutput(AgentOutput):
     """Output from summarization agent."""
 
@@ -117,6 +120,7 @@ class SummarizationOutput(AgentOutput):
     confidence: float = Field(default=0.0, description="Confidence score 0-1")
     word_count: int = Field(default=0, description="Summary word count")
     style_used: str = Field(default="", description="Style applied")
+    error: Optional[str] = Field(default=None, description="Error message if processing failed")
 ```
 
 `★ Insight ─────────────────────────────────────`
@@ -135,6 +139,7 @@ Dependencies are services your agent needs (LLMs, backends, other agents). They'
 # libs/agents/cogniverse_agents/summarization/types.py (continued)
 
 from cogniverse_core.agents.base import AgentDeps
+from pydantic import ConfigDict
 from typing import Optional, Any
 import dspy
 
@@ -145,13 +150,12 @@ class SummarizationDeps(AgentDeps):
     config_manager: Optional[Any] = None  # For configuration access
     telemetry_manager: Optional[Any] = None  # For tracing
 
-    class Config:
-        arbitrary_types_allowed = True  # Allow dspy.LM type
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # Allow dspy.LM type
 ```
 
 `★ Insight ─────────────────────────────────────`
-- Dependencies are optional because they're provided at runtime via dependency injection
-- `arbitrary_types_allowed = True` is needed for non-Pydantic types like `dspy.LM`
+- Dependency fields CAN be optional (like `lm`, `config_manager`), but `tenant_id` (inherited from AgentDeps) is ALWAYS REQUIRED
+- Use Pydantic v2 `model_config = ConfigDict(arbitrary_types_allowed=True)` for non-Pydantic types like `dspy.LM`
 - This pattern allows easy mocking in tests
 `─────────────────────────────────────────────────`
 
@@ -164,7 +168,7 @@ Now create the agent class extending `A2AAgent` with your generic types.
 ```python
 # libs/agents/cogniverse_agents/summarization/agent.py
 
-from cogniverse_core.agents.a2a_agent import A2AAgent
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_agents.summarization.types import (
     SummarizationInput,
     SummarizationOutput,
@@ -178,14 +182,33 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
     Supports multiple styles: concise, detailed, bullet points.
     """
 
-    # Required class attributes
-    AGENT_NAME = "summarization_agent"
-    AGENT_DESCRIPTION = "Summarizes text content with configurable styles"
-    CAPABILITIES = ["text_summarization", "key_point_extraction"]
+    def __init__(self, deps: SummarizationDeps, port: int = 8003):
+        """
+        Initialize summarization agent.
 
-    def __init__(self, deps: SummarizationDeps | None = None):
-        super().__init__(deps=deps)
+        Args:
+            deps: Typed dependencies (must include tenant_id)
+            port: A2A server port
+
+        Raises:
+            TypeError: If deps is not SummarizationDeps
+            ValidationError: If deps fails Pydantic validation
+        """
+        # Create A2A config
+        a2a_config = A2AAgentConfig(
+            agent_name="summarization_agent",
+            agent_description="Summarizes text content with configurable styles",
+            capabilities=["text_summarization", "key_point_extraction"],
+            port=port,
+            version="1.0.0"
+        )
+
+        # Initialize DSPy module first
+        self.summarization_module = None
         self._init_dspy_module()
+
+        # Initialize A2A base with config and DSPy module
+        super().__init__(deps=deps, config=a2a_config, dspy_module=self.summarization_module)
 
     def _init_dspy_module(self):
         """Initialize DSPy module for summarization."""
@@ -195,8 +218,9 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 
 `★ Insight ─────────────────────────────────────`
 - The type parameters `[SummarizationInput, SummarizationOutput, SummarizationDeps]` enable full type safety
-- `AGENT_NAME` is used for registration and routing
-- `CAPABILITIES` list tells the routing agent what this agent can do
+- `A2AAgentConfig` contains agent metadata: name, description, capabilities, port, version
+- `deps` is REQUIRED (not optional) and must include `tenant_id` for multi-tenancy
+- DSPy module is initialized before calling `super().__init__()` and passed to A2A base
 `─────────────────────────────────────────────────`
 
 ---
@@ -204,18 +228,23 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 ## Step 4: Implement the Process Method
 
 Agents use a two-method pattern for processing:
+
 - `_process_impl()` - Core logic (you implement this)
+
 - `process()` - Public API that supports streaming (inherited from base)
 
 The base class `process()` method handles:
+
 - Dict-to-typed-input conversion
+
 - Streaming vs non-streaming routing
+
 - Input validation
 
 ```python
 # libs/agents/cogniverse_agents/summarization/agent.py (continued)
 
-from cogniverse_core.agents.a2a_agent import A2AAgent
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_agents.summarization.types import (
     SummarizationInput,
     SummarizationOutput,
@@ -228,13 +257,23 @@ logger = logging.getLogger(__name__)
 class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, SummarizationDeps]):
     """Agent that summarizes text content using LLM."""
 
-    AGENT_NAME = "summarization_agent"
-    AGENT_DESCRIPTION = "Summarizes text content with configurable styles"
-    CAPABILITIES = ["text_summarization", "key_point_extraction"]
+    def __init__(self, deps: SummarizationDeps, port: int = 8003):
+        """Initialize summarization agent with typed dependencies."""
+        # Create A2A config
+        a2a_config = A2AAgentConfig(
+            agent_name="summarization_agent",
+            agent_description="Summarizes text content with configurable styles",
+            capabilities=["text_summarization", "key_point_extraction"],
+            port=port,
+            version="1.0.0"
+        )
 
-    def __init__(self, deps: SummarizationDeps | None = None):
-        super().__init__(deps=deps)
+        # Initialize DSPy module
+        self.summarization_module = None
         self._init_dspy_module()
+
+        # Initialize A2A base
+        super().__init__(deps=deps, config=a2a_config, dspy_module=self.summarization_module)
 
     def _init_dspy_module(self):
         """Initialize DSPy module."""
@@ -385,7 +424,6 @@ class SummarizationSignature(dspy.Signature):
     key_points: str = dspy.OutputField(desc="Comma-separated key points")
     confidence: float = dspy.OutputField(desc="Confidence score 0-1")
 
-
 class SummarizationModule(dspy.Module):
     """DSPy module for text summarization."""
 
@@ -430,6 +468,7 @@ Now integrate the module into the agent:
 # libs/agents/cogniverse_agents/summarization/agent.py (update _init_dspy_module)
 
 from cogniverse_agents.summarization.dspy_module import SummarizationModule
+import dspy
 
 class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, SummarizationDeps]):
     # ... existing code ...
@@ -438,9 +477,9 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         """Initialize DSPy module."""
         self.summarization_module = SummarizationModule()
 
-        # Configure with LM from deps if available
-        if self.deps and self.deps.lm:
-            dspy.configure(lm=self.deps.lm)
+        # Note: Configure DSPy LM separately, not in deps
+        # Example: dspy.configure(lm=dspy.LM(model="ollama/smollm3:3b"))
+        # This is typically done before agent instantiation
 
     def _generate_summary(
         self,
@@ -513,14 +552,28 @@ Register in the agent registry:
 ```python
 # Usage: Register at startup
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_agents.summarization import SummarizationAgent
+from cogniverse_core.common.agent_models import AgentEndpoint
 
-registry = AgentRegistry(config_manager=config_manager)
-registry.register(SummarizationAgent)
+registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+
+# Register agent endpoint (not the class)
+# A2A agents use "/tasks/send" endpoint (overrides AgentEndpoint default of "/process")
+agent = AgentEndpoint(
+    name="summarization_agent",
+    url="http://localhost:8003",
+    capabilities=["text_summarization", "key_point_extraction"],
+    health_endpoint="/health",
+    process_endpoint="/tasks/send"  # A2A protocol uses /tasks/send instead of /process
+)
+registry.register_agent(agent)
 
 # The agent is now discoverable
 agents = registry.list_agents()
-# -> ["routing_agent", "search_agent", "summarization_agent", ...]
+# -> ["summarization_agent", ...]
+
+# Get specific agent
+agent_endpoint = registry.get_agent("summarization_agent")
+# -> AgentEndpoint(name="summarization_agent", url="http://localhost:8003", ...)
 ```
 
 ---
@@ -533,8 +586,8 @@ Test your agent thoroughly.
 # tests/agents/unit/test_summarization_agent.py
 
 import pytest
-from cogniverse_agents.summarization import (
-    SummarizationAgent,
+from cogniverse_agents.summarization.agent import SummarizationAgent
+from cogniverse_agents.summarization.types import (
     SummarizationInput,
     SummarizationOutput,
     SummarizationDeps
@@ -545,8 +598,8 @@ class TestSummarizationAgent:
 
     @pytest.fixture
     def agent(self):
-        """Create agent instance."""
-        deps = SummarizationDeps()
+        """Create agent instance with required tenant_id."""
+        deps = SummarizationDeps(tenant_id="test_tenant")
         return SummarizationAgent(deps=deps)
 
     @pytest.fixture
@@ -587,12 +640,12 @@ class TestSummarizationAgent:
 
     def test_agent_name(self, agent):
         """Test agent has correct name."""
-        assert agent.AGENT_NAME == "summarization_agent"
+        assert agent.agent_name == "summarization_agent"
 
     def test_capabilities(self, agent):
         """Test agent advertises capabilities."""
-        assert "text_summarization" in agent.CAPABILITIES
-        assert "key_point_extraction" in agent.CAPABILITIES
+        assert "text_summarization" in agent.capabilities
+        assert "key_point_extraction" in agent.capabilities
 ```
 
 Run the tests:
@@ -614,13 +667,11 @@ import logging
 from typing import List, Optional
 
 import dspy
-from cogniverse_core.agents.a2a_agent import A2AAgent
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentInput, AgentOutput, AgentDeps
-from pydantic import Field
+from pydantic import Field, ConfigDict
 
 logger = logging.getLogger(__name__)
-
-
 # ============ Types ============
 
 class SummarizationInput(AgentInput):
@@ -630,7 +681,6 @@ class SummarizationInput(AgentInput):
     style: str = Field(default="concise", description="Summary style")
     focus_topics: Optional[List[str]] = Field(default=None, description="Topics to focus on")
 
-
 class SummarizationOutput(AgentOutput):
     """Output from summarization agent."""
     summary: str = Field(..., description="Generated summary")
@@ -638,14 +688,13 @@ class SummarizationOutput(AgentOutput):
     confidence: float = Field(default=0.0, description="Confidence score")
     word_count: int = Field(default=0, description="Summary word count")
     style_used: str = Field(default="", description="Style applied")
-
+    error: Optional[str] = Field(default=None, description="Error message if processing failed")
 
 class SummarizationDeps(AgentDeps):
     """Dependencies for summarization agent."""
     lm: Optional[dspy.LM] = None
-    class Config:
-        arbitrary_types_allowed = True
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 # ============ DSPy Module ============
 
@@ -660,7 +709,6 @@ class SummarizationSignature(dspy.Signature):
     key_points: str = dspy.OutputField(desc="Comma-separated key points")
     confidence: float = dspy.OutputField(desc="Confidence 0-1")
 
-
 class SummarizationModule(dspy.Module):
     """DSPy module for summarization."""
     def __init__(self):
@@ -673,21 +721,27 @@ class SummarizationModule(dspy.Module):
             content=content, max_length=max_length, style=style, focus_topics=topics_str
         )
 
-
 # ============ Agent ============
 
 class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, SummarizationDeps]):
     """Agent that summarizes text content using LLM."""
 
-    AGENT_NAME = "summarization_agent"
-    AGENT_DESCRIPTION = "Summarizes text content with configurable styles"
-    CAPABILITIES = ["text_summarization", "key_point_extraction"]
+    def __init__(self, deps: SummarizationDeps, port: int = 8003):
+        """Initialize summarization agent with typed dependencies."""
+        # Create A2A config
+        a2a_config = A2AAgentConfig(
+            agent_name="summarization_agent",
+            agent_description="Summarizes text content with configurable styles",
+            capabilities=["text_summarization", "key_point_extraction"],
+            port=port,
+            version="1.0.0"
+        )
 
-    def __init__(self, deps: SummarizationDeps | None = None):
-        super().__init__(deps=deps)
+        # Initialize DSPy module
         self.module = SummarizationModule()
-        if self.deps and self.deps.lm:
-            dspy.configure(lm=self.deps.lm)
+
+        # Initialize A2A base
+        super().__init__(deps=deps, config=a2a_config, dspy_module=self.module)
 
     async def _process_impl(self, input: SummarizationInput) -> SummarizationOutput:
         """Core processing logic. Override _process_impl(), not process()."""
@@ -726,9 +780,8 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 ## Next Steps
 
 - **Add streaming**: Override `_process_stream_impl()` for progressive results
-- **Add telemetry**: Use `TelemetryMixin` to add tracing
-- **Add memory**: Use `MemoryMixin` for conversation context
+- **Add telemetry**: Use `TelemetryManager` from `cogniverse_foundation.telemetry`
+- **Add memory**: Use `MemoryAwareMixin` from `cogniverse_core.agents.memory_aware_mixin` for conversation context
 - **Optimize with DSPy**: Train the module with synthetic data
-- **Enable checkpointing**: Add `CheckpointingMixin` for durability
 
 See [Core Module](../modules/core.md) for mixin documentation.

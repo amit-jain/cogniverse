@@ -287,20 +287,18 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 
 ## Configuration
 
-Configuration via `UnifiedConfig` from `cogniverse-foundation`:
+Configuration via `SystemConfig` from `cogniverse-foundation`:
 
 ```python
 from cogniverse_runtime import create_app
-from cogniverse_foundation.config import UnifiedConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
-config = UnifiedConfig(
+config = SystemConfig(
     tenant_id="acme_corp",
-    vespa_url="http://localhost:8080",
-    vespa_config_url="http://localhost:19071",
-    phoenix_endpoint="http://localhost:6006",
-    redis_url="redis://localhost:6379",
-    enable_telemetry=True,
-    enable_caching=True
+    backend_url="http://localhost",
+    backend_port=8080,
+    phoenix_url="http://localhost:6006",
+    environment="production",
 )
 
 app = create_app(config=config)
@@ -566,21 +564,19 @@ uv run uvicorn cogniverse_runtime.main:app --workers 4 --loop uvloop
 
 ```python
 # Enable Redis caching for search results
-config = UnifiedConfig(
-    enable_caching=True,
-    redis_url="redis://localhost:6379",
-    cache_ttl=3600  # 1 hour
+config = SystemConfig(
+    backend_url="http://localhost",
+    backend_port=8080,
 )
 ```
 
 ### Connection Pooling
 
 ```python
-# HTTP connection pooling
-config = UnifiedConfig(
-    max_connections=100,
-    max_keepalive_connections=20,
-    keepalive_expiry=30
+# HTTP connection pooling is configured at the HTTPX client level
+config = SystemConfig(
+    backend_url="http://localhost",
+    backend_port=8080,
 )
 ```
 

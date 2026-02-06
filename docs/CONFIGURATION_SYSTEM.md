@@ -2,11 +2,12 @@
 
 **Spans**: SDK (interfaces), Foundation (base), Core (system configuration)
 
-Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse 11-package architecture.
+Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse layered architecture.
 
 ## Overview
 
 The configuration system provides centralized management for all system configurations with:
+
 - **Multi-tenant isolation**: Complete configuration separation per tenant
 - **Versioning**: Full history tracking with rollback capability
 - **Pluggable backends**: VespaConfigStore (default), or custom implementations via ConfigStore interface
@@ -16,63 +17,41 @@ The configuration system provides centralized management for all system configur
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Application Layer                          │
-│                    (cogniverse-services)                        │
-└──────────────────────────┬──────────────────────────────────────┘
-                          │
-┌─────────────────────────▼─────────────────────────────┐
-│                    Agent Layer                        │
-│              (cogniverse-agents)                      │
-│  Composing Agent │ Video Search │ Routing Optimizer  │
-└──────────────────────────┬────────────────────────────┘
-                          │
-┌─────────────────────────▼─────────────────────────────┐
-│                     Core Layer                        │
-│               (cogniverse-core)                       │
-│           ConfigManager (System Config)               │
-└──────────────────────────┬────────────────────────────┘
-                          │
-┌─────────────────────────▼─────────────────────────────┐
-│                  Foundation Layer                     │
-│              (cogniverse-foundation)                  │
-│     ConfigStore Interface │ Base Config Classes       │
-└──────────────────────────┬────────────────────────────┘
-                          │
-┌─────────────────────────▼─────────────────────────────┐
-│                     SDK Layer                         │
-│                (cogniverse-sdk)                       │
-│          Config Interfaces │ Type Definitions         │
-└───────────────────────────────────────────────────────┘
+See [System Architecture](architecture/overview.md) for the complete package structure.
 
-       Storage Backend Implementations:
-┌──────────────────┐ ┌──────────────┐
-│ VespaConfigStore │ │    Custom    │
-│    (Default)     │ │ ConfigStore  │
-└──────────────────┘ └──────────────┘
-```
+The configuration system spans:
+
+- **SDK Layer**: ConfigStore interface, type definitions
+- **Foundation Layer**: Base config classes, serialization
+- **Core Layer**: ConfigManager for system-wide configuration
+- **Implementation Layer**: VespaConfigStore (default backend)
 
 ## Configuration Scopes
 
 ### System Configuration
+
 Global infrastructure settings shared across all agents:
+
 - LLM providers and models
-- Vespa backend URLs
-- Phoenix telemetry endpoints
-- Mem0 memory configuration
+- Backend URLs and connection settings
+- Telemetry endpoints
+- Memory configuration
 - Default resource limits
 
 ### Agent Configuration
+
 Per-agent DSPy module and optimizer settings:
-- DSPy module types (CoT, ReAct, etc.)
+
+- DSPy module types (ChainOfThought, ReAct, etc.)
 - Optimizer selection (Bootstrap, SIMBA, MIPRO, GEPA)
 - Model-specific parameters
 - Prompt templates and signatures
 - Resource allocations
 
 ### Routing Configuration
+
 Routing optimizer and strategy settings:
+
 - Routing tiers (FAST, BALANCED, COMPREHENSIVE)
 - Strategy weights and thresholds
 - Experience buffer configuration
@@ -80,7 +59,9 @@ Routing optimizer and strategy settings:
 - Multi-tenant routing rules
 
 ### Telemetry Configuration
-Phoenix observability settings:
+
+Observability settings:
+
 - Project isolation per tenant
 - Span export configuration
 - Experiment tracking settings
@@ -88,7 +69,9 @@ Phoenix observability settings:
 - Dashboard customization
 
 ### Backend Configuration
+
 Backend-specific settings for video processing and storage:
+
 - Backend type (vespa, elasticsearch, etc.)
 - Backend connection parameters (URL, port)
 - Profile-based video processing configuration
@@ -101,63 +84,59 @@ Backend-specific settings for video processing and storage:
 Configuration scopes are defined by the `ConfigScope` enum:
 
 ```python
-from cogniverse_core.config.store_interface import ConfigScope
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 class ConfigScope(Enum):
     SYSTEM = "system"        # Global infrastructure settings
     AGENT = "agent"          # Per-agent DSPy configuration
     ROUTING = "routing"      # Routing optimizer settings
-    TELEMETRY = "telemetry"  # Phoenix observability settings
+    TELEMETRY = "telemetry"  # Observability settings
+    SCHEMA = "schema"        # Schema configuration
     BACKEND = "backend"      # Backend and profile configuration
 ```
 
 **Usage Example**:
 ```python
-from cogniverse_core.config.manager import get_config_manager
-from cogniverse_sdk.config.types import ConfigScope
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-manager = get_config_manager()
+manager = create_default_config_manager()
 
 # Set backend configuration for tenant
-backend_config = {
-    "backend": {
-        "profiles": {
-            "video_colpali_smol500_mv_frame": {
-                "pipeline_config": {
-                    "max_frames": 200
-                }
-            }
-        }
-    }
-}
+from cogniverse_foundation.config.unified_config import BackendConfig
 
-manager.set_config(
+backend_config = BackendConfig(
     tenant_id="acme",
-    scope=ConfigScope.BACKEND,  # Use BACKEND scope
-    config=backend_config
+    backend_type="vespa",
+    url="http://vespa-cluster",
+    port=8080
 )
+
+manager.set_backend_config(backend_config, tenant_id="acme")
 
 # Retrieve backend configuration
-config = manager.get_config(
-    tenant_id="acme",
-    scope=ConfigScope.BACKEND
-)
+config = manager.get_backend_config(tenant_id="acme")
+print(f"Backend: {config.url}:{config.port}")
 ```
 
 ## Storage Backends
 
-### VespaConfigStore (Default)
+The configuration system uses a pluggable backend architecture. Any storage backend implementing the `ConfigStore` interface can be used.
 
-Unified configuration storage in Vespa alongside application data. This is the primary and recommended backend for production deployments.
+### Backend Implementation (Vespa Example)
+
+The default implementation uses Vespa for unified configuration storage alongside application data:
 
 ```python
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
-# Initialize Vespa store (connects to Vespa backend)
+# Initialize backend store
 store = VespaConfigStore(
+    vespa_app=None,  # Optional: pass existing Vespa app instance
     vespa_url="http://localhost",
-    vespa_port=8080
+    vespa_port=8080,
+    schema_name="config_metadata"
 )
 
 # Use with ConfigManager
@@ -173,14 +152,14 @@ print(f"Backend: {system_config.backend_url}")
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Automatically uses VespaConfigStore with settings from environment
+# Automatically uses default backend with settings from environment
 # Reads BACKEND_URL and BACKEND_PORT from environment variables
 manager = create_default_config_manager()
 ```
 
-**Schema Deployment:**
+**Schema Deployment (Vespa):**
 
-The `config_metadata` schema is automatically deployed as part of the metadata schemas when initializing a Vespa backend:
+The `config_metadata` schema is automatically deployed as part of the metadata schemas:
 
 ```python
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
@@ -194,11 +173,12 @@ schema_manager = VespaSchemaManager(
 schema_manager.upload_metadata_schemas(app_name="cogniverse")
 ```
 
-**Features:**
-- Leverages Vespa's HA/replication
+**Backend Features:**
+
+- High availability and replication
 - Unified storage with application data (no separate database)
 - Real-time configuration sync
-- Scales with Vespa cluster
+- Horizontal scaling
 - Multi-tenant isolation via tenant_id field
 - Version tracking for configuration history
 
@@ -207,10 +187,9 @@ schema_manager.upload_metadata_schemas(app_name="cogniverse")
 Create custom storage backends by implementing the ConfigStore interface:
 
 ```python
-from cogniverse_sdk.config.interfaces import ConfigStore
-from cogniverse_sdk.config.types import ConfigEntry, ConfigScope
+from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigEntry, ConfigScope
 from typing import Dict, Any, Optional, List
-import datetime
+from datetime import datetime
 
 class RedisConfigStore(ConfigStore):
     """Redis-based configuration storage"""
@@ -263,30 +242,30 @@ class RedisConfigStore(ConfigStore):
 Each tenant has completely isolated configuration:
 
 ```python
-from cogniverse_core.config.manager import get_config_manager
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import SystemConfig
 
-manager = get_config_manager()
+manager = create_default_config_manager()
 
 # Configure Tenant A
 tenant_a_config = SystemConfig(
     tenant_id="tenant_a",
     llm_model="gpt-4",
-    llm_base_url="https://api.openai.com/v1",
-    vespa_url="http://vespa-tenant-a:8080",
-    phoenix_project_name="tenant_a_project"
+    base_url="https://api.openai.com/v1",
+    backend_url="http://backend-tenant-a:8080",
+    phoenix_url="http://phoenix-tenant-a:6006"
 )
-manager.set_system_config(tenant_a_config)
+manager.set_system_config(tenant_a_config, tenant_id="tenant_a")
 
 # Configure Tenant B
 tenant_b_config = SystemConfig(
     tenant_id="tenant_b",
     llm_model="claude-3-opus",
-    llm_base_url="https://api.anthropic.com",
-    vespa_url="http://vespa-tenant-b:8080",
-    phoenix_project_name="tenant_b_project"
+    base_url="https://api.anthropic.com",
+    backend_url="http://backend-tenant-b:8080",
+    phoenix_url="http://phoenix-tenant-b:6006"
 )
-manager.set_system_config(tenant_b_config)
+manager.set_system_config(tenant_b_config, tenant_id="tenant_b")
 
 # Configurations are completely isolated
 config_a = manager.get_system_config("tenant_a")
@@ -296,25 +275,58 @@ assert config_a.llm_model != config_b.llm_model
 
 ### Tenant Lifecycle Management
 
+Tenant creation is handled via the runtime admin API:
+
+```bash
+# Create a new tenant via admin API
+curl -X POST http://localhost:8000/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:production", "created_by": "admin"}'
+```
+
+For schema cleanup, use VespaSchemaManager with SchemaRegistry:
+
 ```python
-# Create new tenant
-manager.create_tenant(
-    tenant_id="new_tenant",
-    config_template="enterprise",  # Use predefined template
-    overrides={
-        "llm_model": "gpt-4-turbo",
-        "max_qps": 100
-    }
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+# SchemaRegistry is required for tenant schema operations
+config_manager = create_default_config_manager()
+schema_registry = SchemaRegistry(config_manager, backend, schema_loader)
+
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=19071,
+    schema_registry=schema_registry  # Required for delete_tenant_schemas and tenant_schema_exists
 )
 
-# Clone tenant configuration
-manager.clone_tenant(
-    source_tenant_id="tenant_a",
-    target_tenant_id="tenant_a_staging"
-)
+# Delete all schemas for a tenant
+deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
+print(f"Deleted schemas: {deleted}")
 
-# Delete tenant (soft delete, keeps history)
-manager.delete_tenant("old_tenant", hard_delete=False)
+# Check if tenant schema exists
+exists = schema_manager.tenant_schema_exists(
+    tenant_id="acme",
+    base_schema_name="video_frames"
+)
+```
+
+For programmatic tenant configuration, create a new SystemConfig for each tenant:
+
+```python
+from cogniverse_foundation.config.unified_config import SystemConfig
+
+# Clone configuration from existing tenant
+source_config = manager.get_system_config("tenant_a")
+
+# Create new config based on source
+import dataclasses
+new_config_dict = dataclasses.asdict(source_config)
+new_config_dict["tenant_id"] = "tenant_a_staging"
+new_config = SystemConfig(**new_config_dict)
+
+manager.set_system_config(new_config, tenant_id="tenant_a_staging")
 ```
 
 ## DSPy Integration
@@ -322,27 +334,34 @@ manager.delete_tenant("old_tenant", hard_delete=False)
 ### Dynamic Module Configuration
 
 ```python
-from cogniverse_sdk.config.types import AgentConfig, ModuleConfig, DSPyModuleType
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig, ModuleConfig, DSPyModuleType, OptimizerConfig, OptimizerType
+)
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-manager = get_config_manager()
+manager = create_default_config_manager()
 
-# Configure Video Search Agent with ReAct
+# Configure Video Search Agent with ReAct and GEPA optimizer
 video_agent_config = AgentConfig(
     agent_name="video_search_agent",
+    agent_version="1.0.0",
+    agent_description="Video search and analysis agent",
+    agent_url="http://localhost:8002",
+    capabilities=["video_search", "visual_analysis"],
+    skills=[],
     module_config=ModuleConfig(
-        module_type=DSPyModuleType.REACT,
+        module_type=DSPyModuleType.REACT,  # Available: PREDICT, CHAIN_OF_THOUGHT, REACT, MULTI_CHAIN_COMPARISON, PROGRAM_OF_THOUGHT
         signature="Question -> Answer",
-        max_iterations=5,
-        tools=["vespa_search", "rerank", "summarize"]
+        max_retries=3,
+        temperature=0.7
     ),
-    optimizer_config={
-        "type": "GEPA",
-        "learning_rate": 0.001,
-        "buffer_size": 10000
-    },
+    optimizer_config=OptimizerConfig(
+        optimizer_type=OptimizerType.GEPA,  # Available: BOOTSTRAP_FEW_SHOT, LABELED_FEW_SHOT, BOOTSTRAP_FEW_SHOT_WITH_RANDOM_SEARCH, COPRO, MIPRO_V2, GEPA, SIMBA
+        num_trials=20,
+        max_bootstrapped_demos=4
+    ),
     llm_model="gpt-4",
-    temperature=0.7
+    llm_temperature=0.7
 )
 
 manager.set_agent_config(
@@ -352,29 +371,67 @@ manager.set_agent_config(
 )
 ```
 
-### Optimizer Selection
+## Backend Configuration API
+
+The ConfigManager provides methods for managing backend and profile configurations:
+
+### Get/Set Backend Configuration
 
 ```python
-from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-manager = get_config_manager()
-factory = OptimizerFactory()
+manager = create_default_config_manager()
 
-# Get routing configuration
-routing_config = manager.get_routing_config("default")
+# Get backend configuration for a tenant
+backend_config = manager.get_backend_config(tenant_id="acme")
+print(f"Backend URL: {backend_config.url}")
+print(f"Backend Port: {backend_config.port}")
 
-# Select optimizer based on data availability
-optimizer = factory.get_optimizer(
-    config=routing_config,
-    training_data_size=len(experience_buffer)
+# Set backend configuration
+from cogniverse_foundation.config.unified_config import BackendConfig
+
+new_config = BackendConfig(
+    backend_type="vespa",
+    url="http://vespa-cluster",
+    port=8080
+)
+manager.set_backend_config(new_config, tenant_id="acme")
+```
+
+### Profile Management
+
+```python
+# List all profiles for a tenant
+profiles = manager.list_backend_profiles(tenant_id="acme")
+for name, profile in profiles.items():
+    print(f"Profile: {name}, Schema: {profile.schema_name}")
+
+# Get a specific profile
+profile = manager.get_backend_profile(
+    profile_name="video_colpali_smol500_mv_frame",
+    tenant_id="acme"
 )
 
-# Optimizer selection logic:
-# < 100 samples: Bootstrap
-# 100-1000 samples: SIMBA
-# 1000-10000 samples: MIPRO
-# > 10000 samples: GEPA
+# Add a new profile
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+new_profile = BackendProfileConfig(
+    profile_name="custom_profile",
+    schema_name="custom_schema_acme",
+    embedding_model="colpali",
+    model_specific={"dimensions": 128}
+)
+manager.add_backend_profile(new_profile, tenant_id="acme")
+
+# Update an existing profile
+manager.update_backend_profile(
+    profile_name="custom_profile",
+    overrides={"model_specific": {"dimensions": 256}},
+    base_tenant_id="acme"
+)
+
+# Delete a profile
+manager.delete_backend_profile(profile_name="custom_profile", tenant_id="acme")
 ```
 
 ## Configuration Versioning
@@ -384,7 +441,7 @@ optimizer = factory.get_optimizer(
 Every configuration change creates a new version:
 
 ```python
-from cogniverse_sdk.config.types import ConfigScope
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 # Get configuration history
 history = manager.store.get_config_history(
@@ -403,50 +460,40 @@ for entry in history:
 
 ### Rollback Capability
 
+Rollback is achieved by retrieving a previous version from history and re-applying it:
+
 ```python
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
 # Get current version
 current = manager.get_system_config("default")
 print(f"Current LLM: {current.llm_model}")
 
-# Rollback to specific version
-manager.rollback_config(
+# Get configuration history to find version to restore
+history = manager.store.get_config_history(
     tenant_id="default",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
-    target_version=5
+    limit=10
 )
+
+# Find the target version (e.g., version 5)
+target_entry = next((e for e in history if e.version == 5), None)
+if target_entry:
+    # Re-apply the historical configuration
+    manager.store.set_config(
+        tenant_id="default",
+        scope=ConfigScope.SYSTEM,
+        service="system",
+        config_key="system_config",
+        config_value=target_entry.config_value
+    )
+    print(f"Rolled back to version {target_entry.version}")
 
 # Verify rollback
 rolled_back = manager.get_system_config("default")
 print(f"Rolled back LLM: {rolled_back.llm_model}")
-```
-
-## Hot Reload Support
-
-Configuration changes apply immediately without restart:
-
-```python
-from cogniverse_core.config.config_watcher import ConfigWatcher
-
-# Setup configuration watcher
-watcher = ConfigWatcher(manager)
-
-# Register callback for configuration changes
-def on_config_change(tenant_id: str, scope: str, config: dict):
-    print(f"Configuration updated for {tenant_id}/{scope}")
-    # Reload affected components
-    if scope == "AGENT":
-        reload_agent(config)
-    elif scope == "ROUTING":
-        update_routing_strategy(config)
-
-watcher.register_callback(on_config_change)
-watcher.start()
-
-# Changes are detected and applied automatically
-manager.set_system_config(updated_config)
-# Callback fires immediately
 ```
 
 ## Export/Import
@@ -460,8 +507,7 @@ from datetime import datetime
 # Export all configurations
 export_data = manager.store.export_configs(
     tenant_id="production",
-    include_history=True,
-    include_versions=True
+    include_history=True  # Include version history
 )
 
 # Save with timestamp
@@ -470,7 +516,6 @@ with open(f"config_backup_{timestamp}.json", "w") as f:
     json.dump(export_data, f, indent=2, default=str)
 
 print(f"Exported {len(export_data['configs'])} configurations")
-print(f"Total versions: {export_data['total_versions']}")
 ```
 
 ### Restore Configuration
@@ -483,9 +528,7 @@ with open("config_backup_20250104_120000.json", "r") as f:
 # Import to new environment
 imported_count = manager.store.import_configs(
     tenant_id="staging",
-    configs=backup_data,
-    overwrite_existing=False,  # Skip existing configs
-    preserve_versions=True     # Keep version numbers
+    configs=backup_data
 )
 
 print(f"Imported {imported_count} configurations")
@@ -505,28 +548,9 @@ else:
 # Get storage statistics
 stats = manager.store.get_stats()
 print(f"Total configurations: {stats['total_configs']}")
+print(f"Total versions: {stats['total_versions']}")
 print(f"Total tenants: {stats['total_tenants']}")
-print(f"Storage size: {stats['storage_size_mb']} MB")
 print(f"Configs by scope: {stats['configs_per_scope']}")
-```
-
-### Configuration Metrics
-
-```python
-from cogniverse_core.telemetry.metrics_manager import MetricsManager
-
-metrics = MetricsManager()
-
-# Track configuration changes
-@metrics.track_config_change
-def update_config(tenant_id: str, config: dict):
-    manager.set_system_config(config)
-
-# Metrics exposed:
-# - config_changes_total
-# - config_rollbacks_total
-# - config_errors_total
-# - config_latency_seconds
 ```
 
 ## Testing
@@ -553,20 +577,27 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
 
 ### Load Testing
 
+Load testing can be implemented using standard Python tools:
+
 ```python
-# Test configuration performance under load
-from tests.load.config_load_test import ConfigLoadTest
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
 
-test = ConfigLoadTest(manager)
-results = test.run(
-    concurrent_readers=100,
-    concurrent_writers=10,
-    duration_seconds=60
-)
+async def load_test_config(manager, tenant_id: str, iterations: int = 100):
+    """Simple load test for configuration reads."""
+    start = time.perf_counter()
 
-print(f"Read QPS: {results['read_qps']}")
-print(f"Write QPS: {results['write_qps']}")
-print(f"P95 latency: {results['p95_latency_ms']}ms")
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [
+            executor.submit(manager.get_system_config, tenant_id)
+            for _ in range(iterations)
+        ]
+        results = [f.result() for f in futures]
+
+    elapsed = time.perf_counter() - start
+    print(f"Completed {iterations} reads in {elapsed:.2f}s")
+    print(f"Read QPS: {iterations / elapsed:.1f}")
 ```
 
 ## Best Practices
@@ -588,21 +619,19 @@ backup = manager.store.export_configs(
     include_history=True
 )
 
-# Make changes with audit trail
-manager.set_system_config(
-    new_config,
-    metadata={"changed_by": "admin", "reason": "Performance tuning"}
-)
+# Make changes with audit trail (metadata is a field on SystemConfig)
+new_config.metadata = {"changed_by": "admin", "reason": "Performance tuning"}
+manager.set_system_config(new_config, tenant_id="production")
 ```
 
 ### 3. Use Type-Safe Configurations
 ```python
 # Good: Type-safe dataclass
-from cogniverse_sdk.config.types import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 config = SystemConfig(
     tenant_id="prod",
     llm_model="gpt-4",
-    vespa_url="http://vespa:8080"
+    backend_url="http://backend:8080"
 )
 
 # Bad: Raw dictionaries
@@ -611,26 +640,35 @@ config = {"tenant_id": "prod", "llm_model": "gpt-4"}  # No validation
 
 ### 4. Implement Configuration Templates
 ```python
+from cogniverse_foundation.config.unified_config import SystemConfig
+
 # Define reusable templates
 TEMPLATES = {
-    "development": {
-        "llm_model": "gpt-3.5-turbo",
-        "max_qps": 10,
-        "cache_ttl": 300
-    },
-    "production": {
-        "llm_model": "gpt-4",
-        "max_qps": 100,
-        "cache_ttl": 3600
-    }
+    "development": SystemConfig(
+        tenant_id="",  # Set per-tenant
+        llm_model="gpt-3.5-turbo",
+        backend_url="http://localhost:8080"
+    ),
+    "production": SystemConfig(
+        tenant_id="",
+        llm_model="gpt-4",
+        backend_url="http://backend-cluster:8080"
+    )
 }
 
 # Apply template with overrides
-manager.apply_template(
-    tenant_id="new_customer",
-    template_name="production",
-    overrides={"llm_model": "claude-3-opus"}
-)
+def apply_template(manager, tenant_id: str, template_name: str, **overrides):
+    """Apply a configuration template with optional overrides."""
+    import dataclasses
+    template = TEMPLATES[template_name]
+    config_dict = dataclasses.asdict(template)
+    config_dict["tenant_id"] = tenant_id
+    config_dict.update(overrides)
+    new_config = SystemConfig(**config_dict)
+    manager.set_system_config(new_config, tenant_id=tenant_id)
+
+# Usage
+apply_template(manager, "new_customer", "production", llm_model="claude-3-opus")
 ```
 
 ## Migration Guide
@@ -641,14 +679,14 @@ manager.apply_template(
 # Old: Environment variables
 import os
 llm_model = os.getenv("LLM_MODEL", "gpt-4")
-vespa_url = os.getenv("VESPA_URL", "http://localhost:8080")
+backend_url = os.getenv("BACKEND_URL", "http://localhost:8080")
 
 # New: ConfigManager
-from cogniverse_core.config.manager import get_config_manager
-manager = get_config_manager()
+from cogniverse_foundation.config.utils import create_default_config_manager
+manager = create_default_config_manager()
 config = manager.get_system_config("default")
 llm_model = config.llm_model
-vespa_url = config.vespa_url
+backend_url = config.backend_url
 ```
 
 ### From Static Config Files
@@ -659,7 +697,7 @@ with open("config.yaml") as f:
     config = yaml.safe_load(f)
 
 # New: Dynamic configuration
-manager = get_config_manager()
+manager = create_default_config_manager()
 config = manager.get_system_config("default")
 # Hot reload supported automatically
 ```
@@ -669,6 +707,9 @@ config = manager.get_system_config("default")
 ### Configuration Not Found
 
 ```python
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_foundation.config.unified_config import SystemConfig
+
 # Check if configuration exists
 configs = manager.store.list_configs(
     tenant_id="default",
@@ -676,25 +717,33 @@ configs = manager.store.list_configs(
 )
 print(f"Available configs: {configs}")
 
-# Initialize missing configuration
-if not manager.has_system_config("default"):
-    manager.set_system_config(SystemConfig(tenant_id="default"))
+# Initialize missing configuration if needed
+try:
+    config = manager.get_system_config("default")
+except Exception:
+    manager.set_system_config(SystemConfig(tenant_id="default"), tenant_id="default")
 ```
 
 ### Version Conflicts
 
+Configuration versioning is tracked automatically via the `get_config_history` method:
+
 ```python
-# Handle concurrent updates
-try:
-    manager.set_system_config(
-        config,
-        expected_version=current_version,  # Optimistic locking
-        force=False
-    )
-except VersionConflictError:
-    # Reload and retry
-    latest = manager.get_system_config("default")
-    # Merge changes and retry
+# Check version history before updates
+history = manager.store.get_config_history(
+    tenant_id="default",
+    scope=ConfigScope.SYSTEM,
+    service="system",
+    config_key="system_config",
+    limit=5
+)
+
+# Log current version before update
+if history:
+    print(f"Current version: {history[0].version}")
+
+# Make update (creates new version automatically)
+manager.set_system_config(config, tenant_id="default")
 ```
 
 ### Storage Backend Issues
@@ -703,42 +752,46 @@ except VersionConflictError:
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_foundation.config.manager import ConfigManager
 
-# Ensure Vespa is available before creating ConfigManager
+# Ensure backend is available before creating ConfigManager
 try:
-    store = VespaConfigStore(vespa_url="http://localhost", vespa_port=8080)
+    store = VespaConfigStore(
+        vespa_app=None,
+        vespa_url="http://localhost",
+        vespa_port=8080,
+        schema_name="config_metadata"
+    )
     manager = ConfigManager(store=store)
 except ConnectionError as e:
     raise RuntimeError(
-        f"Vespa backend unavailable: {e}. "
-        "Ensure Vespa is running and metadata schemas are deployed."
+        f"Backend unavailable: {e}. "
+        "Ensure the backend is running and metadata schemas are deployed."
     )
 ```
 
 ## Configuration Layer Details
 
 ### SDK Layer (cogniverse-sdk)
+
 - Defines configuration interfaces and type contracts
 - No implementation, just pure interfaces
 - Used by all other layers for type safety
 
 ### Foundation Layer (cogniverse-foundation)
+
 - Implements base ConfigStore interface
 - Provides common configuration utilities
 - Handles serialization/deserialization
 
 ### Core Layer (cogniverse-core)
+
 - Implements ConfigManager for system-wide configuration
 - Orchestrates configuration across all components
 - Manages tenant isolation and versioning
 
 ## Related Documentation
 
-- [11-Package Architecture](architecture/overview.md) - System design
-- [Multi-Tenant System](multi-tenant-system.md) - Tenant isolation
-- [Agent Orchestration](agent-orchestration.md) - Agent configuration
-- [Optimization System](optimization-system.md) - DSPy optimizer configuration
+- [Architecture Overview](architecture/overview.md) - System design
+- [Multi-Tenant Architecture](architecture/multi-tenant.md) - Tenant isolation
+- [Agents Module](modules/agents.md) - Agent configuration
+- [Optimization Module](modules/optimization.md) - DSPy optimizer configuration
 
----
-
-**Last Updated:** 2026-01-25
-**Status**: Production - Spans SDK, Foundation, and Core Layers

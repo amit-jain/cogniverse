@@ -7,12 +7,12 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Multi-Agent Orchestration
 | Component | P50 Target | P95 Target | P99 Target |
 |-----------|------------|------------|------------|
-| **Composing Agent** | < 50ms | < 100ms | < 150ms |
-| **Video Search Agent** | < 200ms | < 500ms | < 750ms |
+| **OrchestratorAgent** | < 50ms | < 100ms | < 150ms |
+| **VideoSearchAgent** | < 200ms | < 500ms | < 750ms |
 | **Routing Decision** | < 10ms | < 25ms | < 50ms |
 | **Result Aggregation** | < 20ms | < 50ms | < 100ms |
 
-### Vespa Backend Performance
+### Backend Performance (Vespa)
 | Operation | P50 Target | P95 Target | P99 Target |
 |-----------|------------|------------|------------|
 | **BM25 Search** | < 10ms | < 25ms | < 50ms |
@@ -30,15 +30,15 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **Transcription** | < 10s | < 60s | < 8 min |
 | **ColPali Embedding** | < 3s | < 20s | < 3 min |
 | **VideoPrism Embedding** | < 8s | < 50s | < 7 min |
-| **Vespa Ingestion** | < 2s | < 10s | < 90s |
+| **Backend Ingestion** | < 2s | < 10s | < 90s |
 
 ### Embedding Model Performance
 | Model | Dimensions | Inference Time | Memory |
 |-------|------------|----------------|--------|
-| **ColPali SmolVLM 500M** | 768 | < 100ms/frame | 2GB |
-| **ColQwen2 Omni** | 768 | < 150ms/frame | 4GB |
-| **VideoPrism Base** | 768 | < 200ms/chunk | 3GB |
-| **VideoPrism LVT** | 1152 | < 300ms/chunk | 4GB |
+| **ColPali SmolVLM 500M** | Patch-based (1024 patches × 128D) | < 100ms/frame | 2GB |
+| **ColQwen2 Omni** | Patch-based (1024 patches × 128D) | < 150ms/frame | 4GB |
+| **VideoPrism Base** | 768 (global) | < 200ms/chunk | 3GB |
+| **VideoPrism LVT** | 1024 (global) | < 300ms/chunk | 4GB |
 
 ## Query Performance
 
@@ -60,25 +60,31 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ## Optimization System Performance
 
-### GEPA Optimizer
-| Metric | Target | Description |
-|--------|--------|-------------|
-| **Optimization Cycle** | < 5 min | Complete GEPA iteration |
-| **Experience Buffer Size** | 10,000 | Routing decisions stored |
-| **Batch Processing** | 1000/min | Experience replay rate |
-| **Model Update** | < 30s | Routing model update time |
+> **Note**: GEPA (Experience-Guided Policy Adaptation) optimizer is implemented in `libs/agents/cogniverse_agents/routing/advanced_optimizer.py` and automatically selected when dataset size >= 200 examples.
 
 ### DSPy Optimizer Performance
 | Optimizer | Training Time | Memory | Convergence |
 |-----------|--------------|--------|-------------|
-| **Bootstrap** | < 10 min | 4GB | 10-20 iterations |
-| **SIMBA** | < 30 min | 8GB | 50-100 iterations |
-| **MIPRO** | < 60 min | 16GB | 100-200 iterations |
-| **GEPA (Custom)** | < 5 min/cycle | 6GB | Continuous |
+| **BootstrapFewShot** | < 10 min | 4GB | 10-20 iterations |
+| **MIPROv2** | < 60 min | 16GB | 100-200 iterations |
+| **COPRO** | < 30 min | 8GB | 50-100 iterations |
+| **GEPA** | < 45 min | 12GB | 50-150 iterations |
+| **SIMBA** | < 30 min | 8GB | 30-80 iterations |
 
-### Optimization Impact
-| Metric | Baseline | Optimized | Improvement |
-|--------|----------|-----------|-------------|
+> **Note**: Available optimizers include: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 (via `libs/core/cogniverse_core/registries/dspy_registry.py`), plus GEPA and SIMBA (via `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`).
+
+### Query Enhancement Performance
+| Component | Training Time | Memory | Description |
+|-----------|--------------|--------|-------------|
+| **SIMBA Query Enhancer** | < 30 min | 8GB | Query enhancement using SIMBA optimizer with memory-augmented learning |
+
+> **Note**: SIMBA Query Enhancer (`libs/agents/cogniverse_agents/routing/simba_query_enhancer.py`) uses the `dspy.teleprompt.SIMBA` optimizer for similarity-based memory-augmented query enhancement.
+
+### Target Optimization Impact
+> **Note**: The following are target improvements for when optimization is fully deployed:
+
+| Metric | Baseline | Target | Target Improvement |
+|--------|----------|--------|-------------------|
 | **Routing Accuracy** | 75% | 92% | +17% |
 | **Query Latency** | 500ms | 350ms | -30% |
 | **Cache Hit Rate** | 20% | 45% | +125% |
@@ -86,15 +92,19 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ## Memory System Performance
 
-### Mem0 Operations
-| Operation | P50 | P95 | P99 |
-|-----------|-----|-----|-----|
+> **Note**: Memory system uses custom abstractions. Mem0 is configurable as a backend but not the only option.
+
+### Memory Operations
+| Operation | P50 Target | P95 Target | P99 Target |
+|-----------|------------|------------|------------|
 | **Memory Add** | < 50ms | < 100ms | < 200ms |
 | **Memory Search** | < 30ms | < 75ms | < 150ms |
 | **Memory Update** | < 40ms | < 90ms | < 180ms |
 | **Memory Delete** | < 20ms | < 50ms | < 100ms |
 
-### Memory Storage
+> **Implementation**: Memory operations are implemented in `libs/core/cogniverse_core/memory/` with support for multiple backends including Vespa-based storage.
+
+### Memory Storage Targets
 | Metric | Target | Maximum |
 |--------|--------|---------|
 | **Memories per User** | 1000 | 10,000 |
@@ -120,7 +130,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **Storage** | 10GB | 100GB |
 | **Memory Usage** | 1GB | 10GB |
 
-## Phoenix Telemetry Performance
+## Telemetry Performance (Phoenix)
 
 ### Span Collection
 | Metric | Target | Description |
@@ -151,12 +161,12 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Container Resources
 | Service | CPU Request | Memory Request | Replicas |
 |---------|-------------|----------------|----------|
-| **Composing Agent** | 2 cores | 4GB | 3 |
-| **Video Search Agent** | 4 cores | 8GB | 5 |
+| **OrchestratorAgent** | 2 cores | 4GB | 3 |
+| **VideoSearchAgent** | 4 cores | 8GB | 5 |
 | **Vespa Container** | 8 cores | 16GB | 3 |
 | **Vespa Content** | 4 cores | 32GB | 5 |
 | **Phoenix** | 2 cores | 4GB | 1 |
-| **Mem0** | 2 cores | 4GB | 2 |
+| **Memory Service** | 2 cores | 4GB | 2 |
 
 ## Evaluation Metrics
 
@@ -205,8 +215,8 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Horizontal Scaling
 | Component | Auto-scale Trigger | Min | Max |
 |-----------|-------------------|-----|-----|
-| **Composing Agent** | CPU > 70% | 2 | 10 |
-| **Video Search Agent** | CPU > 70% | 3 | 20 |
+| **OrchestratorAgent** | CPU > 70% | 2 | 10 |
+| **VideoSearchAgent** | CPU > 70% | 3 | 20 |
 | **Vespa Container** | QPS > 100 | 3 | 10 |
 | **Vespa Content** | Storage > 80% | 3 | 20 |
 
@@ -221,51 +231,22 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ## Testing and Validation
 
 ### Load Testing
-```bash
-# 100 QPS sustained load test
-locust -f tests/load/locust_multi_agent.py --users 100 --spawn-rate 10
 
-# Stress test with 1000 concurrent users
-locust -f tests/load/locust_stress.py --users 1000 --spawn-rate 50
-
-# Endurance test (24 hours)
-locust -f tests/load/locust_endurance.py --users 100 --run-time 24h
-```
+Load testing suite: `tests/routing/integration/test_production_load.py` — covers 100 QPS throughput, concurrent request handling, sustained load, and latency percentile validation.
 
 ### Performance Benchmarks
+
 ```bash
-# Video ingestion benchmark
-uv run python benchmarks/ingestion_performance.py --videos 100
+# Video ingestion - use integration test with timing
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/integration/ -v -k "ingestion" --durations=0
 
-# Query latency benchmark
-uv run python benchmarks/query_latency.py --queries 10000
-
-# Optimization impact benchmark
-uv run python benchmarks/optimization_impact.py --iterations 100
+# Query latency - use search tests with timing
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v -k "search" --durations=0
 ```
 
 ### Continuous Performance Monitoring
-```python
-# Real-time dashboard
+```bash
+# Real-time dashboard (available)
 uv run streamlit run scripts/phoenix_dashboard_standalone.py
-
-# Performance regression detection
-uv run python scripts/performance_regression_check.py --baseline v1.0 --current HEAD
-
-# Weekly performance report
-uv run python scripts/generate_performance_report.py --period weekly
 ```
 
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 2.1 | 2025-11-13 | Updated for 11-package layered architecture |
-| 2.0 | 2025-10-04 | Complete rewrite for multi-agent architecture |
-| 1.5 | 2025-09-15 | Added DSPy optimization targets |
-| 1.0 | 2025-08-01 | Initial performance targets |
-
----
-
-**Last Updated:** 2026-01-25
-**Status**: Production - 11-Package Layered Architecture v2.1

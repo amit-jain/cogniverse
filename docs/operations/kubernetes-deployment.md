@@ -1,19 +1,21 @@
 # Kubernetes Deployment Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages - Helm-based Kubernetes deployment with multi-tenant support
-**Purpose:** Complete guide for deploying Cogniverse on Kubernetes/K3s
-
 ---
 
 ## Overview
 
 Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
+
 - **Helm Chart**: `charts/cogniverse/`
+
 - **StatefulSets**: Vespa, Phoenix, Ollama (with persistent storage)
+
 - **Deployments**: Runtime, Dashboard
+
 - **Auto-scaling**: HPA for Runtime
+
 - **Ingress**: NGINX with TLS/SSL
+
 - **Init Jobs**: Schema deployment, model pulling
 
 ---
@@ -23,16 +25,25 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 ### Cluster Requirements
 
 **Minimum:**
+
 - Kubernetes 1.24+
+
 - 3 nodes (1 master, 2 workers)
+
 - 32GB RAM per node
+
 - 100GB+ storage per node
 
 **Recommended:**
+
 - Kubernetes 1.27+
+
 - 5+ nodes
+
 - 64GB RAM per node
+
 - GPU nodes for Ollama
+
 - NVMe/SSD storage
 
 ### Required Tools
@@ -81,7 +92,7 @@ cd cogniverse/charts
 kubectl create namespace cogniverse
 
 # Install chart
-helm install cogniverse ./cogniverse \
+helm install cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --create-namespace
 
@@ -182,7 +193,7 @@ ollama:
 
 ```bash
 # Deploy with production values
-helm install cogniverse ./cogniverse \
+helm install cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --create-namespace \
   --values values.prod.yaml
@@ -199,15 +210,23 @@ kubectl get all -n cogniverse
 ### Overview
 
 K3s is a lightweight Kubernetes distribution perfect for local development, testing, and edge deployments. It:
+
 - Runs on minimal resources (single node with 4GB RAM)
+
 - Includes built-in storage (local-path provisioner)
+
 - Has Traefik ingress controller by default
+
 - Supports full Kubernetes APIs
 
 **Use Cases:**
+
 - Local development and testing
+
 - CI/CD pipelines
+
 - Edge deployments
+
 - Learning Kubernetes
 
 ### Quick Start with K3s
@@ -535,16 +554,25 @@ kubectl describe ingress cogniverse -n cogniverse
 ### When to Use K3s
 
 **✅ Good for:**
+
 - Local development and testing
+
 - CI/CD testing pipelines
+
 - Learning Kubernetes concepts
+
 - Edge deployments
+
 - Small-scale production (single tenant)
 
 **❌ Not ideal for:**
+
 - Large-scale production (100+ tenants)
+
 - High-availability requirements
+
 - Heavy resource workloads
+
 - Multi-region deployments
 
 ---
@@ -630,7 +658,7 @@ ollama:
 nano values.prod.yaml
 
 # Upgrade with new values
-helm upgrade cogniverse ./cogniverse \
+helm upgrade cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --values values.prod.yaml \
   --reuse-values
@@ -661,7 +689,7 @@ kubectl scale deployment cogniverse-runtime \
   -n cogniverse
 
 # Or update via Helm
-helm upgrade cogniverse ./cogniverse \
+helm upgrade cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --set runtime.replicaCount=5 \
   --reuse-values
@@ -685,7 +713,7 @@ kubectl get pvc -n cogniverse -o yaml > backup-pvcs.yaml
 **Restore:**
 ```bash
 # Restore from backup
-helm install cogniverse ./cogniverse \
+helm install cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --values backup-values.yaml
 ```
@@ -770,7 +798,7 @@ kubectl logs job/cogniverse-schema-deployment -n cogniverse
 
 # Delete and re-run
 kubectl delete job cogniverse-schema-deployment -n cogniverse
-helm upgrade cogniverse ./cogniverse -n cogniverse --reuse-values
+helm upgrade cogniverse ./charts/cogniverse -n cogniverse --reuse-values
 ```
 
 ### Service Connection Issues
@@ -884,7 +912,3 @@ See script help for full options: `./scripts/deploy_*.sh --help`
 - [SDK Architecture](../architecture/sdk-architecture.md) - System architecture
 
 ---
-
-**Version:** 2.1.0
-**Last Updated:** 2026-01-25
-**Status:** Production Ready

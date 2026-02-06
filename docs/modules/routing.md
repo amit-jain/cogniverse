@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Location:** `libs/agents/cogniverse_agents/routing/`
-**Last Updated:** 2026-01-25
-**Purpose:** Comprehensive guide to intelligent query routing strategies and optimization
 
 ---
 
@@ -34,19 +32,27 @@ The Routing Module provides intelligent query routing capabilities with multiple
 - **Production Features**: Per-modality caching (LRU), parallel execution, metrics
 
 ### Package Structure
-```
+```text
 libs/agents/cogniverse_agents/routing/
 ├── router.py                           # Comprehensive router (1145 lines)
-├── strategies.py                       # Core routing strategies (1292 lines)
-├── advanced_optimizer.py               # GRPO optimization (1273 lines)
-├── config.py                           # Configuration system (391 lines)
-├── query_enhancement_engine.py         # Query enhancement with SIMBA (1037 lines)
-├── cross_modal_optimizer.py            # Multi-modal fusion (630 lines)
-├── modality_cache.py                   # Per-modality caching (255 lines)
+├── strategies.py                       # Core routing strategies (1291 lines)
+├── advanced_optimizer.py               # GRPO optimization (1358 lines)
+├── config.py                           # Configuration system (390 lines)
+├── query_enhancement_engine.py         # Query enhancement with SIMBA (1036 lines)
+├── cross_modal_optimizer.py            # Multi-modal fusion (685 lines)
+├── modality_cache.py                   # Per-modality caching (300 lines)
+├── modality_optimizer.py               # Per-modality optimization (783 lines)
+├── modality_evaluator.py               # Modality evaluation (521 lines)
+├── modality_metrics.py                 # Performance metrics (361 lines)
+├── xgboost_meta_models.py              # XGBoost meta-learning (619 lines)
+├── contextual_analyzer.py              # Cross-modal context (441 lines)
+├── llm_auto_annotator.py               # LLM annotations (294 lines)
+├── profile_performance_optimizer.py    # Profile optimization (390 lines)
+├── lazy_executor.py                    # Lazy evaluation (309 lines)
+├── routing_span_evaluator.py           # Routing span evaluation
 ├── parallel_executor.py                # Parallel agent execution
-├── modality_evaluator.py               # Modality evaluation
-├── phoenix_span_evaluator.py           # Phoenix telemetry integration
-└── base.py                             # Base routing classes
+├── base.py                             # Base routing classes
+└── ... (20+ additional files for DSPy, optimization, and utilities)
 ```
 
 ---
@@ -56,74 +62,74 @@ libs/agents/cogniverse_agents/routing/
 ### Tiered Routing Decision Tree
 
 ```mermaid
-graph TB
-    QueryInput[Query Input] --> Tier1[TIER 1: GLiNER Fast Path<br/>• NER-based entity detection<br/>• Rule-based classification<br/>• Latency: ~50-100ms<br/>• Confidence threshold: 0.7]
+flowchart TB
+    QueryInput["<span style='color:#000'>Query Input</span>"] --> Tier1["<span style='color:#000'>TIER 1: GLiNER Fast Path<br/>• NER-based entity detection<br/>• Rule-based classification<br/>• Latency: ~50-100ms<br/>• Confidence threshold: 0.7</span>"]
 
-    Tier1 -->|confidence >= 0.7| Decision1[Routing Decision]
-    Tier1 -->|confidence < 0.7| Tier2[TIER 2: LLM Medium Path<br/>• Local LLM Ollama: gemma3:4b<br/>• Chain-of-thought reasoning<br/>• Latency: ~500-1000ms<br/>• Confidence threshold: 0.6]
+    Tier1 -->|confidence >= 0.7| Decision1["<span style='color:#000'>Routing Decision</span>"]
+    Tier1 -->|confidence < 0.7| Tier2["<span style='color:#000'>TIER 2: LLM Medium Path<br/>• Local LLM Ollama: gemma3:4b<br/>• Chain-of-thought reasoning<br/>• Latency: ~500-1000ms<br/>• Confidence threshold: 0.6</span>"]
 
-    Tier2 -->|confidence >= 0.6| Decision2[Routing Decision]
-    Tier2 -->|confidence < 0.6| Tier3[TIER 3: LangExtract Slow Path<br/>• Structured extraction Gemini<br/>• Source grounding + visualization<br/>• Latency: ~2000-3000ms<br/>• Always succeeds fallback]
+    Tier2 -->|confidence >= 0.6| Decision2["<span style='color:#000'>Routing Decision</span>"]
+    Tier2 -->|confidence < 0.6| Tier3["<span style='color:#000'>TIER 3: LangExtract Slow Path<br/>• Structured extraction Gemini<br/>• Source grounding + visualization<br/>• Latency: ~2000-3000ms<br/>• Always succeeds fallback</span>"]
 
-    Tier3 --> Decision3[Routing Decision]
+    Tier3 --> Decision3["<span style='color:#000'>Routing Decision</span>"]
 
-    style QueryInput fill:#e1f5ff
-    style Tier1 fill:#e1ffe1
-    style Tier2 fill:#fff4e1
-    style Tier3 fill:#ffe1e1
-    style Decision1 fill:#e1ffe1
-    style Decision2 fill:#e1ffe1
-    style Decision3 fill:#e1ffe1
+    style QueryInput fill:#90caf9,stroke:#1565c0,color:#000
+    style Tier1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Tier2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Tier3 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Decision1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Decision2 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Decision3 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### GRPO Optimization Loop
 
 ```mermaid
-graph TB
-    Experience[Routing Experience<br/>• Query, entities, relationships<br/>• Agent chosen, confidence<br/>• Search quality, user satisfaction]
+flowchart TB
+    Experience["<span style='color:#000'>Routing Experience<br/>• Query, entities, relationships<br/>• Agent chosen, confidence<br/>• Search quality, user satisfaction</span>"]
 
-    Experience --> Reward[Reward Computation<br/>reward = search_quality × 0.4<br/>+ agent_success × 0.3<br/>+ user_satisfaction × 0.3<br/>- time_penalty]
+    Experience --> Reward["<span style='color:#000'>Reward Computation<br/>reward = search_quality × 0.4<br/>+ agent_success × 0.3<br/>+ user_satisfaction × 0.3<br/>- time_penalty</span>"]
 
-    Reward --> Buffer[Experience Replay Buffer<br/>• LRU buffer max 1000 experiences<br/>• Sampling for training]
+    Reward --> Buffer["<span style='color:#000'>Experience Replay Buffer<br/>• LRU buffer max 1000 experiences<br/>• Sampling for training</span>"]
 
-    Buffer -->|every N experiences| Optimizer[Advanced Multi-Stage Optimizer<br/>1. Select optimizer based on dataset size:<br/>- <20 samples: Bootstrap<br/>- 20-50: SIMBA<br/>- 50-100: MIPROv2<br/>- 100+: GEPA<br/>2. Compile routing policy<br/>3. Update confidence calibrator<br/>4. Decay exploration rate ε-greedy]
+    Buffer -->|every N experiences| Optimizer["<span style='color:#000'>Advanced Multi-Stage Optimizer<br/>1. Select optimizer based on dataset size:<br/>- <20 samples: Bootstrap<br/>- 20-50: SIMBA<br/>- 50-100: MIPROv2<br/>- 100+: GEPA<br/>2. Compile routing policy<br/>3. Update confidence calibrator<br/>4. Decay exploration rate ε-greedy</span>"]
 
-    Optimizer --> Policy[Optimized Routing Policy<br/>• Improved agent selection<br/>• Calibrated confidence scores<br/>• Better generalization]
+    Optimizer --> Policy["<span style='color:#000'>Optimized Routing Policy<br/>• Improved agent selection<br/>• Calibrated confidence scores<br/>• Better generalization</span>"]
 
-    style Experience fill:#e1f5ff
-    style Reward fill:#f5f5f5
-    style Buffer fill:#fff4e1
-    style Optimizer fill:#ffe1e1
-    style Policy fill:#e1ffe1
+    style Experience fill:#90caf9,stroke:#1565c0,color:#000
+    style Reward fill:#b0bec5,stroke:#546e7a,color:#000
+    style Buffer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Optimizer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Policy fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### Query Enhancement Pipeline
 
 ```mermaid
-graph TB
-    OriginalQuery[Original Query] --> Extraction[Relationship Extraction<br/>GLiNER/LLM<br/>• Entities: subject, object, action<br/>• Relationships: subj, relation, obj]
+flowchart TB
+    OriginalQuery["<span style='color:#000'>Original Query</span>"] --> Extraction["<span style='color:#000'>Relationship Extraction<br/>GLiNER/LLM<br/>• Entities: subject, object, action<br/>• Relationships: subj, relation, obj</span>"]
 
-    Extraction --> SimbaPattern[SIMBA Pattern Matching<br/>• Find similar queries in memory<br/>• Retrieve successful enhancement patterns<br/>• Confidence: avg improvement from patterns]
+    Extraction --> SimbaPattern["<span style='color:#000'>SIMBA Pattern Matching<br/>• Find similar queries in memory<br/>• Retrieve successful enhancement patterns<br/>• Confidence: avg improvement from patterns</span>"]
 
-    SimbaPattern -->|confidence > threshold| SimbaEnhance[Apply Learned Patterns<br/>• Expansion terms<br/>• Relationship phrases<br/>• Semantic enrichment]
-    SimbaPattern -->|confidence <= threshold| DspyBaseline[DSPy Baseline Enhancement<br/>• Relationship expansion<br/>• Semantic enrichment<br/>• Domain specialization<br/>• Boolean optimization<br/>• Synonym expansion]
+    SimbaPattern -->|confidence > threshold| SimbaEnhance["<span style='color:#000'>Apply Learned Patterns<br/>• Expansion terms<br/>• Relationship phrases<br/>• Semantic enrichment</span>"]
+    SimbaPattern -->|confidence <= threshold| DspyBaseline["<span style='color:#000'>DSPy Baseline Enhancement<br/>• Relationship expansion<br/>• Semantic enrichment<br/>• Domain specialization<br/>• Boolean optimization<br/>• Synonym expansion</span>"]
 
-    SimbaEnhance --> Enhanced[Enhanced Query<br/>+ metadata + quality score]
+    SimbaEnhance --> Enhanced["<span style='color:#000'>Enhanced Query<br/>+ metadata + quality score</span>"]
     DspyBaseline --> Enhanced
 
-    style OriginalQuery fill:#e1f5ff
-    style Extraction fill:#f5f5f5
-    style SimbaPattern fill:#fff4e1
-    style SimbaEnhance fill:#e1ffe1
-    style DspyBaseline fill:#ffe1e1
-    style Enhanced fill:#e1ffe1
+    style OriginalQuery fill:#90caf9,stroke:#1565c0,color:#000
+    style Extraction fill:#b0bec5,stroke:#546e7a,color:#000
+    style SimbaPattern fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SimbaEnhance fill:#a5d6a7,stroke:#388e3c,color:#000
+    style DspyBaseline fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Enhanced fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
 
 ## Core Components
 
-### 1. RoutingConfig (config.py:20-391)
+### 1. RoutingConfig (config.py:20-390)
 
 **Purpose**: Complete configuration system for routing with environment variable overrides
 
@@ -217,6 +223,7 @@ config.save("configs/my_routing.json")
 **Purpose**: Fast NER-based routing using GLiNER for entity detection (Tier 1)
 
 **Key Features**:
+
 - Entity detection with 17 label types
 - Rule-based classification from entities
 - Circuit breaker for fault tolerance
@@ -224,11 +231,10 @@ config.save("configs/my_routing.json")
 
 **Key Methods**:
 ```python
-async def route_query(
+async def route(
     self,
     query: str,
-    context: Optional[Dict[str, Any]] = None,
-    return_detailed_metrics: bool = False
+    context: dict[str, Any] | None = None
 ) -> RoutingDecision:
     """
     Route query using GLiNER entity detection
@@ -260,6 +266,7 @@ report_entities = ["detailed_analysis", "report_request"]
 ```
 
 **Performance**:
+
 - Latency: 50-100ms
 - Confidence threshold: 0.7
 - Success rate: ~85% on clear queries
@@ -271,6 +278,7 @@ report_entities = ["detailed_analysis", "report_request"]
 **Purpose**: LLM-based routing with chain-of-thought reasoning (Tier 2)
 
 **Key Features**:
+
 - Uses local Ollama LLMs (gemma3:4b)
 - Chain-of-thought prompting
 - JSON structured output
@@ -278,11 +286,10 @@ report_entities = ["detailed_analysis", "report_request"]
 
 **Key Methods**:
 ```python
-async def route_query(
+async def route(
     self,
     query: str,
-    context: Optional[Dict[str, Any]] = None,
-    return_detailed_metrics: bool = False
+    context: dict[str, Any] | None = None
 ) -> RoutingDecision:
     """
     Route using LLM with chain-of-thought
@@ -308,17 +315,19 @@ Use exact JSON format in your response."""
 ```
 
 **Performance**:
+
 - Latency: 500-1000ms
 - Confidence threshold: 0.6
 - Success rate: ~92% on medium complexity queries
 
 ---
 
-### 4. AdvancedRoutingOptimizer (advanced_optimizer.py:136-1273)
+### 4. AdvancedRoutingOptimizer (advanced_optimizer.py:137-1358)
 
 **Purpose**: GRPO optimization with DSPy 3.0 advanced optimizers
 
 **Key Features**:
+
 - Multi-stage optimization (Bootstrap → SIMBA → MIPROv2 → GEPA)
 - Experience replay buffer
 - Reward-based learning
@@ -330,8 +339,9 @@ Use exact JSON format in your response."""
 class AdvancedRoutingOptimizer:
     def __init__(
         self,
+        tenant_id: str,  # REQUIRED - no default
         config: Optional[AdvancedOptimizerConfig] = None,
-        storage_dir: str = "data/optimization"
+        base_storage_dir: str = "data/optimization"
     ):
         # Experience storage
         self.experiences: List[RoutingExperience] = []
@@ -364,6 +374,7 @@ async def record_routing_experience(
     agent_success: bool,
     processing_time: float = 0.0,
     user_satisfaction: Optional[float] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> float:
     """
     Record routing experience and compute reward
@@ -427,11 +438,12 @@ else:
 
 ---
 
-### 5. QueryEnhancementPipeline (query_enhancement_engine.py:743-1037)
+### 5. QueryEnhancementPipeline (query_enhancement_engine.py:743-1036)
 
 **Purpose**: Complete query enhancement with SIMBA learning and relationship extraction
 
 **Key Features**:
+
 - Relationship extraction (entities + relationships)
 - SIMBA pattern-based enhancement
 - DSPy baseline enhancement (fallback)
@@ -514,11 +526,12 @@ enhanced = f"{query} OR {' OR '.join(synonyms)}"
 
 ---
 
-### 6. CrossModalOptimizer (cross_modal_optimizer.py:21-630)
+### 6. CrossModalOptimizer (cross_modal_optimizer.py:21-685)
 
 **Purpose**: Optimize multi-modal fusion for queries spanning multiple modalities
 
 **Key Features**:
+
 - Fusion benefit prediction (XGBoost model)
 - Modality agreement calculation
 - Query ambiguity scoring
@@ -610,11 +623,12 @@ benefit = fusion_model.predict({
 
 ---
 
-### 7. ModalityCacheManager (modality_cache.py:67-255)
+### 7. ModalityCacheManager (modality_cache.py:67-300)
 
 **Purpose**: Per-modality LRU caching with TTL-based expiration
 
 **Key Features**:
+
 - Separate LRU cache per modality (VIDEO, DOCUMENT, IMAGE)
 - TTL-based invalidation (default 3600s)
 - Hit/miss tracking per modality
@@ -675,9 +689,441 @@ def get_cache_stats(
 ```
 
 **Performance**:
+
 - Cache hit latency: <1ms
 - Cache miss latency: fallthrough to backend
 - Typical hit rate: 40-60% for repeated queries
+
+---
+
+### 8. ModalityOptimizer (modality_optimizer.py:73-783)
+
+**Purpose**: Per-modality routing optimization with XGBoost meta-learning for automatic decisions
+
+**Key Features**:
+
+- Separate optimization per modality (VIDEO, DOCUMENT, IMAGE, AUDIO)
+- XGBoost meta-models for training decisions
+- Synthetic data generation for cold start
+- Progressive training strategies (synthetic → hybrid → pure real)
+- DSPy integration with MIPROv2/BootstrapFewShot
+
+**Key Methods**:
+
+```python
+async def optimize_all_modalities(
+    self,
+    lookback_hours: int = 24,
+    min_confidence: float = 0.7,
+) -> Dict[QueryModality, Dict[str, Any]]:
+    """
+    Evaluate and optimize all modalities
+
+    Process:
+    1. Get span statistics to find modalities with data
+    2. Optimize each modality that has data
+    3. Return results per modality
+
+    Returns:
+        Dictionary mapping each modality to optimization results
+    """
+
+async def optimize_modality(
+    self,
+    modality: QueryModality,
+    lookback_hours: int = 24,
+    min_confidence: float = 0.7,
+    force_training: bool = False,
+) -> Dict[str, Any]:
+    """
+    Evaluate and train a specific modality
+
+    Process:
+    1. Collect training examples from spans
+    2. Build modeling context
+    3. Decide whether to train (XGBoost decision model)
+    4. Select training strategy (pure_real, hybrid, synthetic)
+    5. Train modality-specific DSPy model
+    6. Record training history
+    """
+
+def predict_agent(
+    self,
+    query: str,
+    modality: QueryModality,
+    query_features: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Predict best agent using trained modality model
+
+    Returns:
+        {"recommended_agent", "confidence", "reasoning", "modality"}
+    """
+```
+
+---
+
+### 9. ModalityEvaluator (modality_evaluator.py:19-521)
+
+**Purpose**: Converts routing spans into modality-specific training examples with specialized features
+
+**Key Features**:
+
+- Converts Phoenix spans to ModalityExample objects
+- Extracts modality-specific features from span attributes
+- Supports synthetic data augmentation
+- Filters examples based on quality thresholds
+
+**Modality-Specific Features**:
+
+| Modality | Feature Categories |
+|----------|-------------------|
+| VIDEO | temporal constraints, tutorial indicators, visual content needs |
+| DOCUMENT | citation requirements, technical depth, document type |
+| IMAGE | diagram type, visual complexity, annotation needs |
+| AUDIO | audio type, duration preference, transcript requirements |
+
+**Key Methods**:
+
+```python
+async def create_training_examples(
+    self,
+    lookback_hours: int = 24,
+    min_confidence: float = 0.7,
+    augment_with_synthetic: bool = False,
+    synthetic_ratio: float = 0.3,
+) -> Dict[QueryModality, List[ModalityExample]]:
+    """
+    Create modality-specific training examples from spans
+
+    Returns:
+        {
+            QueryModality.VIDEO: [example1, example2, ...],
+            QueryModality.DOCUMENT: [example3, example4, ...],
+            ...
+        }
+    """
+```
+
+---
+
+### 10. ModalityMetricsTracker (modality_metrics.py:20-361)
+
+**Purpose**: Track per-modality performance metrics including latency percentiles, success rates, and error patterns
+
+**Metrics Tracked**:
+
+- Latency (P50, P95, P99)
+- Success rate
+- Error count by type
+- Request volume
+- Throughput (QPS)
+
+**Key Methods**:
+
+```python
+def record_modality_execution(
+    self,
+    modality: QueryModality,
+    latency_ms: float,
+    success: bool,
+    error: Optional[str] = None,
+):
+    """
+    Record execution metrics for a modality
+
+    Maintains rolling window of latencies (default: 1000 samples)
+    """
+
+def get_modality_stats(self, modality: QueryModality) -> Dict[str, Any]:
+    """
+    Get aggregated stats for modality
+
+    Returns:
+        {
+            "modality": str,
+            "total_requests": int,
+            "success_count": int,
+            "error_count": int,
+            "success_rate": float,
+            "p50_latency": float,
+            "p95_latency": float,
+            "p99_latency": float,
+            "avg_latency": float,
+            "error_breakdown": {error_type: count},
+            "throughput_qps": float,
+        }
+    """
+```
+
+---
+
+### 11. XGBoost Meta-Models (xgboost_meta_models.py:62-619)
+
+**Purpose**: XGBoost-based meta-models for automatic training decisions without hardcoded thresholds
+
+**Classes**:
+
+**TrainingDecisionModel**: Predicts if training will be beneficial
+
+```python
+def should_train(self, context: ModelingContext) -> Tuple[bool, float]:
+    """
+    Predict if training will be beneficial
+
+    Input Features:
+    - real_sample_count
+    - synthetic_sample_count
+    - success_rate, avg_confidence
+    - days_since_last_training
+    - current_performance_score
+    - data_quality_score, feature_diversity
+
+    Returns:
+        (should_train: bool, expected_improvement: float)
+    """
+```
+
+**TrainingStrategyModel**: Selects optimal training strategy
+
+```python
+class TrainingStrategy(Enum):
+    PURE_REAL = "pure_real"    # Train on real data only
+    HYBRID = "hybrid"          # Mix real + synthetic
+    SYNTHETIC = "synthetic"    # Synthetic only (cold start)
+    SKIP = "skip"              # Skip training
+
+def select_strategy(self, context: ModelingContext) -> TrainingStrategy:
+    """Select optimal training strategy based on context"""
+```
+
+**FusionBenefitModel**: Predicts benefit of multi-modal fusion
+
+```python
+def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
+    """
+    Predict fusion benefit from context
+
+    Features:
+    - primary_modality_confidence
+    - secondary_modality_confidence
+    - modality_agreement
+    - query_ambiguity_score
+    - historical_fusion_success_rate
+
+    Returns:
+        Expected benefit (0-1)
+    """
+```
+
+---
+
+### 12. ContextualAnalyzer (contextual_analyzer.py:34-441)
+
+**Purpose**: Maintains cross-modal context across queries to improve routing and search quality
+
+**Key Features**:
+
+- Conversation history tracking
+- Modality preference learning
+- Topic evolution tracking
+- Temporal pattern recognition
+- Context-aware routing hints
+
+**Key Methods**:
+
+```python
+def update_context(
+    self,
+    query: str,
+    detected_modalities: List[str],
+    result: Optional[Any] = None,
+    result_count: int = 0,
+):
+    """
+    Track user query and update context
+
+    Updates:
+    - Conversation history (deque with max size)
+    - Modality preferences (count per modality)
+    - Topic tracking (keyword extraction)
+    - Temporal patterns (hourly distribution)
+    """
+
+def get_contextual_hints(self, current_query: str) -> Dict[str, Any]:
+    """
+    Get context-aware routing hints
+
+    Returns:
+        {
+            "preferred_modality": str,
+            "recent_topics": List[str],
+            "session_stats": {...},
+            "temporal_context": {...}
+        }
+    """
+```
+
+---
+
+### 13. LLMAutoAnnotator (llm_auto_annotator.py:46-294)
+
+**Purpose**: Uses LLM to analyze routing spans and provide initial annotations for training data
+
+**Annotation Labels**:
+
+| Label | Description |
+|-------|-------------|
+| CORRECT_ROUTING | Right agent chosen |
+| WRONG_ROUTING | Wrong agent chosen |
+| AMBIGUOUS | Multiple agents could work |
+| INSUFFICIENT_INFO | Cannot determine |
+
+**Key Methods**:
+
+```python
+def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
+    """
+    Generate automatic annotation for a routing decision
+
+    Analyzes:
+    - Original query and context
+    - Routing decision (chosen agent + confidence)
+    - Downstream execution results
+    - Error messages or failure indicators
+
+    Returns:
+        AutoAnnotation {
+            span_id: str,
+            label: AnnotationLabel,
+            confidence: float,
+            reasoning: str,
+            suggested_correct_agent: Optional[str],
+            requires_human_review: bool
+        }
+    """
+```
+
+**Model Configuration**:
+
+```python
+# Default model: claude-3-5-sonnet-20241022
+# Override via environment:
+#   ANNOTATION_MODEL=gemini-pro
+#   ANNOTATION_API_BASE=http://localhost:11434
+```
+
+---
+
+### 14. ProfilePerformanceOptimizer (profile_performance_optimizer.py:51-390)
+
+**Purpose**: Learns which backend profile works best for different query types using XGBoost
+
+**Query Features**:
+
+- query_length, word_count
+- has_temporal_keywords (when, before, after, timeline, etc.)
+- has_spatial_keywords (where, location, near, scene, etc.)
+- has_object_keywords (object, person, what, who, etc.)
+- avg_word_length
+
+**Key Methods**:
+
+```python
+def predict_best_profile(
+    self,
+    query_text: str,
+) -> Tuple[str, float]:
+    """
+    Predict best profile for query
+
+    Uses Phoenix evaluation data to learn:
+    (query_features, profile, ndcg) → best_profile
+
+    Returns:
+        (best_profile: str, confidence: float)
+    """
+
+async def extract_training_data_from_phoenix(
+    self,
+    tenant_id: str,
+    project_name: str,
+    start_time=None,
+    end_time=None,
+    min_samples: int = 10,
+) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+    """
+    Extract training data from telemetry provider evaluation spans
+
+    Args:
+        tenant_id: Tenant identifier
+        project_name: Project name for span query
+        start_time: Start time for span query
+        end_time: End time for span query
+        min_samples: Minimum samples required
+
+    Returns:
+        Tuple of (features_array, labels_array, profile_names)
+    """
+```
+
+---
+
+### 15. LazyModalityExecutor (lazy_executor.py:16-309)
+
+**Purpose**: Execute expensive modalities only when needed based on cost/benefit analysis
+
+**Cost Ranking** (fast → slow):
+
+| Modality | Cost | Description |
+|----------|------|-------------|
+| TEXT | 1 | Fastest |
+| DOCUMENT | 2 | Fast |
+| IMAGE | 5 | Medium |
+| VIDEO | 8 | Slow |
+| AUDIO | 10 | Slower |
+| MIXED | 15 | Multiple modalities |
+
+**Key Methods**:
+
+```python
+async def execute_with_lazy_evaluation(
+    self,
+    query: str,
+    modalities: List[QueryModality],
+    context: Dict[str, Any],
+    modality_executor: Callable,
+) -> Dict[str, Any]:
+    """
+    Execute modalities with lazy evaluation
+
+    Strategy:
+    1. Sort modalities by cost (cheap first)
+    2. Execute in order, checking quality threshold
+    3. Stop early when sufficient results achieved
+
+    Returns:
+        {
+            "results": {modality: result},
+            "executed_modalities": [modality1, modality2],
+            "skipped_modalities": [modality3],
+            "early_stopped": bool,
+            "total_cost": int,
+        }
+    """
+```
+
+**Execution Stats**:
+
+```python
+# Track execution patterns
+executor.execution_stats = {
+    "total_executions": int,
+    "early_stops": int,       # Stopped before all modalities
+    "full_executions": int,   # Executed all modalities
+    "modalities_skipped": int # Total skipped due to early stop
+}
+```
 
 ---
 
@@ -700,26 +1146,26 @@ def get_cache_stats(
 # Tiered mode (default)
 if routing_mode == "tiered":
     # Try Tier 1 (GLiNER)
-    result = await gliner_strategy.route_query(query)
-    if result.confidence >= 0.7:
+    result = await gliner_strategy.route(query)
+    if result.confidence_score >= 0.7:
         return result
 
     # Fallback to Tier 2 (LLM)
-    result = await llm_strategy.route_query(query)
-    if result.confidence >= 0.6:
+    result = await llm_strategy.route(query)
+    if result.confidence_score >= 0.6:
         return result
 
     # Fallback to Tier 3 (LangExtract)
-    result = await langextract_strategy.route_query(query)
+    result = await langextract_strategy.route(query)
     return result  # Always succeeds
 
 # Ensemble mode
 elif routing_mode == "ensemble":
     # Run multiple strategies in parallel
     results = await asyncio.gather(
-        gliner_strategy.route_query(query),
-        llm_strategy.route_query(query),
-        keyword_strategy.route_query(query)
+        gliner_strategy.route(query),
+        llm_strategy.route(query),
+        keyword_strategy.route(query)
     )
 
     # Weighted voting
@@ -738,7 +1184,7 @@ elif routing_mode == "ensemble":
 
 ### GRPO Optimization Lifecycle
 
-```
+```text
 1. EXPERIENCE COLLECTION
    ├─ Query + entities + relationships
    ├─ Agent selection + confidence
@@ -834,91 +1280,45 @@ else:
 
 ### Complete Routing Flow with Optimization
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                     USER QUERY                          │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              QUERY ENHANCEMENT PIPELINE                 │
-│  1. Extract entities and relationships (GLiNER)         │
-│  2. Try SIMBA pattern matching                          │
-│  3. Fallback to DSPy baseline enhancement               │
-│                                                          │
-│  Output: enhanced_query, expansions, phrases            │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              MODALITY CACHE CHECK                       │
-│  • Generate cache key (hash of query + modality)        │
-│  • Check per-modality LRU cache                         │
-│  • Verify TTL (default: 3600s)                          │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                [cache miss]
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              TIERED ROUTING DECISION                    │
-│  Tier 1: GLiNER (50-100ms, conf > 0.7)                 │
-│     └─ Success? Return decision                         │
-│                                                          │
-│  Tier 2: LLM (500-1000ms, conf > 0.6)                  │
-│     └─ Success? Return decision                         │
-│                                                          │
-│  Tier 3: LangExtract (2-3s, always succeeds)           │
-│     └─ Return decision                                  │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              GRPO OPTIMIZATION (if enabled)             │
-│  • Check if optimization ready (min experiences)        │
-│  • Apply ε-greedy exploration vs exploitation           │
-│  • Use optimized policy for prediction                  │
-│  • Calibrate confidence score                           │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│         CROSS-MODAL FUSION CHECK (if ambiguous)         │
-│  • Detect multiple modalities                           │
-│  • Predict fusion benefit (XGBoost)                     │
-│  • Decide: use fusion or single modality                │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│                 ROUTING DECISION                        │
-│  {                                                       │
-│    recommended_agent: "video_search_agent",             │
-│    search_modality: "video",                            │
-│    generation_type: "raw_results",                      │
-│    confidence: 0.85,                                    │
-│    enhanced_query: "...",                               │
-│    reasoning: "...",                                    │
-│    optimization_applied: true                           │
-│  }                                                       │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              AGENT EXECUTION                            │
-│  • Route to selected agent                              │
-│  • Execute with enhanced query                          │
-│  • Collect results + quality metrics                    │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│         EXPERIENCE RECORDING (for learning)             │
-│  • Record routing experience                            │
-│  • Compute reward from outcomes                         │
-│  • Trigger optimization if needed                       │
-│  • Record enhancement outcome for SIMBA                 │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    UserQuery["<span style='color:#000'>USER QUERY</span>"]
+
+    Enhancement["<span style='color:#000'>QUERY ENHANCEMENT PIPELINE<br/><br/>1. Extract entities (GLiNER)<br/>2. SIMBA pattern matching<br/>3. DSPy baseline fallback<br/><br/>Output: enhanced_query, expansions</span>"]
+
+    Cache["<span style='color:#000'>MODALITY CACHE CHECK<br/><br/>• Generate cache key<br/>• Check LRU cache<br/>• Verify TTL (3600s)</span>"]
+
+    Tiered["<span style='color:#000'>TIERED ROUTING DECISION<br/><br/>Tier 1: GLiNER (50-100ms, conf > 0.7)<br/>Tier 2: LLM (500-1000ms, conf > 0.6)<br/>Tier 3: LangExtract (2-3s, always succeeds)</span>"]
+
+    GRPO["<span style='color:#000'>GRPO OPTIMIZATION<br/><br/>• Check optimization ready<br/>• ε-greedy exploration<br/>• Apply optimized policy<br/>• Calibrate confidence</span>"]
+
+    Fusion["<span style='color:#000'>CROSS-MODAL FUSION CHECK<br/><br/>• Detect multiple modalities<br/>• Predict fusion benefit (XGBoost)<br/>• Decide: fusion or single</span>"]
+
+    Decision["<span style='color:#000'>ROUTING DECISION<br/><br/>primary_agent<br/>search_modality<br/>confidence_score<br/>enhanced_query</span>"]
+
+    Execution["<span style='color:#000'>AGENT EXECUTION<br/><br/>• Route to selected agent<br/>• Execute with enhanced query<br/>• Collect results + metrics</span>"]
+
+    Recording["<span style='color:#000'>EXPERIENCE RECORDING<br/><br/>• Record routing experience<br/>• Compute reward<br/>• Trigger optimization<br/>• Record SIMBA outcome</span>"]
+
+    UserQuery --> Enhancement
+    Enhancement --> Cache
+    Cache -->|cache miss| Tiered
+    Cache -->|cache hit| Decision
+    Tiered --> GRPO
+    GRPO --> Fusion
+    Fusion --> Decision
+    Decision --> Execution
+    Execution --> Recording
+
+    style UserQuery fill:#90caf9,stroke:#1565c0,color:#000
+    style Enhancement fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Cache fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Tiered fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GRPO fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Fusion fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Decision fill:#b0bec5,stroke:#546e7a,color:#000
+    style Execution fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Recording fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ---
@@ -942,13 +1342,13 @@ llm = LLMRoutingStrategy(config)
 query = "Show me videos of robots playing soccer"
 
 # Try Tier 1 (GLiNER)
-result = await gliner.route_query(query)
-if result.confidence >= 0.7:
-    print(f"Tier 1 success: {result.recommended_agent} (conf: {result.confidence})")
+result = await gliner.route(query)
+if result.confidence_score >= 0.7:
+    print(f"Tier 1 success: {result.primary_agent} (conf: {result.confidence_score})")
 else:
     # Fallback to Tier 2 (LLM)
-    result = await llm.route_query(query)
-    print(f"Tier 2 success: {result.recommended_agent} (conf: {result.confidence})")
+    result = await llm.route(query)
+    print(f"Tier 2 success: {result.primary_agent} (conf: {result.confidence_score})")
 
 # Output:
 # Tier 1 success: video_search_agent (conf: 0.87)
@@ -1014,7 +1414,10 @@ config = AdvancedOptimizerConfig(
     batch_size=32
 )
 
-optimizer = AdvancedRoutingOptimizer(config)
+optimizer = AdvancedRoutingOptimizer(
+    tenant_id="default",  # Required parameter
+    config=config
+)
 
 # Record routing experience
 reward = await optimizer.record_routing_experience(
@@ -1058,8 +1461,8 @@ print(f"Optimization ready: {recommendations['optimization_ready']}")
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
-# Initialize optimizer
-optimizer = CrossModalOptimizer()
+# Initialize optimizer (tenant_id is required)
+optimizer = CrossModalOptimizer(tenant_id="default")
 
 # Predict fusion benefit
 benefit = optimizer.predict_fusion_benefit(
@@ -1156,6 +1559,7 @@ for mod, mod_stats in all_stats.items():
 ### Performance Optimization
 
 **Latency Targets**:
+
 - Tier 1 (GLiNER): <100ms p95
 - Tier 2 (LLM): <1000ms p95
 - Tier 3 (LangExtract): <3000ms p95
@@ -1163,6 +1567,7 @@ for mod, mod_stats in all_stats.items():
 - Overall routing: <150ms p95 (with cache)
 
 **Throughput**:
+
 - GLiNER: ~100 queries/sec (single GPU)
 - LLM: ~10 queries/sec (local Ollama)
 - Cache: ~10,000 queries/sec
@@ -1244,9 +1649,12 @@ llm_config["max_tokens"] = 100  # Limit output length
 
 **Example Monitoring Setup**:
 ```python
-from cogniverse_core.telemetry.manager import TelemetryManager
+import time
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 
 telemetry = TelemetryManager()
+metrics_tracker = ModalityMetricsTracker()
 
 with telemetry.span(
     name="routing_decision",
@@ -1257,16 +1665,19 @@ with telemetry.span(
         "tier": "gliner"
     }
 ) as span:
-    result = await gliner.route_query(query)
+    start_time = time.time()
+    result = await gliner.route(query)
+    latency_ms = (time.time() - start_time) * 1000
 
-    span.set_attribute("recommended_agent", result.recommended_agent)
-    span.set_attribute("confidence", result.confidence)
-    span.set_attribute("latency_ms", result.latency_ms)
+    span.set_attribute("primary_agent", result.primary_agent)
+    span.set_attribute("confidence_score", result.confidence_score)
+    span.set_attribute("search_modality", result.search_modality.value)
+    span.set_attribute("routing_method", result.routing_method)
 
-    # Record modality metrics
-    telemetry.record_modality_metrics(
+    # Record modality metrics using separate tracker
+    metrics_tracker.record_modality_execution(
         modality=result.search_modality,
-        latency_ms=result.latency_ms,
+        latency_ms=latency_ms,
         success=True
     )
 ```
@@ -1283,12 +1694,12 @@ class GLiNERRoutingStrategy:
             recovery_timeout=30.0   # Try recovery after 30s
         )
 
-    async def route_query(self, query):
+    async def route(self, query):
         try:
             return self.circuit_breaker.call(self._route_with_gliner, query)
         except CircuitBreakerOpen:
             # Fallback to next tier
-            return await self.fallback_strategy.route_query(query)
+            return await self.fallback_strategy.route(query)
 ```
 
 **Graceful Degradation**:
@@ -1296,22 +1707,22 @@ class GLiNERRoutingStrategy:
 # Tiered routing provides automatic fallback
 try:
     # Try Tier 1 (GLiNER - fast)
-    result = await gliner.route_query(query)
-    if result.confidence >= 0.7:
+    result = await gliner.route(query)
+    if result.confidence_score >= 0.7:
         return result
 except Exception as e:
     logger.warning(f"Tier 1 failed: {e}")
 
 try:
     # Fallback to Tier 2 (LLM - medium)
-    result = await llm.route_query(query)
-    if result.confidence >= 0.6:
+    result = await llm.route(query)
+    if result.confidence_score >= 0.6:
         return result
 except Exception as e:
     logger.warning(f"Tier 2 failed: {e}")
 
 # Fallback to Tier 3 (LangExtract - slow but reliable)
-result = await langextract.route_query(query)
+result = await langextract.route(query)
 return result  # Always succeeds
 ```
 
@@ -1360,61 +1771,90 @@ config = tenant_configs[tenant_id]
 Located in: `tests/routing/unit/`
 
 **Key Test Files**:
-- `test_tiered_routing.py` - Tiered routing logic
-- `test_advanced_routing_optimizer.py` - GRPO optimization
-- `test_query_enhancement.py` - Query enhancement strategies
+
 - `test_modality_cache.py` - Cache management
+- `test_modality_evaluator.py` - Modality evaluator tests
+- `test_modality_optimizer.py` - Per-modality optimization
+- `test_modality_metrics.py` - Modality metrics tracking
+- `test_cross_modal_optimizer.py` - Cross-modal fusion tests
+- `test_lazy_executor.py` - Lazy execution tests
+- `test_contextual_analyzer.py` - Contextual analysis tests
+- `test_routing_strategies.py` - Routing strategy tests
+- `test_xgboost_meta_models.py` - XGBoost meta-model tests
 
 **Example Test**:
 ```python
-# tests/routing/unit/test_tiered_routing.py
+# tests/routing/unit/test_modality_cache.py
 
 import pytest
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_agents.routing.modality_cache import ModalityCacheManager
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 @pytest.mark.asyncio
-async def test_gliner_routing_high_confidence():
-    """Test GLiNER returns decision with high confidence"""
-    strategy = GLiNERRoutingStrategy()
+async def test_cache_hit_and_miss():
+    """Test cache hit and miss behavior"""
+    cache = ModalityCacheManager(cache_size_per_modality=10)
 
-    result = await strategy.route_query(
-        "Show me videos of robots playing soccer"
-    )
+    query = "machine learning tutorials"
+    modality = QueryModality.VIDEO
 
-    assert result.recommended_agent == "video_search_agent"
-    assert result.search_modality == "video"
-    assert result.confidence >= 0.7
-    assert "robot" in [e["text"] for e in result.extracted_entities]
+    # First access should be a miss
+    result = cache.get_cached_result(query, modality)
+    assert result is None
+
+    # Cache a result
+    cache.cache_result(query, modality, {"results": ["video1", "video2"]})
+
+    # Second access should be a hit
+    result = cache.get_cached_result(query, modality)
+    assert result is not None
+    assert "results" in result
 ```
 
 ### Integration Tests
 Located in: `tests/routing/integration/`
 
 **Key Test Files**:
+
 - `test_tiered_routing.py` - End-to-end tiered routing
 - `test_routing_agent_with_advanced_features.py` - Full routing agent
 - `test_orchestration_end_to_end.py` - Multi-agent orchestration with routing
 - `test_e2e_cache_lazy_metrics.py` - Caching with metrics
+- `test_modality_routing_integration.py` - Per-modality routing integration
+- `test_complete_optimization_integration.py` - Complete optimization flow
+- `test_modality_optimization_integration.py` - Modality optimization integration
+- `test_routing_span_evaluator_integration.py` - Routing span evaluator tests
+- `test_production_routing_integration.py` - Production-level integration tests
 
 **Example Test**:
 ```python
-# tests/routing/integration/test_tiered_routing.py
+# tests/routing/integration/test_e2e_cache_lazy_metrics.py
 
 @pytest.mark.integration
-async def test_tiered_routing_fallback():
-    """Test tiered routing falls back from GLiNER to LLM"""
-    orchestrator = TieredRoutingOrchestrator()
+async def test_cache_integration_with_metrics():
+    """Test cache integration with metrics tracking"""
+    cache = ModalityCacheManager(cache_size_per_modality=100)
+    metrics = ModalityMetricsTracker()
 
-    # Ambiguous query (GLiNER should have low confidence)
-    query = "Find information about quantum computing applications"
+    query = "Find videos about machine learning"
+    modality = QueryModality.VIDEO
 
-    result = await orchestrator.route_with_fallback(query)
+    # First request (cache miss)
+    result1 = cache.get_cached_result(query, modality)
+    assert result1 is None
+    metrics.record_modality_execution(modality, latency_ms=150, success=True)
 
-    # Should fallback to LLM
-    assert result.tier_used == "llm"
-    assert result.confidence >= 0.6
-    assert result.recommended_agent in ["video_search_agent", "text_search_agent"]
-    assert result.fallback_from == "gliner"
+    # Cache result
+    cache.cache_result(query, modality, {"videos": ["v1", "v2"]})
+
+    # Second request (cache hit)
+    result2 = cache.get_cached_result(query, modality)
+    assert result2 is not None
+    metrics.record_modality_execution(modality, latency_ms=1, success=True)
+
+    # Verify cache stats
+    stats = cache.get_cache_stats(modality)
+    assert stats["hit_rate"] > 0
 ```
 
 ### E2E Tests
@@ -1422,42 +1862,38 @@ Located in: `tests/routing/integration/`
 
 **Example E2E Test**:
 ```python
-@pytest.mark.e2e
-async def test_complete_routing_with_optimization():
-    """Test complete routing flow with GRPO optimization"""
-    # Initialize full stack
-    config = RoutingConfig(routing_mode="tiered")
-    orchestrator = TieredRoutingOrchestrator(config)
-    optimizer = AdvancedRoutingOptimizer()
+@pytest.mark.integration
+async def test_complete_routing_with_cache_and_metrics():
+    """Test complete routing flow with caching and metrics"""
+    # Initialize components
+    cache = ModalityCacheManager(cache_size_per_modality=100)
+    metrics = ModalityMetricsTracker()
 
     query = "Show videos of Boston Dynamics Atlas robot"
+    modality = QueryModality.VIDEO
 
-    # 1. Route query
-    routing_result = await orchestrator.route_with_fallback(query)
+    # 1. First request (cache miss)
+    start_time = time.time()
+    cached_result = cache.get_cached_result(query, modality)
+    assert cached_result is None
 
-    # 2. Execute agent (simulated)
-    search_results = await execute_agent(
-        routing_result.recommended_agent,
-        routing_result.enhanced_query
-    )
+    # 2. Simulate search execution
+    search_results = {"videos": ["atlas_v1.mp4", "atlas_v2.mp4"]}
+    latency_ms = (time.time() - start_time) * 1000
 
-    # 3. Record experience for optimization
-    reward = await optimizer.record_routing_experience(
-        query=query,
-        entities=routing_result.extracted_entities,
-        relationships=routing_result.extracted_relationships,
-        enhanced_query=routing_result.enhanced_query,
-        chosen_agent=routing_result.recommended_agent,
-        routing_confidence=routing_result.confidence,
-        search_quality=0.9,
-        agent_success=True,
-        processing_time=0.5
-    )
+    # 3. Cache results
+    cache.cache_result(query, modality, search_results)
+    metrics.record_modality_execution(modality, latency_ms, success=True)
 
-    # Assertions
-    assert routing_result.recommended_agent == "video_search_agent"
-    assert reward > 0.7  # Good reward
-    assert len(search_results) > 0
+    # 4. Second request (cache hit)
+    cached_result = cache.get_cached_result(query, modality)
+    assert cached_result is not None
+    assert cached_result["videos"] == search_results["videos"]
+
+    # 5. Verify metrics
+    stats = metrics.get_modality_stats(modality)
+    assert stats["success_rate"] == 1.0
+    assert stats["total_requests"] == 1
 ```
 
 ---
@@ -1465,9 +1901,13 @@ async def test_complete_routing_with_optimization():
 ## Next Steps
 
 For detailed information on related modules:
+
 - **Agents Module** (`agents.md`) - Multi-agent orchestration and specialized agents (libs/agents/cogniverse_agents/)
+
 - **Common Module** (`common.md`) - Shared configuration and utilities (libs/core/cogniverse_core/common/)
-- **Telemetry Module** (`telemetry.md`) - Multi-tenant observability (libs/core/cogniverse_core/telemetry/)
+
+- **Telemetry Module** (`telemetry.md`) - Multi-tenant observability (libs/foundation/cogniverse_foundation/telemetry/)
+
 - **Evaluation Module** (`evaluation.md`) - Experiment tracking and metrics (libs/core/cogniverse_core/evaluation/)
 
 ---
@@ -1481,6 +1921,7 @@ For detailed information on related modules:
 6. Use integration tests to understand end-to-end routing flow
 
 **Key Takeaways**:
+
 - Tiered routing provides the best balance of speed and accuracy
 - GRPO optimization improves routing decisions over time (requires 50+ experiences)
 - Query enhancement with SIMBA learns from successful patterns

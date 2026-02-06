@@ -42,7 +42,7 @@ Base classes and utilities for configuration management across the platform:
 
 **Core Components:**
 - `AgentConfig`: Base configuration class for agent settings
-- `UnifiedConfig`: Unified configuration interface across all components
+- `SystemConfig`: System-level configuration (agent URLs, backends, telemetry)
 - `ConfigManager`: Centralized configuration management
 - `APIMixin`: API configuration integration mixin
 - `ConfigSchema`: Pydantic schemas for configuration validation
@@ -196,21 +196,23 @@ TelemetryRegistry.register("custom", CustomTelemetryProvider)
 telemetry = TelemetryRegistry.get("custom")(config={"endpoint": "..."})
 ```
 
-### Unified Configuration
+### System Configuration
 
 ```python
-from cogniverse_foundation.config import UnifiedConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Load unified configuration for a component
-unified_config = UnifiedConfig.from_file("config.yaml")
+# Load configuration via ConfigManager
+config_manager = create_default_config_manager()
+system_config = config_manager.get_system_config(tenant_id="acme")
 
-# Access different configuration sections
-agent_config = unified_config.agent
-telemetry_config = unified_config.telemetry
-backend_config = unified_config.backend
-
-# Validate configuration
-unified_config.validate()
+# Or create directly
+system_config = SystemConfig(
+    tenant_id="acme",
+    backend_url="http://localhost",
+    backend_port=8080,
+    environment="production",
+)
 ```
 
 ## Architecture Position

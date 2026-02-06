@@ -17,7 +17,7 @@ The Fine-Tuning module provides end-to-end infrastructure for adapting LLM and e
 - [Configuration](#configuration)
 - [Backend Support](#backend-support)
 - [Training Methods](#training-methods)
-- [Validation & Error Handling](#validation--error-handling)
+- [Validation & Error Handling](#validation-error-handling)
 - [Best Practices](#best-practices)
 
 ---
@@ -51,30 +51,37 @@ The Fine-Tuning module enables continuous improvement of AI agents by learning f
 
 ### High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Fine-Tuning Orchestrator                     │
-│                                                                   │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │  Dataset     │    │   Method     │    │  Training    │      │
-│  │  Extraction  │───▶│  Selection   │───▶│  Execution   │      │
-│  └──────────────┘    └──────────────┘    └──────────────┘      │
-│         │                     │                     │            │
-│         ▼                     ▼                     ▼            │
-│  Phoenix Telemetry    Auto SFT/DPO     Local/Remote GPU        │
-└─────────────────────────────────────────────────────────────────┘
-         │                     │                     │
-         ▼                     ▼                     ▼
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Phoenix    │      │  Synthetic   │      │   Backend    │
-│   Provider   │      │   Service    │      │   Provider   │
-│ (Spans+Anno) │      │   (DSPy)     │      │ (Local/Modal)│
-└──────────────┘      └──────────────┘      └──────────────┘
+```mermaid
+flowchart TB
+    subgraph Orchestrator["<span style='color:#000'>Fine-Tuning Orchestrator</span>"]
+        Dataset["<span style='color:#000'>Dataset<br/>Extraction</span>"]
+        Method["<span style='color:#000'>Method<br/>Selection</span>"]
+        Training["<span style='color:#000'>Training<br/>Execution</span>"]
+
+        Dataset --> Method
+        Method --> Training
+    end
+
+    Phoenix["<span style='color:#000'>Phoenix Provider<br/>(Spans+Anno)</span>"]
+    Synthetic["<span style='color:#000'>Synthetic Service<br/>(DSPy)</span>"]
+    Backend["<span style='color:#000'>Backend Provider<br/>(Local/Modal)</span>"]
+
+    Dataset --> Phoenix
+    Method --> Synthetic
+    Training --> Backend
+
+    style Orchestrator fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Dataset fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Method fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Training fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Synthetic fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Backend fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### Component Architecture
 
-```
+```text
 cogniverse-finetuning/
 │
 ├── orchestrator.py          # High-level coordination
@@ -88,14 +95,25 @@ cogniverse-finetuning/
 │   ├── preference_extractor.py # Phoenix → DPO pairs
 │   ├── embedding_extractor.py  # Search logs → triplets
 │   ├── method_selector.py      # Auto SFT/DPO selection
-│   └── formatters.py            # TRL format conversion
+│   ├── formatters.py            # TRL format conversion
+│   └── utils.py                 # Utilities
 │
 ├── training/                # Model training
 │   ├── backend.py               # Backend abstraction
 │   ├── sft_trainer.py           # SFT with TRL
 │   ├── dpo_trainer.py           # DPO with TRL
 │   ├── embedding_finetuner.py   # Triplet loss
-│   └── modal_runner.py          # Remote GPU execution
+│   ├── modal_runner.py          # Remote GPU execution
+│   └── modal_app.py             # Modal deployment
+│
+├── registry/                # Adapter lifecycle management
+│   ├── adapter_registry.py      # Main registry interface
+│   ├── models.py                # Data models
+│   ├── storage.py               # Storage backends
+│   └── inference.py             # Inference helpers
+│
+├── evaluation/              # Adapter evaluation
+│   └── adapter_evaluator.py    # Automatic adapter evaluation
 │
 └── __init__.py             # Public API
 ```
@@ -109,6 +127,7 @@ cogniverse-finetuning/
 **Purpose**: High-level coordination of fine-tuning pipeline.
 
 **Key Classes**:
+
 - `FinetuningOrchestrator`: Main entry point
 - `OrchestrationConfig`: Configuration dataclass
 - `OrchestrationResult`: Training result
@@ -129,8 +148,20 @@ async def finetune(
     model_type: Literal["llm", "embedding"],
     agent_type: Optional[str] = None,
     modality: Optional[str] = None,
+    base_model: str = "HuggingFaceTB/SmolLM-135M",
     backend: Literal["local", "remote"] = "local",
-    **kwargs
+    backend_provider: str = "modal",
+    epochs: int = 3,
+    batch_size: int = 4,
+    learning_rate: float = 2e-4,
+    gpu: str = "A10G",
+    gpu_count: int = 1,
+    cpu: int = 4,
+    memory: int = 16384,
+    timeout: int = 3600,
+    synthetic_service: Optional[any] = None,
+    approval_orchestrator: Optional[any] = None,
+    output_dir: str = "outputs/adapters"
 ) -> OrchestrationResult
 ```
 
@@ -207,6 +238,7 @@ Triplet(
     anchor="query text",
     positive="relevant document",
     negative="irrelevant document",
+    modality="video",  # Required: "video", "image", or "text"
     metadata={"search_id": "..."}
 )
 ```
@@ -258,10 +290,11 @@ from cogniverse_finetuning.dataset.trace_converter import TraceToTrajectoryConve
 converter = TraceToTrajectoryConverter(telemetry_provider)
 
 # Extract trajectories from Phoenix
-dataset = await converter.extract_trajectories(
+dataset = await converter.convert(
     project="cogniverse-tenant1",
+    agent_type="routing",
     min_turns_per_session=2,      # Minimum turns for multi-turn
-    include_annotations=True,     # Include session annotations
+    require_session_annotation=False,  # Include session annotations
     start_time=datetime.now() - timedelta(days=7)
 )
 
@@ -282,13 +315,10 @@ for traj in dataset.trajectories[:3]:
 
 ```python
 # Save to JSONL
-dataset.save_jsonl("trajectories.jsonl")
+dataset.save("trajectories.jsonl", format="jsonl")
 
 # Save to Parquet
-dataset.save_parquet("trajectories.parquet")
-
-# Load from file
-loaded = TrajectoryDataset.load_jsonl("trajectories.jsonl")
+dataset.save("trajectories.parquet", format="parquet")
 ```
 
 **JSONL Format**:
@@ -304,7 +334,7 @@ loaded = TrajectoryDataset.load_jsonl("trajectories.jsonl")
 **Purpose**: Auto-select SFT vs DPO based on available data.
 
 **Decision Logic**:
-```
+```text
 IF preference_pairs >= min_dpo_pairs (20):
     ✅ Recommend DPO (more sample-efficient)
 ELIF approved_examples >= min_sft_examples (50):
@@ -340,7 +370,7 @@ print(f"Confidence: {analysis.confidence}")
 **Purpose**: Unified interface for local and remote training.
 
 **Architecture**:
-```
+```text
 TrainingBackend (abstract)
     ├── LocalTrainingBackend    # Local GPU/CPU
     └── RemoteTrainingBackend   # Modal/SageMaker/Azure ML
@@ -361,6 +391,7 @@ class TrainingBackend(ABC):
 **Purpose**: Supervised fine-tuning with HuggingFace TRL.
 
 **Technology Stack**:
+
 - **Library**: TRL `SFTTrainer`
 - **Format**: Alpaca text format (`{"text": "..."}`)
 - **PEFT**: LoRA adapters (r=8, alpha=16)
@@ -383,6 +414,7 @@ class TrainingBackend(ABC):
 **Purpose**: Direct Preference Optimization with HuggingFace TRL.
 
 **Technology Stack**:
+
 - **Library**: TRL `DPOTrainer`
 - **Format**: `{"prompt": "...", "chosen": "...", "rejected": "..."}`
 - **PEFT**: LoRA adapters
@@ -405,6 +437,7 @@ class TrainingBackend(ABC):
 **Purpose**: Fine-tune embedding models with contrastive learning.
 
 **Technology Stack**:
+
 - **Library**: sentence-transformers
 - **Loss**: Triplet loss with margin
 - **PEFT**: LoRA adapters (optional)
@@ -423,6 +456,7 @@ class TrainingBackend(ABC):
 **Purpose**: Convert extracted data to TRL-compatible formats.
 
 **Supported Formats**:
+
 - **Alpaca Text**: `{"text": "### Instruction:\n...\n### Response:\n..."}`
 - **DPO**: `{"prompt": "...", "chosen": "...", "rejected": "..."}`
 - **Triplets**: `{"anchor": "...", "positive": "...", "negative": "..."}`
@@ -439,8 +473,8 @@ The Adapter Registry provides complete lifecycle management for trained adapters
 |-----------|------|-------------|
 | `AdapterRegistry` | `adapter_registry.py` | Main interface for adapter lifecycle management |
 | `AdapterMetadata` | `models.py` | Data model for adapter metadata |
-| `AdapterStoreRegistry` | `libs/core/.../adapter_store_registry.py` | Registry for discovering adapter stores via entry points |
-| `VespaAdapterStore` | `libs/vespa/.../adapter_store.py` | Vespa-backed storage (discovered via registry) |
+| `AdapterStoreRegistry` | `libs/core/cogniverse_core/registries/adapter_store_registry.py` | Registry for discovering adapter stores via entry points |
+| `VespaAdapterStore` | `libs/vespa/cogniverse_vespa/registry/adapter_store.py` | Vespa-backed storage (discovered via registry) |
 | `LocalStorage` | `storage.py` | Local filesystem storage backend |
 | `HuggingFaceStorage` | `storage.py` | HuggingFace Hub storage backend |
 | Inference Helpers | `inference.py` | vLLM integration utilities |
@@ -484,14 +518,13 @@ from cogniverse_finetuning.registry import upload_adapter, download_adapter
 # Upload to HuggingFace Hub
 upload_adapter(
     local_path="outputs/adapters/sft_routing/",
-    destination_uri="hf://myorg/my-adapter",
-    hf_token="hf_xxx"
+    destination_uri="hf://myorg/my-adapter"
 )
 
 # Download from HuggingFace Hub
 local_path = download_adapter(
     source_uri="hf://myorg/my-adapter",
-    local_dir="/tmp/adapters/"
+    local_path="/tmp/adapters/"
 )
 ```
 
@@ -523,13 +556,15 @@ When `enable_registry=True`, the orchestrator automatically registers adapters a
 ```python
 config = OrchestrationConfig(
     tenant_id="acme_corp",
+    project="cogniverse-acme_corp",
+    model_type="llm",
     agent_type="routing",
     enable_registry=True,           # Auto-register after training
     adapter_version="1.0.0",        # Version for registered adapter
     adapter_storage_uri="hf://org/repo"  # Optional: upload to HuggingFace
 )
 
-result = orchestrator.train_sft(config)
+result = await orchestrator.run(config)
 print(f"Registered adapter: {result.adapter_id}")
 print(f"Storage URI: {result.adapter_uri}")
 ```
@@ -555,87 +590,50 @@ class RoutingAgent(AdapterAwareMixin):
 
 ### End-to-End Flow (LLM Fine-Tuning)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. Data Extraction                                               │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-Phoenix Telemetry Provider
-         │
-         ├─▶ TraceStore.get_spans(project="cogniverse-tenant1")
-         │       └─▶ Returns: spans_df
-         │
-         └─▶ AnnotationStore.get_annotations(spans_df)
-                 └─▶ Returns: annotations_df (with approved/rejected)
+```mermaid
+flowchart TB
+    Step1["<span style='color:#000'>1. Data Extraction</span>"]
+    Phoenix["<span style='color:#000'>Phoenix Telemetry Provider<br/>• TraceStore.get_spans() → spans_df<br/>• AnnotationStore.get_annotations() → annotations_df</span>"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. Method Selection                                              │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-TrainingMethodSelector.analyze_data()
-         │
-         ├─▶ Count approved annotations → SFT examples
-         ├─▶ Count preference pairs (approved + rejected) → DPO pairs
-         │
-         └─▶ Decision:
-             ├─▶ preference_pairs >= 20? → DPO ✅
-             ├─▶ approved >= 50? → SFT ✅
-             └─▶ Else → Generate Synthetic ⚠️
+    Step2["<span style='color:#000'>2. Method Selection</span>"]
+    Selector["<span style='color:#000'>TrainingMethodSelector.analyze_data()<br/>• Count approved → SFT examples<br/>• Count preference pairs → DPO pairs<br/>Decision: DPO (≥20 pairs) / SFT (≥50) / Synthetic</span>"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. Dataset Formatting                                            │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-IF DPO:
-    PreferencePairExtractor.extract()
-         └─▶ InstructionFormatter.format_dpo()
-              └─▶ [{"prompt": "...", "chosen": "...", "rejected": "..."}]
-ELSE (SFT):
-    TraceToInstructionConverter.convert()
-         └─▶ InstructionFormatter.format_alpaca_text()
-              └─▶ [{"text": "### Instruction:\n...\n### Response:\n..."}]
+    Step3["<span style='color:#000'>3. Dataset Formatting</span>"]
+    Format["<span style='color:#000'>DPO: PreferencePairExtractor → format_dpo()<br/>SFT: TraceToInstructionConverter → format_alpaca()</span>"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. Validation                                                    │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-validate_dpo_dataset(dataset) / validate_sft_dataset(dataset)
-         │
-         ├─▶ Check: len(dataset) > 0?
-         ├─▶ Check: Required fields present?
-         └─▶ Raise ValueError if invalid
+    Step4["<span style='color:#000'>4. Validation</span>"]
+    Validate["<span style='color:#000'>validate_dpo_dataset() / validate_sft_dataset()<br/>• Check len(dataset) > 0<br/>• Check required fields present</span>"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. Training                                                      │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-Backend.train_dpo() / Backend.train_sft()
-         │
-         ├─▶ Load base model
-         ├─▶ Apply LoRA (try/except fallback)
-         ├─▶ Split train/val if >100 examples
-         ├─▶ Train with TRL
-         └─▶ Save adapter
+    Step5["<span style='color:#000'>5. Training</span>"]
+    Train["<span style='color:#000'>Backend.train_dpo() / train_sft()<br/>• Load base model<br/>• Apply LoRA<br/>• Split train/val if >100<br/>• Train with TRL<br/>• Save adapter</span>"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│ 6. Return Result                                                 │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-OrchestrationResult(
-    model_type="llm",
-    training_method="dpo",
-    adapter_path="outputs/adapters/dpo_routing_20251124_143052/",
-    metrics={"train_loss": 0.42, "eval_reward_accuracy": 0.78},
-    base_model="HuggingFaceTB/SmolLM-135M",
-    lora_config={"use_lora": True},
-    used_synthetic=False
-)
+    Step6["<span style='color:#000'>6. Return Result</span>"]
+    Result["<span style='color:#000'>OrchestrationResult<br/>model_type, training_method,<br/>adapter_path, metrics</span>"]
+
+    Step1 --> Phoenix
+    Phoenix --> Step2
+    Step2 --> Selector
+    Selector --> Step3
+    Step3 --> Format
+    Format --> Step4
+    Step4 --> Validate
+    Validate --> Step5
+    Step5 --> Train
+    Train --> Step6
+    Step6 --> Result
+
+    style Step1 fill:#90caf9,stroke:#1565c0,color:#000
+    style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Step2 fill:#90caf9,stroke:#1565c0,color:#000
+    style Selector fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step3 fill:#90caf9,stroke:#1565c0,color:#000
+    style Format fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step4 fill:#90caf9,stroke:#1565c0,color:#000
+    style Validate fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step5 fill:#90caf9,stroke:#1565c0,color:#000
+    style Train fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step6 fill:#90caf9,stroke:#1565c0,color:#000
+    style Result fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -645,13 +643,14 @@ OrchestrationResult(
 ### Basic Usage (Local GPU)
 
 ```python
-from cogniverse_telemetry_phoenix import PhoenixProvider
+from cogniverse_foundation.telemetry import TelemetryManager
 from cogniverse_finetuning import finetune
 
-# Initialize provider
-provider = PhoenixProvider(
+# Get telemetry provider
+telemetry_manager = TelemetryManager()
+provider = telemetry_manager.get_provider(
     tenant_id="tenant1",
-    project="cogniverse-tenant1"
+    project_name="cogniverse-tenant1"
 )
 
 # Fine-tune routing agent
@@ -820,6 +819,18 @@ class OrchestrationConfig:
     # Synthetic generation
     generate_synthetic: bool = True
 
+    # Evaluation
+    evaluate_after_training: bool = True  # Auto-evaluate adapter
+    test_set_size: int = 50  # Number of test examples
+
+    # Registry
+    enable_registry: bool = True  # Register adapters in the registry
+    adapter_version: str = "1.0.0"  # Version for registered adapter
+
+    # Storage
+    adapter_storage_uri: Optional[str] = None  # Storage URI to upload adapters (hf://org/repo, file://, etc.)
+    hf_token: Optional[str] = None  # HuggingFace token for hf:// storage
+
     # Output
     output_dir: str = "outputs/adapters"
 ```
@@ -843,6 +854,7 @@ class OrchestrationConfig:
 ### Local Backend
 
 **When to Use**:
+
 - Development/testing
 - Small models (SmolLM-135M)
 - Have local GPU
@@ -853,11 +865,13 @@ backend="local"
 ```
 
 **Pros**:
+
 - ✅ No network latency
 - ✅ No additional costs
 - ✅ Easy debugging
 
 **Cons**:
+
 - ❌ GPU availability
 - ❌ Manual resource management
 - ❌ No automatic scaling
@@ -867,6 +881,7 @@ backend="local"
 ### Remote Backend (Modal)
 
 **When to Use**:
+
 - Production training
 - Large models (>3B)
 - Need powerful GPUs (A100, H100)
@@ -882,12 +897,14 @@ timeout=7200
 ```
 
 **Pros**:
+
 - ✅ Powerful GPUs on-demand
 - ✅ Automatic resource management
 - ✅ Scalable
 - ✅ Pay per use
 
 **Cons**:
+
 - ❌ Network overhead
 - ❌ Usage costs
 - ❌ Requires Modal setup
@@ -905,6 +922,7 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ### Supervised Fine-Tuning (SFT)
 
 **When to Use**:
+
 - Have approved examples (instruction → response)
 - No preference data
 - Bootstrap new agent behavior
@@ -919,11 +937,13 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ```
 
 **Advantages**:
+
 - ✅ Simple data requirements
 - ✅ Fast training
 - ✅ Lower memory (1x model)
 
 **Disadvantages**:
+
 - ❌ Less sample-efficient than DPO
 - ❌ No explicit preference learning
 
@@ -932,6 +952,7 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ### Direct Preference Optimization (DPO)
 
 **When to Use**:
+
 - Have preference pairs (approved + rejected)
 - Want sample-efficient training
 - Align agent with human preferences
@@ -948,22 +969,27 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ```
 
 **Advantages**:
+
 - ✅ More sample-efficient (learns from preferences)
 - ✅ No reward model needed
 - ✅ Industry standard (Anthropic, OpenAI)
 
 **Disadvantages**:
+
 - ❌ Higher memory (2x model)
 - ❌ Requires preference annotations
 
 **Algorithm**:
-```
+```text
 Loss = -log σ(β * (log π_θ(chosen|prompt) - log π_θ(rejected|prompt)))
 ```
 
 Where:
+
 - `π_θ`: Policy model (being trained)
+
 - `β`: KL penalty coefficient (default 0.1)
+
 - `σ`: Sigmoid function
 
 ---
@@ -971,6 +997,7 @@ Where:
 ### Embedding Fine-Tuning
 
 **When to Use**:
+
 - Improve search/retrieval quality
 - Domain adaptation for embeddings
 - Learn from search feedback
@@ -987,48 +1014,43 @@ Where:
 ```
 
 **Loss**: Triplet loss with margin
-```
+```text
 Loss = max(0, margin + sim(anchor, neg) - sim(anchor, pos))
 ```
 
 ---
 
-### Multi-Turn Fine-Tuning (Planned)
+### Multi-Turn Fine-Tuning
 
-**Status**: Phase 5 - Pending Implementation
+Multi-turn fine-tuning trains on conversation trajectories extracted from Phoenix sessions.
 
-Multi-turn fine-tuning will enable training on conversation trajectories extracted from Phoenix sessions.
+**Trajectory Extraction** (implemented in `TraceToTrajectoryConverter`):
 
-**Planned Features**:
-- Extract trajectories using `TraceToTrajectoryConverter`
-- Format for multi-turn SFT (each turn includes conversation history as context)
-- Support `multi_turn: bool` and `min_turns_per_session: int` in `OrchestrationConfig`
-- Train using existing SFT backend with conversation-aware formatting
-
-**Planned Configuration**:
 ```python
-@dataclass
-class OrchestrationConfig:
-    # ... existing fields ...
-    multi_turn: bool = False
-    min_turns_per_session: int = 2
-```
+from cogniverse_finetuning.dataset.trace_converter import TraceToTrajectoryConverter
 
-**Planned Usage**:
-```python
-result = await finetune(
-    telemetry_provider=provider,
-    tenant_id="tenant1",
+converter = TraceToTrajectoryConverter(telemetry_provider)
+dataset = await converter.convert(
     project="cogniverse-tenant1",
-    model_type="llm",
     agent_type="routing",
-    multi_turn=True,
     min_turns_per_session=2,
-    backend="local"
+    require_session_annotation=False,
 )
+
+print(f"Extracted {len(dataset.trajectories)} conversations")
+print(f"Total turns: {sum(len(t.turns) for t in dataset.trajectories)}")
 ```
+
+Data models: `ConversationTurn`, `ConversationTrajectory`, `TrajectoryDataset` (with `.to_dataframe()`, `.save()`)
+
+**Not yet integrated with training**:
+
+- `multi_turn: bool` and `min_turns_per_session: int` parameters in `OrchestrationConfig`
+- SFT formatter that includes conversation history as context per turn
+- `finetune()` orchestrator wiring for multi-turn mode
 
 **Future Enhancements**:
+
 - **DiaTool-DPO**: Trajectory-level DPO when algorithm is released
 - **GRPO with SkyRL**: Online RL for multi-turn agents
 - **Turn Attribution**: Per-turn quality scoring and credit assignment
@@ -1107,6 +1129,7 @@ if len(dataset) > 100:
 ```
 
 **Benefits**:
+
 - Early stopping to prevent overfitting
 - Eval metrics during training
 - Better training quality
@@ -1131,11 +1154,13 @@ output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 ### 1. Data Preparation
 
 **Minimum Data Requirements**:
+
 - SFT: 50+ approved examples
 - DPO: 20+ preference pairs (40+ annotations)
 - Embedding: 100+ triplets
 
 **Data Quality**:
+
 - ✅ Review annotations before training
 - ✅ Use approval workflow for synthetic data
 - ✅ Ensure diversity in training examples
@@ -1146,16 +1171,19 @@ output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 ### 2. Model Selection
 
 **Start Small**:
+
 - Begin with SmolLM-135M for testing
 - Validate pipeline works end-to-end
 - Scale up to larger models
 
 **GPU Memory Guide**:
+
 - SmolLM-135M: 2-4GB (any GPU)
 - Qwen2.5-3B: 12-16GB (RTX 3090, A10G)
 - Llama-3.1-8B: 24-40GB (A100)
 
 **DPO Considerations**:
+
 - Requires 2x GPU memory (loads reference model)
 - Use remote backend for large models
 
@@ -1164,16 +1192,19 @@ output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 ### 3. Training Configuration
 
 **Learning Rate**:
+
 - Small models (135M): 2e-4
 - Medium models (3B): 5e-5
 - Large models (8B+): 2e-5
 
 **Batch Size**:
+
 - Limited GPU memory: Start with batch_size=1-2
 - Ample GPU memory: Use batch_size=4-8
 - Use gradient accumulation if OOM
 
 **Epochs**:
+
 - Small datasets (<100): 3-5 epochs
 - Large datasets (>1000): 1-3 epochs
 - Monitor validation loss to prevent overfitting
@@ -1183,12 +1214,14 @@ output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 ### 4. Backend Selection
 
 **Use Local Backend When**:
+
 - Testing/development
 - Small models (SmolLM-135M)
 - Have available GPU
 - Frequent iterations
 
 **Use Remote Backend When**:
+
 - Production training
 - Large models (>3B)
 - Need powerful GPUs (A100, H100)
@@ -1206,6 +1239,7 @@ logging.basicConfig(level=logging.INFO)
 ```
 
 **Metrics to Monitor**:
+
 - Train loss (should decrease)
 - Eval loss (should decrease, watch for overfitting)
 - DPO reward accuracy (should increase)
@@ -1226,12 +1260,13 @@ logging.basicConfig(level=logging.INFO)
 ### 6. Adapter Management
 
 **Adapter Naming**:
+
 - Timestamped by default: `dpo_routing_20251124_143052/`
 - Prevents overwriting previous adapters
 - Enables A/B testing
 
 **Adapter Storage**:
-```
+```text
 outputs/adapters/
 ├── sft_routing_20251124_120000/
 │   ├── adapter_config.json
@@ -1256,6 +1291,7 @@ model = PeftModel.from_pretrained(base_model, adapter_path)
 ### 7. Production Deployment
 
 **Testing Checklist**:
+
 - [ ] Validate with small test dataset (3-5 examples)
 - [ ] Check GPU memory usage
 - [ ] Verify adapter loads correctly
@@ -1274,10 +1310,12 @@ model = PeftModel.from_pretrained(base_model, adapter_path)
 ### 8. Cost Optimization
 
 **Local Training**:
+
 - No cloud costs
 - Use for small models and testing
 
 **Remote Training**:
+
 - Modal charges per GPU-hour
 - Choose smallest GPU that fits model
 - Use timeout to prevent runaway costs
@@ -1298,7 +1336,7 @@ model = PeftModel.from_pretrained(base_model, adapter_path)
 ### Common Errors
 
 **1. Empty Dataset**:
-```
+```text
 ValueError: Cannot train with empty dataset. No training examples available after formatting.
 ```
 **Solution**: Ensure you have approved annotations in Phoenix.
@@ -1306,7 +1344,7 @@ ValueError: Cannot train with empty dataset. No training examples available afte
 ---
 
 **2. Missing Fields**:
-```
+```text
 ValueError: Invalid DPO dataset at index 5: missing required fields ['chosen', 'rejected'].
 Expected fields: ['prompt', 'chosen', 'rejected'], got: ['prompt', 'text']
 ```
@@ -1315,7 +1353,7 @@ Expected fields: ['prompt', 'chosen', 'rejected'], got: ['prompt', 'text']
 ---
 
 **3. Insufficient Data**:
-```
+```text
 ValueError: Insufficient preference pairs: 15 < 20. Need spans with both approved and rejected annotations.
 ```
 **Solution**: Generate synthetic data or collect more annotations.
@@ -1323,7 +1361,7 @@ ValueError: Insufficient preference pairs: 15 < 20. Need spans with both approve
 ---
 
 **4. GPU Out of Memory**:
-```
+```text
 RuntimeError: CUDA out of memory. Tried to allocate 12.00 GiB
 ```
 **Solution**: Use smaller model, reduce batch size, or use remote backend with larger GPU.
@@ -1331,7 +1369,7 @@ RuntimeError: CUDA out of memory. Tried to allocate 12.00 GiB
 ---
 
 **5. LoRA Application Failure**:
-```
+```text
 WARNING: Failed to apply LoRA (continuing with full fine-tuning): KeyError: 'q_proj'
 ```
 **Impact**: Training continues with full fine-tuning (higher memory usage).
@@ -1346,12 +1384,14 @@ WARNING: Failed to apply LoRA (continuing with full fine-tuning): KeyError: 'q_p
 Fine-tuning extracts data directly from Phoenix:
 
 ```python
-# Phoenix provides TelemetryProvider interface
-provider = PhoenixProvider(tenant_id, project)
+# Get telemetry provider from TelemetryManager
+from cogniverse_foundation.telemetry import TelemetryManager
+telemetry_manager = TelemetryManager()
+provider = telemetry_manager.get_provider(tenant_id="tenant1", project_name="cogniverse-tenant1")
 
 # Fine-tuning uses provider to query spans and annotations
-spans = await provider.traces.get_spans(project)
-annotations = await provider.annotations.get_annotations(spans_df, project)
+spans = await provider.traces.get_spans(project="cogniverse-tenant1")
+annotations = await provider.annotations.get_annotations(spans_df, project="cogniverse-tenant1")
 ```
 
 ---
@@ -1394,7 +1434,7 @@ approved_batch = await approval_orchestrator.submit_for_review(batch)
 
 ## Package Structure
 
-```
+```text
 libs/finetuning/
 ├── cogniverse_finetuning/
 │   ├── __init__.py              # Public API
@@ -1407,16 +1447,23 @@ libs/finetuning/
 │   │   ├── method_selector.py       # Auto-selection
 │   │   ├── formatters.py            # Format conversion
 │   │   └── utils.py                 # Utilities
-│   └── training/
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── backend.py               # Backend abstraction
+│   │   ├── sft_trainer.py           # SFT training
+│   │   ├── dpo_trainer.py           # DPO training
+│   │   ├── embedding_finetuner.py   # Embedding training
+│   │   ├── modal_runner.py          # Modal integration
+│   │   └── modal_app.py             # Modal deployment
+│   ├── registry/
+│   │   ├── __init__.py
+│   │   ├── adapter_registry.py      # Main registry interface
+│   │   ├── models.py                # Data models
+│   │   ├── storage.py               # Storage backends
+│   │   └── inference.py             # Inference helpers
+│   └── evaluation/
 │       ├── __init__.py
-│       ├── backend.py               # Backend abstraction
-│       ├── sft_trainer.py           # SFT training
-│       ├── dpo_trainer.py           # DPO training
-│       ├── embedding_finetuner.py   # Embedding training
-│       ├── modal_runner.py          # Modal integration
-│       └── modal_app.py             # Modal deployment
-├── tests/
-│   └── ... (test files)
+│       └── adapter_evaluator.py     # Automatic adapter evaluation
 ├── pyproject.toml
 └── README.md
 ```
@@ -1434,38 +1481,60 @@ All fine-tuning experiments are automatically logged to Phoenix as EXPERIMENT sp
 Each training run creates an EXPERIMENT span with the following attributes:
 
 **Span Identification**:
+
 - `openinference.span.kind`: "EXPERIMENT"
 - `operation.name`: "fine_tuning"
 - `experiment.run_id`: Unique run ID (e.g., "run_2025-11-24T10:00:00")
 - `experiment.agent_type`: Agent type or modality (e.g., "routing", "video")
 
 **Hyperparameters** (`params.*`):
+
 - `params.base_model`: Base model name (e.g., "HuggingFaceTB/SmolLM-135M")
+
 - `params.method`: Training method ("sft", "dpo", "embedding")
+
 - `params.backend`: Backend type ("local" or "remote")
+
 - `params.backend_provider`: Provider for remote backend ("modal", "sagemaker", etc.)
+
 - `params.epochs`: Number of training epochs
+
 - `params.batch_size`: Batch size
+
 - `params.learning_rate`: Learning rate
+
 - `params.use_lora`: Whether LoRA was used
+
 - `params.lora_r`: LoRA rank (default: 8)
+
 - `params.lora_alpha`: LoRA alpha (default: 16)
 
 **Dataset Info** (`data.*`):
+
 - `data.total_spans`: Total spans in Phoenix
+
 - `data.approved_count`: Number of approved annotations
+
 - `data.rejected_count`: Number of rejected annotations
+
 - `data.preference_pairs`: Number of preference pairs (for DPO)
+
 - `data.dataset_size`: Final training dataset size
+
 - `data.used_synthetic`: Whether synthetic data was used
+
 - `data.synthetic_approved_count`: Number of approved synthetic examples
 
 **Results** (`metrics.*`):
+
 - `metrics.train_loss`: Final training loss
+
 - `metrics.train_samples`: Number of training samples processed
+
 - `metrics.epochs_completed`: Actual epochs completed
 
 **Output** (`output.*`):
+
 - `output.adapter_path`: Path to saved adapter
 
 ### Querying Experiments
@@ -1526,18 +1595,22 @@ After training completes, adapters are automatically evaluated against the base 
 ### Evaluation Metrics
 
 **Accuracy Metrics**:
+
 - `accuracy`: Percentage of correct predictions (0-1)
 - `top_k_accuracy`: Correct prediction in top-k results
 
 **Confidence Metrics**:
+
 - `avg_confidence`: Average confidence score (0-1)
 - `confidence_calibration`: How well confidence matches accuracy
 
 **Error Metrics**:
+
 - `error_rate`: Percentage of incorrect predictions (0-1)
 - `hallucination_rate`: Predictions not in valid output space
 
 **Latency**:
+
 - `avg_latency_ms`: Average inference latency in milliseconds
 - `latency_overhead`: Additional latency from adapter (ms)
 
@@ -1560,9 +1633,13 @@ config = OrchestrationConfig(
 ### Test Set Creation
 
 Evaluation uses a time-based split to ensure test data is NOT in the training set:
+
 - **Training Data**: Older annotations (used for training)
+
 - **Test Data**: Recent annotations (last 7 days)
+
 - **Size**: Configurable (default: 50 examples)
+
 - **Sampling**: Random sample from recent data
 
 ### Evaluation Process
@@ -1579,6 +1656,7 @@ Evaluation uses a time-based split to ensure test data is NOT in the training se
 Each evaluation creates an EVALUATION span with the following attributes:
 
 **Span Identification**:
+
 - `openinference.span.kind`: "EVALUATION"
 - `operation.name`: "adapter_evaluation"
 - `evaluation.adapter_path`: Path to evaluated adapter
@@ -1586,32 +1664,51 @@ Each evaluation creates an EVALUATION span with the following attributes:
 - `evaluation.test_size`: Number of test examples
 
 **Base Model Metrics** (`metrics.base.*`):
+
 - `metrics.base.accuracy`: Base model accuracy
+
 - `metrics.base.confidence`: Base model average confidence
+
 - `metrics.base.error_rate`: Base model error rate
+
 - `metrics.base.hallucination_rate`: Base model hallucination rate
+
 - `metrics.base.latency_ms`: Base model average latency
 
 **Adapter Metrics** (`metrics.adapter.*`):
+
 - `metrics.adapter.accuracy`: Adapter accuracy
+
 - `metrics.adapter.confidence`: Adapter average confidence
+
 - `metrics.adapter.error_rate`: Adapter error rate
+
 - `metrics.adapter.hallucination_rate`: Adapter hallucination rate
+
 - `metrics.adapter.latency_ms`: Adapter average latency
 
 **Improvements** (`improvement.*`):
+
 - `improvement.accuracy`: Accuracy improvement (e.g., 0.18 = 18% improvement)
+
 - `improvement.confidence`: Confidence improvement
+
 - `improvement.error_reduction`: Error rate reduction
+
 - `improvement.latency_overhead`: Additional latency from adapter (ms)
+
 - `improvement.significant`: Statistical significance (boolean)
+
 - `improvement.p_value`: P-value for significance test
 
 ### Statistical Significance
 
 Improvements are tested for statistical significance:
+
 - **Threshold**: Accuracy improvement >5%
+
 - **p-value**: Computed for significance test
+
 - **Result**: `improvement.significant` = true if p < 0.05
 
 ### Dashboard Integration
@@ -1619,13 +1716,14 @@ Improvements are tested for statistical significance:
 Evaluation results are displayed in the Fine-Tuning dashboard:
 
 **Experiment Details View**:
+
 - **Base Model Metrics**: Accuracy, confidence, error rate, hallucination rate, latency
 - **Adapter Model Metrics**: Same metrics for adapter
 - **Improvements**: Side-by-side comparison with delta indicators
 - **Statistical Significance**: Visual indicator (✅/ℹ️) with p-value
 
 **Example**:
-```
+```text
 Base Model Metrics          Adapter Model Metrics
 Accuracy: 65.0%            Accuracy: 83.0%
 Confidence: 72.0%          Confidence: 88.0%
@@ -1671,15 +1769,21 @@ if result.evaluation_result:
 ### Supported Agent Types
 
 Evaluation currently supports:
+
 - **routing**: Agent routing decisions
+
 - **profile_selection**: Backend profile selection
-- **entity_extraction**: Not yet implemented (falls back to exact match)
+
+- **entity_extraction**: Set-based F1 scoring comparing predicted vs expected entity (text, type) tuples
 
 ### Error Handling
 
 Evaluation failures do NOT fail the training pipeline:
+
 - **No Test Data**: Logs warning, continues without evaluation
+
 - **Model Load Failure**: Logs error, continues without evaluation
+
 - **Inference Errors**: Logs error, continues without evaluation
 
 This ensures training can complete even if evaluation fails.
@@ -1687,11 +1791,13 @@ This ensures training can complete even if evaluation fails.
 ### Best Practices
 
 **Test Set Quality**:
+
 - ✅ Ensure recent telemetry data available (last 7 days)
 - ✅ Use realistic test set size (50-100 examples)
 - ✅ Review test set coverage (different query types)
 
 **Interpreting Results**:
+
 - ✅ Focus on statistically significant improvements
 - ✅ Consider latency overhead vs accuracy gains
 - ✅ Compare multiple training runs
@@ -1699,6 +1805,7 @@ This ensures training can complete even if evaluation fails.
 - ❌ Don't ignore high hallucination rates
 
 **When to Retrain**:
+
 - Accuracy improvement <5%: May need more data or better hyperparameters
 - High hallucination rate (>10%): Check dataset quality
 - Large latency overhead (>50ms): Consider distillation or quantization
@@ -1714,14 +1821,16 @@ For larger datasets (>100 examples/pairs), training automatically uses a 90/10 t
 ### Automatic Validation Split
 
 **Trigger Condition**:
+
 - Dataset size > 100 examples (SFT) or pairs (DPO)
 
 **Split Ratio**:
+
 - 90% training data
 - 10% validation data
 
 **Example**:
-```
+```text
 Dataset: 150 examples
 → Train: 135 examples (90%)
 → Val: 15 examples (10%)
@@ -1730,6 +1839,7 @@ Dataset: 150 examples
 ### Early Stopping
 
 **Configuration**:
+
 - **Metric**: Validation loss (`eval_loss`)
 - **Patience**: 3 evaluations
 - **Threshold**: 0.0 (any improvement counts)
@@ -1741,6 +1851,7 @@ Dataset: 150 examples
 3. Best checkpoint (lowest `eval_loss`) is loaded at end
 
 **Benefits**:
+
 - Prevents overfitting on training data
 - Saves compute time (stops when no longer improving)
 - Automatically selects best model checkpoint
@@ -1748,23 +1859,32 @@ Dataset: 150 examples
 ### Validation Metrics
 
 **Training Metrics** (logged to Phoenix):
+
 - `metrics.train_loss`: Final training loss
+
 - `metrics.train_samples`: Number of training samples
+
 - `metrics.train_examples`: Number of training examples/pairs
 
 **Validation Metrics** (logged to Phoenix):
+
 - `metrics.used_validation_split`: Boolean (true if validation used)
+
 - `metrics.eval_loss`: Validation loss
+
 - `metrics.eval_samples`: Number of validation samples
+
 - `metrics.val_examples`: Number of validation examples/pairs
 
 **DPO-Specific Validation Metrics**:
+
 - `metrics.eval_reward_accuracy`: Percentage of times chosen > rejected
 - `metrics.eval_reward_margin`: Average reward margin (chosen - rejected)
 
 ### Dashboard Display
 
 **Experiment Details → Validation Metrics Section**:
+
 - **Train Examples**: Number of training examples
 - **Val Examples**: Number of validation examples
 - **Val Loss**: Final validation loss
@@ -1774,12 +1894,13 @@ Dataset: 150 examples
 - **Early Stopping Indicator**: "✅ Validation split used with early stopping (patience=3)"
 
 **DPO Experiments Also Show**:
+
 - **Reward Accuracy**: Percentage of preference pairs correctly ranked
 - **Reward Margin**: Average difference in rewards between chosen and rejected
 
 ### Example Output
 
-```
+```text
 Training HuggingFaceTB/SmolLM-135M with 120 examples...
 Split dataset: 108 train, 12 validation examples
 Early stopping enabled (patience=3)
@@ -1799,24 +1920,30 @@ Validation loss: 0.7234
 Validation split and early stopping are **automatic** and cannot be disabled when dataset size > 100. This is by design to ensure high-quality adapters.
 
 **Customization** (advanced users can modify trainer code):
+
 - `eval_steps`: Frequency of validation evaluation (default: 500)
+
 - `early_stopping_patience`: Number of evaluations to wait (default: 3)
+
 - `metric_for_best_model`: Metric to optimize (default: "eval_loss")
 
 ### Best Practices
 
 **Interpreting Validation Metrics**:
+
 - ✅ `eval_loss` < `train_loss`: Model generalizing well
 - ⚠️ `eval_loss` ≈ `train_loss`: Model learning appropriately
 - ❌ `eval_loss` >> `train_loss`: Model overfitting (>10% difference)
 
 **When Overfitting Occurs**:
+
 - Reduce `epochs` (try 2 instead of 3)
 - Increase `batch_size` (try 8 instead of 4)
 - Reduce `learning_rate` (try 1e-4 instead of 2e-4)
 - Add more training data
 
 **When Validation Loss is High**:
+
 - Increase training data quality (review annotations)
 - Check for data distribution mismatch (train vs val)
 - Consider using DPO if you have preference data
@@ -1839,6 +1966,7 @@ Validation split and early stopping are **automatic** and cannot be disabled whe
 ## Dependencies
 
 **Core**:
+
 - `transformers` - HuggingFace model loading
 - `trl` - Supervised fine-tuning and DPO
 - `peft` - LoRA adapters
@@ -1846,10 +1974,12 @@ Validation split and early stopping are **automatic** and cannot be disabled whe
 - `datasets` - Dataset management
 
 **Optional**:
+
 - `sentence-transformers` - Embedding fine-tuning
 - `modal` - Remote GPU training
 
 **Integration**:
+
 - `cogniverse-foundation` - Telemetry provider interface
 - `cogniverse-telemetry-phoenix` - Phoenix implementation
 - `cogniverse-agents` - Approval workflow
@@ -1884,4 +2014,3 @@ Validation split and early stopping are **automatic** and cannot be disabled whe
 - [Phoenix Telemetry](telemetry.md) - Telemetry provider integration
 - [Approval Workflow](approval-workflow.md) - Human-in-the-loop approval
 - [Optimization](optimization.md) - DSPy module optimization
-- [Implementation Plan](../plan/fine-tuning-implementation.md) - Future enhancements

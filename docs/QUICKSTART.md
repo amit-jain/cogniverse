@@ -6,7 +6,7 @@ Get started with Cogniverse in 5 minutes.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Docker (for Vespa and Phoenix)
 
@@ -42,25 +42,39 @@ curl http://localhost:6006/                   # Phoenix
 
 ```python
 # quick_search.py
-from cogniverse_vespa import VespaBackend
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
+# NOTE: Backend must be initialized with schemas deployed before searching
+# Run: uv run python scripts/deploy_all_schemas.py first
 
 # Initialize configuration
 config_manager = create_default_config_manager()
-config = get_config(tenant_id="quickstart", config_manager=config_manager)
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Create backend and search
-backend = VespaBackend(config)
-
-# Execute a search
-results = backend.search(
-    query="machine learning tutorial",
-    profile="video_colpali_mv_frame",
-    top_k=10
+# Get backend from registry (handles instantiation and caching)
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="quickstart",
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
+# Execute a search using query dict format
+results = backend.search({
+    "query": "machine learning tutorial",
+    "type": "video",
+    "top_k": 10,
+    "profile": "video_colpali_smol500_mv_frame"
+})
+
+# Results are SearchResult objects with document and score
 for result in results:
-    print(f"- {result.title}: {result.score:.2f}")
+    doc_id = result.document.id
+    score = result.score
+    print(f"- {doc_id}: {score:.2f}")
 ```
 
 ```bash
@@ -73,21 +87,39 @@ uv run python quick_search.py
 
 ```python
 # ingest_video.py
+import asyncio
 from pathlib import Path
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
+# Initialize dependencies
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
+# Create pipeline with required parameters
 pipeline = VideoIngestionPipeline(
     tenant_id="quickstart",
     config_manager=config_manager,
-    schema_name="video_colpali_mv_frame"
+    schema_loader=schema_loader,
+    schema_name="video_colpali_smol500_mv_frame"
 )
 
-# Process a single video
-result = await pipeline.process_video_async(Path("my_video.mp4"))
-print(f"Processed: {result['video_id']}, frames: {result['results']['keyframes']['count']}")
+async def main():
+    # Process a single video
+    result = await pipeline.process_video_async(Path("my_video.mp4"))
+
+    # Result is a dict with: video_id, video_path, duration, status, results
+    print(f"Processed: {result.get('video_id', 'unknown')}")
+    print(f"Status: {result.get('status', 'unknown')}")
+    print(f"Duration: {result.get('duration', 0):.1f}s")
+
+    # Access strategy results (populated by processing strategies)
+    if result.get('results'):
+        for strategy_name, strategy_result in result['results'].items():
+            print(f"  {strategy_name}: {strategy_result}")
+
+asyncio.run(main())
 ```
 
 ```bash
@@ -110,7 +142,7 @@ curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "machine learning tutorial",
-    "profile": "video_colpali_mv_frame",
+    "profile": "video_colpali_smol500_mv_frame",
     "top_k": 10,
     "tenant_id": "quickstart"
   }'
@@ -145,22 +177,23 @@ open http://localhost:8501
 
 ## Project Structure
 
-```
+```text
 cogniverse/
-├── libs/                    # 11 packages in layered architecture
+├── libs/                    # 11-package workspace
 │   ├── sdk/                 # Pure interfaces
 │   ├── foundation/          # Config + telemetry
-│   ├── core/                # Agent base, orchestration
+│   ├── core/                # Agent base, orchestration, caching
 │   ├── agents/              # Agent implementations
 │   ├── vespa/               # Vespa backend
 │   ├── evaluation/          # Metrics, experiments
-│   ├── telemetry-phoenix/   # Phoenix provider
+│   ├── finetuning/          # LLM fine-tuning (SFT, DPO)
+│   ├── telemetry-phoenix/   # Phoenix telemetry provider
 │   ├── synthetic/           # Training data generation
 │   ├── runtime/             # FastAPI server
 │   └── dashboard/           # Streamlit UI
 ├── configs/                 # Configuration files
-│   ├── config.yml           # Main config
-│   └── schemas/             # Vespa schemas
+│   ├── config.json          # Main config
+│   └── schemas/             # Schema definitions
 ├── scripts/                 # Utility scripts
 ├── tests/                   # Test suites
 └── docs/                    # Documentation
@@ -181,7 +214,7 @@ uv run make lint-all
 uv run ruff format .
 
 # Run ingestion
-uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa --profile video_colpali_smol500_mv_frame
 
 # View Phoenix traces
 open http://localhost:6006
@@ -207,14 +240,17 @@ python -c "import cogniverse_core; print('OK')"
 ```
 
 **Search returns no results:**
+
 - Check tenant_id matches ingested data
+
 - Verify schema exists: `curl http://localhost:8080/document/v1/`
+
 - Ensure embeddings were generated during ingestion
 
 ---
 
 ## Getting Help
 
-- [Full Documentation](./README.md)
+- [Full Documentation](./index.md)
 - [Troubleshooting Guide](./TROUBLESHOOTING.md)
 - [GitHub Issues](https://github.com/your-org/cogniverse/issues)

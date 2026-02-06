@@ -1,9 +1,6 @@
 # Cogniverse Study Guide: Instrumentation & Observability Module
 
-**Last Updated:** 2026-01-25
-**Module Path:** `libs/foundation/cogniverse_foundation/telemetry/`, `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/`, `libs/evaluation/cogniverse_evaluation/phoenix/`
-**Architecture:** 11-package layered architecture (foundation → evaluation/telemetry-phoenix)
-**Purpose:** Phoenix-powered observability and multi-tenant telemetry
+**Module Path:** `libs/foundation/cogniverse_foundation/telemetry/`, `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/`
 
 ---
 
@@ -11,10 +8,15 @@
 
 ### Purpose
 The Instrumentation module provides production-grade observability through:
+
 - **Multi-Tenant Telemetry**: Isolated tracing per tenant/project
+
 - **OpenTelemetry Integration**: Industry-standard span instrumentation
+
 - **Phoenix Backend**: Arize Phoenix for trace collection and analysis
+
 - **Performance Metrics**: Modality-specific performance tracking
+
 - **Analytics**: Trace analysis and visualization
 
 ### Key Features
@@ -33,17 +35,17 @@ The Instrumentation module provides production-grade observability through:
 ### 1. Telemetry Architecture
 
 ```mermaid
-graph TB
-    App[APPLICATION LAYER<br/>Routing Agent, Video Agent, Summarizer Agent]
+flowchart TB
+    App["<span style='color:#000'>APPLICATION LAYER<br/>Routing Agent, Video Agent, Summarizer Agent</span>"]
 
-    Manager[TELEMETRY MANAGER Singleton<br/>• Lazy tenant provider initialization<br/>• LRU cache for tracer providers<br/>• Graceful degradation with NoOpSpan]
+    Manager["<span style='color:#000'>TELEMETRY MANAGER Singleton<br/>• Lazy tenant provider initialization<br/>• LRU cache for tracer providers<br/>• Graceful degradation with NoOpSpan</span>"]
 
-    Batch[BATCH MODE<br/>Production<br/>Phoenix register<br/>BatchSpanProc]
-    Sync[SYNC MODE<br/>Testing<br/>SimpleSpanProc<br/>OTLP Exporter]
+    Batch["<span style='color:#000'>BATCH MODE<br/>Production<br/>Phoenix register<br/>BatchSpanProc</span>"]
+    Sync["<span style='color:#000'>SYNC MODE<br/>Testing<br/>SimpleSpanProc<br/>OTLP Exporter</span>"]
 
-    Collector[PHOENIX COLLECTOR<br/>localhost:4317]
+    Collector["<span style='color:#000'>PHOENIX COLLECTOR<br/>localhost:4317</span>"]
 
-    Isolation[PROJECT ISOLATION<br/>• tenant-123-video<br/>• tenant-456-routing<br/>• default-video]
+    Isolation["<span style='color:#000'>PROJECT ISOLATION<br/>• cogniverse-tenant-123-video<br/>• cogniverse-tenant-456-routing<br/>• cogniverse-default-video</span>"]
 
     App --> Manager
     Manager --> Batch
@@ -52,28 +54,28 @@ graph TB
     Sync --> Collector
     Collector --> Isolation
 
-    style App fill:#e1f5ff
-    style Manager fill:#fff4e1
-    style Batch fill:#fff4e1
-    style Sync fill:#fff4e1
-    style Collector fill:#ffe1f5
-    style Isolation fill:#e1ffe1
+    style App fill:#90caf9,stroke:#1565c0,color:#000
+    style Manager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Batch fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Sync fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Collector fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Isolation fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Multi-Tenant Isolation
 
 ```mermaid
-graph TB
-    ReqA[Tenant A Request]
-    ReqB[Tenant B Request]
+flowchart TB
+    ReqA["<span style='color:#000'>Tenant A Request</span>"]
+    ReqB["<span style='color:#000'>Tenant B Request</span>"]
 
-    TracerA[Tracer A<br/>cached]
-    TracerB[Tracer B<br/>cached]
+    TracerA["<span style='color:#000'>Tracer A<br/>cached</span>"]
+    TracerB["<span style='color:#000'>Tracer B<br/>cached</span>"]
 
-    ProviderA[Provider A<br/>Project:<br/>cogniverse-<br/>tenant-a-<br/>video]
-    ProviderB[Provider B<br/>Project:<br/>cogniverse-<br/>tenant-b-<br/>routing]
+    ProviderA["<span style='color:#000'>Provider A<br/>Project:<br/>cogniverse-<br/>tenant-a-<br/>video</span>"]
+    ProviderB["<span style='color:#000'>Provider B<br/>Project:<br/>cogniverse-<br/>tenant-b-<br/>routing</span>"]
 
-    Phoenix[Phoenix Backend<br/>• Project A<br/>• Project B]
+    Phoenix["<span style='color:#000'>Phoenix Backend<br/>• Project A<br/>• Project B</span>"]
 
     ReqA --> TracerA
     ReqB --> TracerB
@@ -84,39 +86,39 @@ graph TB
     ProviderA --> Phoenix
     ProviderB --> Phoenix
 
-    style ReqA fill:#e1f5ff
-    style ReqB fill:#e1f5ff
-    style TracerA fill:#fff4e1
-    style TracerB fill:#fff4e1
-    style ProviderA fill:#ffe1f5
-    style ProviderB fill:#ffe1f5
-    style Phoenix fill:#e1ffe1
+    style ReqA fill:#90caf9,stroke:#1565c0,color:#000
+    style ReqB fill:#90caf9,stroke:#1565c0,color:#000
+    style TracerA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TracerB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProviderA fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ProviderB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Phoenix fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Span Lifecycle
 
 ```mermaid
-graph TB
-    Request[Agent Request]
+flowchart TB
+    Request["<span style='color:#000'>Agent Request</span>"]
 
-    Context[telemetry.span context manager<br/>• Creates span<br/>• Sets tenant attributes<br/>• Records exceptions<br/>• Sets status on exit]
+    Context["<span style='color:#000'>telemetry.span context manager<br/>• Creates span<br/>• Sets tenant attributes<br/>• Records exceptions<br/>• Sets status on exit</span>"]
 
-    Recording[Span Recording<br/>• span.set_attribute<br/>• span.add_event<br/>• span.record_exception]
+    Recording["<span style='color:#000'>Span Recording<br/>• span.set_attribute<br/>• span.add_event<br/>• span.record_exception</span>"]
 
-    Queue[Export Queue<br/>• Batch: Queue until full/timed<br/>• Sync: Immediate export]
+    Queue["<span style='color:#000'>Export Queue<br/>• Batch: Queue until full/timed<br/>• Sync: Immediate export</span>"]
 
-    Collector[Phoenix Collector OTLP/gRPC<br/>• Receives spans<br/>• Stores in project]
+    Collector["<span style='color:#000'>Phoenix Collector OTLP/gRPC<br/>• Receives spans<br/>• Stores in project</span>"]
 
     Request --> Context
     Context --> Recording
     Recording --> Queue
     Queue --> Collector
 
-    style Request fill:#e1f5ff
-    style Context fill:#fff4e1
-    style Recording fill:#fff4e1
-    style Queue fill:#ffe1f5
-    style Collector fill:#e1ffe1
+    style Request fill:#90caf9,stroke:#1565c0,color:#000
+    style Context fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Recording fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Queue fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Collector fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -191,9 +193,13 @@ with telemetry.session_span("search", tenant_id="acme", session_id=session_id) a
 ```
 
 **Session Tracking Benefits:**
+
 - **Phoenix Sessions View**: Traces with same `session.id` grouped together
-- **Fine-Tuning Data**: Extract conversation trajectories via `TraceToTrajectoryConverter`
+
+- **Fine-Tuning Data**: Extract conversation trajectories for fine-tuning datasets
+
 - **Session Evaluation**: Log session-level outcomes (success/partial/failure)
+
 - **Conversation Analysis**: View complete user journeys across turns
 
 #### Configuration
@@ -204,29 +210,27 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLev
 config = TelemetryConfig(
     enabled=True,
     level=TelemetryLevel.DETAILED,
-    phoenix_endpoint="localhost:4317",
-    phoenix_enabled=True,
-    tenant_project_template="cogniverse-{tenant_id}-{service}",
+    otlp_endpoint="localhost:4317",
+    otlp_enabled=True,
+    tenant_service_template="cogniverse-{tenant_id}-{service}",
     max_cached_tenants=100
 )
 
 telemetry = TelemetryManager(config)
 ```
 
-#### Environment Variables
+#### Configuration
 
-```bash
-# Core settings
-TELEMETRY_ENABLED=true
-TELEMETRY_LEVEL=detailed  # disabled, basic, detailed, verbose
+Configure telemetry programmatically via `TelemetryConfig` instantiation:
 
-# Phoenix settings
-PHOENIX_ENABLED=true
-PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
-PHOENIX_USE_TLS=false
-
-# Test mode
-TELEMETRY_SYNC_EXPORT=true  # Synchronous export for tests
+```python
+config = TelemetryConfig(
+    enabled=True,
+    level=TelemetryLevel.DETAILED,
+    otlp_enabled=True,
+    otlp_endpoint="localhost:4317",
+    batch_config=BatchExportConfig(use_sync_export=True)  # For tests
+)
 ```
 
 ### 2. TelemetryConfig
@@ -247,13 +251,14 @@ class TelemetryConfig:
     level: TelemetryLevel = TelemetryLevel.DETAILED
     environment: str = "development"
 
-    # Phoenix settings
-    phoenix_enabled: bool = True
-    phoenix_endpoint: str = "localhost:4317"
-    phoenix_use_tls: bool = False
+    # OpenTelemetry OTLP settings (backend-agnostic)
+    otlp_enabled: bool = True
+    otlp_endpoint: str = "localhost:4317"
+    otlp_use_tls: bool = False
 
     # Multi-tenant settings
-    tenant_project_template: str = "cogniverse-{tenant_id}-{service}"
+    tenant_project_template: str = "cogniverse-{tenant_id}"
+    tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
     default_tenant_id: str = "default"
     max_cached_tenants: int = 100
 
@@ -291,9 +296,9 @@ class BatchExportConfig:
 
 ### 3. ModalityMetricsTracker
 
-**File:** `libs/agents/cogniverse_agents/telemetry/modality_metrics.py`
+**File:** `libs/agents/cogniverse_agents/routing/modality_metrics.py`
 
-**Package:** `cogniverse-agents` (implementation layer - moved from foundation to agents package)
+**Package:** `cogniverse-agents` (implementation layer)
 
 Tracks per-modality performance metrics with rolling windows.
 
@@ -306,7 +311,7 @@ Tracks per-modality performance metrics with rolling windows.
 #### Usage
 
 ```python
-from cogniverse_agents.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 tracker = ModalityMetricsTracker(window_size=1000)
@@ -365,9 +370,9 @@ for entry in error_prone:
 
 ### 4. PhoenixAnalytics
 
-**File:** `libs/evaluation/cogniverse_evaluation/phoenix/analytics.py`
+**File:** `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py`
 
-**Package:** `cogniverse-evaluation` (core layer)
+**Package:** `cogniverse-telemetry-phoenix` (implementation layer)
 
 Analytics and visualization engine for Phoenix traces.
 
@@ -382,7 +387,7 @@ Analytics and visualization engine for Phoenix traces.
 
 ```python
 from datetime import datetime, timedelta
-from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
 analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
 
@@ -475,20 +480,19 @@ class VideoSearchAgent:
 
 ```python
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 class RoutingAgent:
     def __init__(self, config):
         self.telemetry = get_telemetry_manager()
 
     def route_query(self, query: str, tenant_id: str = "default"):
-        # Use orchestration service name for Phoenix project
+        # Use project_name parameter for separate orchestration project
         with self.telemetry.span(
             name="cogniverse.routing",
             tenant_id=tenant_id,
-            service_name=SERVICE_NAME_ORCHESTRATION,
+            project_name="orchestration",
             attributes={
-                "openinference.project.name": f"cogniverse-{tenant_id}-orchestration"
+                "routing.operation": "route_query"
             }
         ) as span:
             # Extract entities
@@ -557,13 +561,13 @@ class SearchService:
 ```python
 import pytest
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig, BatchExportConfig
 
 @pytest.fixture
 def telemetry_manager():
     config = TelemetryConfig(
         enabled=True,
-        phoenix_enabled=True,
+        otlp_enabled=True,
         batch_config=BatchExportConfig(use_sync_export=True)  # Sync for tests
     )
     manager = TelemetryManager(config)
@@ -619,13 +623,14 @@ BatchExportConfig(
 
 **Project Isolation**
 ```python
-# Template generates unique project names
-tenant_project_template = "cogniverse-{tenant_id}-{service}"
+# Templates generate unique project names
+tenant_project_template = "cogniverse-{tenant_id}"
+tenant_service_template = "cogniverse-{tenant_id}-{service}"
 
 # Examples:
-# cogniverse-tenant-123-video
-# cogniverse-tenant-123-routing
-# cogniverse-tenant-456-video
+# cogniverse-tenant-123 (user operations)
+# cogniverse-tenant-123-video (service-specific management)
+# cogniverse-tenant-123-routing (service-specific management)
 ```
 
 **Resource Attributes**
@@ -670,7 +675,7 @@ def check_telemetry_health():
     if not telemetry.config.enabled:
         return {"status": "disabled"}
 
-    # Check Phoenix connectivity
+    # Check OTLP connectivity
     try:
         test_span = telemetry.span("health_check", tenant_id="system")
         with test_span:
@@ -681,7 +686,7 @@ def check_telemetry_health():
 
         return {
             "status": "healthy" if success else "degraded",
-            "phoenix_endpoint": telemetry.config.phoenix_endpoint,
+            "otlp_endpoint": telemetry.config.otlp_endpoint,
             "stats": telemetry.get_stats()
         }
     except Exception as e:
@@ -695,18 +700,18 @@ def check_telemetry_health():
 
 **Common Issues**
 
-1. **Spans not appearing in Phoenix**
-```python
+1. **Spans not appearing in backend**
+```bash
 # Check synchronous export for immediate visibility (tests)
 export TELEMETRY_SYNC_EXPORT=true
 
-# Or force flush manually
-telemetry.force_flush(timeout_millis=10000)
+# Or force flush manually (in Python)
+# telemetry.force_flush(timeout_millis=10000)
 
-# Check Phoenix collector endpoint
-export PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
+# Check OTLP collector endpoint
+export OTLP_ENDPOINT=localhost:4317
 
-# Verify Phoenix is running
+# Verify telemetry backend is running (e.g., Phoenix)
 curl http://localhost:6006
 ```
 
@@ -741,10 +746,10 @@ project_name = config.get_project_name("tenant-123", "video")
 print(project_name)  # Should be: cogniverse-tenant-123-video
 
 # Check span attributes
-with telemetry.span("test", tenant_id="tenant-123") as span:
+with telemetry.span("test", tenant_id="tenant-123", project_name="video") as span:
     # Should automatically include:
     # - tenant.id = tenant-123
-    # - openinference.project.name = cogniverse-tenant-123-video
+    # - service.name = video-search (or configured service name)
     pass
 ```
 
@@ -754,39 +759,9 @@ with telemetry.span("test", tenant_id="tenant-123") as span:
 
 ### Unit Tests
 
-**File:** `tests/telemetry/unit/test_telemetry_manager.py`
+**File:** `tests/telemetry/unit/test_session_tracking.py`
 
-```python
-def test_lazy_initialization():
-    """Tracers created on first use"""
-    manager = TelemetryManager()
-    assert len(manager._tenant_tracers) == 0
-
-    tracer = manager.get_tracer("tenant-1")
-    assert tracer is not None
-    assert len(manager._tenant_tracers) == 1
-
-def test_lru_eviction():
-    """Old tracers evicted when cache full"""
-    config = TelemetryConfig(max_cached_tenants=2)
-    manager = TelemetryManager(config)
-
-    # Add 3 tenants (should evict oldest)
-    manager.get_tracer("tenant-1")
-    manager.get_tracer("tenant-2")
-    manager.get_tracer("tenant-3")
-
-    assert len(manager._tenant_tracers) <= 2
-
-def test_graceful_degradation():
-    """Returns NoOpSpan when disabled"""
-    config = TelemetryConfig(enabled=False)
-    manager = TelemetryManager(config)
-
-    with manager.span("test", tenant_id="tenant-1") as span:
-        # Should be NoOpSpan
-        span.set_attribute("key", "value")  # No error
-```
+Tests for session tracking functionality including multi-turn conversation correlation and session context management.
 
 ### Integration Tests
 
@@ -820,17 +795,17 @@ def test_multi_tenant_span_isolation():
 
 ### Implementation Layer - Phoenix Integration
 - `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/` - Phoenix-specific telemetry implementation
+- `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py` - Analytics and visualization
 
-### Core Layer - Evaluation & Analytics
-- `libs/evaluation/cogniverse_evaluation/phoenix/analytics.py` - Analytics and visualization
+### Core Layer - Evaluation & Experiment Tracking
 - `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` - Experiment tracking
 
 ### Implementation Layer - Agent Metrics
-- `libs/agents/cogniverse_agents/telemetry/modality_metrics.py` - Performance metrics tracking
+- `libs/agents/cogniverse_agents/routing/modality_metrics.py` - Performance metrics tracking
 
 ### Tests
+- `tests/telemetry/unit/test_session_tracking.py` - Session tracking tests
 - `tests/telemetry/integration/test_multi_tenant_telemetry.py` - Multi-tenant integration tests
-- `tests/routing/integration/test_phoenix_span_evaluator_integration.py` - Span evaluator tests
 
 ---
 
@@ -904,9 +879,10 @@ with telemetry.span("search", tenant_id=tenant_id) as span:
 
 ---
 
-**Next**: Update README.md and PROGRESS.md with all new guides (11-17)
-
 **Related Guides:**
-- [05_TELEMETRY_MODULE.md](./05_TELEMETRY_MODULE.md) - TelemetryManager overview
-- [06_EVALUATION_MODULE.md](./06_EVALUATION_MODULE.md) - Phoenix experiments and evaluation
-- [16_SYSTEM_INTEGRATION.md](./16_SYSTEM_INTEGRATION.md) - E2E integration testing
+
+- [Telemetry Module](../modules/telemetry.md) - TelemetryManager overview
+
+- [Evaluation Module](../modules/evaluation.md) - Phoenix experiments and evaluation
+
+- [System Integration](../architecture/integration.md) - E2E integration testing

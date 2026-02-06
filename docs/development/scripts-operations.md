@@ -1,10 +1,7 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
-**Last Updated:** 2026-01-25
 **Module Path:** `scripts/`
-**Architecture:** 11-package layered architecture
 **SDK Packages:** Uses all 11 packages (foundation → core → implementation → application)
-**Purpose:** Operational scripts for system deployment, ingestion, optimization, experimentation, and tenant-aware management
 
 ---
 
@@ -22,12 +19,19 @@
 
 ### Purpose
 The Scripts & Operations module provides command-line tools for:
+
 - **Video Ingestion**: Processing and indexing video content
+
 - **Schema Deployment**: Managing Vespa search schemas
+
 - **System Setup**: Initializing the system environment
+
 - **Optimization**: Running DSPy optimization workflows
+
 - **Experimentation**: Conducting Phoenix experiments with visualization
+
 - **Dataset Management**: Managing evaluation datasets
+
 - **Dashboard**: Interactive Streamlit-based analytics UI
 
 ### Key Features
@@ -42,7 +46,7 @@ The Scripts & Operations module provides command-line tools for:
 
 ### Script Categories
 
-```
+```text
 scripts/
 ├── Ingestion & Processing
 │   ├── run_ingestion.py              # Main video ingestion pipeline
@@ -96,22 +100,22 @@ scripts/
 ### 1. Ingestion Pipeline Architecture
 
 ```mermaid
-graph TB
-    Entry[run_ingestion.py<br/>Command Line Entry Point]
+flowchart TB
+    Entry["<span style='color:#000'>run_ingestion.py<br/>Command Line Entry Point</span>"]
 
-    TestMode[Test Mode<br/>build_test_pipeline]
-    SimpleMode[Simple Mode<br/>build_simple_pipeline]
-    AdvMode[Advanced Mode<br/>create_pipeline]
+    TestMode["<span style='color:#000'>Test Mode<br/>build_test_pipeline</span>"]
+    SimpleMode["<span style='color:#000'>Simple Mode<br/>build_simple_pipeline</span>"]
+    AdvMode["<span style='color:#000'>Advanced Mode<br/>create_pipeline</span>"]
 
-    Pipeline[IngestionPipeline<br/>• Video Processing<br/>• Embedding Generation<br/>• Vespa Upload]
+    Pipeline["<span style='color:#000'>IngestionPipeline<br/>• Video Processing<br/>• Embedding Generation<br/>• Vespa Upload</span>"]
 
-    ColPali[ColPali Profile<br/>Frame-based]
-    VideoPrism[VideoPrism Profile<br/>Global embeddings]
-    ColQwen[ColQwen Profile<br/>Chunk-based]
+    ColPali["<span style='color:#000'>ColPali Profile<br/>Frame-based</span>"]
+    VideoPrism["<span style='color:#000'>VideoPrism Profile<br/>Global embeddings</span>"]
+    ColQwen["<span style='color:#000'>ColQwen Profile<br/>Chunk-based</span>"]
 
-    Concurrent[Concurrent Async<br/>Video Processing<br/>max_concurrent=3]
+    Concurrent["<span style='color:#000'>Concurrent Async<br/>Video Processing<br/>max_concurrent=3</span>"]
 
-    Vespa[Vespa Backend<br/>Bulk Upload]
+    Vespa["<span style='color:#000'>Vespa Backend<br/>Bulk Upload</span>"]
 
     Entry --> TestMode
     Entry --> SimpleMode
@@ -131,53 +135,61 @@ graph TB
 
     Concurrent --> Vespa
 
-    style Entry fill:#e1f5ff
-    style Pipeline fill:#fff4e1
-    style Concurrent fill:#fff4e1
-    style Vespa fill:#e1ffe1
+    style Entry fill:#90caf9,stroke:#1565c0,color:#000
+    style TestMode fill:#b0bec5,stroke:#546e7a,color:#000
+    style SimpleMode fill:#b0bec5,stroke:#546e7a,color:#000
+    style AdvMode fill:#b0bec5,stroke:#546e7a,color:#000
+    style Pipeline fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ColPali fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VideoPrism fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ColQwen fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Concurrent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Vespa fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Optimization Workflow Architecture
 
 ```mermaid
-graph TB
-    Start[run_optimization.py<br/>Complete Optimization & Deployment]
+flowchart TB
+    Start["<span style='color:#000'>run_optimization.py<br/>Complete Optimization & Deployment</span>"]
 
-    Step1[Step 1: Run Orchestrator<br/>• Execute optimization<br/>• Generate prompt artifacts<br/>• Timeout: 2 hours]
+    Step1["<span style='color:#000'>Step 1: Run Orchestrator<br/>• Execute optimization<br/>• Generate prompt artifacts<br/>• Timeout: 2 hours</span>"]
 
-    Step2[Step 2: Upload to Modal<br/>• Upload artifacts to Modal volume<br/>• Path: /artifacts/*.json]
+    Step2["<span style='color:#000'>Step 2: Upload to Modal<br/>• Upload artifacts to Modal volume<br/>• Path: /artifacts/*.json</span>"]
 
-    Step3[Step 3: Deploy Production API<br/>• Deploy to Modal<br/>• Setup HuggingFace secret<br/>• Return API URL]
+    Step3["<span style='color:#000'>Step 3: Deploy Production API<br/>• Deploy to Modal<br/>• Setup HuggingFace secret<br/>• Return API URL</span>"]
 
-    Step4[Step 4: Test Production API<br/>• Run test cases<br/>• Verify modality routing<br/>• Check generation types]
+    Step4["<span style='color:#000'>Step 4: Test Production API<br/>• Run test cases<br/>• Verify modality routing<br/>• Check generation types</span>"]
 
     Start --> Step1
     Step1 --> Step2
     Step2 --> Step3
     Step3 --> Step4
 
-    style Start fill:#e1f5ff
-    style Step1 fill:#fff4e1
-    style Step2 fill:#fff4e1
-    style Step3 fill:#fff4e1
-    style Step4 fill:#e1ffe1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Step1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step4 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Experiment Workflow Architecture
 
+**Note:** Uses legacy `src.evaluation.experiments` module (archived code)
+
 ```mermaid
-graph TB
-    Start[run_experiments_with_visualization.py<br/>Phoenix Experiment Runner]
+flowchart TB
+    Start["<span style='color:#000'>run_experiments_with_visualization.py<br/>Phoenix Experiment Runner (Legacy)</span>"]
 
-    Runner[PhoenixExperimentRunner<br/>• Experiment project isolation<br/>• Quality evaluators optional<br/>• LLM evaluators optional]
+    Runner["<span style='color:#000'>PhoenixExperimentRunner<br/>• From archived src.evaluation<br/>• Experiment project isolation<br/>• Quality evaluators optional<br/>• LLM evaluators optional</span>"]
 
-    Dataset[Dataset Preparation<br/>• Load or create dataset<br/>• CSV parsing<br/>• Phoenix dataset registration]
+    Dataset["<span style='color:#000'>Dataset Preparation<br/>• Load or create dataset<br/>• CSV parsing<br/>• Phoenix dataset registration</span>"]
 
-    Loop[Multi-Profile Multi-Strategy Loop<br/>FOR each profile:<br/>  FOR each strategy:<br/>    • Run experiment<br/>    • Track spans<br/>    • Evaluate results<br/>    • Store metrics]
+    Loop["<span style='color:#000'>Multi-Profile Multi-Strategy Loop<br/>FOR each profile:<br/>  FOR each strategy:<br/>    • Run experiment<br/>    • Track spans<br/>    • Evaluate results<br/>    • Store metrics</span>"]
 
-    Viz[Visualization Generation<br/>• Profile summary table<br/>• Strategy comparison<br/>• Detailed results<br/>• HTML report optional]
+    Viz["<span style='color:#000'>Visualization Generation<br/>• Profile summary table<br/>• Strategy comparison<br/>• Detailed results<br/>• HTML report optional</span>"]
 
-    Export[Results Export<br/>• CSV summary<br/>• JSON detailed results<br/>• Phoenix UI links]
+    Export["<span style='color:#000'>Results Export<br/>• CSV summary<br/>• JSON detailed results<br/>• Phoenix UI links</span>"]
 
     Start --> Runner
     Runner --> Dataset
@@ -185,24 +197,24 @@ graph TB
     Loop --> Viz
     Viz --> Export
 
-    style Start fill:#e1f5ff
-    style Runner fill:#fff4e1
-    style Dataset fill:#fff4e1
-    style Loop fill:#fff4e1
-    style Viz fill:#fff4e1
-    style Export fill:#e1ffe1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Runner fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Dataset fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Loop fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Viz fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Export fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 4. Schema Deployment Architecture
 
 ```mermaid
-graph TB
-    subgraph Single["Single Schema Deployment"]
-        Single1[deploy_json_schema.py<br/>Single Schema Deployment]
-        Parser[JsonSchemaParser<br/>• Load JSON schema file<br/>• Parse to Vespa Schema object<br/>• Validate structure]
-        Package1[ApplicationPackage<br/>• Create package<br/>• Add schema<br/>• Generate ZIP]
-        Deploy1[HTTP Deployment<br/>• POST to config server<br/>• Port: 19071<br/>• Endpoint: prepareandactivate]
-        Verify[Verification<br/>• Check ApplicationStatus<br/>• Verify Vespa responding]
+flowchart TB
+    subgraph Single["<span style='color:#000'>Single Schema Deployment</span>"]
+        Single1["<span style='color:#000'>deploy_json_schema.py<br/>Single Schema Deployment</span>"]
+        Parser["<span style='color:#000'>JsonSchemaParser<br/>• Load JSON schema file<br/>• Parse to Vespa Schema object<br/>• Validate structure</span>"]
+        Package1["<span style='color:#000'>ApplicationPackage<br/>• Create package<br/>• Add schema<br/>• Generate ZIP</span>"]
+        Deploy1["<span style='color:#000'>HTTP Deployment<br/>• POST to config server<br/>• Port: 19071<br/>• Endpoint: prepareandactivate</span>"]
+        Verify["<span style='color:#000'>Verification<br/>• Check ApplicationStatus<br/>• Verify Vespa responding</span>"]
 
         Single1 --> Parser
         Parser --> Package1
@@ -210,26 +222,26 @@ graph TB
         Deploy1 --> Verify
     end
 
-    subgraph Multi["Multi-Schema Deployment"]
-        Multi1[deploy_all_schemas.py<br/>Multi-Schema Deployment]
-        Discovery[Schema Discovery<br/>• Scan configs/schemas/*.json<br/>• Load all schema files]
-        Package2[ApplicationPackage Multi-Schema<br/>• Create single package<br/>• Add all schemas<br/>• Add validation overrides]
-        Extract[Ranking Strategy Extraction<br/>• Extract from all schemas<br/>• Save to ranking_strategies.json]
+    subgraph Multi["<span style='color:#000'>Multi-Schema Deployment</span>"]
+        Multi1["<span style='color:#000'>deploy_all_schemas.py<br/>Multi-Schema Deployment</span>"]
+        Discovery["<span style='color:#000'>Schema Discovery<br/>• Scan configs/schemas/*.json<br/>• Load all schema files</span>"]
+        Package2["<span style='color:#000'>ApplicationPackage Multi-Schema<br/>• Create single package<br/>• Add all schemas<br/>• Add validation overrides</span>"]
+        Extract["<span style='color:#000'>Ranking Strategy Extraction<br/>• Extract from all schemas<br/>• Save to ranking_strategies.json</span>"]
 
         Multi1 --> Discovery
         Discovery --> Package2
         Package2 --> Extract
     end
 
-    style Single1 fill:#e1f5ff
-    style Multi1 fill:#e1f5ff
-    style Parser fill:#fff4e1
-    style Package1 fill:#fff4e1
-    style Discovery fill:#fff4e1
-    style Package2 fill:#fff4e1
-    style Deploy1 fill:#ffe1f5
-    style Verify fill:#e1ffe1
-    style Extract fill:#e1ffe1
+    style Single1 fill:#90caf9,stroke:#1565c0,color:#000
+    style Multi1 fill:#90caf9,stroke:#1565c0,color:#000
+    style Parser fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Package1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Discovery fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Package2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Deploy1 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Verify fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Extract fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -240,7 +252,7 @@ graph TB
 
 **Purpose:** Main entry point for video ingestion pipeline with builder pattern configuration
 
-**Location:** `scripts/run_ingestion.py` (205 lines)
+**Location:** `scripts/run_ingestion.py` (213 lines)
 
 **Command Line Arguments:**
 ```python
@@ -248,7 +260,7 @@ graph TB
 --output_dir PATH        # Output directory for processed data
 --backend {byaldi,vespa} # Search backend (default: vespa)
 --profile PROFILES       # Processing profiles (space-separated)
---tenant-id TENANT       # Tenant ID for schema isolation (default: "default")
+--tenant-id TENANT       # Tenant ID for schema isolation (default: "default_tenant")
 --max-concurrent INT     # Max concurrent videos (default: 3)
 --max-frames INT         # Maximum frames per video
 --test-mode             # Use test mode with limited frames
@@ -299,15 +311,15 @@ pipeline = (create_pipeline()
 **Multi-Profile Processing (Tenant-Aware):**
 ```python
 # Process with multiple profiles simultaneously for specific tenant
-# Import from agents package (implementation layer)
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
-from cogniverse_core.config import SystemConfig
+# Uses builder pattern from runtime package
+from cogniverse_runtime.ingestion.pipeline_builder import build_simple_pipeline
 
 for profile in ["video_colpali_smol500_mv_frame",
                 "video_videoprism_base_mv_chunk_30s"]:
-    pipeline = VideoIngestionPipeline(
-        profile=profile,
+    pipeline = build_simple_pipeline(
         tenant_id="acme_corp",  # Tenant-specific processing
+        video_dir=Path("data/videos"),
+        schema=profile,
         backend="vespa"
     )
     results = await pipeline.process_videos_concurrent(
@@ -317,9 +329,13 @@ for profile in ["video_colpali_smol500_mv_frame",
 ```
 
 **Output:**
+
 - Success/failure status per video
+
 - Documents fed to Vespa
+
 - Processing time and throughput
+
 - Per-profile summary statistics
 
 ---
@@ -328,49 +344,44 @@ for profile in ["video_colpali_smol500_mv_frame",
 
 **Purpose:** Deploy individual JSON schema files to Vespa
 
-**Location:** `scripts/deploy_json_schema.py` (198 lines)
+**Location:** `scripts/deploy_json_schema.py` (197 lines)
 
 **Command Line Arguments:**
 ```python
 schema_file              # Path to JSON schema file (required)
---tenant-id TENANT       # Tenant ID for schema isolation (default: "default")
 --config-host HOST       # Vespa config server host (default: localhost)
 --config-port PORT       # Config server port (default: 19071)
 --data-host HOST         # Vespa data endpoint host (default: localhost)
 --data-port PORT         # Data endpoint port (default: 8080)
 ```
 
-**Deployment Process (Tenant-Aware):**
+**Deployment Process:**
 ```python
-def deploy_json_schema(schema_file, tenant_id, vespa_host, config_port, data_port):
-    # Import from vespa package (implementation layer)
-    from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+def deploy_json_schema(schema_file, vespa_host, config_port, data_port):
+    # Imports from SDK packages
+    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+    from vespa.package import ApplicationPackage
 
     # 1. Load JSON schema
-    with open(schema_path, 'r') as f:
+    with open(schema_file, 'r') as f:
         schema_config = json.load(f)
 
     # 2. Parse schema using JsonSchemaParser
     parser = JsonSchemaParser()
     schema = parser.parse_schema(schema_config)
 
-    # 3. Add tenant suffix to schema name
-    tenant_schema_name = f"{schema.name}_{tenant_id}"
+    # 3. Create application package
+    app_package = ApplicationPackage(name=schema.name.replace('_', ''))
+    app_package.add_schema(schema)
 
-    # 4. Deploy using VespaSchemaManager
-    schema_manager = VespaSchemaManager(
-        vespa_url=f"http://{vespa_host}",
-        vespa_config_port=config_port
-    )
-    schema_manager.deploy_schema(
-        schema=schema,
-        tenant_id=tenant_id,
-        schema_suffix=f"_{tenant_id}"
-    )
+    # 4. Deploy via HTTP
+    deploy_url = f"http://{vespa_host}:{config_port}/application/v2/tenant/default/prepareandactivate"
+    app_zip = app_package.to_zip()
+    response = requests.post(deploy_url, headers={"Content-Type": "application/zip"},
+                            data=app_zip, timeout=60)
 
     # 5. Verify deployment
-    verify_deployment(tenant_schema_name, vespa_host, data_port)
+    verify_deployment(schema.name, vespa_host, data_port)
 ```
 
 **Verification:**
@@ -386,20 +397,17 @@ def verify_deployment(schema_name, vespa_host, data_port):
 
 **Example Usage:**
 ```bash
-# Deploy agent memories schema for default tenant
-uv run python scripts/deploy_json_schema.py \
-  configs/schemas/agent_memories_schema.json \
-  --tenant-id default
+# Deploy agent memories schema
+python scripts/deploy_json_schema.py \
+  configs/schemas/agent_memories_schema.json
 
-# Deploy for specific tenant
-uv run python scripts/deploy_json_schema.py \
-  configs/schemas/video_colpali_smol500_mv_frame.json \
-  --tenant-id acme_corp
+# Deploy video schema
+python scripts/deploy_json_schema.py \
+  configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Deploy to remote Vespa instance
-uv run python scripts/deploy_json_schema.py \
+python scripts/deploy_json_schema.py \
   configs/schemas/config_metadata_schema.json \
-  --tenant-id acme_corp \
   --config-host vespa.example.com \
   --config-port 19071
 ```
@@ -410,51 +418,50 @@ uv run python scripts/deploy_json_schema.py \
 
 **Purpose:** Deploy all schemas from configs/schemas directory in a single application package
 
-**Location:** `scripts/deploy_all_schemas.py` (104 lines)
+**Location:** `scripts/deploy_all_schemas.py` (113 lines)
 
-**Deployment Workflow (Multi-Tenant):**
+**Deployment Workflow:**
 ```python
 def main():
-    # Import from vespa package (implementation layer)
-    from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
-    from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
-    from cogniverse_core.config import SystemConfig
+    # Imports from SDK packages
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+    from vespa.package import ApplicationPackage
 
     # 1. Get all schema files
     schemas_dir = Path("configs/schemas")
     schema_files = list(schemas_dir.glob("*.json"))
 
-    # 2. Define tenants
-    tenants = ["acme_corp", "globex_inc", "default"]
+    # 2. Initialize schema manager
+    schema_manager = VespaSchemaManager()
 
-    # 3. Deploy schemas for each tenant
-    for tenant_id in tenants:
-        print(f"Deploying schemas for tenant: {tenant_id}")
+    # 3. Create application package with all schemas
+    app_package = ApplicationPackage(name="videosearch")
 
-        schema_manager = VespaSchemaManager(
-            vespa_url="http://localhost:8080",
-            vespa_config_port=19071
-        )
+    # 4. Parse each schema and add to package
+    for schema_file in schema_files:
+        parser = JsonSchemaParser()
+        schema = parser.load_schema_from_json_file(str(schema_file))
+        app_package.add_schema(schema)
 
-        # 4. Parse and deploy each schema with tenant suffix
-        for schema_file in schema_files:
-            parser = JsonSchemaParser()
-            schema = parser.load_schema_from_json_file(str(schema_file))
+    # 5. Add validation overrides for schema changes
+    from vespa.package import Validation
+    validation = Validation(validation_id="schema-removal", until="2026-12-31")
+    app_package.validations = [validation]
 
-            # Deploy with tenant-specific name
-            schema_manager.deploy_schema(
-                schema=schema,
-                tenant_id=tenant_id,
-                schema_suffix=f"_{tenant_id}"  # e.g., video_colpali_mv_frame_acme_corp
-            )
+    # 6. Deploy all schemas at once
+    schema_manager._deploy_package(app_package)
 
-            print(f"  ✓ Deployed: {schema.name}_{tenant_id}")
+    # Note: Ranking strategy extraction (extract_all_ranking_strategies)
+    # has been removed or moved in SDK refactoring
 ```
 
 **Benefits:**
+
 - Single deployment for all schemas
+
 - Consistent schema versions
-- Automatic ranking strategy extraction
+
 - Validation override handling
 
 ---
@@ -468,15 +475,14 @@ def main():
 **Setup Steps:**
 ```python
 def main():
-    # Import from implementation layer packages
-    from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-    from cogniverse_core.config import SystemConfig
+    # Imports from SDK packages
+    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
     # 1. Check dependencies
     required_modules = [
         ("torch", "PyTorch"),
         ("transformers", "Transformers"),
+        ("byaldi", "Byaldi"),
         ("colpali_engine", "ColPali Engine"),
         ("faster_whisper", "Faster Whisper"),
         ("PIL", "Pillow"),
@@ -484,23 +490,14 @@ def main():
     ]
 
     # 2. Create directories
-    directories = [
-        "data/videos",
-        "data/text",
-        "outputs/ingestion",
-        "outputs/logs"
-    ]
+    create_directories()  # Creates data/videos, data/text, data/indexes, .byaldi
 
     # 3. Create sample content
     create_sample_content()  # README files
     download_sample_videos()  # Test video with imageio
 
-    # 4. Setup video ingestion (using SDK pipeline)
-    pipeline = VideoIngestionPipeline(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="default",
-        backend="vespa"
-    )
+    # 4. Setup video index (calls run_ingestion.py via subprocess)
+    setup_byaldi_index()
 ```
 
 **Sample Video Creation:**
@@ -542,20 +539,22 @@ http://localhost:8000
 
 **Purpose:** Complete optimization and deployment workflow for agentic router
 
-**Location:** `scripts/run_optimization.py` (299 lines)
+**Location:** `scripts/run_optimization.py` (297 lines)
 
 **Workflow Steps:**
 
 **Step 1: Run Orchestrator**
 ```python
 def run_orchestrator(config_path="config.json"):
-    # Import from agents package (implementation layer)
-    from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+    # Note: Orchestrator implementation details may vary
+    # The actual script runs optimization logic and generates artifacts
+    cmd = [sys.executable, "-m", "src.optimizer.orchestrator", "--config", config_path]
 
-    # Run orchestrator using SDK packages
-    orchestrator = OptimizationOrchestrator(config_path=config_path)
-
-    result = orchestrator.run_optimization(
+    result = subprocess.run(
+        cmd,
+        cwd=Path(__file__).parent.parent,
+        capture_output=True,
+        text=True,
         timeout=7200  # 2 hour timeout
     )
 
@@ -639,21 +638,32 @@ python scripts/run_optimization.py \
 
 **Purpose:** Optimize routing/workflow modules with automatic DSPy optimizer selection and synthetic data generation
 
-**Location:** `scripts/run_module_optimization.py` (424 lines)
+**Location:** `scripts/run_module_optimization.py` (442 lines)
 
 **What Gets Optimized (Modules):**
+
 - `modality` - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
+
 - `cross_modal` - Multi-modal fusion decisions
+
 - `routing` - Entity-based advanced routing
+
 - `workflow` - Multi-agent workflow orchestration
+
 - `unified` - Combined routing + workflow planning
+
 - `all` - All modules sequentially
 
 **How They Get Optimized:**
+
 - System automatically selects DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO) based on training data size
+
 - < 100 examples → Bootstrap
+
 - 100-500 examples → SIMBA
+
 - 500-1000 examples → MIPRO
+
 - \> 1000 examples → GEPA
 
 **Module Optimization Functions:**
@@ -856,7 +866,9 @@ This script is used by Argo Workflows for batch optimization:
 **Scheduled Execution:**
 
 See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization:
+
 - **Weekly**: Sunday 3 AM UTC (all modules)
+
 - **Daily**: 4 AM UTC (routing module only)
 
 ---
@@ -865,12 +877,16 @@ See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization
 
 **Purpose:** Run Phoenix experiments with comprehensive visualization and quality evaluators
 
-**Location:** `scripts/run_experiments_with_visualization.py` (425 lines)
+**Location:** `scripts/run_experiments_with_visualization.py` (148 lines)
+
+**Note:** This script uses legacy `src.` imports from archived code. Future versions will migrate to SDK packages.
 
 **Experiment Configuration:**
 ```python
 def get_experiment_configurations(args):
-    # Get profiles from registry
+    # Get profiles from registry (legacy src.common.core.registry)
+    from src.common.core.registry import get_registry
+
     registry = get_registry()
     profiles = args.profiles if args.profiles else registry.list_profiles()
 
@@ -900,6 +916,10 @@ def get_experiment_configurations(args):
 **Experiment Execution:**
 ```python
 def main(args):
+    # Note: PhoenixExperimentRunner is from legacy src.evaluation.experiments
+    # Future SDK versions will use cogniverse_evaluation package
+    from src.evaluation.experiments import PhoenixExperimentRunner
+
     # Initialize experiment runner
     with PhoenixExperimentRunner(
         experiment_project_name="experiments",
@@ -959,18 +979,24 @@ def create_visualization_tables(experiments):
 ```
 
 **Output:**
+
 - Profile summary table
+
 - Strategy comparison by profile
+
 - Detailed experiment results
+
 - CSV summary file
+
 - JSON detailed results
+
 - HTML integrated report (if quantitative tests exist)
 
 **Command Line Arguments:**
 ```bash
 python scripts/run_experiments_with_visualization.py \
   --dataset-name golden_eval_v1 \
-  --csv-path data/testset/evaluation/video_search_queries.csv \
+  --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --profiles frame_based_colpali \
   --quality-evaluators \
   --llm-evaluators \
@@ -984,7 +1010,7 @@ python scripts/run_experiments_with_visualization.py \
 
 **Purpose:** CLI tool for managing evaluation datasets
 
-**Location:** `scripts/manage_datasets.py` (58 lines)
+**Location:** `scripts/manage_datasets.py` (60 lines)
 
 **Operations:**
 
@@ -996,7 +1022,7 @@ python scripts/manage_datasets.py --list
 # Registered datasets:
 #
 # Name: golden_eval_v1
-#   Phoenix ID: ds_abc123
+#   Dataset ID: ds_abc123
 #   Created: 2025-10-07 10:30:00
 #   Examples: 50
 #   Description: Golden evaluation dataset
@@ -1018,7 +1044,7 @@ python scripts/manage_datasets.py --info golden_eval_v1
 
 # Output:
 # Dataset: golden_eval_v1
-#   phoenix_id: ds_abc123
+#   dataset_id: ds_abc123
 #   created_at: 2025-10-07 10:30:00
 #   num_examples: 50
 #   description: Golden evaluation dataset
@@ -1026,31 +1052,40 @@ python scripts/manage_datasets.py --info golden_eval_v1
 
 **Implementation:**
 ```python
-def main():
-    # Import from evaluation package (core layer)
-    from cogniverse_evaluation.core.dataset_manager import DatasetManager
+async def main():
+    from cogniverse_evaluation.data import DatasetManager
 
     dm = DatasetManager()
 
     if args.list:
         datasets = dm.list_datasets()
-        for ds in datasets:
-            print(f"\nName: {ds['name']}")
-            print(f"  Phoenix ID: {ds['phoenix_id']}")
-            print(f"  Created: {ds['created_at']}")
-            print(f"  Examples: {ds['num_examples']}")
+        if datasets:
+            print("\nRegistered datasets:")
+            for ds_name in datasets:
+                ds_info = dm.get_dataset(ds_name)
+                print(f"\nName: {ds_name}")
+                print(f"  Dataset ID: {ds_info['id']}")
+                print(f"  Created: {ds_info['created_at']}")
+                print(f"  Queries: {len(ds_info['queries'])}")
+        else:
+            print("\nNo datasets registered yet")
 
     elif args.create and args.csv:
-        dataset_id = dm.get_or_create_dataset(
-            name=args.create,
+        # Create dataset from CSV
+        dataset_id = dm.create_from_csv(
             csv_path=args.csv,
+            dataset_name=args.create,
             description=f"Created from {args.csv}"
         )
 
     elif args.info:
-        info = dm.get_dataset_info(args.info)
-        for key, value in info.items():
-            print(f"  {key}: {value}")
+        info = dm.get_dataset(args.info)
+        if info:
+            print(f"\nDataset: {args.info}")
+            for key, value in info.items():
+                print(f"  {key}: {value}")
+        else:
+            print(f"\nDataset '{args.info}' not found")
 ```
 
 ---
@@ -1059,27 +1094,26 @@ def main():
 
 **Purpose:** Interactive Streamlit dashboard for analytics, configuration, and system management
 
-**Location:** `scripts/phoenix_dashboard_standalone.py` (200+ lines, multi-tab)
+**Location:** `scripts/phoenix_dashboard_standalone.py` (3054 lines, multi-tab)
 
 **Dashboard Tabs:**
 
-**1. Analytics Tab** (PhoenixAnalytics):
+**1. Analytics Tab**:
 ```python
-# Import from evaluation package (core layer)
-from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+# Phoenix analytics are displayed via Streamlit components
+# Charts include:
+# - Performance metrics over time
+# - Latency distribution
+# - Error rate tracking
+# - Request throughput
 
-# Performance metrics over time (tenant-aware)
-analytics = PhoenixAnalytics(tenant_id="acme_corp")
-metrics = analytics.get_performance_metrics(time_range="7d")
-
-# Display charts
 st.plotly_chart(
-    analytics.plot_latency_distribution(),
+    plot_latency_distribution(),
     use_container_width=True
 )
 
 st.plotly_chart(
-    analytics.plot_error_rate_over_time(),
+    plot_error_rate_over_time(),
     use_container_width=True
 )
 ```
@@ -1145,10 +1179,15 @@ render_orchestration_annotation_tab()
 ```
 
 **Dashboard Features:**
+
 - Auto-refresh capability
+
 - Time range filtering
+
 - Tenant isolation
+
 - Export functionality
+
 - Real-time metrics
 
 **Startup:**
@@ -1164,7 +1203,7 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 
 ### 1. Video Ingestion Flow
 
-```
+```text
 User Command
     │
     ├─> run_ingestion.py
@@ -1211,7 +1250,7 @@ User Command
 
 ### 2. Schema Deployment Flow
 
-```
+```text
 User Command
     │
     ├─> deploy_json_schema.py OR deploy_all_schemas.py
@@ -1255,12 +1294,15 @@ User Command
 
 ### 3. Experiment Workflow Flow
 
-```
+**Note:** This workflow uses legacy `src.evaluation.experiments` module (archived)
+
+```text
 User Command
     │
     ├─> run_experiments_with_visualization.py
     │       │
-    │       ├─> Initialize PhoenixExperimentRunner
+    │       ├─> Initialize PhoenixExperimentRunner (Legacy)
+    │       │   • From archived src.evaluation.experiments
     │       │   • Separate "experiments" project
     │       │   • Quality evaluators: relevance, diversity, distribution
     │       │   • LLM evaluators: reference-free, reference-based
@@ -1274,7 +1316,7 @@ User Command
     │       │       • Register with Phoenix
     │       │
     │       ├─> Get Experiment Configurations
-    │       │   • Query strategy registry
+    │       │   • Query strategy registry (legacy src.common.core.registry)
     │       │   • Filter profiles (--profiles or all)
     │       │   • Filter strategies (--strategies or common)
     │       │   • Build profile × strategy matrix
@@ -1330,7 +1372,7 @@ User Command
 
 ### 4. Optimization & Deployment Flow
 
-```
+```text
 User Command
     │
     ├─> run_optimization.py
@@ -1471,17 +1513,17 @@ uv run python scripts/run_ingestion.py \
 ```bash
 # Deploy single schema
 python scripts/deploy_json_schema.py \
-  configs/schemas/video_colpali_smol500_mv_frame.json
+  configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Output:
 # ============================================================
 # Vespa JSON Schema Deployment
 # ============================================================
-# Schema file: configs/schemas/video_colpali_smol500_mv_frame.json
+# Schema file: configs/schemas/video_colpali_smol500_mv_frame_schema.json
 # Config server: localhost:19071
 # Data endpoint: localhost:8080
 #
-# 📄 Loading schema from video_colpali_smol500_mv_frame.json
+# 📄 Loading schema from video_colpali_smol500_mv_frame_schema.json
 # 📦 Processing schema: video_colpali_smol500_mv_frame
 # 🚀 Deploying to http://localhost:19071/application/v2/tenant/default/prepareandactivate...
 # ✅ Schema 'video_colpali_smol500_mv_frame' deployed successfully!
@@ -1500,15 +1542,13 @@ python scripts/deploy_all_schemas.py
 
 # Output:
 # 🚀 Found 8 schemas to deploy
-# 📄 Loading schema from video_colpali_smol500_mv_frame.json
+# 📄 Loading schema from video_colpali_smol500_mv_frame_schema.json
 # ✅ Added schema: video_colpali_smol500_mv_frame
-# 📄 Loading schema from video_videoprism_base_mv_chunk_30s.json
+# 📄 Loading schema from video_videoprism_base_mv_chunk_30s_schema.json
 # ✅ Added schema: video_videoprism_base_mv_chunk_30s
 # ...
 # 📦 Deploying all schemas to Vespa...
 # ✅ All schemas deployed successfully!
-# 📊 Extracting ranking strategies from all schemas...
-# ✅ Extracted 42 ranking strategies from 8 schemas
 # 🎉 Schema deployment complete!
 ```
 
@@ -1518,7 +1558,7 @@ python scripts/deploy_all_schemas.py
 # Run experiments with quality evaluators
 uv run python scripts/run_experiments_with_visualization.py \
   --dataset-name golden_eval_v1 \
-  --csv-path data/testset/evaluation/video_search_queries.csv \
+  --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --profiles frame_based_colpali \
   --quality-evaluators
 
@@ -1665,13 +1705,13 @@ python scripts/manage_datasets.py --list
 # Registered datasets:
 #
 # Name: golden_eval_v1
-#   Phoenix ID: ds_abc123
+#   Dataset ID: ds_abc123
 #   Created: 2025-10-05 10:30:00
 #   Examples: 50
 #   Description: Golden evaluation dataset v1
 #
 # Name: video_search_test
-#   Phoenix ID: ds_def456
+#   Dataset ID: ds_def456
 #   Created: 2025-10-06 14:15:00
 #   Examples: 25
 #   Description: Test queries for video search
@@ -1689,7 +1729,7 @@ python scripts/manage_datasets.py --info golden_eval_v1
 
 # Output:
 # Dataset: golden_eval_v1
-#   phoenix_id: ds_abc123
+#   dataset_id: ds_abc123
 #   created_at: 2025-10-05 10:30:00
 #   num_examples: 50
 #   description: Golden evaluation dataset v1
@@ -2014,18 +2054,29 @@ The Scripts & Operations module provides comprehensive tooling for:
 7. **System Setup**: Environment initialization and dependency checking
 
 **Key Design Patterns:**
+
 - Builder pattern for flexible pipeline configuration
+
 - Async processing for concurrent video handling
+
 - Command pattern for CLI tool design
+
 - Context manager for experiment runner lifecycle
+
 - Factory pattern for strategy resolution
 
 **Production Features:**
+
 - Concurrent async video processing
+
 - Multi-profile simultaneous ingestion
+
 - Phoenix experiment tracking with visualization
+
 - Comprehensive error handling and logging
+
 - Resource-aware concurrency limits
+
 - Interactive Streamlit dashboards
 
 This module serves as the operational backbone of the Cogniverse system, providing production-grade tools for deployment, ingestion, optimization, and monitoring.
@@ -2033,6 +2084,9 @@ This module serves as the operational backbone of the Cogniverse system, providi
 ---
 
 **Next Study Guides:**
+
 - **15_UI_DASHBOARD.md**: Detailed Streamlit dashboard components
+
 - **16_SYSTEM_INTEGRATION.md**: End-to-end system integration
+
 - **17_INSTRUMENTATION.md**: Phoenix telemetry and observability

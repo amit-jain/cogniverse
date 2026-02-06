@@ -1,6 +1,6 @@
 # Deploy Modal VLM Service for Video Processing
 
-**Package**: `cogniverse-vlm` (Implementation Layer)
+**Note**: VLM functionality is part of `cogniverse-runtime` (Application Layer). This guide covers deploying the Modal VLM service.
 
 This guide walks you through deploying the Modal VLM service for image description generation in your video processing pipeline.
 
@@ -30,14 +30,15 @@ modal deploy scripts/modal_vlm_service.py
 ```
 
 This will:
-- ✅ Download and cache the Qwen2-VL-7B-Instruct model
-- ✅ Create a serverless GPU-accelerated inference service
-- ✅ Return a web endpoint URL for API access
+
+- Download and cache the Qwen2-VL-7B-Instruct model
+- Create a serverless GPU-accelerated inference service
+- Return a web endpoint URL for API access
 
 ## Step 2: Get Your Endpoint URL
 
 After deployment, Modal will provide an endpoint URL that looks like:
-```
+```text
 https://username--cogniverse-vlm-vlmmodel-generate-description.modal.run
 ```
 
@@ -45,7 +46,7 @@ https://username--cogniverse-vlm-vlmmodel-generate-description.modal.run
 
 ## Step 3: Update Configuration
 
-Edit your `config.json` file and replace the placeholder:
+Edit your `configs/config.json` file and replace the placeholder:
 
 ```json
 {
@@ -58,11 +59,8 @@ Edit your `config.json` file and replace the placeholder:
 Test that everything works:
 
 ```bash
-# Test just the Modal service
-modal run scripts/modal_vlm_service.py --image-path /path/to/test/image.jpg
-
-# Test the full pipeline integration
-python test_fix.py
+# Test just the Modal service (uses --frame-path parameter)
+modal run scripts/modal_vlm_service.py::test_vlm --frame-path /path/to/test/frame.jpg
 ```
 
 ## Step 5: Run Video Processing
@@ -70,25 +68,29 @@ python test_fix.py
 Now your video processing pipeline will use Modal instead of Ollama:
 
 ```bash
-python scripts/test_video_processing.py
+# Run ingestion with Modal VLM backend
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+    --video_dir data/testset/evaluation/sample_videos \
+    --backend vespa
 ```
 
 ## Expected Benefits
 
-✅ **Better Reliability**: No local Ollama service dependencies  
-✅ **GPU Acceleration**: Fast inference on Modal's L40S/A100 GPUs  
-✅ **Scalability**: Handles multiple videos concurrently  
-✅ **Quality**: Qwen2-VL-7B produces high-quality descriptions  
+- **Better Reliability**: No local Ollama service dependencies
+- **GPU Acceleration**: Fast inference on Modal's H100/A100 GPUs (default: H100)
+- **Scalability**: Handles multiple videos concurrently
+- **Quality**: Qwen2-VL-7B produces high-quality descriptions
 
 ## Troubleshooting
 
 ### "VLM endpoint not configured" error
 - Ensure you've deployed the service: `modal deploy scripts/modal_vlm_service.py`
-- Check that `config.json` has the correct endpoint URL
+- Check that `configs/config.json` has the correct endpoint URL
 - Verify the endpoint is working: `curl -X POST your-endpoint-url -d '{"frame_base64":"..."}'`
 
 ### GPU/Memory errors
-- Try reducing GPU type in `modal_vlm_service.py`: Change `GPU_TYPE = "l40s"` to `"t4"`
+- Try reducing GPU type in `modal_vlm_service.py`: Change default from `"h100"` to `"a100"`, `"l40s"`, or `"t4"`
+- Set environment variable: `GPU_TYPE=a100 modal deploy scripts/modal_vlm_service.py`
 - Reduce batch size or concurrent requests
 
 ### Authentication errors
@@ -102,20 +104,33 @@ python scripts/test_video_processing.py
 - **Cost**: ~$0.01-0.05 per image (depending on GPU type)
 
 For our elephant_dream_clip test (719 frames):
+
 - **Total cost**: ~$7-35
+
 - **Processing time**: ~25-50 minutes (including cold starts)
 
 ## Scaling Configuration
 
-For high-volume processing, adjust these settings in `scripts/modal_vlm_service.py`:
+For high-volume processing, modify these settings in `scripts/modal_vlm_service.py`:
 
+**Increase concurrent requests** (line 91):
 ```python
-# More aggressive scaling
-@modal.concurrent(max_inputs=100)  # Increase concurrent requests
+@modal.concurrent(max_inputs=100)  # Default is 50
+```
 
-# Faster GPUs
-GPU_TYPE = "a100-80gb"  # or "h100" for maximum speed
+**Change GPU type** (line 18 or via environment variable):
+```bash
+# Set via environment variable before deploying
+GPU_TYPE=a100 modal deploy scripts/modal_vlm_service.py
+```
 
-# Longer warm periods
-scaledown_window=60 * MINUTES  # Keep warm longer
-``` 
+**Keep service warm longer** (line 87):
+```python
+@app.cls(
+    gpu=GPU_CONFIG,
+    timeout=180 * MINUTES,
+    scaledown_window=600,  # Default is 300 (5 minutes), increase to 10 minutes
+    image=vlm_image,
+    volumes=volumes,
+)
+```

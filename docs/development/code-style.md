@@ -168,11 +168,11 @@ def config(t):
 
 ```python
 # Good
-class VideoSearchAgent(A2AAgent):
+class SearchAgent(A2AAgent[SearchInput, SearchOutput, SearchAgentDeps]):
     ...
 
 # Bad
-class video_search_agent(A2AAgent):  # Wrong case
+class search_agent(A2AAgent):  # Wrong case
     ...
 ```
 
@@ -234,31 +234,33 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 # Local packages
-from cogniverse_core.agents.base import AgentBase, AgentInput, AgentOutput
+from cogniverse_core.agents.base import AgentInput, AgentOutput, AgentDeps
 from cogniverse_foundation.config.manager import ConfigManager
 ```
 
 ### Absolute vs Relative
 
-- **Absolute imports** for cross-package: `from cogniverse_core.agents import AgentBase`
-- **Relative imports** within package: `from .types import AgentInput`
+- **Absolute imports** for cross-package: `from cogniverse_core.agents.base import AgentInput`
+- **Both absolute and relative imports** are acceptable within package
+- **Relative imports** are preferred for submodule imports: `from .base import RoutingStrategy`
 
 ```python
-# In cogniverse_agents/routing/agent.py
+# In cogniverse_agents/search_agent.py
 
 # Cross-package (absolute)
 from cogniverse_core.agents.a2a_agent import A2AAgent
+from cogniverse_foundation.config.manager import ConfigManager
 
-# Within package (relative)
-from .types import RoutingInput, RoutingOutput
-from .module import RoutingModule
+# Within package (absolute form - commonly used)
+from cogniverse_core.query.encoders import QueryEncoderFactory
+from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 ```
 
 ### Avoid Star Imports
 
 ```python
 # Good
-from cogniverse_core.agents.base import AgentBase, AgentInput, AgentOutput
+from cogniverse_core.agents.base import AgentInput, AgentOutput, AgentDeps
 
 # Bad
 from cogniverse_core.agents.base import *
@@ -311,20 +313,30 @@ def search(
 ### Class Docstrings
 
 ```python
-class SearchAgent(A2AAgent[SearchInput, SearchOutput, SearchDeps]):
+# Example pattern for agent class docstrings
+class MySearchAgent(A2AAgent[MySearchInput, MySearchOutput, MySearchDeps]):
     """
     Agent for multi-modal search.
 
     Supports semantic, hybrid, and learned ranking strategies.
-    Integrates with Vespa backend for vector search.
+    Integrates with backend for vector search.
 
     Attributes:
         AGENT_NAME: Unique identifier for registration
         CAPABILITIES: List of supported operations
 
     Example:
-        agent = SearchAgent(deps=deps)
-        result = await agent.process(SearchInput(query="hello"))
+        # Standard A2AAgent initialization pattern
+        config = A2AAgentConfig(
+            agent_name="search",
+            agent_description="Multi-modal search agent",
+            capabilities=["search"],
+        )
+        agent = MySearchAgent(deps=deps, config=config)
+        result = await agent.process(MySearchInput(query="hello"))
+
+        # Note: Some agents may require additional dependencies
+        # (e.g., schema_loader, config_manager) passed to constructor
     """
 ```
 
@@ -371,16 +383,18 @@ except:
 Define domain-specific exceptions:
 
 ```python
-# Good
+# Good - Example pattern for custom exceptions
 class BackendError(Exception):
     """Error communicating with backend."""
 
-class ConfigurationError(Exception):
+class ConfigError(Exception):
     """Invalid configuration."""
 
 # Raise with context
 raise BackendError(f"Failed to connect to {url}")
 ```
+
+**Note:** The codebase uses `BackendError` from `cogniverse_runtime.ingestion.exceptions`. For configuration errors, define project-specific exception classes as needed.
 
 ### Return vs Raise
 
@@ -388,8 +402,8 @@ raise BackendError(f"Failed to connect to {url}")
 - **Return error output** for expected failure modes
 
 ```python
-# Agent process - return error in output
-async def process(self, input: Input) -> Output:
+# Agent _process_impl - return error in output
+async def _process_impl(self, input: Input) -> Output:
     if not input.query:
         return Output(result=None, error="Query cannot be empty")
     ...
@@ -397,7 +411,7 @@ async def process(self, input: Input) -> Output:
 # Utility function - raise exception
 def validate_config(config: dict) -> None:
     if "tenant_id" not in config:
-        raise ConfigurationError("tenant_id is required")
+        raise ValueError("tenant_id is required")
 ```
 
 ---
@@ -406,19 +420,57 @@ def validate_config(config: dict) -> None:
 
 ### Test Organization
 
-```
+```text
 tests/
 ├── agents/
 │   ├── unit/
 │   │   ├── test_routing_agent.py
 │   │   └── test_search_agent.py
-│   └── integration/
-│       └── test_agent_orchestration.py
-├── foundation/
+│   ├── integration/
+│   │   └── test_autonomous_agents_integration.py
+│   └── e2e/
+│       └── test_real_multi_agent_integration.py
+├── ingestion/
 │   ├── unit/
-│   │   └── test_config_manager.py
+│   │   └── test_pipeline.py
 │   └── integration/
-│       └── test_telemetry.py
+│       └── test_ingestion_end_to_end.py
+├── routing/
+│   ├── unit/
+│   │   └── test_router_unit.py
+│   └── integration/
+├── evaluation/
+│   ├── unit/
+│   │   └── test_metrics.py
+│   ├── integration/
+│   └── conftest.py
+├── backends/
+│   ├── unit/
+│   └── integration/
+├── memory/
+│   ├── unit/
+│   └── integration/
+├── admin/
+│   ├── unit/
+│   │   └── test_tenant_manager_validation.py
+│   ├── test_profile_api.py
+│   └── test_tenant_manager.py
+├── finetuning/
+│   ├── integration/
+│   ├── test_adapter_registry.py
+│   ├── test_dpo_trainer.py
+│   └── conftest.py
+├── system/
+│   ├── test_ensemble_comprehensive.py
+│   └── conftest.py
+├── common/
+│   ├── unit/
+│   └── integration/
+├── ui/
+│   └── integration/
+├── utils/
+│   └── memory_store.py
+├── unit/
 └── conftest.py  # Shared fixtures
 ```
 
@@ -447,17 +499,38 @@ class TestSearchAgent:
 Use pytest fixtures for common setup:
 
 ```python
-# conftest.py
+# Example fixture pattern for in-memory store (from tests/conftest.py)
 @pytest.fixture
-def config_manager():
-    """Create test config manager."""
-    return ConfigManager(store=InMemoryStore())
+def config_manager_memory():
+    """Create ConfigManager with in-memory store for unit testing."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
 
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+# Example agent fixture pattern (typically defined per test file, not globally)
+# This shows the pattern - actual fixtures are in individual test modules
 @pytest.fixture
-def search_agent(config_manager):
-    """Create test search agent."""
-    deps = SearchDeps(config_manager=config_manager)
-    return SearchAgent(deps=deps)
+def search_agent_example(config_manager, schema_loader):
+    """Example pattern for creating test search agent."""
+    from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+
+    # Create typed dependencies
+    deps = SearchAgentDeps(
+        tenant_id="test_tenant",
+        backend_url="http://localhost",
+        backend_port=8080,
+    )
+    # Note: SearchAgent requires schema_loader and config_manager via dependency injection
+    # The port parameter defaults to 8002 for A2A server
+    return SearchAgent(
+        deps=deps,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
+        port=8002,  # Optional: A2A server port
+    )
 ```
 
 ### Assertions
@@ -519,14 +592,14 @@ uv run make lint-all
 ```toml
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "C4"]
+select = ["E", "W", "F", "I"]
 ignore = ["E501"]  # Line length handled by formatter
 
 [tool.ruff.lint.isort]
-known-first-party = ["cogniverse_*"]
+known-first-party = ["cogniverse_sdk", "cogniverse_foundation", "cogniverse_core", "cogniverse_evaluation", "cogniverse_telemetry_phoenix", "cogniverse_agents", "cogniverse_vespa", "cogniverse_synthetic", "cogniverse_runtime", "cogniverse_dashboard", "cogniverse_finetuning"]
 ```
 
 ---

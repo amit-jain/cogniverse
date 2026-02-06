@@ -1,9 +1,5 @@
 # Package Publishing Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 10 SDK Packages in Layered Architecture
-**Purpose:** Complete guide for building and publishing Cogniverse SDK packages to PyPI in dependency order
-
 ---
 
 ## Table of Contents
@@ -24,50 +20,57 @@
 
 ## Overview
 
-Cogniverse consists of **10 independent SDK packages** published to PyPI in **layered architecture**:
+Cogniverse consists of **11 independent packages** organized in a **layered architecture**. The publishing scripts currently support **5 main packages** (core, agents, vespa, runtime, dashboard):
 
-### Foundation Layer
+### Packages Supported by Publishing Scripts
+
 | Package | Description | Dependencies |
 |---------|-------------|--------------|
-| **cogniverse-sdk** | Base types and protocols | None (pure foundation) |
-| **cogniverse-foundation** | Core telemetry, config, utils | cogniverse-sdk |
-
-### Core Layer
-| Package | Description | Dependencies |
-|---------|-------------|--------------|
-| **cogniverse-evaluation** | Evaluation framework and Phoenix analytics | cogniverse-foundation |
-| **cogniverse-core** | Business logic and system configuration | cogniverse-foundation, cogniverse-sdk |
-
-### Implementation Layer
-| Package | Description | Dependencies |
-|---------|-------------|--------------|
-| **cogniverse-telemetry-phoenix** | Phoenix telemetry implementation | cogniverse-foundation, cogniverse-evaluation |
-| **cogniverse-agents** | Agent implementations | cogniverse-core, cogniverse-evaluation |
+| **cogniverse-core** | Business logic and system configuration | cogniverse-foundation, cogniverse-sdk, cogniverse-evaluation |
+| **cogniverse-agents** | Agent implementations | cogniverse-core, cogniverse-synthetic |
 | **cogniverse-vespa** | Vespa backend integration | cogniverse-core |
-| **cogniverse-synthetic** | Synthetic data generation | cogniverse-core, cogniverse-agents |
+| **cogniverse-runtime** | FastAPI server runtime | cogniverse-core, cogniverse-sdk (agents/vespa optional) |
+| **cogniverse-dashboard** | Streamlit UI dashboard | cogniverse-core, cogniverse-evaluation, cogniverse-runtime |
 
-### Application Layer
-| Package | Description | Dependencies |
-|---------|-------------|--------------|
-| **cogniverse-runtime** | FastAPI server runtime | All lower layers |
-| **cogniverse-dashboard** | Streamlit UI dashboard | core, agents, telemetry-phoenix |
+### Other Packages (Manual Publishing Required)
+
+| Package | Description | Layer |
+|---------|-------------|-------|
+| **cogniverse-sdk** | Base types and protocols | Foundation |
+| **cogniverse-foundation** | Core telemetry, config, utils | Foundation |
+| **cogniverse-evaluation** | Evaluation framework and Phoenix analytics | Core |
+| **cogniverse-telemetry-phoenix** | Phoenix telemetry implementation | Implementation |
+| **cogniverse-synthetic** | Synthetic data generation | Implementation |
+| **cogniverse-finetuning** | Model fine-tuning and optimization | Implementation |
 
 ### Publishing Workflow
 
-```
-Version Bump → Build (Layer Order) → Test (Layer-Aware) → Publish (Layer Order) → Release
-     ↓              ↓                      ↓                      ↓                  ↓
-  version_    build packages       pytest by layer        publish packages     GitHub
-  bump.py    foundation first    test dependencies      foundation first      Release
-                                    per layer
+```mermaid
+flowchart LR
+    A["<span style='color:#000'><b>Version Bump</b><br/>version_bump.py</span>"]
+    B["<span style='color:#000'><b>Build</b><br/>build 5 packages<br/>in dependency order</span>"]
+    C["<span style='color:#000'><b>Test</b><br/>pytest by layer<br/>test dependencies</span>"]
+    D["<span style='color:#000'><b>Publish</b><br/>publish 5 packages<br/>in dependency order</span>"]
+    E["<span style='color:#000'><b>Release</b><br/>GitHub Release</span>"]
+
+    A --> B --> C --> D --> E
+
+    style A fill:#ffcc80,stroke:#ef6c00,color:#000
+    style B fill:#90caf9,stroke:#1565c0,color:#000
+    style C fill:#a5d6a7,stroke:#388e3c,color:#000
+    style D fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style E fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
-**Critical: Publish in Dependency Order**
+**Publishing Scripts Handle 5 Packages**
 
-1. Foundation Layer: sdk → foundation
-2. Core Layer: evaluation, core (can be parallel)
-3. Implementation Layer: telemetry-phoenix → agents, vespa (parallel) → synthetic
-4. Application Layer: runtime, dashboard (can be parallel)
+The automated scripts (`build_packages.sh`, `version_bump.py`, `publish_packages.sh`) handle these packages in dependency order:
+
+1. **cogniverse-core** - Built first (has workspace dependencies on foundation, sdk, evaluation)
+2. **cogniverse-agents**, **cogniverse-vespa** - Built in parallel (depend on core)
+3. **cogniverse-runtime**, **cogniverse-dashboard** - Built last (depend on core, agents, vespa)
+
+**Note:** The other 6 packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning) must be published manually or require script updates.
 
 ---
 
@@ -75,14 +78,14 @@ Version Bump → Build (Layer Order) → Test (Layer-Aware) → Publish (Layer O
 
 Each package follows UV workspace structure with layer organization:
 
-```
+```text
 libs/
 ├── FOUNDATION LAYER
 ├── sdk/                     # cogniverse-sdk
 │   ├── cogniverse_sdk/
 │   │   ├── __init__.py
-│   │   ├── types/
-│   │   └── protocols/
+│   │   ├── document.py
+│   │   └── interfaces/
 │   ├── pyproject.toml
 │   └── README.md
 ├── foundation/              # cogniverse-foundation
@@ -90,6 +93,7 @@ libs/
 │   │   ├── __init__.py
 │   │   ├── telemetry/
 │   │   ├── config/
+│   │   ├── cache/
 │   │   └── utils/
 │   ├── pyproject.toml
 │   └── README.md
@@ -101,6 +105,7 @@ libs/
 ├── agents/                  # cogniverse-agents
 ├── vespa/                   # cogniverse-vespa
 ├── synthetic/               # cogniverse-synthetic
+├── finetuning/              # cogniverse-finetuning
 ├── APPLICATION LAYER
 ├── runtime/                 # cogniverse-runtime
 └── dashboard/               # cogniverse-dashboard
@@ -112,14 +117,20 @@ libs/
 # libs/foundation/pyproject.toml
 [project]
 name = "cogniverse-foundation"
-version = "2.0.0"
-description = "Foundation utilities for Cogniverse SDK - telemetry, config, and common tools"
+version = "0.1.0"
+description = "Cogniverse Foundation - Cross-cutting concerns and shared infrastructure"
 requires-python = ">=3.12"
 dependencies = [
-    "cogniverse-sdk>=2.0.0",  # Foundation layer dependency
-    "pydantic>=2.0",
-    "pyyaml>=6.0"
+    "cogniverse-sdk",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "pydantic>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "pandas>=2.0.0",
 ]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -132,14 +143,34 @@ build-backend = "hatchling.build"
 # libs/agents/pyproject.toml
 [project]
 name = "cogniverse-agents"
-version = "2.0.0"
-description = "Agent implementations for Cogniverse multi-agent system"
+version = "0.1.0"
+description = "Agent implementations, routing logic, and search enhancement for Cogniverse"
 requires-python = ">=3.12"
 dependencies = [
-    "cogniverse-core>=2.0.0",       # Core layer dependency
-    "cogniverse-evaluation>=2.0.0",  # Core layer dependency
-    "litellm>=1.0.0"
+    "cogniverse-sdk",
+    "cogniverse-core",
+    "cogniverse-synthetic",
+    # Machine Learning
+    "torch>=2.5.0",
+    "transformers>=4.50.0",
+    "colpali-engine>=0.3.12",
+    "sentence-transformers>=5.1.0",
+    # Optimization and ML
+    "xgboost>=3.0.5",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.10.0",
+    # NLP
+    "spacy>=3.7.0",
+    "gliner>=0.2.21",
+    "langextract>=1.0.6",
+    # MLflow for experiment tracking
+    "mlflow>=3.0.0",
 ]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
+cogniverse-core = { workspace = true }
+cogniverse-synthetic = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -173,13 +204,19 @@ pip install twine
 #### 2. Generate API Tokens
 
 **PyPI:**
+
 1. Go to https://pypi.org/manage/account/token/
+
 2. Create token with scope: "Entire account"
+
 3. Save token securely (starts with `pypi-`)
 
 **TestPyPI:**
+
 1. Go to https://test.pypi.org/manage/account/token/
+
 2. Create token with scope: "Entire account"
+
 3. Save token securely (starts with `pypi-`)
 
 #### 3. Configure Credentials
@@ -220,10 +257,10 @@ password = pypi-your-test-token
 
 Cogniverse follows [Semantic Versioning 2.0.0](https://semver.org/):
 
-```
+```text
 MAJOR.MINOR.PATCH[-PRERELEASE]
   ↓     ↓     ↓         ↓
-  2  .  1  .  3  -  alpha.0
+  0  .  1  .  0  -  alpha.0
 
 MAJOR: Breaking changes
 MINOR: New features (backward compatible)
@@ -238,16 +275,16 @@ PRERELEASE: alpha, beta, rc
 #### Basic Usage
 
 ```bash
-# Patch bump (2.0.0 → 2.0.1)
+# Patch bump (0.1.0 → 0.1.1)
 ./scripts/version_bump.py patch
 
-# Minor bump (2.0.1 → 2.1.0)
+# Minor bump (0.1.0 → 0.2.0)
 ./scripts/version_bump.py minor
 
-# Major bump (2.1.0 → 3.0.0)
+# Major bump (0.2.0 → 1.0.0)
 ./scripts/version_bump.py major
 
-# Prerelease (2.0.0 → 2.0.1-alpha.0)
+# Prerelease (0.1.0 → 0.1.1-alpha.0)
 ./scripts/version_bump.py prerelease --prerelease-suffix alpha
 ```
 
@@ -277,13 +314,13 @@ PRERELEASE: alpha, beta, rc
 ./scripts/version_bump.py minor --commit --tag
 
 # Output:
-# [INFO] Current version: 2.0.0
-# [INFO] New version: 2.1.0
-# [SUCCESS] Updated core: 2.0.0 → 2.1.0
-# [SUCCESS] Updated agents: 2.0.0 → 2.1.0
+# [INFO] Current version: 0.1.0
+# [INFO] New version: 0.2.0
+# [SUCCESS] Updated core: 0.1.0 → 0.2.0
+# [SUCCESS] Updated agents: 0.1.0 → 0.2.0
 # ...
-# [SUCCESS] Committed version bump: 2.1.0
-# [SUCCESS] Created git tag: v2.1.0
+# [SUCCESS] Committed version bump: 0.2.0
+# [SUCCESS] Created git tag: v0.2.0
 ```
 
 ---
@@ -322,46 +359,31 @@ CONTINUE_ON_ERROR=true ./scripts/build_packages.sh
 
 #### Build Output
 
-```
+```text
 dist/
-├── FOUNDATION LAYER
-├── cogniverse_sdk-2.1.0-py3-none-any.whl
-├── cogniverse_sdk-2.1.0.tar.gz
-├── cogniverse_foundation-2.1.0-py3-none-any.whl
-├── cogniverse_foundation-2.1.0.tar.gz
-├── CORE LAYER
-├── cogniverse_evaluation-2.1.0-py3-none-any.whl
-├── cogniverse_evaluation-2.1.0.tar.gz
-├── cogniverse_core-2.1.0-py3-none-any.whl
-├── cogniverse_core-2.1.0.tar.gz
-├── IMPLEMENTATION LAYER
-├── cogniverse_telemetry_phoenix-2.1.0-py3-none-any.whl
-├── cogniverse_telemetry_phoenix-2.1.0.tar.gz
-├── cogniverse_agents-2.1.0-py3-none-any.whl
-├── cogniverse_agents-2.1.0.tar.gz
-├── cogniverse_vespa-2.1.0-py3-none-any.whl
-├── cogniverse_vespa-2.1.0.tar.gz
-├── cogniverse_synthetic-2.1.0-py3-none-any.whl
-├── cogniverse_synthetic-2.1.0.tar.gz
-├── APPLICATION LAYER
-├── cogniverse_runtime-2.1.0-py3-none-any.whl
-├── cogniverse_runtime-2.1.0.tar.gz
-├── cogniverse_dashboard-2.1.0-py3-none-any.whl
-├── cogniverse_dashboard-2.1.0.tar.gz
+├── cogniverse_core-0.1.0-py3-none-any.whl
+├── cogniverse_core-0.1.0.tar.gz
+├── cogniverse_agents-0.1.0-py3-none-any.whl
+├── cogniverse_agents-0.1.0.tar.gz
+├── cogniverse_vespa-0.1.0-py3-none-any.whl
+├── cogniverse_vespa-0.1.0.tar.gz
+├── cogniverse_runtime-0.1.0-py3-none-any.whl
+├── cogniverse_runtime-0.1.0.tar.gz
+├── cogniverse_dashboard-0.1.0-py3-none-any.whl
+├── cogniverse_dashboard-0.1.0.tar.gz
 └── BUILD_MANIFEST.txt
 ```
 
 #### Build Process
 
-1. **Validation:** Checks package structure and version format for all 11 packages
-2. **Layer-Aware Dependency Order:** Builds packages layer-by-layer respecting dependencies
-   - Foundation layer (sdk, foundation)
-   - Core layer (evaluation, core)
-   - Implementation layer (telemetry-phoenix, agents, vespa, synthetic)
-   - Application layer (runtime, dashboard)
+1. **Validation:** Checks package structure and version format for 5 packages (core, agents, vespa, runtime, dashboard)
+2. **Dependency Order:** Builds packages respecting dependencies:
+   - core (built first)
+   - agents, vespa (built in parallel after core)
+   - runtime, dashboard (built last)
 3. **Artifact Generation:** Creates wheel (.whl) and source (.tar.gz) distributions
 4. **Verification:** Validates metadata and contents for each package
-5. **Manifest:** Generates build manifest with layer information
+5. **Manifest:** Generates build manifest
 
 ---
 
@@ -376,32 +398,25 @@ dist/
 python -m venv test-env
 source test-env/bin/activate
 
-# Install packages in layer dependency order (CRITICAL)
+# Install built packages in dependency order
 
-# Foundation layer
-pip install dist/cogniverse_sdk-*.whl
-pip install dist/cogniverse_foundation-*.whl
-
-# Core layer
-pip install dist/cogniverse_evaluation-*.whl
+# Core package (built first)
 pip install dist/cogniverse_core-*.whl
 
-# Implementation layer
-pip install dist/cogniverse_telemetry_phoenix-*.whl
+# Agent and backend packages (depend on core)
 pip install dist/cogniverse_agents-*.whl
 pip install dist/cogniverse_vespa-*.whl
-pip install dist/cogniverse_synthetic-*.whl
 
-# Application layer
+# Application packages (depend on core, agents, vespa)
 pip install dist/cogniverse_runtime-*.whl
 pip install dist/cogniverse_dashboard-*.whl
 
-# Verify imports (layer-by-layer)
-python -c "from cogniverse_sdk.types import BaseModel"
-python -c "from cogniverse_foundation.telemetry.manager import get_telemetry_manager"
-python -c "from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker"
-python -c "from cogniverse_core.config import SystemConfig"
-python -c "from cogniverse_agents.agents import RoutingAgent"
+# Verify imports
+python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
+python -c "from cogniverse_agents.routing_agent import RoutingAgent"
+python -c "from cogniverse_vespa import VespaBackend"
+python -c "from cogniverse_runtime.main import app"
+python -c "print('All packages imported successfully')"
 ```
 
 #### Run Test Suite
@@ -439,9 +454,9 @@ TEST_PYPI_TOKEN="your-test-token" ./scripts/publish_packages.sh --test
 
 # Output:
 # [INFO] Publishing package: cogniverse-core
-# [INFO]   Version: 2.1.0
+# [INFO]   Version: 0.1.0
 # [INFO]   Uploading...
-# [SUCCESS] Published successfully: cogniverse-core v2.1.0
+# [SUCCESS] Published successfully: cogniverse-core v0.1.0
 ```
 
 ### Test Installation
@@ -460,7 +475,7 @@ pip install --index-url https://test.pypi.org/simple/ \
 ```bash
 # Test package functionality
 python -c "
-from cogniverse_core.config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 config = SystemConfig(tenant_id='test')
 print(f'Successfully imported: {config.tenant_id}')
 "
@@ -474,53 +489,37 @@ print(f'Successfully imported: {config.tenant_id}')
 
 - [ ] All tests passing
 - [ ] Version bumped correctly
-- [ ] Git tag created (`v2.1.0`)
-- [ ] CHANGELOG updated
+- [ ] Git tag created (`v0.1.0`)
+- [ ] CHANGELOG updated (optional - file not currently maintained)
 - [ ] README accurate
 - [ ] License included
 - [ ] Tested on TestPyPI
 
-### Manual Publishing (Layer-by-Layer)
+### Manual Publishing
 
 ```bash
-# 1. Final build (layer-aware)
+# 1. Build packages
 ./scripts/build_packages.sh --clean --test
 
-# 2. Publish to PyPI layer-by-layer (with dry run first)
+# 2. Publish to PyPI (with dry run first)
+PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh --dry-run
 
-# Foundation layer
-PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
-  --packages "sdk foundation" --dry-run
-
-# Core layer (after foundation is published)
-PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
-  --packages "evaluation core" --dry-run
-
-# Implementation layer (after core is published)
-PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
-  --packages "telemetry-phoenix agents vespa synthetic" --dry-run
-
-# Application layer (after implementation is published)
-PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
-  --packages "runtime dashboard" --dry-run
-
-# 3. Confirm and publish (layer-by-layer)
-PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
-  --layer foundation
-
-# WARNING: You are about to publish foundation layer packages to PyPI
-# Packages: cogniverse-sdk, cogniverse-foundation
-# This action cannot be undone!
-#
-# Continue? (yes/no): yes
+# 3. Actual publish
+PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh
 
 # Output:
-# [SUCCESS] Published successfully: cogniverse-sdk v2.1.0
-# [SUCCESS] Published successfully: cogniverse-foundation v2.1.0
-# [INFO] Foundation layer published! Proceed with core layer.
-
-# Repeat for each layer...
+# [INFO] Publishing package: cogniverse-core
+# [INFO]   Version: 0.1.0
+# [INFO]   Uploading...
+# [SUCCESS] Published successfully: cogniverse-core v0.1.0
+# [SUCCESS] Published successfully: cogniverse-agents v0.1.0
+# [SUCCESS] Published successfully: cogniverse-vespa v0.1.0
+# [SUCCESS] Published successfully: cogniverse-runtime v0.1.0
+# [SUCCESS] Published successfully: cogniverse-dashboard v0.1.0
 ```
+
+**Note:** The scripts publish all 5 packages (core, agents, vespa, runtime, dashboard). For other packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning), manual publishing or script updates are required.
+
 
 ### Verify Publication
 
@@ -529,10 +528,10 @@ PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh \
 open https://pypi.org/project/cogniverse-core/
 
 # Test installation
-pip install cogniverse-core==2.1.0
+pip install cogniverse-core==0.1.0
 
 # Test functionality
-python -c "from cogniverse_core.config import SystemConfig; print('Success!')"
+python -c "from cogniverse_foundation.config.unified_config import SystemConfig; print('Success!')"
 ```
 
 ---
@@ -547,8 +546,8 @@ python -c "from cogniverse_core.config import SystemConfig; print('Success!')"
 
 ```bash
 # Create and push version tag
-git tag -a v2.1.0 -m "Release 2.1.0"
-git push origin v2.1.0
+git tag -a v0.1.0 -m "Release 0.1.0"
+git push origin v0.1.0
 
 # GitHub Actions automatically:
 # 1. Builds packages
@@ -569,38 +568,39 @@ git push origin v2.1.0
 
 ### Workflow Stages
 
-```
-┌──────────┐
-│  Build   │ → Build all 5 packages
-└────┬─────┘
-     ↓
-┌────┴─────┐
-│   Test   │ → Run test suite with Vespa
-└────┬─────┘
-     ↓
-   ┌─┴──────────┐
-   │            │
-┌──┴────┐  ┌───┴────┐
-│TestPyPI│  │  PyPI  │ → Publish based on tag type
-└───┬────┘  └───┬────┘
-    ↓           ↓
-┌───┴───────────┴────┐
-│  GitHub Release     │ → Create release with notes
-└────────────────────┘
+```mermaid
+flowchart TD
+    A["<span style='color:#000'><b>Build</b><br/>Build 5 packages<br/>(core, agents, vespa, runtime, dashboard)</span>"]
+    B["<span style='color:#000'><b>Test</b><br/>Run test suite with Vespa</span>"]
+    C["<span style='color:#000'><b>TestPyPI</b><br/>Publish based on tag type</span>"]
+    D["<span style='color:#000'><b>PyPI</b><br/>Publish based on tag type</span>"]
+    E["<span style='color:#000'><b>GitHub Release</b><br/>Create release with notes</span>"]
+
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    D --> E
+
+    style A fill:#90caf9,stroke:#1565c0,color:#000
+    style B fill:#a5d6a7,stroke:#388e3c,color:#000
+    style C fill:#ffcc80,stroke:#ef6c00,color:#000
+    style D fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style E fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 ### Tag-Based Publishing Rules
 
 | Tag Format | Target | Example |
 |------------|--------|---------|
-| `v*.*.*` | PyPI | `v2.1.0` |
-| `v*.*.*-alpha.*` | TestPyPI | `v2.1.0-alpha.0` |
-| `v*.*.*-beta.*` | TestPyPI | `v2.1.0-beta.1` |
-| `v*.*.*-rc.*` | TestPyPI | `v2.1.0-rc.1` |
+| `v*.*.*` | PyPI | `v0.1.0` |
+| `v*.*.*-alpha.*` | TestPyPI | `v0.1.0-alpha.0` |
+| `v*.*.*-beta.*` | TestPyPI | `v0.1.0-beta.1` |
+| `v*.*.*-rc.*` | TestPyPI | `v0.1.0-rc.1` |
 
 ### Required GitHub Secrets
 
-```
+```text
 Settings → Secrets → Actions:
 
 PYPI_TOKEN           Production PyPI API token
@@ -616,7 +616,7 @@ TEST_PYPI_TOKEN      TestPyPI API token
 #### Version Already Exists on PyPI
 
 **Error:**
-```
+```text
 HTTPError: 400 Bad Request from https://upload.pypi.org/legacy/
 File already exists
 ```
@@ -635,7 +635,7 @@ File already exists
 #### Missing Dependencies in Build
 
 **Error:**
-```
+```text
 ModuleNotFoundError: No module named 'cogniverse_core'
 ```
 
@@ -651,7 +651,7 @@ uv sync
 #### Twine Upload Fails
 
 **Error:**
-```
+```text
 twine.exceptions.TwineException: Invalid or non-existent authentication information
 ```
 
@@ -668,17 +668,17 @@ export PYPI_TOKEN="pypi-your-token"
 #### Package Import Fails After Install
 
 **Error:**
-```
-ImportError: cannot import name 'SystemConfig' from 'cogniverse_core.config'
+```text
+ImportError: cannot import name 'SystemConfig' from 'cogniverse_foundation.config.unified_config'
 ```
 
 **Solution:**
 ```bash
 # Check package contents
-unzip -l dist/cogniverse_core-*.whl | grep config
+unzip -l dist/cogniverse_foundation-*.whl | grep config
 
 # Verify __init__.py exports
-cat libs/core/cogniverse_core/__init__.py
+cat libs/foundation/cogniverse_foundation/__init__.py
 
 # Rebuild with correct exports
 ./scripts/build_packages.sh --clean
@@ -759,9 +759,9 @@ cat libs/core/cogniverse_core/__init__.py
    ./scripts/publish_packages.sh --dry-run
    ```
 
-3. **Document changes in CHANGELOG**
+3. **Document changes in CHANGELOG (optional)**
    ```markdown
-   ## [2.1.0] - 2025-10-15
+   ## [0.2.0] - 2025-10-15
    ### Added
    - New routing strategy: GLiNER-based
    - Multi-tenant Phoenix projects
@@ -772,6 +772,8 @@ cat libs/core/cogniverse_core/__init__.py
    ### Fixed
    - Vespa schema deployment bug
    ```
+
+   Note: CHANGELOG.md is not currently maintained in this project. This is a recommended best practice if you choose to implement it.
 
 ### Security
 
@@ -870,7 +872,3 @@ open https://pypi.org/project/cogniverse-core/
 - **CI/CD Issues:** Check GitHub Actions logs
 
 ---
-
-**Version:** 2.1.0
-**Last Updated:** 2026-01-25
-**Status:** Production Ready

@@ -1,278 +1,115 @@
 # Welcome to Cogniverse
 
-**Version 2.1.0** | **11-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2026-01-25**
+**v0.1.0** · Multi-Agent AI Platform
 
-## Self-Optimizing Content Intelligence Platform
-
-Cogniverse is a general-purpose multi-agent AI platform for intelligent processing and understanding across multi-modal content. The architecture supports any agent type (content, web, code, domain-specific) with complete multi-tenant isolation and self-optimization via DSPy.
+Cogniverse is a self-optimizing multi-agent platform for intelligent processing and search across multi-modal content (video, audio, images, documents). It features A2A agent orchestration, continuous learning via DSPy, and complete multi-tenant isolation.
 
 ---
 
-## What is Cogniverse?
+## Platform Overview
 
-Cogniverse is a technical framework for building production multi-agent systems that process and search across multi-modal content including:
+```mermaid
+flowchart TD
+    %% Main Request Flow
+    user(("<span style='color:#000'>User</span>")) --> |request| agentlayer["<span style='color:#000'><b>Agents (A2A)</b><br/>Router · Composing · Search · ...</span>"]
+    agentlayer --> |response| user
+    agentlayer <--> store[("<span style='color:#000'>Content Store</span>")]
+    agentlayer <--> |context| memory["<span style='color:#000'>Memory</span>"]
+    agentlayer -.-> model["<span style='color:#000'>Model</span>"]
+    config["<span style='color:#000'><b>Config</b><br/>Models · Embeddings</span>"] -.-> model
+    config -.-> store
 
-- **Video**: Frame-level analysis with ColPali/VideoPrism embeddings, temporal segmentation, keyframe extraction
-- **Audio**: Transcription with Whisper, audio embeddings, speaker detection
-- **Images**: Visual similarity search, content-based retrieval, image embeddings
-- **Documents**: PDF/text processing, semantic search, document chunking
-- **Text**: Natural language understanding, entity extraction, BM25 and dense retrieval
-- **Dataframes**: Structured data analysis and integration with unstructured content
+    %% Content Ingestion
+    content[/"<span style='color:#000'>Multi-Modal Content</span>"/] --> |ingest| store
 
-### Core Capabilities
+    %% Continuous Improvement
+    agentlayer -.-> |traces| telemetry["<span style='color:#000'>Telemetry</span>"]
+    telemetry -.-> evaluator["<span style='color:#000'>Evaluator</span>"]
+    evaluator -.-> optimizer["<span style='color:#000'>Optimizer</span>"]
+    optimizer -.-> |improves| agentlayer
 
-**Multi-Modal Content Processing**
-- Frame-level and chunk-level video segmentation strategies
-- Audio transcription with timestamp alignment
-- Image and document embedding generation
-- Text analysis with entity extraction and relationship detection
-- Unified document model across all modalities
+    %% Experiments
+    telemetry -.-> experiments["<span style='color:#000'>Experiments</span>"]
+    experiments -.-> evaluator
 
-**Multi-Agent Orchestration**
-- Agent-to-Agent (A2A) protocol for inter-agent communication
-- Routing agent with DSPy 3.0 modules for intelligent query routing
-- Video, audio, image, document, and text search agents
-- Composing agent for multi-step workflows with dependency management
-- Parallel agent execution with timeout and circuit breaker patterns
+    %% Training
+    store -.-> |samples| generator["<span style='color:#000'>Synthetic Generator</span>"]
+    generator -.-> trainer["<span style='color:#000'>Trainer</span>"]
+    evaluator -.-> |annotations| trainer
+    trainer -.-> |adapters| model
 
-**Experience-Guided Optimization (GEPA)**
-- Continuous learning from query routing decisions
-- Experience buffer for storing successful routing patterns
-- DSPy-based optimization with GEPA, MIPRO, SIMBA, Bootstrap
-- Synthetic data generation for training optimizers
-- Automated prompt and module optimization
+    style user fill:#90caf9,stroke:#1565c0,color:#000
+    style content fill:#a5d6a7,stroke:#388e3c,color:#000
+    style agentlayer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style model fill:#81d4fa,stroke:#0288d1,color:#000
+    style store fill:#90caf9,stroke:#1565c0,color:#000
+    style memory fill:#90caf9,stroke:#1565c0,color:#000
 
-**LLM Fine-Tuning Infrastructure**
-- End-to-end pipeline from Phoenix telemetry to trained LoRA adapters
-- Automatic method selection (SFT vs DPO) based on available annotations
-- Validation split with early stopping to prevent overfitting
-- Automatic adapter evaluation with test set comparison
-- Complete dashboard UI for dataset analysis, training configuration, and experiment tracking
+    style telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
+    style experiments fill:#a5d6a7,stroke:#388e3c,color:#000
+    style evaluator fill:#a5d6a7,stroke:#388e3c,color:#000
+    style optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style generator fill:#ffcc80,stroke:#ef6c00,color:#000
+    style trainer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style config fill:#b0bec5,stroke:#546e7a,color:#000
+```
 
-**Multi-Tenant Architecture**
-- Schema-per-tenant physical isolation in Vespa
-- Tenant-aware configuration and memory systems
-- Independent telemetry streams per tenant
-- JWT-based tenant authentication and authorization
-- Complete data isolation with no cross-tenant leakage
+---
 
-**Production Observability**
-- OpenTelemetry integration with Phoenix
-- Distributed tracing across all agent interactions
-- Experiment tracking with provider-agnostic evaluation framework
-- Metrics collection for latency, accuracy, and resource utilization
-- UMAP visualization of multi-modal embeddings
+## Key Features
+
+- **Multi-Modal Processing** — Video, audio, images, documents with unified embeddings
+- **Agent Orchestration** — A2A protocol with routing, search, and composing agents
+- **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data
+- **LLM Fine-Tuning** — End-to-end pipeline from telemetry to LoRA adapters
+- **Memory** — Context persistence across conversations
+- **Experiments** — Run and track evaluation experiments with datasets
+- **Hybrid Search** — BM25 + dense vectors with multiple ranking strategies
+- **Configurable** — Pluggable models, embeddings, and backends
+- **Multi-Tenant** — Schema-per-tenant isolation with independent telemetry
+- **Production Ready** — OpenTelemetry tracing, metrics, and distributed traces
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd cogniverse
-
-# Install UV workspace (all 11 packages)
+# Install
+git clone <repository-url> && cd cogniverse
 uv sync
 
-# Start infrastructure services
+# Start services (Vespa, Phoenix, Ollama)
 docker compose up -d
 
-# Verify services
-curl http://localhost:8080/ApplicationStatus  # Vespa
-curl http://localhost:6006/health             # Phoenix
-curl http://localhost:11434/api/tags          # Ollama
-
-# Ingest sample videos with ColPali embeddings
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
-  --video_dir data/testset/evaluation/sample_videos \
-  --profile video_colpali_smol500_mv_frame \
-  --tenant default
-
-# Run comprehensive multi-agent test
-JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
-  --profiles video_colpali_smol500_mv_frame \
-  --test-multiple-strategies
+# Launch dashboard
+uv run streamlit run scripts/phoenix_dashboard_standalone.py
+# Open http://localhost:8501
 ```
 
-## 11-Package Layered Architecture
-
-Cogniverse uses a UV workspace with 11 packages organized in 4 layers:
-
-```
-┌─────────────────────────────────────────────┐
-│          APPLICATION LAYER                   │
-│  ┌─────────────────┐  ┌─────────────────┐  │
-│  │ cogniverse-     │  │ cogniverse-      │  │
-│  │ runtime         │  │ dashboard        │  │
-│  │ (FastAPI Server)│  │ (Streamlit UI)   │  │
-│  └─────────────────┘  └─────────────────┘  │
-└─────────────────────────────────────────────┘
-               ↓ depends on ↓
-┌─────────────────────────────────────────────┐
-│        IMPLEMENTATION LAYER                  │
-│  ┌─────────┐  ┌────────┐  ┌──────────────┐ │
-│  │ agents  │  │ vespa  │  │ finetuning   │ │
-│  ├─────────┤  ├────────┤  ├──────────────┤ │
-│  │synthetic│  │        │  │              │ │
-│  └─────────┘  └────────┘  └──────────────┘ │
-└─────────────────────────────────────────────┘
-               ↓ depends on ↓
-┌─────────────────────────────────────────────┐
-│             CORE LAYER                       │
-│  ┌───────┐ ┌─────────────┐ ┌──────────────┐│
-│  │ core  │ │ evaluation  │ │ telemetry-   ││
-│  │       │ │             │ │ phoenix      ││
-│  └───────┘ └─────────────┘ └──────────────┘│
-└─────────────────────────────────────────────┘
-               ↓ depends on ↓
-┌─────────────────────────────────────────────┐
-│         FOUNDATION LAYER                     │
-│  ┌────────────┐    ┌──────────────────────┐ │
-│  │ sdk        │    │ foundation           │ │
-│  │ (Interfaces)│    │ (Config & Telemetry)│ │
-│  └────────────┘    └──────────────────────┘ │
-└─────────────────────────────────────────────┘
-```
-
-**Package Responsibilities:**
-
-| Package | Layer | Purpose |
-|---------|-------|---------|
-| **cogniverse-sdk** | Foundation | Backend interfaces, Document model (zero dependencies) |
-| **cogniverse-foundation** | Foundation | Config base, telemetry interfaces |
-| **cogniverse-core** | Core | Base agent classes, registries, memory management |
-| **cogniverse-evaluation** | Core | Provider-agnostic experiments, metrics, datasets |
-| **cogniverse-telemetry-phoenix** | Core | Phoenix telemetry provider (plugin via entry points) |
-| **cogniverse-agents** | Implementation | Routing, video search, orchestration agents |
-| **cogniverse-vespa** | Implementation | Vespa backend, tenant schema management |
-| **cogniverse-finetuning** | Implementation | LLM fine-tuning pipeline (SFT, DPO, evaluation, dashboard) |
-| **cogniverse-synthetic** | Implementation | Synthetic data generation for optimizers |
-| **cogniverse-runtime** | Application | FastAPI server, ingestion pipeline, middleware |
-| **cogniverse-dashboard** | Application | Streamlit UI, Phoenix analytics |
-
-## Technical Use Cases
-
-### Multi-Modal Video Search
-- Frame-level embeddings with ColPali (multi-vector) for visual document understanding
-- Global video embeddings with VideoPrism for semantic video understanding
-- Chunk-level embeddings with ColQwen for temporal segment retrieval
-- Audio transcription with Whisper for text-based video search
-- Hybrid ranking strategies: BM25 + dense, binary + float, phased ranking
-
-### Intelligent Query Routing
-- DSPy 3.0 modules for structured LLM programming
-- GLiNER for entity extraction (people, places, concepts)
-- Relationship detection between entities for relevance boosting
-- Query modality classification (factual, conceptual, visual, temporal)
-- GEPA optimizer for continuous learning from routing decisions
-
-### Multi-Agent Orchestration
-- A2A protocol for structured agent communication
-- Parallel agent execution with timeout handling
-- Task dependency graph resolution
-- Memory-aware agents with Mem0 integration
-- Circuit breaker pattern for fault tolerance
-
-### Multi-Tenant Content Management
-- Schema-per-tenant physical isolation in Vespa
-- Per-tenant configuration profiles for video processing
-- Independent telemetry streams and Phoenix projects
-- JWT-based tenant authentication
-- Tenant-specific memory and cache instances
-
-## Technical Components
-
-### Agent System (cogniverse-agents)
-- **RoutingAgent**: DSPy 3.0-based intelligent query routing with entity extraction, relationship detection, and query enhancement
-- **VideoSearchAgent**: Multi-modal video search with ColPali/VideoPrism embeddings and hybrid ranking
-- **ComposingAgent**: Multi-agent orchestration with task dependency resolution and parallel execution
-- **BaseAgent**: Foundation class with health checks, telemetry, and memory awareness mixins
-
-### Backend System (cogniverse-vespa)
-- **TenantSchemaManager**: Schema-per-tenant lifecycle management with lazy creation
-- **VespaSearchClient**: Tenant-aware search client with 9 ranking strategies (BM25, dense, binary, hybrid, phased)
-- **VespaPyClient**: Batch ingestion with connection pooling and retry logic
-- **JSONSchemaParser**: Parses Vespa schema JSON for multi-tenant deployment
-
-### Ingestion Pipeline (cogniverse-runtime)
-- **FrameSegmentationStrategy**: Extract keyframes at configurable FPS with scene change detection
-- **ChunkSegmentationStrategy**: Temporal chunking for 30-second segments with overlap
-- **MultiVectorEmbeddingStrategy**: Generate per-frame embeddings with ColPali
-- **GlobalEmbeddingStrategy**: Generate video-level embeddings with VideoPrism
-- **Audio transcription**: Whisper integration with timestamp alignment
-
-### Optimization Framework (cogniverse-synthetic + cogniverse-agents)
-- **GEPA Optimizer**: Experience-guided prompt and module optimization with continuous learning
-- **SyntheticDataService**: Generate training data for GEPA/MIPRO/Bootstrap/SIMBA optimizers
-- **ProfileSelector**: LLM-based profile selection from backend content
-- **BackendQuerier**: Sample real content from Vespa for synthetic generation
-
-### Fine-Tuning Infrastructure (cogniverse-finetuning)
-- **FinetuningOrchestrator**: End-to-end pipeline from Phoenix annotations to trained adapters
-- **TrainingMethodSelector**: Auto-select SFT vs DPO based on data availability (preference pairs, approved examples)
-- **SFTTrainer & DPOTrainer**: TRL-based trainers with LoRA, validation split, and early stopping
-- **AdapterEvaluator**: Compare adapter vs base model on held-out test sets
-- **Dashboard Integration**: Dataset analysis, training configuration UI, experiment tracking, job monitoring
-
-### Evaluation Framework (cogniverse-evaluation + cogniverse-telemetry-phoenix)
-- **Provider-agnostic metrics**: Accuracy, MRR, NDCG, Precision@K independent of telemetry backend
-- **Phoenix evaluation provider**: Phoenix-specific experiment tracking and annotation
-- **Dataset management**: Load and validate evaluation datasets with ground truth
-- **Experiment tracking**: Track experiments with metadata, parameters, and results
-
-## Technology Stack
-
-**Core Technologies:**
-- **Python**: 3.12+ (3.11+ for sdk and foundation packages)
-- **Package Manager**: UV workspace with unified lockfile
-- **Build System**: Hatchling for all packages
-
-**AI/ML Stack:**
-- **LLM Framework**: DSPy 3.0 with declarative modules and optimizers (GEPA, MIPRO, SIMBA, Bootstrap)
-- **Embeddings**: ColPali (vidore/colsmol-500m), VideoPrism (scenic-t5/base, scenic-t5/lvt), ColQwen (vidore/colqwen2-v1.0)
-- **Entity Extraction**: GLiNER for zero-shot NER
-- **Audio Transcription**: OpenAI Whisper (base, small, medium, large-v3)
-- **LLM Inference**: Ollama (local) with Llama 3.2, Llama 3.1, Qwen models
-
-**Search & Storage:**
-- **Vector Database**: Vespa 8.x with 9 ranking strategies (BM25, float, binary, hybrid)
-- **Memory System**: Mem0 with Vespa backend for context storage
-- **Document Model**: Universal SDK document model across all backends
-
-**Observability:**
-- **Telemetry**: OpenTelemetry with Phoenix (Arize) collector
-- **Tracing**: Distributed traces with span collection
-- **Experiments**: Provider-agnostic evaluation framework with Phoenix provider
-- **Visualization**: UMAP embeddings, Streamlit dashboards
-
-**Deployment:**
-- **Containerization**: Docker with multi-stage builds
-- **Orchestration**: Kubernetes with Helm charts
-- **Serverless**: Modal deployment support
-- **CI/CD**: Automated testing and deployment workflows
-
-## Documentation
-
-**For Users:**
-- [User Guide](USER_GUIDE.md) - Complete guide for using Cogniverse
-- [Setup & Installation](operations/setup-installation.md) - Installation and configuration
-- [Configuration Guide](operations/configuration.md) - Multi-tenant configuration
-- [Troubleshooting](operations/troubleshooting.md) - Common issues and solutions
-
-**For Developers:**
-- [Developer Guide](DEVELOPER_GUIDE.md) - Development workflows and best practices
-- [Architecture Overview](architecture/overview.md) - System architecture and design
-- [SDK Architecture](architecture/sdk-architecture.md) - UV workspace and package structure
-- [Module Documentation](modules/) - Package-specific technical documentation
-
-**For DevOps:**
-- [Deployment Guide](operations/deployment.md) - Production deployment options
-- [Docker Deployment](operations/docker-deployment.md) - Docker Compose setup
-- [Kubernetes Deployment](operations/kubernetes-deployment.md) - K8s with Helm charts
-- [Multi-Tenant Operations](operations/multi-tenant-ops.md) - Tenant lifecycle management
+See [Getting Started](operations/setup-installation.md) for ingestion and configuration.
 
 ---
 
-**Version**: 2.1.0
-**Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated**: 2026-01-25
-**Status**: Production Ready
+## Built With
+
+| Category | Technologies |
+|----------|-------------|
+| **Embedding Models** | ColPali, VideoPrism, ColQwen, Whisper |
+| **Entity Extraction** | GLiNER (zero-shot NER) |
+| **LLM Inference** | Ollama (Llama, Qwen, SmolLM, Gemma) |
+| **Remote Infra** | Modal (inference, training) |
+| **Search Backend** | Vespa (BM25, dense, hybrid ranking) |
+| **Memory** | Mem0 (context persistence) |
+| **Telemetry** | Phoenix (OpenTelemetry, tracing, experiments) |
+| **Optimization** | DSPy 3.1+ (GEPA, MIPRO, SIMBA, Bootstrap) |
+| **Fine-Tuning** | TRL (LoRA, SFT, DPO) |
+
+---
+
+## Documentation
+
+| Audience | Resources |
+|----------|-----------|
+| **Users** | [User Guide](USER_GUIDE.md) · [Setup](operations/setup-installation.md) · [Configuration](operations/configuration.md) |
+| **Developers** | [Developer Guide](DEVELOPER_GUIDE.md) · [Architecture](architecture/overview.md) · [Modules](modules/sdk.md) |
+| **DevOps** | [Deployment](operations/deployment.md) · [Docker](operations/docker-deployment.md) · [Kubernetes](operations/kubernetes-deployment.md) |

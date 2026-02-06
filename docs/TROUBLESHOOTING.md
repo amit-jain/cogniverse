@@ -23,7 +23,7 @@ Common errors and solutions for Cogniverse.
 ### uv Not Found
 
 **Error:**
-```
+```text
 command not found: uv
 ```
 
@@ -42,7 +42,7 @@ uv --version
 ### Package Installation Fails
 
 **Error:**
-```
+```text
 error: Failed to resolve dependencies
 ```
 
@@ -53,7 +53,7 @@ uv cache clean
 uv sync --refresh
 
 # If still failing, check Python version
-python --version  # Should be 3.11+
+python --version  # Should be 3.12+
 
 # Install specific Python version
 uv python install 3.11
@@ -63,7 +63,7 @@ uv sync
 ### Missing System Dependencies
 
 **Error:**
-```
+```text
 error: libffi.so not found
 ```
 
@@ -86,7 +86,7 @@ sudo dnf install libffi-devel
 ### ModuleNotFoundError
 
 **Error:**
-```
+```text
 ModuleNotFoundError: No module named 'cogniverse_core'
 ```
 
@@ -109,12 +109,14 @@ which python
 ### Circular Import
 
 **Error:**
-```
+```text
 ImportError: cannot import name 'X' from partially initialized module
 ```
 
 **Solution:**
+
 - Check import order in `__init__.py`
+
 - Use `TYPE_CHECKING` for type hints that cause cycles:
 
 ```python
@@ -135,9 +137,9 @@ def process(agent: "AgentBase") -> None:
 ### Connection Refused
 
 **Error:**
-```
+```text
 ConnectionRefusedError: [Errno 111] Connection refused
-VESPA_URL: http://localhost:8080
+Backend: http://localhost:8080
 ```
 
 **Solution:**
@@ -158,7 +160,7 @@ docker logs vespa
 ### Schema Deployment Failed
 
 **Error:**
-```
+```text
 vespa.deployment.ApplicationError: Schema deployment failed
 ```
 
@@ -170,40 +172,43 @@ curl http://localhost:19071/ApplicationStatus
 # Wait for config server (can take 30-60s after start)
 sleep 60
 
-# Deploy schema manually
-vespa deploy configs/schemas/
+# Schema deployment is handled by pyvespa ApplicationPackage
+# See scripts/run_ingestion.py for schema deployment examples
 
-# Check deployment
-vespa status
+# Check deployment status
+curl http://localhost:8080/ApplicationStatus
 ```
 
 ### Embedding Dimension Mismatch
 
 **Error:**
-```
+```text
 Expected 768 values, got 1024
 ```
 
 **Solution:**
+
 - Check schema embedding dimension matches model:
-  - ColPali base: 128 × 128 = 16384 (multi-vector)
-  - VideoPrism base: 768
-  - VideoPrism large: 1024
+  - ColPali: Multi-vector format with 128-dim patches (float) or 16-dim (binary): `tensor<bfloat16>(patch{}, v[128])`
+  - VideoPrism base: 768-dim single vector: `tensor<float>(x[768])`
+  - VideoPrism large: 1024-dim single vector: `tensor<float>(x[1024])`
 
 ```bash
-# Check schema
-cat configs/schemas/video_colpali_mv_frame/schema.sd | grep dimension
+# Check schema tensor types (schemas are JSON files in configs/schemas/)
+cat configs/schemas/video_colpali_smol500_mv_frame_schema.json | grep -A2 '"embedding"'
 
-# Update schema to match model
-# In schema.sd:
-field embedding type tensor<float>(p{}, x[768])  # For 768-dim model
+# Embeddings use tensor type definitions with dimensions specified in brackets
+# Example: tensor<bfloat16>(patch{}, v[128]) means multi-vector with 128-dim patches
 ```
 
 ### Search Returns No Results
 
 **Possible Causes:**
+
 1. Wrong tenant_id
+
 2. Schema doesn't exist
+
 3. No documents ingested
 
 **Solution:**
@@ -218,7 +223,7 @@ curl http://localhost:8080/ApplicationStatus | jq '.services'
 curl http://localhost:8080/document/v1/<schema>/docid/?cluster=content | jq '.documentCount'
 
 # Re-ingest if needed
-uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+uv run python scripts/run_ingestion.py --video_dir data/testset/evaluation/sample_videos --backend vespa
 ```
 
 ---
@@ -228,7 +233,7 @@ uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
 ### Phoenix Won't Start
 
 **Error:**
-```
+```text
 Phoenix server failed to start
 Port 6006 already in use
 ```
@@ -252,18 +257,21 @@ docker-compose up -d phoenix
 ### No Traces Visible
 
 **Possible Causes:**
+
 1. Wrong project name
+
 2. Telemetry not enabled
+
 3. Spans not being exported
 
 **Solution:**
 ```python
 # Check project name format
-# Should be: {tenant_id}_project
+# Should be: cogniverse-{tenant_id}-{project_name}
 
 # Verify telemetry is enabled
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-telemetry = get_telemetry_manager()
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+telemetry = TelemetryManager()
 print(telemetry.get_stats())
 
 # Force flush spans
@@ -281,7 +289,7 @@ curl http://localhost:4317/v1/traces
 ### OTLP Export Fails
 
 **Error:**
-```
+```text
 Failed to export spans: Connection refused to localhost:4317
 ```
 
@@ -308,7 +316,7 @@ telemetry.register_project(
 ### Model Loading Failed
 
 **Error:**
-```
+```text
 OSError: Unable to load weights from pytorch checkpoint
 ```
 
@@ -327,7 +335,7 @@ df -h
 ### CUDA Out of Memory
 
 **Error:**
-```
+```text
 RuntimeError: CUDA out of memory
 ```
 
@@ -346,7 +354,7 @@ python -c "import torch; torch.cuda.empty_cache()"
 ### JAX Platform Error
 
 **Error:**
-```
+```text
 RuntimeError: Unable to initialize JAX backend
 ```
 
@@ -369,47 +377,61 @@ import jax  # Now uses CPU
 ### Agent Not Found
 
 **Error:**
-```
-AgentNotFoundError: Agent 'search_agent' not registered
+```text
+KeyError: Agent 'search_agent' not found in registry
 ```
 
 **Solution:**
 ```python
 # Check agent is registered
-from cogniverse_core.registries import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.agent_models import AgentEndpoint
 
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
 agents = registry.list_agents()
 print(agents)
 
-# Register agent
-from cogniverse_agents.search import SearchAgent
-registry.register(SearchAgent)
+# Register agent endpoint
+agent = AgentEndpoint(
+    name="search_agent",
+    url="http://localhost:8002",
+    capabilities=["video_search"],
+    health_endpoint="/health",
+    process_endpoint="/process"
+)
+registry.register_agent(agent)
 ```
 
 ### Process Method Timeout
 
 **Error:**
-```
+```text
 asyncio.TimeoutError: Agent process exceeded timeout
 ```
 
 **Solution:**
+
+Agent timeout is controlled via `AgentEndpoint.timeout` (default: 30 seconds) or at the HTTP client level:
+
 ```python
-# Increase timeout
-result = await asyncio.wait_for(
-    agent.process(input),
+# Configure timeout when registering agent
+from cogniverse_core.common.agent_models import AgentEndpoint
+
+agent = AgentEndpoint(
+    name="search_agent",
+    url="http://localhost:8002",
+    capabilities=["video_search"],
     timeout=300  # 5 minutes
 )
+registry.register_agent(agent)
 
-# Or configure agent timeout
-agent = SearchAgent(deps=SearchDeps(timeout=300))
+# HTTP client timeout is set in AgentRegistry (default: 10 seconds)
 ```
 
 ### Type Validation Error
 
 **Error:**
-```
+```text
 pydantic.ValidationError: 1 validation error for SearchInput
 query
   field required
@@ -418,12 +440,13 @@ query
 **Solution:**
 ```python
 # Check required fields
-from cogniverse_agents.search import SearchInput
+from cogniverse_agents.search_agent import SearchInput
 
 # All required fields must be provided
 input = SearchInput(
     query="test",  # Required
-    profile="default"  # Optional with default
+    modality="video",  # Has default value
+    top_k=10  # Has default value
 )
 ```
 
@@ -434,17 +457,20 @@ input = SearchInput(
 ### Config Not Found
 
 **Error:**
-```
-ConfigurationError: Configuration for tenant 'acme' not found
+```text
+KeyError: Configuration for tenant 'acme' not found
 ```
 
 **Solution:**
 ```python
 # Check config exists
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import SystemConfig
+
 config_manager = create_default_config_manager()
 try:
     config = config_manager.get_system_config(tenant_id="acme")
-except ConfigurationError:
+except (KeyError, ValueError):
     # Create default config
     config_manager.set_system_config(
         SystemConfig(tenant_id="acme"),
@@ -455,8 +481,8 @@ except ConfigurationError:
 ### Invalid Profile
 
 **Error:**
-```
-ProfileNotFoundError: Profile 'video_colpali_mv_frame' not found
+```text
+ValueError: Profile 'video_colpali_mv_frame' not found
 ```
 
 **Solution:**
@@ -465,7 +491,7 @@ ProfileNotFoundError: Profile 'video_colpali_mv_frame' not found
 curl http://localhost:8000/search/profiles
 
 # Check config file
-cat configs/config.yml | grep -A 10 profiles
+cat configs/config.json | jq '.backend.profiles'
 ```
 
 ```python
@@ -477,22 +503,22 @@ print(profiles)
 ### Environment Variable Missing
 
 **Error:**
-```
-KeyError: 'VESPA_URL' not set
+```text
+KeyError: 'BACKEND_URL' not set
 ```
 
 **Solution:**
 ```bash
 # Set required variables
 export TENANT_ID="acme"
-export VESPA_URL="http://localhost:8080"
-export PHOENIX_ENDPOINT="http://localhost:6006"
+export BACKEND_URL="http://localhost"
+export BACKEND_PORT="8080"
 
 # Or use .env file
 cat > .env << EOF
 TENANT_ID=acme
-VESPA_URL=http://localhost:8080
-PHOENIX_ENDPOINT=http://localhost:6006
+BACKEND_URL=http://localhost
+BACKEND_PORT=8080
 EOF
 
 # Load .env in Python
@@ -507,7 +533,7 @@ load_dotenv()
 ### Tests Fail with JAX Error
 
 **Error:**
-```
+```text
 RuntimeError: jax.local_devices returned no devices
 ```
 
@@ -524,7 +550,7 @@ os.environ["JAX_PLATFORM_NAME"] = "cpu"
 ### Async Test Not Running
 
 **Error:**
-```
+```text
 PytestUnhandledCoroutineWarning: async def test_...
 ```
 
@@ -543,7 +569,7 @@ async def test_async_operation():
 ### Fixture Not Found
 
 **Error:**
-```
+```text
 fixture 'config_manager' not found
 ```
 
@@ -555,9 +581,14 @@ fixture 'config_manager' not found
 import pytest
 
 @pytest.fixture
-def config_manager():
+def config_manager_memory():
+    """ConfigManager with in-memory store for unit testing."""
     from cogniverse_foundation.config.manager import ConfigManager
-    return ConfigManager(store=InMemoryStore())
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
 ```
 
 ---
@@ -567,7 +598,7 @@ def config_manager():
 ### Server Won't Start
 
 **Error:**
-```
+```text
 uvicorn.error: Can't start server: Address already in use
 ```
 
@@ -599,7 +630,7 @@ curl -v http://localhost:8000/search/ -X POST \
 ### Streamlit Dashboard Crashes
 
 **Error:**
-```
+```text
 StreamlitAPIError: Unable to connect
 ```
 

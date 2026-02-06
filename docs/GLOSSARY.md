@@ -19,7 +19,7 @@ Pydantic model for agent dependencies (LLMs, backends, other agents). Injected a
 Pydantic model that all agent inputs must extend. Provides validation and serialization for agent requests.
 
 ### AgentOutput
-Pydantic model that all agent outputs must extend. Includes optional `error` field for error reporting.
+Pydantic model that all agent outputs must extend. Provides validation and serialization for agent responses.
 
 ### AgentRegistry
 Central registry for discovering and accessing agents. Agents register themselves with capabilities for routing.
@@ -29,9 +29,9 @@ Central registry for discovering and accessing agents. Agents register themselve
 ## B
 
 ### Backend
-Abstract interface for vector database operations (search, feed, delete). Implemented by `VespaBackend`, `PineconeBackend`, etc.
+Abstract interface for vector database operations (search, feed, delete). Implemented by `VespaBackend`.
 
-### BackendProfile
+### BackendProfileConfig
 Configuration for a specific embedding/search strategy. Defines embedding model, chunk strategy, top_k, etc.
 
 ### BackendRegistry
@@ -57,13 +57,13 @@ State of a checkpoint: `ACTIVE`, `SUPERSEDED`, `FAILED`, `COMPLETED`.
 Multi-vector embedding model for images/documents. Creates patch-level embeddings for fine-grained similarity search.
 
 ### ColQwen
-Vision-language model that processes video chunks. Generates embeddings from video frames with text understanding.
+Vision-language model that processes video chunks. Generates multi-vector embeddings from video chunks with text understanding.
 
 ### ConfigManager
 Central API for multi-tenant configuration. Manages system, agent, backend, routing, and telemetry configs.
 
 ### ConfigScope
-Category of configuration: `SYSTEM`, `AGENT`, `ROUTING`, `TELEMETRY`, `BACKEND`.
+Category of configuration: `SYSTEM`, `AGENT`, `ROUTING`, `TELEMETRY`, `SCHEMA`, `BACKEND`.
 
 ---
 
@@ -83,7 +83,7 @@ Workflow execution that survives failures via checkpointing. Completed tasks are
 ## E
 
 ### Embedding
-Vector representation of content for similarity search. Different models produce different dimensions (768, 1024, 1152).
+Vector representation of content for similarity search. Different models produce different dimensions (128, 768, 1024).
 
 ### EmbeddingGenerator
 Component that generates embeddings and feeds them to backends. Handles multi-vector and single-vector strategies.
@@ -92,7 +92,7 @@ Component that generates embeddings and feeds them to backends. Handles multi-ve
 A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports pub/sub pattern, reconnection with replay, and graceful cancellation. Used by orchestrator and ingestion pipeline.
 
 ### EventType
-Standard A2A event categories: `StatusEvent` (state transitions), `ProgressEvent` (incremental progress), `ArtifactEvent` (intermediate results), `ErrorEvent` (errors), `CompleteEvent` (task completion).
+Enum discriminator for event types: `STATUS`, `PROGRESS`, `ARTIFACT`, `ERROR`, `COMPLETE`. Corresponding event classes are `StatusEvent` (state transitions), `ProgressEvent` (incremental progress), `ArtifactEvent` (intermediate results), `ErrorEvent` (errors), `CompleteEvent` (task completion).
 
 ---
 
@@ -133,10 +133,10 @@ Evaluator that uses LLMs to score outputs. Supports reference-free, reference-ba
 Protocol for connecting LLMs to external tools and data. Enables agents to access databases, APIs, etc.
 
 ### Mixin
-Composable class that adds specific functionality to agents. Examples: `TelemetryMixin`, `MemoryMixin`, `CheckpointingMixin`.
+Composable class that adds specific functionality to agents. Examples: `MemoryAwareMixin`, `TenantAwareAgentMixin`, `HealthCheckMixin`, `DSPyIntegrationMixin`.
 
 ### Modality
-Type of content: `video`, `image`, `pdf`, `audio`, `document`. Used for routing queries to appropriate agents.
+Type of content defined by `ContentType` enum: `video`, `audio`, `image`, `text`, `dataframe`, `document`. Used for routing queries to appropriate agents.
 
 ### MRR (Mean Reciprocal Rank)
 Evaluation metric: average of 1/rank for first relevant result. Higher is better (max 1.0).
@@ -185,6 +185,13 @@ Named configuration for backend, embedding model, and search strategy. Examples:
 
 ---
 
+## Q
+
+### QueueManager
+Lifecycle manager for EventQueues. Creates, retrieves, closes, and cleans up expired queues. Supports multi-tenant isolation via `tenant_id`.
+
+---
+
 ## R
 
 ### RAGAS
@@ -226,17 +233,10 @@ Pluggable algorithm for processing steps. Types: `FrameSegmentationStrategy`, `C
 
 ---
 
-## Q
-
-### QueueManager
-Lifecycle manager for EventQueues. Creates, retrieves, closes, and cleans up expired queues. Supports multi-tenant isolation via `tenant_id`.
-
----
-
 ## T
 
 ### TaskEvent
-Base type for all A2A-compatible events. Contains `event_id`, `task_id`, `tenant_id`, `timestamp`, and type-specific data.
+Union type for all A2A-compatible events (StatusEvent, ProgressEvent, ArtifactEvent, ErrorEvent, CompleteEvent). All events extend BaseEvent which contains `event_id`, `task_id`, `tenant_id`, `timestamp`, and type-specific data.
 
 ### TaskState
 A2A-compatible workflow state: `pending`, `working`, `input-required`, `completed`, `failed`, `cancelled`.
@@ -247,8 +247,8 @@ Observability data: traces, spans, metrics. Managed by `TelemetryManager` with t
 ### Tenant
 Isolated organization in multi-tenant system. All data and config is tenant-scoped via `tenant_id`.
 
-### Tier
-Routing strategy category: `fast`, `accurate`, `comprehensive`. Balances latency vs quality.
+### RoutingTier
+Routing tier levels: `FAST_PATH` (GLiNER for common patterns), `SLOW_PATH` (SmolLM3 + DSPy for complex queries), `LANGEXTRACT` (structured extraction), `FALLBACK` (keyword-based). Balances latency vs quality.
 
 ### Trace
 End-to-end record of a request through the system. Contains multiple spans in a tree structure.
@@ -264,7 +264,7 @@ Multi-turn conversation sequence for fine-tuning. Extracted from session-aware t
 Vector database used for content storage and search. Supports multi-vector, hybrid search, tenant isolation.
 
 ### VideoPrism
-Google's video embedding model. Produces global embeddings from video frames.
+Google's video embedding model. Produces global embeddings from video chunks/segments.
 
 ### VLM (Vision Language Model)
 Model that understands both images and text. Used for generating frame descriptions.

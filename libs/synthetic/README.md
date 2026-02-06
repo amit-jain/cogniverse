@@ -328,15 +328,18 @@ uv run mypy libs/synthetic
 
 ## Configuration
 
-Configuration is provided via `UnifiedConfig` from `cogniverse-foundation`:
+Configuration is provided via `SystemConfig` from `cogniverse-foundation`:
 
 ```python
-config = UnifiedConfig(
+from cogniverse_foundation.config.unified_config import SystemConfig
+
+config = SystemConfig(
     tenant_id="acme_corp",
-    llm_model="gpt-4",              # For DSPy modules
-    llm_api_key="sk-...",           # LLM API key
-    backend="vespa",                # Backend type
-    vespa_url="http://localhost:8080"
+    llm_model="gpt-4",
+    llm_api_key="sk-...",
+    search_backend="vespa",
+    backend_url="http://localhost",
+    backend_port=8080,
 )
 ```
 
@@ -453,7 +456,7 @@ documents = await querier.sample_documents(
 ```bash
 export OPENAI_API_KEY="sk-..."
 # Or in code
-config = UnifiedConfig(llm_api_key="sk-...")
+config = SystemConfig(llm_api_key="sk-...")
 ```
 
 **2. Validation Fails After 3 Retries**

@@ -13,24 +13,29 @@ The EventQueue system provides A2A-compatible real-time progress notifications. 
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        QueueManager                              │
-│  (Manages lifecycle of EventQueues)                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│   │ EventQueue   │    │ EventQueue   │    │ EventQueue   │     │
-│   │ workflow_123 │    │ workflow_456 │    │ ingestion_789│     │
-│   └──────────────┘    └──────────────┘    └──────────────┘     │
-│          │                   │                   │               │
-│          ▼                   ▼                   ▼               │
-│   ┌────────────┐      ┌────────────┐      ┌────────────┐       │
-│   │ Subscriber │      │ Subscriber │      │ Subscriber │       │
-│   │ (Dashboard)│      │   (CLI)    │      │ (Monitor)  │       │
-│   └────────────┘      └────────────┘      └────────────┘       │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph QueueManager["<span style='color:#000'>QueueManager<br/>(Manages lifecycle of EventQueues)</span>"]
+        Queue1["<span style='color:#000'>EventQueue<br/>workflow_123</span>"]
+        Queue2["<span style='color:#000'>EventQueue<br/>workflow_456</span>"]
+        Queue3["<span style='color:#000'>EventQueue<br/>ingestion_789</span>"]
+
+        Sub1["<span style='color:#000'>subscribe()<br/>(Dashboard)</span>"]
+        Sub2["<span style='color:#000'>subscribe()<br/>(CLI)</span>"]
+        Sub3["<span style='color:#000'>subscribe()<br/>(Monitor)</span>"]
+
+        Queue1 -- "AsyncIterator" --> Sub1
+        Queue2 -- "AsyncIterator" --> Sub2
+        Queue3 -- "AsyncIterator" --> Sub3
+    end
+
+    style QueueManager fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Queue1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Queue2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Queue3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Sub1 fill:#90caf9,stroke:#1565c0,color:#000
+    style Sub2 fill:#90caf9,stroke:#1565c0,color:#000
+    style Sub3 fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ## Event Types
@@ -140,9 +145,15 @@ async for event in queue.subscribe():
 from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
 from cogniverse_core.events import get_queue_manager
 
+# Create event queue for this workflow
 manager = get_queue_manager()
-queue = await manager.create_queue("workflow_123", "tenant1")
+workflow_id = "workflow_123"
+queue = await manager.create_queue(
+    task_id=workflow_id,
+    tenant_id="tenant1",
+)
 
+# Create orchestrator with event queue
 orchestrator = MultiAgentOrchestrator(
     tenant_id="tenant1",
     event_queue=queue,  # Events emitted automatically
@@ -157,19 +168,27 @@ result = await orchestrator.process_complex_query("Find videos about cats")
 ```python
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_core.events import get_queue_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
+# Create event queue for ingestion job
 manager = get_queue_manager()
-queue = await manager.create_queue("ingestion_456", "tenant1")
-
-pipeline = VideoIngestionPipeline(
+job_id = "ingestion_456"
+queue = await manager.create_queue(
+    task_id=job_id,
     tenant_id="tenant1",
-    config=config,
-    event_queue=queue,  # Events emitted automatically
 )
 
-# Process videos - returns job_id for subscription
+# Create pipeline with event queue
+config_manager = create_default_config_manager()
+pipeline = VideoIngestionPipeline(
+    tenant_id="tenant1",
+    config_manager=config_manager,
+    event_queue=queue,  # Events emitted automatically during processing
+)
+
+# Process videos - pipeline.job_id is set during execution
 result = await pipeline.process_videos_concurrent(video_files)
-job_id = result["job_id"]  # Use this to subscribe
+# Subscribe to events using the job_id from queue or pipeline.job_id
 ```
 
 ### SSE Streaming (HTTP Clients)
@@ -298,24 +317,50 @@ checkpoint_storage = WorkflowCheckpointStorage(
 
 ### Event Flow
 
-```
-Workflow Execution
-    │
-    ├─► Planning Phase
-    │       └─► Orchestrator emits StatusEvent("planning")
-    │
-    ├─► Execution Phase
-    │       ├─► Orchestrator emits StatusEvent("executing")
-    │       │
-    │       ├─► Phase 1 completes
-    │       │       └─► Checkpoint saves → StatusEvent + ProgressEvent
-    │       │
-    │       └─► Phase 2 completes
-    │               └─► Checkpoint saves → StatusEvent + ProgressEvent
-    │
-    └─► Completion
-            ├─► Checkpoint saves → StatusEvent(COMPLETED)
-            └─► Orchestrator emits CompleteEvent(result)
+```mermaid
+flowchart TD
+    Start["<span style='color:#000'>Workflow Execution</span>"]
+
+    Planning["<span style='color:#000'>Planning Phase</span>"]
+    PlanningEvent["<span style='color:#000'>Orchestrator emits<br/>StatusEvent('planning')</span>"]
+
+    Execution["<span style='color:#000'>Execution Phase</span>"]
+    ExecutionEvent["<span style='color:#000'>Orchestrator emits<br/>StatusEvent('executing')</span>"]
+
+    Phase1["<span style='color:#000'>Phase 1 completes</span>"]
+    Phase1Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
+
+    Phase2["<span style='color:#000'>Phase 2 completes</span>"]
+    Phase2Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
+
+    Completion["<span style='color:#000'>Completion</span>"]
+    CompletionEvent1["<span style='color:#000'>Checkpoint saves<br/>StatusEvent(COMPLETED)</span>"]
+    CompletionEvent2["<span style='color:#000'>Orchestrator emits<br/>CompleteEvent(result)</span>"]
+
+    Start --> Planning
+    Planning --> PlanningEvent
+    PlanningEvent --> Execution
+    Execution --> ExecutionEvent
+    ExecutionEvent --> Phase1
+    Phase1 --> Phase1Event
+    Phase1Event --> Phase2
+    Phase2 --> Phase2Event
+    Phase2Event --> Completion
+    Completion --> CompletionEvent1
+    Completion --> CompletionEvent2
+
+    style Start fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Planning fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PlanningEvent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Execution fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ExecutionEvent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Phase1 fill:#81d4fa,stroke:#0288d1,color:#000
+    style Phase1Event fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Phase2 fill:#81d4fa,stroke:#0288d1,color:#000
+    style Phase2Event fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Completion fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CompletionEvent1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CompletionEvent2 fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ## Relationship with Checkpoints
@@ -350,4 +395,4 @@ uv run pytest tests/events/integration/ -v
 | `libs/core/cogniverse_core/events/queue.py` | EventQueue/QueueManager protocols |
 | `libs/core/cogniverse_core/events/backends/memory.py` | In-memory backend |
 | `libs/runtime/cogniverse_runtime/routers/events.py` | SSE streaming endpoints |
-| `libs/agents/.../checkpoint_storage.py` | Checkpoint storage with event emission |
+| `libs/agents/cogniverse_agents/orchestrator/checkpoint_storage.py` | Checkpoint storage with event emission |

@@ -1,9 +1,5 @@
 # Multi-Tenant Management Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages in layered architecture
-**Purpose:** Comprehensive guide for multi-tenant architecture with schema-per-tenant isolation
-
 ---
 
 ## Overview
@@ -22,32 +18,36 @@ Cogniverse implements a **schema-per-tenant** multi-tenant architecture providin
 ### Architecture at a Glance
 
 ```mermaid
-graph TB
-    Client[Client Application]
+flowchart TB
+    Client["<span style='color:#000'>Client Application</span>"]
 
-    Client --> TenantAPI[Tenant Management API<br/>Port 8001]
-    Client --> Agents[Multi-Tenant Agents]
+    Client --> TenantAPI["<span style='color:#000'>Tenant Management API<br/>Port 9000</span>"]
+    Client --> Agents["<span style='color:#000'>Multi-Tenant Agents</span>"]
 
-    TenantAPI --> TenantMgr[TenantSchemaManager]
-    Agents --> TenantSearch[TenantAwareVespaSearchClient]
+    TenantAPI --> TenantMgr["<span style='color:#000'>VespaSchemaManager</span>"]
+    Agents --> TenantSearch["<span style='color:#000'>TenantAwareVespaSearchClient</span>"]
 
-    TenantMgr --> OrgMeta[(organization_metadata)]
-    TenantMgr --> TenantMeta[(tenant_metadata)]
-    TenantMgr --> Schemas[Tenant Schemas]
+    TenantMgr --> OrgMeta[("<span style='color:#000'>organization_metadata</span>")]
+    TenantMgr --> TenantMeta[("<span style='color:#000'>tenant_metadata</span>")]
+    TenantMgr --> Schemas["<span style='color:#000'>Tenant Schemas</span>"]
 
     TenantSearch --> Schemas
 
-    Schemas --> AcmeProd[(Schema: acme_production)]
-    Schemas --> AcmeDev[(Schema: acme_dev)]
-    Schemas --> InitechProd[(Schema: initech_production)]
+    Schemas --> AcmeProd[("<span style='color:#000'>Schema: acme_production</span>")]
+    Schemas --> AcmeDev[("<span style='color:#000'>Schema: acme_dev</span>")]
+    Schemas --> InitechProd[("<span style='color:#000'>Schema: initech_production</span>")]
 
-    style Client fill:#e1f5ff
-    style TenantAPI fill:#fff4e1
-    style Agents fill:#ffe1f5
-    style TenantMgr fill:#f5e1ff
-    style TenantSearch fill:#e1ffe1
-    style OrgMeta fill:#ffe1e1
-    style TenantMeta fill:#ffe1e1
+    style Client fill:#90caf9,stroke:#1565c0,color:#000
+    style TenantAPI fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Agents fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TenantMgr fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TenantSearch fill:#a5d6a7,stroke:#388e3c,color:#000
+    style OrgMeta fill:#b0bec5,stroke:#546e7a,color:#000
+    style TenantMeta fill:#b0bec5,stroke:#546e7a,color:#000
+    style Schemas fill:#b0bec5,stroke:#546e7a,color:#000
+    style AcmeProd fill:#a5d6a7,stroke:#388e3c,color:#000
+    style AcmeDev fill:#a5d6a7,stroke:#388e3c,color:#000
+    style InitechProd fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -70,7 +70,7 @@ graph TB
 
 All tenant operations use the **org:tenant** format:
 
-```
+```json
 {organization}:{tenant_name}
 
 Examples:
@@ -82,6 +82,7 @@ Examples:
 ```
 
 **Parsing Rules**:
+
 - Colon `:` separates organization from tenant name
 - Exactly one colon required
 - Both parts must pass validation
@@ -95,6 +96,7 @@ Examples:
 | **Tenant Name** | `^[a-zA-Z0-9_-]+$` | `production`, `dev-2024`, `cust_1` | `prod.env`, `staging:v2`, `test env` |
 
 **Common Validation Errors**:
+
 - ❌ `acme-corp:production` - Hyphen not allowed in organization
 - ❌ `acme:prod.env` - Dot not allowed in tenant name
 - ❌ `acme:prod env` - Space not allowed
@@ -106,7 +108,7 @@ Examples:
 
 Tenants are organized in a hierarchical directory structure:
 
-```
+```text
 base_dir/
 ├── acme/                      # Organization
 │   ├── production/            # Tenant
@@ -126,17 +128,20 @@ base_dir/
 
 ## Tenant Management REST API
 
-The tenant management service (`src/admin/tenant_manager.py`) provides a complete REST API for organization and tenant lifecycle management.
+The tenant management service (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`) provides a complete REST API for organization and tenant lifecycle management.
 
 ### API Endpoints
 
 | Method | Endpoint | Purpose | Authentication |
 |--------|----------|---------|----------------|
-| POST | `/organizations` | Create organization | Not implemented |
-| POST | `/tenants` | Create tenant | Not implemented |
-| GET | `/organizations` | List all organizations | Not implemented |
-| GET | `/tenants` | List tenants (optionally filtered by org) | Not implemented |
-| DELETE | `/tenants/{tenant_id}` | Delete tenant and all data | Not implemented |
+| POST | `/admin/organizations` | Create organization | None (open) |
+| POST | `/admin/tenants` | Create tenant | None (open) |
+| GET | `/admin/organizations` | List all organizations | None (open) |
+| GET | `/admin/organizations/{org_id}` | Get organization details | None (open) |
+| GET | `/admin/organizations/{org_id}/tenants` | List tenants for organization | None (open) |
+| GET | `/admin/tenants/{tenant_full_id}` | Get tenant details | None (open) |
+| DELETE | `/admin/tenants/{tenant_full_id}` | Delete tenant and all data | None (open) |
+| DELETE | `/admin/organizations/{org_id}` | Delete organization and all tenants | None (open) |
 
 ### Create Organization
 
@@ -144,29 +149,30 @@ Creates a new organization and initializes metadata storage.
 
 **Request**:
 ```bash
-curl -X POST http://localhost:8001/organizations \
+curl -X POST http://localhost:9000/admin/organizations \
   -H "Content-Type: application/json" \
   -d '{
     "org_id": "acme",
-    "description": "ACME Corporation",
-    "metadata": {
-      "industry": "manufacturing",
-      "region": "us-west"
-    }
+    "org_name": "ACME Corporation",
+    "created_by": "admin"
   }'
 ```
 
 **Response** (201 Created):
 ```json
 {
-  "status": "success",
   "org_id": "acme",
-  "message": "Organization 'acme' created successfully",
-  "created_at": "2025-10-09T10:30:00Z"
+  "org_name": "ACME Corporation",
+  "created_at": 1728470000000,
+  "created_by": "admin",
+  "status": "active",
+  "tenant_count": 0,
+  "config": {}
 }
 ```
 
 **Validation**:
+
 - `org_id` must match `^[a-zA-Z0-9_]+$`
 - `org_id` cannot be empty
 - Organization must not already exist
@@ -177,43 +183,40 @@ Creates a new tenant within an organization, initializes storage, and creates Ve
 
 **Request**:
 ```bash
-curl -X POST http://localhost:8001/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{
     "org_id": "acme",
     "tenant_id": "production",
-    "description": "Production environment",
-    "metadata": {
-      "environment": "production",
-      "region": "us-west-2"
-    }
+    "created_by": "admin"
   }'
 ```
 
 **Alternate Format** (full tenant_id):
 ```bash
-curl -X POST http://localhost:8001/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "acme:production",
-    "description": "Production environment"
+    "created_by": "admin"
   }'
 ```
 
 **Response** (201 Created):
 ```json
 {
-  "status": "success",
-  "tenant_id": "acme:production",
+  "tenant_full_id": "acme:production",
   "org_id": "acme",
   "tenant_name": "production",
-  "message": "Tenant 'acme:production' created successfully",
-  "schemas_initialized": true,
-  "created_at": "2025-10-09T10:35:00Z"
+  "created_at": 1728470100000,
+  "created_by": "admin",
+  "status": "active",
+  "schemas_deployed": ["video_colpali_smol500_mv_frame"]
 }
 ```
 
 **Validation**:
+
 - Organization must exist before creating tenant
 - `tenant_id` must match `^[a-zA-Z0-9_-]+$` (if using org_id + tenant_id format)
 - Full `tenant_id` must be valid org:tenant format
@@ -225,28 +228,31 @@ Retrieves all organizations in the system.
 
 **Request**:
 ```bash
-curl http://localhost:8001/organizations
+curl http://localhost:9000/admin/organizations
 ```
 
 **Response** (200 OK):
 ```json
 {
-  "status": "success",
   "organizations": [
     {
       "org_id": "acme",
-      "description": "ACME Corporation",
-      "tenant_count": 3,
-      "created_at": "2025-10-09T10:30:00Z"
+      "org_name": "ACME Corporation",
+      "created_at": 1728470000000,
+      "created_by": "admin",
+      "status": "active",
+      "tenant_count": 3
     },
     {
       "org_id": "initech",
-      "description": "Initech Inc",
-      "tenant_count": 1,
-      "created_at": "2025-10-09T11:00:00Z"
+      "org_name": "Initech Inc",
+      "created_at": 1728471800000,
+      "created_by": "admin",
+      "status": "active",
+      "tenant_count": 1
     }
   ],
-  "total": 2
+  "total_count": 2
 }
 ```
 
@@ -254,39 +260,36 @@ curl http://localhost:8001/organizations
 
 Retrieves all tenants, optionally filtered by organization.
 
-**Request** (all tenants):
+**Request** (list tenants for org):
 ```bash
-curl http://localhost:8001/tenants
-```
-
-**Request** (filter by org):
-```bash
-curl http://localhost:8001/tenants?org_id=acme
+curl http://localhost:9000/admin/organizations/acme/tenants
 ```
 
 **Response** (200 OK):
 ```json
 {
-  "status": "success",
   "tenants": [
     {
-      "tenant_id": "acme:production",
+      "tenant_full_id": "acme:production",
       "org_id": "acme",
       "tenant_name": "production",
-      "description": "Production environment",
-      "schema_count": 4,
-      "created_at": "2025-10-09T10:35:00Z"
+      "created_at": 1728470100000,
+      "created_by": "admin",
+      "status": "active",
+      "schemas_deployed": ["video_colpali_smol500_mv_frame"]
     },
     {
-      "tenant_id": "acme:staging",
+      "tenant_full_id": "acme:staging",
       "org_id": "acme",
       "tenant_name": "staging",
-      "description": "Staging environment",
-      "schema_count": 4,
-      "created_at": "2025-10-09T10:36:00Z"
+      "created_at": 1728470160000,
+      "created_by": "admin",
+      "status": "active",
+      "schemas_deployed": ["video_colpali_smol500_mv_frame"]
     }
   ],
-  "total": 2
+  "total_count": 2,
+  "org_id": "acme"
 }
 ```
 
@@ -296,18 +299,16 @@ Deletes a tenant and all associated data (schemas, documents, storage).
 
 **Request**:
 ```bash
-curl -X DELETE http://localhost:8001/tenants/acme:staging
+curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 ```
 
 **Response** (200 OK):
 ```json
 {
-  "status": "success",
-  "tenant_id": "acme:staging",
-  "message": "Tenant 'acme:staging' deleted successfully",
-  "schemas_deleted": 4,
-  "documents_deleted": 1523,
-  "deleted_at": "2025-10-09T12:00:00Z"
+  "status": "deleted",
+  "tenant_full_id": "acme:staging",
+  "schemas_deleted": 1,
+  "deleted_schemas": ["video_colpali_smol500_mv_frame_acme_staging"]
 }
 ```
 
@@ -315,32 +316,33 @@ curl -X DELETE http://localhost:8001/tenants/acme:staging
 
 ### Error Responses
 
-All endpoints return consistent error responses:
+All endpoints return FastAPI HTTPException responses:
 
 **400 Bad Request** (validation failure):
 ```json
 {
-  "status": "error",
-  "error": "Invalid org_id: only alphanumeric and underscore characters allowed",
-  "code": "VALIDATION_ERROR"
+  "detail": "Invalid org_id 'acme-corp': only alphanumeric and underscore allowed"
 }
 ```
 
 **404 Not Found** (resource doesn't exist):
 ```json
 {
-  "status": "error",
-  "error": "Organization 'acme' not found",
-  "code": "NOT_FOUND"
+  "detail": "Organization acme not found"
 }
 ```
 
 **409 Conflict** (resource already exists):
 ```json
 {
-  "status": "error",
-  "error": "Organization 'acme' already exists",
-  "code": "ALREADY_EXISTS"
+  "detail": "Organization acme already exists"
+}
+```
+
+**500 Internal Server Error** (backend failure):
+```json
+{
+  "detail": "Failed to create organization acme in backend"
 }
 ```
 
@@ -392,7 +394,7 @@ sequenceDiagram
     participant Client
     participant API as Tenant API
     participant Validator
-    participant SchemaManager as TenantSchemaManager
+    participant SchemaManager as VespaSchemaManager
     participant VespaClient as Vespa Client
     participant Storage
 
@@ -419,9 +421,9 @@ sequenceDiagram
 
     VespaClient-->>API: Found
 
-    API->>SchemaManager: register_tenant("acme:production")
+    API->>SchemaManager: Create tenant schemas via BackendRegistry
 
-    SchemaManager->>SchemaManager: Initialize tenant schemas<br/>(lazy creation)
+    SchemaManager->>SchemaManager: Initialize tenant-specific schemas<br/>(lazy creation via SchemaRegistry)
 
     SchemaManager->>VespaClient: Feed tenant_metadata
     VespaClient-->>SchemaManager: Success
@@ -429,7 +431,7 @@ sequenceDiagram
     SchemaManager->>Storage: Create directory:<br/>base_dir/acme/production/
     Storage-->>SchemaManager: Created
 
-    SchemaManager-->>API: Tenant registered
+    SchemaManager-->>API: Tenant schemas initialized
 
     API-->>Client: 201 Created<br/>{tenant_id: "acme:production"}
 ```
@@ -442,7 +444,7 @@ sequenceDiagram
     participant Agent as VideoSearchAgent
     participant SearchClient as TenantAwareVespaSearchClient
     participant Parser as parse_tenant_id()
-    participant SchemaManager as TenantSchemaManager
+    participant SchemaManager as VespaSchemaManager
     participant Vespa
 
     Client->>Agent: search(query="tutorial",<br/>tenant_id="acme:production")
@@ -457,8 +459,8 @@ sequenceDiagram
         SearchClient-->>Client: 400 Bad Request
     end
 
-    SearchClient->>SchemaManager: get_schema_name(profile, tenant_id)
-    SchemaManager-->>SearchClient: "video_colpali_acme_production"
+    SearchClient->>SchemaManager: get_tenant_schema_name(tenant_id, base_schema_name)
+    SchemaManager-->>SearchClient: "video_colpali_smol500_mv_frame_acme_production"
 
     SearchClient->>Vespa: Query schema:<br/>video_colpali_acme_production
     Vespa-->>SearchClient: Results (isolated to tenant)
@@ -474,7 +476,7 @@ sequenceDiagram
     participant Client
     participant API as Tenant API
     participant Validator
-    participant SchemaManager as TenantSchemaManager
+    participant SchemaManager as VespaSchemaManager
     participant VespaClient as Vespa Client
     participant Storage
 
@@ -512,20 +514,21 @@ sequenceDiagram
 
 ## Core Components
 
-### TenantSchemaManager
+### VespaSchemaManager
 
-**Location**: `libs/vespa/cogniverse_vespa/schema/` (implementation layer)
+**Location**: `libs/vespa/cogniverse_vespa/vespa_schema_manager.py` (implementation layer)
 
 **Purpose**: Manages the lifecycle of tenant-specific Vespa schemas with lazy creation and automatic tenant isolation.
 
 **Key Responsibilities**:
+
 - Lazy schema creation on first tenant access
 - Tenant registration and validation
 - Schema naming with tenant isolation
 - Metadata schema management (organization_metadata, tenant_metadata)
 
 **Schema Naming Convention**:
-```
+```json
 {profile}_{org}_{tenant}
 
 Examples:
@@ -535,29 +538,39 @@ Examples:
 
 **Usage**:
 ```python
-from cogniverse_vespa.schema.json_schema_parser import JSONSchemaParser  # Implementation layer
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager  # Implementation layer
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_core.registries.schema_registry import SchemaRegistry
+from pathlib import Path
 
-# Initialize schema parser
-schema_parser = JSONSchemaParser()
+# Initialize dependencies
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # For loading schema templates
+schema_registry = SchemaRegistry.get_instance()  # For schema deployment
 
-# Register tenant (creates schemas lazily)
-schema_manager.register_tenant("acme:production")
+# Initialize schema manager (backend_endpoint and backend_port are REQUIRED)
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080,
+    schema_loader=schema_loader,
+    schema_registry=schema_registry
+)
 
-# Get schema name for profile and tenant
-schema_name = schema_manager.get_schema_name(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:production"
+# Get tenant-specific schema name
+schema_name = schema_manager.get_tenant_schema_name(
+    tenant_id="acme:production",
+    base_schema_name="video_colpali_smol500_mv_frame"
 )
 # Returns: "video_colpali_smol500_mv_frame_acme_production"
 ```
 
 ### TenantAwareVespaSearchClient
 
-**Location**: `libs/vespa/cogniverse_vespa/backends/` (implementation layer)
+**Location**: `libs/vespa/cogniverse_vespa/tenant_aware_search_client.py` (implementation layer)
 
 **Purpose**: Automatic tenant-aware query routing ensuring all search operations are isolated to the correct tenant schema.
 
 **Key Responsibilities**:
+
 - Parse and validate tenant_id from requests
 - Route queries to tenant-specific schemas
 - Prevent cross-tenant data access
@@ -565,20 +578,28 @@ schema_name = schema_manager.get_schema_name(
 
 **Usage**:
 ```python
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient  # Implementation layer
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient  # Implementation layer
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize client with tenant awareness
-search_client = VespaSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
-    tenant_id="acme:production"
+# Initialize dependencies (all REQUIRED)
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # REQUIRED for schema operations
+
+search_client = TenantAwareVespaSearchClient(
+    tenant_id="acme:production",
+    base_schema_name="video_colpali_smol500_mv_frame",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
-# Search with tenant isolation
+# Search with automatic tenant isolation
 results = search_client.search(
-    query="machine learning tutorial",
-    tenant_id="acme:production",
-    ranking_strategy="hybrid_float_bm25",
+    query_text="machine learning tutorial",
+    strategy="hybrid_float_bm25",
     top_k=10
 )
 # Automatically routes to: video_colpali_smol500_mv_frame_acme_production
@@ -586,7 +607,7 @@ results = search_client.search(
 
 ### parse_tenant_id() Utility
 
-**Location**: `libs/core/cogniverse_core/utils/tenant_utils.py` (core layer)
+**Location**: `libs/core/cogniverse_core/common/tenant_utils.py` (core layer)
 
 **Purpose**: Parse and validate org:tenant format.
 
@@ -594,30 +615,38 @@ results = search_client.search(
 ```python
 def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
     """
-    Parse tenant_id in org:tenant format.
+    Parse tenant_id into org_id and tenant_name.
+
+    Supports two formats:
+    - Simple: "acme" -> ("acme", "acme")
+    - Org:tenant: "acme:production" -> ("acme", "production")
 
     Args:
-        tenant_id: Full tenant identifier (e.g., "acme:production")
+        tenant_id: Tenant identifier (simple or org:tenant format)
 
     Returns:
         Tuple of (org_id, tenant_name)
 
     Raises:
-        ValueError: If tenant_id is invalid or doesn't contain exactly one colon
+        ValueError: If tenant_id is empty, has multiple colons, or empty parts
     """
 ```
 
 **Usage**:
 ```python
-from cogniverse_core.utils.tenant_utils import parse_tenant_id  # Core layer
+from cogniverse_core.common.tenant_utils import parse_tenant_id  # Core layer
 
 # Parse tenant ID
 org_id, tenant_name = parse_tenant_id("acme:production")
 # Returns: ("acme", "production")
 
+# Simple format (no colon) returns same value for both org and tenant
+parse_tenant_id("acme")     # Returns: ("acme", "acme")
+
 # Validation errors
-parse_tenant_id("invalid")  # ValueError: must contain org:tenant format
-parse_tenant_id("a:b:c")    # ValueError: must contain exactly one colon
+parse_tenant_id("")          # ValueError: tenant_id cannot be empty
+parse_tenant_id("a:b:c")    # ValueError: Expected 'org:tenant' with single colon
+parse_tenant_id("acme:")     # ValueError: both org and tenant parts must be non-empty
 ```
 
 ### Agent Factory Pattern
@@ -628,17 +657,27 @@ All agents implement a factory function for tenant-aware instantiation:
 
 ```python
 # Video Search Agent (implementation layer)
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
 
+config_manager = create_default_config_manager()
 agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="acme:production",
-    profile="video_colpali_smol500_mv_frame"
+    config_manager=config_manager
 )
 
 # Routing Agent (implementation layer)
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-agent = RoutingAgent(tenant_id="acme:production")
+deps = RoutingDeps(
+    tenant_id="acme:production",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+router = RoutingAgent(deps=deps)
 ```
 
 **Caching**: Agents are cached per tenant_id to avoid re-initialization overhead.
@@ -653,55 +692,68 @@ agent = RoutingAgent(tenant_id="acme:production")
 
 ```bash
 # 1. Create organization
-curl -X POST http://localhost:8001/organizations \
+curl -X POST http://localhost:9000/admin/organizations \
   -H "Content-Type: application/json" \
-  -d '{"org_id": "acme", "description": "ACME Corporation"}'
+  -d '{"org_id": "acme", "org_name": "ACME Corporation", "created_by": "admin"}'
 
 # 2. Create production tenant
-curl -X POST http://localhost:8001/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "acme:production", "description": "Production environment"}'
+  -d '{"tenant_id": "acme:production", "created_by": "admin"}'
 
 # 3. Create staging tenant
-curl -X POST http://localhost:8001/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "acme:staging", "description": "Staging environment"}'
+  -d '{"tenant_id": "acme:staging", "created_by": "admin"}'
 ```
 
 ### Video Ingestion with Tenant Isolation
 
 ```python
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline  # Implementation layer
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline  # Application layer
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # Initialize pipeline for tenant
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # Optional but recommended for schema operations
+
 pipeline = VideoIngestionPipeline(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:production"
+    tenant_id="acme:production",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+    schema_name="video_colpali_smol500_mv_frame"
 )
 
 # Process video (automatically isolated to acme:production schema)
-result = await pipeline.process_video(
-    video_path="/path/to/video.mp4",
-    video_id="tutorial_001"
+result = await pipeline.process_video_async(
+    video_path=Path("/path/to/video.mp4")
 )
 ```
 
 ### Video Search with Tenant Isolation
 
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent  # Implementation layer
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent  # Implementation layer
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
 
 # Get tenant-specific agent
 agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="acme:production",
-    profile="video_colpali_smol500_mv_frame"
+    config_manager=config_manager
 )
 
-# Search (automatically isolated to acme:production)
-results = await agent.search(
+# Search (automatically isolated to acme:production) - synchronous
+results = agent.search(
     query="machine learning tutorial",
-    ranking_strategy="hybrid_float_bm25",
-    top_k=10
+    top_k=10,
+    # Optional: Add date filters
+    # start_date="2024-01-01",
+    # end_date="2024-12-31"
 )
 
 # Results only from acme:production schema - no cross-tenant access
@@ -711,7 +763,7 @@ results = await agent.search(
 
 ```bash
 # List all tenants for "acme" organization
-curl http://localhost:8001/tenants?org_id=acme
+curl http://localhost:9000/admin/organizations/acme/tenants
 
 # Response shows: acme:production, acme:staging, acme:dev
 ```
@@ -720,7 +772,7 @@ curl http://localhost:8001/tenants?org_id=acme
 
 ```bash
 # Delete staging tenant and all data
-curl -X DELETE http://localhost:8001/tenants/acme:staging
+curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 
 # Warning: This permanently deletes:
 # - All Vespa schemas for this tenant
@@ -765,4 +817,4 @@ curl -X DELETE http://localhost:8001/tenants/acme:staging
 - [Deployment Guide](deployment.md) - Multi-tenant deployment procedures
 - [Configuration Guide](configuration.md) - Multi-tenant configuration spanning foundation and core layers
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Day-to-day tenant operations
-- [Architecture Documentation](../architecture/sdk-architecture.md) - 11-package layered architecture
+- [Architecture Documentation](../architecture/sdk-architecture.md) - layered architecture

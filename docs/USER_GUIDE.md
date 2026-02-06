@@ -1,7 +1,4 @@
 # Cogniverse User Guide
-
-**Version:** 2.1.0 | **Last Updated:** 2026-01-25 | **Status:** Production Ready
-
 Complete guide for using Cogniverse - the general-purpose multi-agent AI platform for content intelligence and beyond.
 
 ---
@@ -22,54 +19,32 @@ Complete guide for using Cogniverse - the general-purpose multi-agent AI platfor
 
 ## Introduction
 
-### What is Cogniverse?
-
-Cogniverse is a **Self-Optimizing Content Intelligence Platform** - a general-purpose multi-agent AI system with built-in optimization via DSPy (including GEPA, BootstrapFewShot, and other optimizers). While it ships with multi-modal content understanding (video, audio, images, documents), the architecture supports integrating **any agent type** including web browsing, code analysis, and domain-specific agents. It provides:
-
-- **Multi-Modal Search**: Search videos using text, images, or video queries
-- **Intelligent Routing**: AI-powered query routing to the best search strategy
-- **Automated Optimization**: Self-improving system using DSPy optimization
-- **Complete Isolation**: Schema-per-tenant architecture for data security
-- **Production Telemetry**: Comprehensive observability with Phoenix
-
 ### Key Capabilities
 
 **For Content Managers:**
+
 - Ingest and index video libraries with multiple embedding strategies
 - Search across videos using natural language queries
 - Get visual relevance scores and frame-level results
 - Monitor performance with built-in dashboards
 
 **For Data Scientists:**
+
 - Run experiments with different embedding models and search strategies
 - Evaluate search quality with reference-free and visual LLM metrics
 - Optimize routing agents using synthetic data generation
 - Track all experiments in Phoenix with full observability
 
 **For Developers:**
+
 - RESTful API for all operations
-- Multi-tenant support with JWT authentication
+- Multi-tenant support with tenant isolation
 - Configurable embedding profiles and search strategies
 - Plugin architecture for custom components
 
 ### Architecture at a Glance
 
-```mermaid
-graph LR
-    User[User] --> API[FastAPI<br/>Server]
-    API --> Orchestrator[Multi-Agent<br/>Orchestrator]
-    Orchestrator --> Routing[Routing<br/>Agent]
-    Orchestrator --> Search[Video Search<br/>Agent]
-    Search --> Vespa[(Vespa<br/>Vector DB)]
-    Routing --> Memory[(Mem0<br/>Memory)]
-    API --> Phoenix[(Phoenix<br/>Telemetry)]
-
-    style User fill:#e1f5ff
-    style API fill:#fff4e1
-    style Orchestrator fill:#ffe1f5
-    style Vespa fill:#e1ffe1
-    style Phoenix fill:#f5e1ff
-```
+See the full [Platform Overview](index.md#platform-overview) for the architecture diagram showing the complete system including agents, content store, memory, telemetry, optimization loop, and training pipeline.
 
 ---
 
@@ -123,7 +98,7 @@ curl http://localhost:11434/api/tags
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --profile video_colpali_smol500_mv_frame \
-  --tenant default
+  --tenant-id default
 ```
 
 #### 4. Run Your First Query
@@ -154,46 +129,62 @@ Search videos using different modalities:
 
 #### Text-to-Video Search
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize agent
-config = SystemConfig(tenant_id="default")
+# Initialize agent with config manager (required)
+config_manager = create_default_config_manager()
 agent = VideoSearchAgent(
-    config,
-    profile="video_colpali_smol500_mv_frame"
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
+    config_manager=config_manager
 )
 
-# Search with text
-results = await agent.search(
+# Search with text (synchronous, not async)
+results = agent.search(
     query="machine learning tutorial",
     top_k=10
 )
 
 for result in results:
-    print(f"Video: {result['video_id']}")
-    print(f"Score: {result['score']}")
-    print(f"Frames: {result['frame_ids']}")
+    print(f"Video: {result.document.metadata.get('video_id')}")
+    print(f"Score: {result.score}")
+    print(f"Frames: {result.document.metadata.get('frame_ids', [])}")
 ```
 
-#### Image-to-Video Search
+#### Multi-Profile Search
 ```python
-# Search using an image
-from PIL import Image
+# Search across different embedding profiles
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-query_image = Image.open("query.jpg")
-results = await agent.search(
-    query_image=query_image,
-    top_k=10
+config_manager = create_default_config_manager()
+
+# ColPali profile for semantic understanding
+colpali_agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
+    config_manager=config_manager
 )
+colpali_results = colpali_agent.search(query="cooking tutorial", top_k=10)
+
+# VideoPrism profile for visual similarity
+videoprism_agent = VideoSearchAgent(
+    profile="video_videoprism_base_mv_chunk_30s",
+    tenant_id="default",
+    config_manager=config_manager
+)
+videoprism_results = videoprism_agent.search(query="cooking tutorial", top_k=10)
 ```
 
-#### Video-to-Video Search
+#### Date-Filtered Search
 ```python
-# Find similar videos
-results = await agent.search_similar(
-    source_video_id="video_123",
-    top_k=10
+# Search with date filters
+results = agent.search(
+    query="machine learning tutorial",
+    top_k=10,
+    start_date="2024-01-01",
+    end_date="2024-12-31"
 )
 ```
 
@@ -202,23 +193,32 @@ results = await agent.search_similar(
 Cogniverse automatically routes queries to the optimal search strategy:
 
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry import TelemetryConfig
 
-# Initialize routing agent
-routing_agent = RoutingAgent(tenant_id="default")
+# Initialize routing agent with deps
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+routing_agent = RoutingAgent(deps=deps)
 
 # Route query (automatic strategy selection)
+# Note: route_query is async, must be called within async function
 decision = await routing_agent.route_query(
     query="cooking recipes with pasta"
 )
 
-print(f"Selected Strategy: {decision.strategy}")
+print(f"Recommended Agent: {decision.recommended_agent}")
 print(f"Confidence: {decision.confidence}")
 print(f"Detected Entities: {decision.entities}")
-print(f"Query Modality: {decision.modality}")
+print(f"Reasoning: {decision.reasoning}")
 ```
 
 **Routing Features:**
+
 - **Entity Extraction**: Identifies people, places, concepts using GLiNER
 - **Relationship Detection**: Finds relationships between entities
 - **Query Enhancement**: Enriches queries with context
@@ -231,10 +231,11 @@ Choose the best embedding model for your use case:
 
 | Model | Type | Best For | Dimensions |
 |-------|------|----------|------------|
-| **ColPali SmolVLM** | Frame-level | Visual documents, text-rich videos | 768 |
+| **ColPali SmolVLM** | Frame-level | Visual documents, text-rich videos | 128 (patch) |
 | **VideoPrism Base** | Global video | Semantic video understanding | 768 |
-| **VideoPrism LVT** | Temporal | Action/motion detection | 1152 |
-| **ColQwen2 Omni** | Multi-modal | Text+visual fusion | 768 |
+| **VideoPrism LVT Base** | Temporal | Action/motion detection | 768 |
+| **VideoPrism LVT Large** | Temporal | Enhanced temporal understanding | 1024 |
+| **ColQwen2 Omni** | Multi-modal | Text+visual fusion | 128 (patch) |
 
 **Switching Models:**
 ```bash
@@ -242,7 +243,7 @@ Choose the best embedding model for your use case:
 uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_videoprism_base_mv_chunk_30s \
-  --tenant default
+  --tenant-id default
 ```
 
 ### 4. Hybrid Search Strategies
@@ -261,10 +262,9 @@ strategies = [
     "bm25_float_rerank",   # BM25 then dense rerank
 ]
 
-# Use hybrid search
-results = await agent.search(
+# Use hybrid search (synchronous call)
+results = agent.search(
     query="tutorial",
-    strategy="hybrid_float_bm25",
     top_k=20
 )
 ```
@@ -274,24 +274,40 @@ results = await agent.search(
 Cogniverse remembers user context for personalized results:
 
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Get memory manager for tenant
-memory = Mem0MemoryManager.get_instance(
-    tenant_id="default",
-    user_id="user_123"
+# Initialize required dependencies
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Get memory manager (singleton per tenant via __new__)
+memory = Mem0MemoryManager(tenant_id="default")
+
+# Initialize with required parameters
+memory.initialize(
+    backend_host="localhost",
+    backend_port=8080,
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
 # Add user preference
-memory.add(
-    "User prefers beginner-level Python tutorials",
-    user_id="user_123"
+memory.add_memory(
+    content="User prefers beginner-level Python tutorials",
+    tenant_id="default",
+    agent_name="search_agent",
+    metadata={"user_id": "user_123"}
 )
 
-# Search considers memory automatically
-results = await agent.search(
-    query="Python tutorial",
-    user_id="user_123"  # Includes user memory
+# Search memories
+user_memories = memory.search_memory(
+    query="Python tutorial preferences",
+    tenant_id="default",
+    agent_name="search_agent",
+    top_k=5
 )
 ```
 
@@ -307,6 +323,7 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py
 ```
 
 **Dashboard Features:**
+
 - **Traces**: Request flow visualization with span details
 - **Experiments**: Compare A/B test results
 - **Metrics**: Query latency, hit rates, routing accuracy
@@ -328,8 +345,7 @@ Ingest videos with one embedding model:
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
-  --tenant default \
-  --batch_size 10
+  --tenant-id default
 ```
 
 #### Multi-Profile Ingestion
@@ -340,38 +356,42 @@ Ingest with multiple models for best coverage:
 # Ingest with ColPali, VideoPrism, and ColQwen
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
-  --profiles video_colpali_smol500_mv_frame \
-             video_videoprism_base_mv_chunk_30s \
-             video_colqwen_omni_mv_chunk_30s \
-  --tenant default
+  --profile video_colpali_smol500_mv_frame \
+            video_videoprism_base_mv_chunk_30s \
+            video_colqwen_omni_mv_chunk_30s \
+  --tenant-id default
 ```
 
 **Ingestion Options:**
+
 - `--video_dir`: Directory containing videos
-- `--profile`: Single embedding profile
-- `--profiles`: Multiple embedding profiles (space-separated)
-- `--tenant`: Tenant ID for multi-tenancy
-- `--batch_size`: Number of videos to process in parallel (default: 5)
-- `--skip_existing`: Skip already ingested videos
-- `--extract_keyframes`: Extract keyframes (default: true)
-- `--transcribe_audio`: Transcribe audio with Whisper (default: true)
+- `--profile`: Embedding profile(s) - can specify multiple space-separated values
+- `--tenant-id`: Tenant ID for multi-tenancy (default: default_tenant)
+- `--backend`: Backend to use (choices: byaldi, vespa; default: vespa)
+- `--max-concurrent`: Maximum concurrent videos to process (default: 3)
+- `--output_dir`: Output directory for processed data
+- `--max-frames`: Maximum frames per video
+- `--test-mode`: Use test mode with limited frames
+- `--debug`: Enable debug mode
+
+**Note:** Processing options like keyframe extraction, transcription, and frame sampling are configured per-profile in `configs/config.json`, not via CLI arguments.
 
 #### Check Ingestion Status
 
 ```python
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-client = VespaSearchClient(
-    host="localhost",
-    port=8080,
-    tenant_id="default"
+config_manager = create_default_config_manager()
+client = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="acme",
+    config_manager=config_manager
 )
 
-# Count indexed videos
-count = await client.count_documents(
-    schema="video_colpali_smol500_mv_frame"
-)
-print(f"Total videos: {count}")
+# Count indexed videos (via Vespa query)
+# Note: Use the search service for production queries
 ```
 
 ### Searching Videos
@@ -382,36 +402,35 @@ Use the REST API for production applications:
 
 ```bash
 # Text search
-curl -X POST http://localhost:8000/api/v1/search \
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: default" \
   -d '{
     "query": "machine learning tutorial",
     "top_k": 10,
-    "strategy": "hybrid_float_bm25"
+    "strategy": "hybrid",
+    "tenant_id": "default"
   }'
 ```
 
 **Response:**
 ```json
 {
+  "query": "machine learning tutorial",
+  "profile": "video_colpali_smol500_mv_frame",
+  "strategy": "hybrid",
+  "results_count": 10,
   "results": [
     {
-      "video_id": "video_123",
+      "document_id": "doc_123",
       "score": 0.95,
-      "title": "Introduction to Machine Learning",
-      "frames": [
-        {"frame_id": "frame_45", "score": 0.98, "timestamp": "00:01:30"},
-        {"frame_id": "frame_102", "score": 0.93, "timestamp": "00:03:25"}
-      ],
-      "transcript_snippet": "Machine learning is a subset of AI..."
+      "metadata": {
+        "source_id": "video_123",
+        "frame_id": "frame_45"
+      },
+      "highlights": {}
     }
   ],
-  "metadata": {
-    "strategy_used": "hybrid_float_bm25",
-    "query_time_ms": 145,
-    "total_results": 25
-  }
+  "session_id": null
 }
 ```
 
@@ -420,54 +439,44 @@ curl -X POST http://localhost:8000/api/v1/search \
 Use the Python SDK for scripting:
 
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize
-config = SystemConfig(tenant_id="default")
-agent = VideoSearchAgent(config, profile="video_colpali_smol500_mv_frame")
-
-# Search
-results = await agent.search(
-    query="cooking pasta",
-    top_k=10,
-    strategy="hybrid_float_bm25"
+# Initialize with config manager (required)
+config_manager = create_default_config_manager()
+agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
+    config_manager=config_manager
 )
 
-# Process results
+# Search (synchronous - no await needed)
+results = agent.search(
+    query="cooking pasta",
+    top_k=10
+)
+
+# Process results (SearchResult objects have .document and .score)
 for result in results:
-    print(f"Video: {result['title']}")
-    print(f"Score: {result['score']:.2f}")
-    print(f"Best Frame: {result['frames'][0]['timestamp']}")
+    print(f"Video: {result.document.metadata.get('video_id')}")
+    print(f"Score: {result.score:.2f}")
 ```
 
 #### Advanced Search Options
 
 ```python
-# Search with filters
-results = await agent.search(
+# Search with date filters
+results = agent.search(
     query="tutorial",
     top_k=10,
-    filters={
-        "duration_min": 300,  # At least 5 minutes
-        "duration_max": 1800,  # At most 30 minutes
-        "upload_date_after": "2024-01-01"
-    }
+    start_date="2024-01-01",  # Filter by upload date
+    end_date="2024-12-31"
 )
 
-# Search with reranking
-results = await agent.search(
+# Search with more results
+results = agent.search(
     query="Python tutorial",
-    top_k=50,  # Get more candidates
-    rerank=True,
-    rerank_top_k=10  # Return top 10 after reranking
-)
-
-# Search specific frame range
-results = await agent.search(
-    query="introduction",
-    top_k=10,
-    frame_range=(0, 100)  # Search only first 100 frames
+    top_k=50  # Get more candidates for client-side filtering
 )
 ```
 
@@ -482,11 +491,12 @@ Evaluate search quality on a dataset:
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
-  --test-multiple-strategies \
+  --all-strategies \
   --quality-evaluators
 ```
 
 **This will:**
+
 1. Load evaluation dataset with ground truth
 2. Run queries through all search strategies
 3. Compute quality metrics (MRR, NDCG, Precision@K)
@@ -520,7 +530,7 @@ Create your own evaluation dataset:
 ```bash
 # Run evaluation on custom dataset
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
-  --dataset-path evaluation_dataset.json \
+  --csv-path evaluation_dataset.json \
   --profiles video_colpali_smol500_mv_frame
 ```
 
@@ -535,11 +545,11 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.p
   --profiles video_colpali_smol500_mv_frame \
              video_videoprism_base_mv_chunk_30s \
              video_colqwen_omni_mv_chunk_30s \
-  --test-multiple-strategies
+  --all-strategies
 ```
 
 **Results Table:**
-```
+```text
 Profile                              | MRR@10 | NDCG@10 | Precision@5
 -------------------------------------|--------|---------|-------------
 video_colpali_smol500_mv_frame       | 0.82   | 0.79    | 0.75
@@ -556,20 +566,20 @@ video_colqwen_omni_mv_chunk_30s      | 0.85   | 0.82    | 0.78
 Set up multiple tenants with isolated data:
 
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Configure tenant A
 config_a = SystemConfig(
     tenant_id="acme_corp",
-    vespa_url="http://localhost:8080",
-    phoenix_project_name="acme_corp_project"
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
 # Configure tenant B
 config_b = SystemConfig(
     tenant_id="startup_inc",
-    vespa_url="http://localhost:8080",
-    phoenix_project_name="startup_inc_project"
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
 # Each tenant gets isolated:
@@ -581,21 +591,14 @@ config_b = SystemConfig(
 **Tenant Lifecycle:**
 
 ```bash
-# Create tenant and deploy schemas
-uv run python scripts/admin/create_tenant.py \
-  --tenant-id new_customer \
-  --profiles video_colpali_smol500_mv_frame
-
-# Ingest data for tenant
+# Ingest data for tenant (tenant is implicitly created on first use)
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/new_customer_videos \
   --profile video_colpali_smol500_mv_frame \
-  --tenant new_customer
+  --tenant-id new_customer
 
-# Delete tenant (removes all data)
-uv run python scripts/admin/delete_tenant.py \
-  --tenant-id old_customer \
-  --confirm
+# Note: Explicit tenant creation/deletion APIs are available via
+# the standalone tenant_manager service (not the main runtime)
 ```
 
 ### Custom Embedding Profiles
@@ -603,29 +606,39 @@ uv run python scripts/admin/delete_tenant.py \
 Create custom profiles for specific use cases:
 
 ```json
-// configs/config.json
 {
   "backend": {
-    "profiles": [
-      {
-        "profile_name": "video_custom_highres_frame",
+    "profiles": {
+      "video_custom_highres_frame": {
+        "type": "video",
+        "description": "Custom high-resolution frame-based profile",
         "schema_name": "video_custom_highres_frame",
         "embedding_model": "vidore/colsmol-500m",
         "pipeline_config": {
           "extract_keyframes": true,
-          "keyframe_fps": 2.0,  // Higher frame rate
-          "max_frames": 200,     // More frames
-          "frame_resolution": [1920, 1080],  // High resolution
+          "keyframe_strategy": "fps",
+          "keyframe_fps": 2.0,
           "transcribe_audio": true,
-          "whisper_model": "large-v3"  // Better transcription
+          "generate_descriptions": true,
+          "generate_embeddings": true
         },
         "strategies": {
-          "segmentation": {"class": "FrameSegmentationStrategy"},
-          "embedding": {"class": "MultiVectorEmbeddingStrategy"}
+          "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {
+              "fps": 2.0,
+              "threshold": 0.999,
+              "max_frames": 200
+            }
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
         },
-        "embedding_type": "float"
+        "embedding_type": "frame_based"
       }
-    ]
+    }
   }
 }
 ```
@@ -633,14 +646,13 @@ Create custom profiles for specific use cases:
 ```bash
 # Deploy custom profile schema
 JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-  --schema-path configs/schemas/video_custom_highres_frame.json \
-  --tenant-id default
+  configs/schemas/video_custom_highres_frame.json
 
 # Ingest with custom profile
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_custom_highres_frame \
-  --tenant default
+  --tenant-id default
 ```
 
 ### DSPy Optimization
@@ -649,29 +661,31 @@ Optimize routing agent using DSPy:
 
 ```python
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
-from cogniverse_agents.routing.config import RoutingConfig
 
-# Configure optimization
-routing_config = RoutingConfig(
+# Initialize orchestrator with configuration
+orchestrator = OptimizationOrchestrator(
     tenant_id="default",
-    optimizer_type="GEPA",  # Options: GEPA, MIPRO, Bootstrap, SIMBA
-    experience_buffer_size=10000,
-    learning_rate=0.001,
-    update_interval=300,  # Update every 5 minutes
-    synthetic_data_enabled=True
+    span_eval_interval_minutes=15,
+    annotation_interval_minutes=30,
+    confidence_threshold=0.6,
+    min_annotations_for_optimization=50
 )
 
-# Run optimization
-orchestrator = OptimizationOrchestrator(config=routing_config)
-results = orchestrator.run_optimization()
+# Run one complete optimization cycle (for testing)
+# Note: run_once is async, must be called within async function
+results = await orchestrator.run_once()
 
-print(f"Baseline Accuracy: {results['baseline_accuracy']}")
-print(f"Optimized Accuracy: {results['optimized_accuracy']}")
-print(f"Improvement: {results['improvement']}%")
+print(f"Span Evaluation: {results['span_evaluation']}")
+print(f"Annotation Requests: {results['annotation_requests']}")
+print(f"Annotations Generated: {results.get('annotations_generated', 0)}")
+print(f"Feedback Loop: {results['feedback_loop']}")
+
+# Or start continuous optimization (for production)
+# await orchestrator.start()  # Runs continuously (also async)
 ```
 
 **Optimization Results:**
-```
+```text
 Baseline Routing Accuracy: 78.5%
 Optimized Routing Accuracy: 92.3%
 Improvement: +13.8%
@@ -683,62 +697,45 @@ Training Time: 45 minutes
 
 ### Batch Processing
 
-Process large video libraries efficiently:
+Process large video libraries efficiently using the CLI:
 
-```python
-from cogniverse_runtime.ingestion.pipeline import IngestionPipeline
-from cogniverse_core.config.unified_config import SystemConfig
+```bash
+# Process videos in batches using the ingestion script
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+  --video_dir data/batch1 \
+  --profile video_colpali_smol500_mv_frame \
+  --tenant-id default
 
-# Initialize pipeline
-config = SystemConfig(tenant_id="default")
-pipeline = IngestionPipeline(
-    config,
-    profile="video_colpali_smol500_mv_frame"
-)
+# Or via the API
+curl -X POST http://localhost:8000/ingestion/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_dir": "data/batch1",
+    "profile": "video_colpali_smol500_mv_frame",
+    "tenant_id": "default",
+    "batch_size": 10
+  }'
 
-# Process videos in batches
-video_dirs = [
-    "data/batch1",
-    "data/batch2",
-    "data/batch3"
-]
-
-for video_dir in video_dirs:
-    results = await pipeline.process_directory(
-        video_dir,
-        batch_size=20,  # Process 20 videos in parallel
-        skip_existing=True
-    )
-
-    print(f"Processed: {results['success_count']}")
-    print(f"Failed: {results['failure_count']}")
-    print(f"Skipped: {results['skipped_count']}")
+# Check status
+curl http://localhost:8000/ingestion/status/{job_id}
 ```
 
 ### API Authentication
 
-Secure your API with JWT:
-
-```python
-# Generate API key for tenant
-from cogniverse_runtime.admin.tenant_manager import TenantManager
-
-manager = TenantManager()
-api_key = manager.create_api_key(
-    tenant_id="acme_corp",
-    expires_in_days=90
-)
-
-print(f"API Key: {api_key}")
-```
+Authentication is handled via tenant isolation. Each request includes a `tenant_id`:
 
 ```bash
-# Use API key in requests
-curl -X POST http://localhost:8000/api/v1/search \
+# Search with tenant ID
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <api_key>" \
-  -d '{"query": "tutorial", "top_k": 10}'
+  -d '{
+    "query": "tutorial",
+    "top_k": 10,
+    "tenant_id": "acme_corp"
+  }'
 ```
+
+**Note:** Tenant isolation provides logical separation of data. API key authentication is planned for future releases.
 
 ---
 
@@ -748,8 +745,8 @@ curl -X POST http://localhost:8000/api/v1/search \
 
 #### Search Endpoint
 
-```
-POST /api/v1/search
+```http
+POST /search/
 ```
 
 **Request:**
@@ -757,73 +754,92 @@ POST /api/v1/search
 {
   "query": "string",
   "top_k": 10,
-  "strategy": "hybrid_float_bm25",
+  "strategy": "hybrid",
   "profile": "video_colpali_smol500_mv_frame",
-  "user_id": "user_123",
-  "filters": {
-    "duration_min": 300,
-    "duration_max": 1800
-  }
+  "tenant_id": "default",
+  "filters": {}
 }
 ```
 
 **Response:**
 ```json
 {
+  "query": "string",
+  "profile": "video_colpali_smol500_mv_frame",
+  "strategy": "hybrid",
+  "results_count": 10,
   "results": [
     {
-      "video_id": "string",
+      "document_id": "string",
       "score": 0.95,
-      "title": "string",
-      "frames": [
-        {"frame_id": "string", "score": 0.98, "timestamp": "00:01:30"}
-      ]
+      "metadata": {},
+      "highlights": {}
     }
   ],
-  "metadata": {
-    "strategy_used": "string",
-    "query_time_ms": 145
-  }
+  "session_id": null
 }
 ```
 
 #### Ingestion Endpoint
 
-```
-POST /api/v1/ingest
+```http
+POST /ingestion/start
 ```
 
-**Request (multipart/form-data):**
-```
-video: <file>
-profile: video_colpali_smol500_mv_frame
-metadata: {"title": "My Video", "tags": ["tutorial"]}
+**Request:**
+```json
+{
+  "video_dir": "/path/to/videos",
+  "profile": "video_colpali_smol500_mv_frame",
+  "backend": "vespa",
+  "tenant_id": "default",
+  "batch_size": 10
+}
 ```
 
 **Response:**
 ```json
 {
-  "video_id": "video_123",
-  "status": "success",
-  "frames_extracted": 150,
-  "embedding_count": 150
+  "job_id": "abc123",
+  "status": "started",
+  "message": "Ingestion job started successfully"
+}
+```
+
+**Check Status:**
+```http
+GET /ingestion/status/{job_id}
+```
+
+**Status Response:**
+```json
+{
+  "job_id": "abc123",
+  "status": "processing",
+  "videos_processed": 5,
+  "videos_total": 10,
+  "errors": []
 }
 ```
 
 #### Health Check
 
-```
-GET /api/v1/health
+```http
+GET /health
 ```
 
 **Response:**
 ```json
 {
   "status": "healthy",
-  "services": {
-    "vespa": "connected",
-    "phoenix": "connected",
-    "ollama": "connected"
+  "service": "cogniverse-runtime",
+  "backends": {
+    "registered": 1,
+    "backends": ["vespa"]
+  },
+  "agents": {
+    "registered": 3,
+    "agents": ["search", "routing", "summarizer"]
   }
 }
 ```
@@ -833,55 +849,92 @@ GET /api/v1/health
 #### VideoSearchAgent
 
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-agent = VideoSearchAgent(config, profile="video_colpali_smol500_mv_frame")
+config_manager = create_default_config_manager()
+agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
+    config_manager=config_manager
+)
 
-# Search methods
-await agent.search(query: str, top_k: int, strategy: str)
-await agent.search_similar(video_id: str, top_k: int)
-await agent.search_by_image(image: PIL.Image, top_k: int)
-
-# Health check
-health = agent.health_check()
+# Search method
+results = agent.search(
+    query="machine learning",
+    top_k=10,
+    start_date="2024-01-01",  # Optional
+    end_date="2024-12-31"     # Optional
+)
 ```
 
 #### RoutingAgent
 
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry import TelemetryConfig
 
-agent = RoutingAgent(tenant_id="default")
+# Create dependencies (telemetry_config is required)
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",  # Local Ollama model
+    base_url="http://localhost:11434/v1"
+)
 
-# Route query
-decision = await agent.route_query(query: str)
+agent = RoutingAgent(deps=deps)
 
-# Properties
-decision.strategy        # Selected strategy
-decision.confidence      # Routing confidence
-decision.entities        # Extracted entities
-decision.relationships   # Entity relationships
-decision.modality        # Query modality
+# Route query (async method - must be called within async function)
+decision = await agent.route_query(query="machine learning tutorial")
+
+# Access routing decision properties
+decision.recommended_agent # Recommended agent name
+decision.confidence        # Routing confidence score
+decision.entities          # Extracted entities
+decision.relationships     # Entity relationships
+decision.enhanced_query    # Enhanced query string
 ```
 
 #### Mem0MemoryManager
 
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-memory = Mem0MemoryManager.get_instance(
-    tenant_id="default",
-    user_id="user_123"
+# Initialize required dependencies first
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Instantiate (per-tenant singleton pattern)
+memory = Mem0MemoryManager(tenant_id="default")
+
+# Initialize with all required parameters
+memory.initialize(
+    backend_host="localhost",
+    backend_port=8080,
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
-# Add memory
-memory.add("User prefers Python tutorials", user_id="user_123")
+# Add memory (requires tenant_id and agent_name)
+memory.add_memory(
+    content="User prefers Python tutorials",
+    tenant_id="default",
+    agent_name="search_agent"
+)
 
 # Search memory
-relevant_memories = memory.search("tutorial preferences", user_id="user_123")
+relevant_memories = memory.search_memory(
+    query="tutorial preferences",
+    tenant_id="default",
+    agent_name="search_agent",
+    top_k=5
+)
 
 # Get all memories
-all_memories = memory.get_all(user_id="user_123")
+all_memories = memory.get_all_memories(tenant_id="default", agent_name="search_agent")
 ```
 
 ---
@@ -890,35 +943,13 @@ all_memories = memory.get_all(user_id="user_123")
 
 ### System Configuration
 
-Configure Cogniverse via `config.yml`:
+Configuration is loaded from `configs/config.json`. The system auto-discovers this file from:
+1. `COGNIVERSE_CONFIG` environment variable (if set)
+2. `configs/config.json` (from current directory)
+3. `../configs/config.json` (one level up)
+4. `../../configs/config.json` (two levels up)
 
-```yaml
-# config.yml
-environment: production
-log_level: INFO
-
-vespa:
-  host: localhost
-  port: 8080
-  config_port: 19071
-
-phoenix:
-  enabled: true
-  collector_endpoint: localhost:4317
-
-ollama:
-  base_url: http://localhost:11434
-  default_model: llama3.2
-
-memory:
-  provider: mem0
-  backend: vespa
-  collection: agent_memories
-
-tenant:
-  default_tenant_id: default
-  allow_tenant_creation: true
-```
+See [Profile Configuration](#profile-configuration) below for the actual config.json structure.
 
 ### Profile Configuration
 
@@ -927,58 +958,57 @@ Configure embedding profiles in `configs/config.json`:
 ```json
 {
   "backend": {
-    "profiles": [
-      {
-        "profile_name": "video_colpali_smol500_mv_frame",
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "type": "video",
+        "description": "Frame-based ColPali profile",
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "vidore/colsmol-500m",
         "pipeline_config": {
           "extract_keyframes": true,
+          "keyframe_strategy": "fps",
           "keyframe_fps": 1.0,
-          "max_frames": 100,
-          "transcribe_audio": true
+          "transcribe_audio": true,
+          "generate_descriptions": true,
+          "generate_embeddings": true
         },
         "strategies": {
-          "segmentation": {"class": "FrameSegmentationStrategy"},
-          "embedding": {"class": "MultiVectorEmbeddingStrategy"}
+          "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {
+              "fps": 1.0,
+              "threshold": 0.999,
+              "max_frames": 3000
+            }
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
         },
-        "embedding_type": "binary"
+        "embedding_type": "frame_based"
       }
-    ]
+    }
   }
 }
 ```
 
 ### Environment Variables
 
-Configure via environment variables:
+The following environment variables are honored by the system:
 
 ```bash
-# Core Configuration
-export COGNIVERSE_ENV=production
-export COGNIVERSE_LOG_LEVEL=INFO
-export DEFAULT_TENANT_ID=default
+# Configuration File Discovery
+export COGNIVERSE_CONFIG=/path/to/config.json  # Override config file path
 
-# Vespa Configuration
-export VESPA_HOST=localhost
-export VESPA_PORT=8080
-export VESPA_CONFIG_PORT=19071
+# JAX Configuration (required for VideoPrism models)
+export JAX_PLATFORM_NAME=cpu  # Required on Apple Silicon or systems without GPU
 
-# Phoenix Configuration
-export PHOENIX_ENABLED=true
-export PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
-export PHOENIX_PROJECT_NAME=cogniverse
-
-# Ollama Configuration
-export OLLAMA_BASE_URL=http://localhost:11434
-
-# JAX Configuration (for VideoPrism)
-export JAX_PLATFORM_NAME=cpu
-
-# Performance Tuning
-export VESPA_POOL_SIZE=10
-export EMBEDDING_BATCH_SIZE=32
+# HuggingFace (for model downloads)
+export HF_TOKEN=your_token_here  # HuggingFace access token for gated models
 ```
+
+**Note:** Most configuration is done via `configs/config.json`. Environment variables are minimal - primarily `JAX_PLATFORM_NAME` for VideoPrism compatibility and `COGNIVERSE_CONFIG` to override the config file location.
 
 ---
 
@@ -1026,49 +1056,54 @@ curl http://localhost:6006/health
 
 **Solution:**
 ```bash
-# Reduce batch size
+# Reduce concurrent processing
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
-  --batch_size 2  # Reduce from default 5
+  --max-concurrent 1  # Reduce from default 3
 
-# Or use binary embeddings (smaller memory footprint)
-# Change embedding_type to "binary" in profile config
+# Or use binary embeddings via ranking strategies
+# Binary embeddings are configured in schema_config and used via ranking strategies
 ```
 
 #### Issue: "Slow search performance"
 
 **Solutions:**
+
 1. Use binary embeddings instead of float
-2. Enable caching in config.yml
+2. Enable caching in config.json
 3. Use BM25-only for text queries
 4. Reduce top_k to get fewer results
 
 ```bash
-# Use binary embeddings profile
+# Binary embeddings are configured per-profile in schema_config.binary_dim
+# Use standard profiles - they support both float and binary embeddings
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
-  --profile video_colpali_binary_mv_frame \
-  --tenant default
+  --profile video_colpali_smol500_mv_frame \
+  --tenant-id default
 ```
 
 ### Debug Mode
 
-Enable debug logging:
+Enable debug logging by configuring the logging level in your Python script or using standard Python logging configuration:
 
 ```bash
-export COGNIVERSE_LOG_LEVEL=DEBUG
-export PHOENIX_ENABLED=true
-
-uv run python scripts/run_ingestion.py \
+# Run ingestion with verbose output
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
-  --tenant default
+  --tenant-id default
+
+# Check logs
+tail -f outputs/logs/*.log
 ```
+
+**Note:** Logging levels are configured programmatically or via `configs/config.json`, not via environment variables.
 
 ### Getting Help
 
-- **Documentation**: [docs/](../docs/)
+- **Documentation**: [Home](index.md)
 - **GitHub Issues**: [Report bugs](https://github.com/org/cogniverse/issues)
 - **Phoenix Dashboard**: http://localhost:8501 for system metrics
 - **API Docs**: http://localhost:8000/docs for interactive API documentation
@@ -1115,19 +1150,13 @@ uv run python scripts/run_ingestion.py \
 - **Deployment**: See [Production Deployment](operations/deployment.md)
 - **Monitoring**: See [Performance Monitoring](operations/performance-monitoring.md)
 
-### For Developers
+### Developer Resources
 - **Developer Guide**: See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)
 - **Architecture**: See [architecture/overview.md](architecture/overview.md)
-- **Module Docs**: See [modules/](modules/) for package-specific documentation
+- **Module Docs**: See [modules/sdk.md](modules/sdk.md) for package-specific documentation
 
 ### For DevOps
 - **Docker Deployment**: See [operations/docker-deployment.md](operations/docker-deployment.md)
 - **Kubernetes Deployment**: See [operations/kubernetes-deployment.md](operations/kubernetes-deployment.md)
 - **Multi-Tenant Operations**: See [operations/multi-tenant-ops.md](operations/multi-tenant-ops.md)
 
----
-
-**Version**: 2.1.0
-**Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated:** 2026-01-25
-**Status**: Production Ready

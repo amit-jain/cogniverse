@@ -1,7 +1,6 @@
 # Getting Started with Cogniverse
 
-**Architecture**: 11-Package Layered System
-**Last Updated:** 2026-01-25
+**Architecture**: Layered System
 
 Welcome to Cogniverse! This guide will help you get your sophisticated multi-agent video search system up and running quickly.
 
@@ -19,11 +18,8 @@ Welcome to Cogniverse! This guide will help you get your sophisticated multi-age
 The Python 3.12 compatibility issues have been resolved. Simply run:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Or using uv (faster)
-uv pip install -r requirements.txt
+# Install all workspace packages and dependencies
+uv sync
 ```
 
 ### 3. Setup Local AI
@@ -32,13 +28,17 @@ Setup the local AI coordinator (Llama 3.1):
 
 ```bash
 # Install and configure Ollama + Llama 3.1
-python scripts/setup_ollama.py
+uv run python scripts/setup_ollama.py
 ```
 
 This automatically:
+
 - Installs Ollama (local AI runtime)
+
 - Downloads Llama 3.1 model 
+
 - Starts the AI server
+
 - Tests functionality
 
 Optional: Copy and customize configuration:
@@ -53,13 +53,17 @@ cp configs/examples/config.example.json configs/config.json
 Run the setup script to create the video index:
 
 ```bash
-python scripts/setup_system.py
+uv run python scripts/setup_system.py
 ```
 
 This will:
+
 - Create necessary directories
+
 - Generate a sample test video (if imageio is available)
+
 - Process videos and create the Byaldi search index
+
 - Validate all components
 
 ### 5. Test the System (Optional)
@@ -67,32 +71,26 @@ This will:
 Run the comprehensive test suite:
 
 ```bash
-python scripts/test_system.py
+uv run python tests/test_system.py
 ```
 
 This will validate all components and tell you if everything is working correctly.
 
 ### 6. Start the System
 
-Use the automated startup script:
+Start components individually:
 
 ```bash
-chmod +x scripts/run_servers.sh
-./scripts/run_servers.sh
+# Terminal 1 - Text Agent Server
+uvicorn cogniverse_agents.text_agent_server:app --port 8002
+
+# Terminal 2 - Composing Agent Web UI
+uv run python -m cogniverse_agents.composing_agents_main
 ```
 
-Or start components individually:
-
-```bash
-# Terminal 1 - Video Agent
-uvicorn src.agents.video_agent_server:app --port 8001
-
-# Terminal 2 - Text Agent  
-uvicorn src.agents.text_agent_server:app --port 8002
-
-# Terminal 3 - Composing Agent Web UI
-python src/agents/composing_agents_main.py web
-```
+> **Note**: The video search functionality uses `VideoSearchAgent` from
+> `cogniverse_agents.video_agent_refactored` which is invoked through the composing agent,
+> not as a standalone server.
 
 ### 7. Access the Web Interface
 
@@ -104,43 +102,40 @@ Navigate to `http://localhost:8000` and select "CoordinatorAgent" from the dropd
 
 #### Option A: Byaldi (Recommended for Development)
 
-Byaldi is perfect for getting started quickly and is set up automatically by the setup script:
+Byaldi is perfect for getting started quickly:
 
 ```bash
 # Run the automated setup (recommended)
-python scripts/setup_system.py
+uv run python scripts/setup_system.py
 
 # Or manually create the index
-python scripts/run_ingestion.py --video_dir data/videos --backend byaldi
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend byaldi
 ```
 
-The setup script automatically configures Byaldi as the default backend.
+Note: The setup script creates necessary directories and can optionally set up Byaldi. Vespa is the default backend in production configurations.
 
 #### Option B: Vespa (Production)
 
 For production deployments with large video collections:
 
 ```bash
-# Start servers (auto-starts Vespa with persistent storage if not running)
-./scripts/run_servers.sh vespa
+# Start Vespa (with persistent storage)
+./scripts/start_vespa.sh
 
 # Deploy all Vespa schemas (first time only)
-python scripts/deploy_all_schemas.py
+uv run python scripts/deploy_all_schemas.py
 
 # Process videos for Vespa
-python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
 
-# When done: Stop agent servers (keeps Vespa running)
-./scripts/stop_servers.sh
-
-# Stop Vespa container completely
+# Stop Vespa container when done
 ./scripts/stop_vespa.sh
 ```
 
-**Important**: 
-- The `run_servers.sh` script automatically starts Vespa with persistent volumes if it's not already running
+**Important**:
 - The `start_vespa.sh` script ensures that Vespa data persists across container restarts by properly mounting volumes at `data/vespa/`
 - Schema deployment is only needed for first-time setup or after cleaning Vespa data
+- After starting Vespa, start the agent servers using the commands shown in "Start the System" section above
 
 ### Elasticsearch Setup (Text Search)
 
@@ -159,13 +154,19 @@ export ELASTIC_INDEX="your-text-index"
 Once the system is running, try these example queries:
 
 **Video-focused queries:**
+
 - "Show me videos of the product demonstration"
+
 - "Find clips from yesterday's meeting"
+
 - "Look for recordings of training sessions"
 
 **Multi-modal queries (video-focused for now):**
+
 - "Find videos about the new drone prototype from last week"
+
 - "Search for video content about system installation"
+
 - "Show me clips with red squares" (if using the sample test video)
 
 > **Note:** Text search is currently disabled until Elasticsearch is configured. The system focuses on video search capabilities.
@@ -184,16 +185,12 @@ You can also use the system programmatically:
 
 ```python
 import asyncio
-from cogniverse_agents.composing_agent import run_query_programmatically
-from cogniverse_core.config import SystemConfig
+from cogniverse_agents.composing_agents_main import run_query_programmatically
 
 async def search_example():
-    # Initialize configuration
-    config = SystemConfig(tenant_id="default")
-
     # Run query
     query = "Find information about system architecture"
-    result = await run_query_programmatically(query, config)
+    result = await run_query_programmatically(query)
     print(result["final_response"])
 
 asyncio.run(search_example())
@@ -216,46 +213,59 @@ asyncio.run(search_example())
 
 ```bash
 # For Vespa backend (recommended - production ready)
-python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
 
 # For Byaldi backend (development/prototyping)
-python scripts/run_ingestion.py --video_dir data/videos --backend byaldi
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend byaldi
 
-# Skip expensive steps if already processed
-python scripts/run_ingestion.py --video_dir data/videos --backend vespa \
-  --skip-keyframes --skip-audio --skip-descriptions  # Only generate embeddings
+# Specify processing profiles for different embedding strategies
+uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa \
+  --profile video_colpali_smol500_mv_frame video_videoprism_base_mv_chunk_30s
 ```
 
 The system will automatically:
-- Extract keyframes (threshold: 0.98 for scene changes)
+
+- Extract keyframes (threshold: 0.999 for scene changes)
+
 - Generate visual descriptions using VLM
+
 - Transcribe audio with word-level timestamps
+
 - Create multi-vector embeddings (ColPali/ColQwen2)
+
 - Index everything for search
 
 ### Modifying Agent Behavior
 
 #### Composing Agent
 
-Edit `src/agents/composing_agents_main.py` to modify:
+Edit `libs/agents/cogniverse_agents/composing_agents_main.py` to modify:
+
 - Query analysis logic
+
 - Routing decisions
+
 - Response synthesis
 
 #### Search Agents
 
 Modify the search logic in:
-- `src/agents/text_agent_server.py` - Text search behavior
-- `src/agents/video_agent_server.py` - Video search behavior
+
+- `libs/agents/cogniverse_agents/text_agent_server.py` - Text search behavior
+
+- `libs/agents/cogniverse_agents/video_agent_refactored.py` - Video search behavior
 
 ### Configuration Options
 
 All configuration can be managed through:
+
 - Environment variables
+
 - `config.json` file
+
 - Runtime parameters
 
-See `src/tools/config.py` for all available options.
+See `libs/foundation/cogniverse_foundation/config/unified_config.py` for all available options.
 
 ## 🐛 Troubleshooting
 
@@ -267,13 +277,13 @@ See `src/tools/config.py` for all available options.
 ollama serve
 
 # Or run the setup script again
-python scripts/setup_ollama.py
+uv run python scripts/setup_ollama.py
 ```
 
 #### Agent Connection Failures
 1. Check if all agent servers are running
 2. Verify ports are not blocked
-3. Run the test suite: `python scripts/test_system.py`
+3. Run the test suite: `uv run python tests/test_system.py`
 
 #### Model Loading Issues
 1. Ensure you have enough RAM (16GB+ recommended)
@@ -297,7 +307,7 @@ If your Vespa data disappears after container restarts:
    ```
 4. **Re-index if needed**: If data is lost, re-run the ingestion:
    ```bash
-   python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+   uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa
    ```
 
 ### Logs and Debugging
@@ -309,19 +319,27 @@ export LOG_LEVEL=DEBUG
 ```
 
 Check the generated log files:
-- `multi_agent_system.log` - Main system log
-- `test_results.json` - Test results
+
+- `outputs/logs/*.log` - System and component logs
+
+- `tests/test_results.json` - Test results
 
 ### Performance Optimization
 
 #### For Faster Video Processing:
+
 - Use GPU acceleration
+
 - Reduce video quality for testing
+
 - Process videos in batches
 
 #### For Better Search Quality:
+
 - Use more descriptive file names
+
 - Add metadata to videos
+
 - Fine-tune embedding models
 
 ## 📈 Advanced Features
@@ -343,9 +361,9 @@ Replace default models by updating configuration:
 Scale horizontally by running multiple agent instances:
 
 ```bash
-# Multiple video agents on different ports
-uvicorn src.agents.video_agent_server:app --port 8001
-uvicorn src.agents.video_agent_server:app --port 8003
+# Multiple text agents on different ports
+uvicorn cogniverse_agents.text_agent_server:app --port 8002
+uvicorn cogniverse_agents.text_agent_server:app --port 8004
 
 # Load balance in configuration
 ```
@@ -355,7 +373,7 @@ uvicorn src.agents.video_agent_server:app --port 8003
 The A2A protocol makes it easy to integrate with external systems:
 
 ```python
-from cogniverse_core.tools.a2a_utils import A2AClient
+from cogniverse_agents.tools.a2a_utils import A2AClient
 
 client = A2AClient()
 result = await client.send_task("http://your-agent-url", "search query")
@@ -372,7 +390,7 @@ result = await client.send_task("http://your-agent-url", "search query")
 
 If you encounter issues:
 
-1. Run the test suite: `python scripts/test_system.py`
+1. Run the test suite: `uv run python tests/test_system.py`
 2. Check the troubleshooting section above
 3. Review logs for error details
 4. Ensure all prerequisites are met
@@ -389,31 +407,30 @@ Once you have the system running:
 
 ## Package Architecture Overview
 
-Cogniverse uses a 11-package layered architecture:
+Cogniverse uses a layered architecture with 11 packages:
 
 ### SDK Layer
 - `cogniverse-sdk`: Interfaces and type contracts
 
 ### Foundation Layer
-- `cogniverse-foundation`: Telemetry, logging, base utilities
+- `cogniverse-foundation`: Configuration, logging, base utilities
 
 ### Core Layer
-- `cogniverse-core`: System configuration, orchestration
-
-### Agent Layer
-- `cogniverse-agents`: Agent implementations (routing, search, etc.)
+- `cogniverse-core`: System orchestration, memory, backends
 
 ### Implementation Layer
-- `cogniverse-retrieval`: Search backends (Vespa, Elasticsearch)
-- `cogniverse-processing`: Video processing pipeline
+- `cogniverse-agents`: Agent implementations (routing, search, coordination)
+- `cogniverse-vespa`: Vespa backend integration
+- `cogniverse-runtime`: Video processing pipeline and embeddings
 - `cogniverse-synthetic`: Synthetic data generation
-- `cogniverse-vlm`: VLM services
+- `cogniverse-finetuning`: Model fine-tuning capabilities
 
 ### Application Layer
-- `cogniverse-services`: Web services, APIs
+- `cogniverse-dashboard`: Web dashboards and visualization
 
 ### Evaluation Layer
-- `cogniverse-evaluation`: Metrics, experiments, Phoenix integration
+- `cogniverse-evaluation`: Metrics, experiments, evaluator integration
+- `cogniverse-telemetry-phoenix`: Phoenix telemetry backend
 
 For detailed architecture documentation, see [Architecture Overview](../architecture/overview.md).
 

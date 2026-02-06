@@ -148,10 +148,6 @@ markdown_extensions:
 extra_css:
   - stylesheets/extra.css
 
-extra_javascript:
-  - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
-  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 # Social Links
 extra:
@@ -179,7 +175,9 @@ nav:
 
   - Getting Started:
     - Quickstart: QUICKSTART.md
+    - Detailed Setup: setup/detailed_setup.md
     - User Guide: USER_GUIDE.md
+    - Profile Management: user/profile-management.md
     - Troubleshooting: TROUBLESHOOTING.md
 
   - Architecture:
@@ -189,10 +187,12 @@ nav:
     - Multi-Tenant: architecture/multi-tenant.md
     - System Flows: architecture/system-flows.md
     - Schema-Driven Flow: architecture/schema_driven_flow.md
+    - Integration: architecture/integration.md
     - Caching Strategy: architecture/caching_strategy.md
     - Code Flow Examples: architecture/code_flow_examples.md
     - Dynamic Profiles: architecture/dynamic-profiles.md
     - Ensemble Composition: architecture/ensemble-composition.md
+    - Frame Boundary Algorithm: processing/frame_boundary_algorithm.md
 
   - System Components:
     - Configuration System: CONFIGURATION_SYSTEM.md
@@ -217,6 +217,7 @@ nav:
     - Runtime: modules/runtime.md
     - Dashboard: modules/dashboard.md
     - Common: modules/common.md
+    - Utils: modules/utils.md
     - Tools: modules/tools.md
 
   - Operations:
@@ -225,19 +226,21 @@ nav:
     - Deployment: operations/deployment.md
     - Docker Deployment: operations/docker-deployment.md
     - Kubernetes Deployment: operations/kubernetes-deployment.md
+    - Modal Deployment:
+      - Deployment Guide: modal/deployment_guide.md
+      - VLM Deployment: modal/deploy_modal_vlm.md
+      - GPU Recommendations: modal/gpu_recommendations.md
     - Multi-Tenant Operations: operations/multi-tenant-ops.md
+    - Multi-Tenant Management: operations/multi-tenant-management.md
     - Argo Workflows: operations/argo-workflows.md
     - Istio Service Mesh: operations/istio-service-mesh.md
     - Performance Monitoring: operations/performance-monitoring.md
     - Troubleshooting: operations/troubleshooting.md
 
-  - Modal Deployment:
-    - VLM Deployment: modal/deploy_modal_vlm.md
-    - GPU Recommendations: modal/gpu_recommendations.md
-    - Deployment Guide: modal/deployment_guide.md
-
   - Development:
     - Developer Guide: DEVELOPER_GUIDE.md
+    - Learning Path: development/learning-path.md
+    - Creating Agents: tutorials/creating-agents.md
     - Package Development: development/package-dev.md
     - Scripts & Operations: development/scripts-operations.md
     - Code Style: development/code-style.md
@@ -247,6 +250,7 @@ nav:
 
   - Testing:
     - Testing Guide: testing/TESTING_GUIDE.md
+    - Comprehensive Testing Plan: operations/comprehensive-testing-plan.md
     - Pytest Best Practices: testing/pytest-best-practices.md
     - Search Client Testing: testing/search_client_testing.md
     - Vespa Search Strategies: testing/vespa_search_strategies.md
@@ -257,6 +261,7 @@ nav:
 
   - Reference:
     - Glossary: GLOSSARY.md
+    - Profile API: user/profile-api-reference.md
     - Approval Workflow: modules/approval-workflow.md
     - Synthetic Data: synthetic-data-generation.md
 

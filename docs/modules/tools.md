@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Module Location:** `libs/agents/cogniverse_agents/tools/`
-**Last Updated:** 2026-01-25
-**Purpose:** Agent-to-Agent (A2A) communication, video playback, and temporal pattern extraction tools
 
 ---
 
@@ -25,7 +23,7 @@ The Tools Module provides specialized utilities for agent communication, interac
 ### Key Capabilities
 - **A2A Protocol**: Agent-to-Agent communication following Google's A2A standard
 - **Video Player Tool**: Interactive HTML5 video player with timeline markers
-- **Temporal Extraction**: Enhanced natural language date/time pattern recognition
+- **Temporal Extraction**: Enhanced natural language date/time pattern recognition with 26 patterns
 - **Agent Discovery**: Automatic capability discovery via agent cards
 
 ### Dependencies
@@ -33,20 +31,23 @@ The Tools Module provides specialized utilities for agent communication, interac
 # External
 import httpx
 from pydantic import BaseModel
-from google.adk.tools import BaseTool
 from google.genai.types import Part
-from dateutil import parser as date_parser
 
 # Internal
-from cogniverse_core.config.unified_config import get_config
+from cogniverse_foundation.config.utils import get_config
+
+# Note: VideoPlayerTool uses google.adk.tools.BaseTool which is part of Google's
+# Agent Development Kit (ADK). This is an external dependency used for tool integration.
 ```
 
 ## Package Structure
-```
+```text
 libs/agents/cogniverse_agents/tools/
-├── a2a_utils.py           # A2A protocol client and utilities
-├── video_player_tool.py   # Interactive video player tool
-└── temporal_extractor.py  # Temporal pattern recognition
+├── a2a_utils.py                      # A2A protocol client and utilities
+├── video_player_tool.py              # Interactive video player tool
+├── temporal_extractor.py             # Temporal pattern recognition
+├── video_file_server.py              # HTTP server for video file serving
+└── apply_miprov2_optimization.py     # MIPROv2 optimization utilities
 ```
 
 ---
@@ -56,40 +57,40 @@ libs/agents/cogniverse_agents/tools/
 ### 1. A2A Protocol Architecture
 
 ```mermaid
-graph TB
-    MSG[A2A Message Structure<br/>role: user | assistant | system<br/>parts:<br/>  TextPart type=text text=...<br/>  DataPart type=data data=...<br/>  FilePart type=file file_uri=... mime_type=...]
+flowchart TB
+    MSG["<span style='color:#000'>A2A Message Structure<br/>role: user | assistant | system<br/>parts:<br/>  TextPart type=text text=...<br/>  DataPart type=data data=...<br/>  FilePart type=file file_uri=... mime_type=...</span>"]
 
-    TASK[Task Structure<br/>id: uuid<br/>messages: A2AMessage ...]
+    TASK["<span style='color:#000'>Task Structure<br/>id: uuid<br/>messages: A2AMessage ...</span>"]
 
-    CLIENT[A2AClient HTTP Transport<br/>• POST /tasks/send<br/>• GET /.well-known/agent-card.json<br/>• Async HTTP with timeout]
+    CLIENT["<span style='color:#000'>A2AClient HTTP Transport<br/>• POST /tasks/send<br/>• GET /.well-known/agent-card.json<br/>• Async HTTP with timeout</span>"]
 
-    CARD[Agent Card Discovery:<br/>name: VideoSearchAgent<br/>description: Multi-modal video search<br/>url: http://localhost:8002<br/>protocol: a2a<br/>capabilities: video_search temporal_filtering<br/>skills: ...]
+    CARD["<span style='color:#000'>Agent Card Discovery:<br/>name: VideoSearchAgent<br/>description: Multi-modal video search<br/>url: http://localhost:8002<br/>protocol: a2a<br/>capabilities: video_search temporal_filtering<br/>skills: ...</span>"]
 
     MSG --> TASK
     TASK --> CLIENT
     CLIENT -.-> CARD
 
-    style MSG fill:#e1f5ff
-    style TASK fill:#fff4e1
-    style CLIENT fill:#ffe1f5
-    style CARD fill:#e1ffe1
+    style MSG fill:#90caf9,stroke:#1565c0,color:#000
+    style TASK fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CLIENT fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CARD fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Video Player Tool Architecture
 
 ```mermaid
-graph TB
-    INPUT[Input:<br/>• video_id: fire_scene_01<br/>• search_results: JSON with frame timestamps<br/>• start_time: 45.0 optional]
+flowchart TB
+    INPUT["<span style='color:#000'>Input:<br/>• video_id: fire_scene_01<br/>• search_results: JSON with frame timestamps<br/>• start_time: 45.0 optional</span>"]
 
-    DISC[Video File Discovery<br/>1. Search video_dir for: video_id.ext<br/>2. Check extensions: mp4 mov avi mkv webm<br/>3. Search subdirectories recursively]
+    DISC["<span style='color:#000'>Video File Discovery<br/>1. Search video_dir for: video_id.ext<br/>2. Check extensions: mp4 mov avi mkv webm<br/>3. Search subdirectories recursively</span>"]
 
-    MARKER[Frame Marker Extraction<br/>Parse search_results JSON:<br/>timestamp: 45.2<br/>score: 0.89<br/>description: Fire scene with smoke<br/>frame_id: frame_0452]
+    MARKER["<span style='color:#000'>Frame Marker Extraction<br/>Parse search_results JSON:<br/>timestamp: 45.2<br/>score: 0.89<br/>description: Fire scene with smoke<br/>frame_id: frame_0452</span>"]
 
-    HTML[HTML Generation<br/>• Bootstrap 5 responsive layout<br/>• HTML5 video element<br/>• Interactive timeline markers<br/>• Playback speed controls 0.5x 1x 1.5x 2x<br/>• Keyboard shortcuts space arrows<br/>• Click-to-jump functionality]
+    HTML["<span style='color:#000'>HTML Generation<br/>• Bootstrap 5 responsive layout<br/>• HTML5 video element<br/>• Interactive timeline markers<br/>• Playback speed controls 0.5x 1x 1.5x 2x<br/>• Keyboard shortcuts space arrows<br/>• Click-to-jump functionality</span>"]
 
-    ADK[ADK Artifact Creation<br/>Part.from_bytes<br/>  data=html_content.encode utf-8<br/>  mime_type=text/html]
+    ADK["<span style='color:#000'>ADK Artifact Creation<br/>Part.from_bytes<br/>  data=html_content.encode utf-8<br/>  mime_type=text/html</span>"]
 
-    OUTPUT[Output:<br/>success: true<br/>video_path: /path/to/video.mp4<br/>frame_count: 5<br/>video_player: ADK HTML Artifact<br/>message: Generated video player with 5 markers]
+    OUTPUT["<span style='color:#000'>Output:<br/>success: true<br/>video_path: /path/to/video.mp4<br/>frame_count: 5<br/>video_player: ADK HTML Artifact<br/>message: Generated video player with 5 markers</span>"]
 
     INPUT --> DISC
     DISC --> MARKER
@@ -97,30 +98,30 @@ graph TB
     HTML --> ADK
     ADK --> OUTPUT
 
-    style INPUT fill:#e1f5ff
-    style DISC fill:#fff4e1
-    style MARKER fill:#ffe1f5
-    style HTML fill:#fff4e1
-    style ADK fill:#ffe1f5
-    style OUTPUT fill:#e1ffe1
+    style INPUT fill:#90caf9,stroke:#1565c0,color:#000
+    style DISC fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MARKER fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style HTML fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ADK fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style OUTPUT fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Temporal Extraction Architecture
 
 ```mermaid
-graph TB
-    INPUT[Input Query: videos from last week]
+flowchart TB
+    INPUT["<span style='color:#000'>Input Query: videos from last week</span>"]
 
-    DETECT[Pattern Detection Priority Order<br/>1. Date Range Patterns<br/>   between 2024-01-10 and 2024-01-20<br/>2. Specific Date Patterns<br/>   • ISO: 2024-01-15<br/>   • US: 01/15/2024<br/>   • Written: January 15 2024<br/>3. Month/Year Patterns<br/>   January 2024 Jan 2024<br/>4. Relative Patterns Enhanced<br/>   • yesterday last week past 7 days<br/>   • two days ago month ago<br/>   • beginning of month first quarter<br/>   • monday last week last tuesday]
+    DETECT["<span style='color:#000'>Pattern Detection Priority Order<br/>1. Date Range Patterns<br/>   between 2024-01-10 and 2024-01-20<br/>2. Specific Date Patterns<br/>   • ISO: 2024-01-15<br/>   • US: 01/15/2024<br/>   • Written: January 15 2024<br/>3. Month/Year Patterns<br/>   January 2024 Jan 2024<br/>4. Relative Patterns Enhanced<br/>   • yesterday last week past 7 days<br/>   • two days ago month ago<br/>   • beginning of month first quarter<br/>   • monday last week last tuesday</span>"]
 
-    RESOLVE[Pattern Resolution<br/>last week →<br/>start_date: 2025-09-30  # 7 days ago<br/>end_date: 2025-10-07    # today<br/>detected_pattern: last_week<br/><br/>Enhanced Resolvers:<br/>• yesterday: today - 1 day<br/>• past_7_days: today - 7 days to today<br/>• this_week: monday to today<br/>• first_quarter: Jan 1 to Mar 31<br/>• last_tuesday: most recent Tuesday<br/>• weekend: last Saturday-Sunday]
+    RESOLVE["<span style='color:#000'>Pattern Resolution<br/>last week →<br/>start_date: 2025-09-30  # 7 days ago<br/>end_date: 2025-10-07    # today<br/>detected_pattern: last_week<br/><br/>Enhanced Resolvers:<br/>• yesterday: today - 1 day<br/>• past_7_days: today - 7 days to today<br/>• this_week: monday to today<br/>• first_quarter: Jan 1 to Mar 31<br/>• last_tuesday: most recent Tuesday<br/>• weekend: last Saturday-Sunday</span>"]
 
     INPUT --> DETECT
     DETECT --> RESOLVE
 
-    style INPUT fill:#e1f5ff
-    style DETECT fill:#fff4e1
-    style RESOLVE fill:#e1ffe1
+    style INPUT fill:#90caf9,stroke:#1565c0,color:#000
+    style DETECT fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RESOLVE fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -153,11 +154,14 @@ class FilePart(BaseModel):
 ```
 
 **Key Features:**
+
 - Type-safe message construction with Pydantic
+
 - Support for multi-modal content (text, data, files)
+
 - Validation of message structure
 
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:10-26`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:11-34`
 
 ---
 
@@ -216,10 +220,12 @@ class A2AClient:
    - Returns agent metadata (capabilities, skills, version)
 
 **Error Handling:**
+
 - `httpx.RequestError`: Connection failures
+
 - `httpx.HTTPStatusError`: Non-200 responses
 
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:43-115`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:48-121`
 
 ---
 
@@ -251,7 +257,7 @@ def format_search_results(
     """Format search results for display (text, video, or generic)."""
 ```
 
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:118-212`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:123-220`
 
 ---
 
@@ -262,15 +268,38 @@ ADK-based tool for generating interactive video players with search result marke
 
 ```python
 class VideoPlayerTool(BaseTool):
-    """Tool for playing videos with frame tagging based on search results"""
+    """Tool for playing videos with frame tagging based on search results
 
-    def __init__(self):
+    Note: Extends google.adk.tools.BaseTool from Google's Agent Development Kit.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str = "default",
+        config_manager: "ConfigManager" = None
+    ):
+        """Initialize video player tool
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenancy support (default: "default")
+            config_manager: ConfigManager instance (REQUIRED despite default=None - raises ValueError if None)
+
+        Raises:
+            ValueError: If config_manager is None
+
+        Note:
+            While config_manager has a default value of None in the signature, it is REQUIRED.
+            Passing None will raise ValueError. The default exists only for type checking compatibility.
+        """
         super().__init__(
             name="VideoPlayer",
-            description="Play videos with frame tagging and timeline markers"
+            description="Play videos with frame tagging and timeline markers for search results"
         )
-        self.config = get_config()
-        self.video_dir = Path(self.config.get("video_dir", "data/videos"))
+        if config_manager is None:
+            raise ValueError("config_manager is required for VideoPlayerTool")
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
     async def execute(
         self,
@@ -321,17 +350,23 @@ class VideoPlayerTool(BaseTool):
    - Implements keyboard shortcuts
 
 **HTML Features:**
+
 - Bootstrap 5 responsive design
+
 - Click-to-jump timeline markers
+
 - Color-coded relevance scores (green/yellow/gray)
+
 - Playback rate controls
+
 - Current time display
+
 - Keyboard shortcuts:
   - Space: Play/Pause
   - Left/Right arrows: Seek ±5s
   - Up/Down arrows: Volume ±10%
 
-**Source:** `libs/agents/cogniverse_agents/tools/video_player_tool.py:19-563`
+**Source:** `libs/agents/cogniverse_agents/tools/video_player_tool.py:22-805`
 
 ---
 
@@ -347,7 +382,7 @@ class EnhancedTemporalExtractor:
     def __init__(self):
         self.today = datetime.date.today()
 
-        # Pattern mapping (40+ patterns)
+        # Pattern mapping (26 patterns in pattern_map)
         self.pattern_map = {
             r'\byesterday\b': "yesterday",
             r'\blast week\b': "last_week",
@@ -355,7 +390,7 @@ class EnhancedTemporalExtractor:
             r'\btwo days ago\b': "two_days_ago",
             r'\bbeginning of (?:this )?month\b': "beginning_of_month",
             r'\bmonday last week\b': "monday_last_week",
-            # ... 40+ patterns total
+            # ... 26 patterns total
         }
 
         # Month name mapping
@@ -402,7 +437,7 @@ class EnhancedTemporalExtractor:
 # "weekend" → {start_date: "2025-09-28", end_date: "2025-09-29"}
 ```
 
-**Source:** `libs/agents/cogniverse_agents/tools/temporal_extractor.py:14-381`
+**Source:** `libs/agents/cogniverse_agents/tools/temporal_extractor.py:14-408`
 
 ---
 
@@ -470,7 +505,7 @@ for name, card in agents.items():
 ```
 
 **Output:**
-```
+```text
 RoutingAgent:
   Description: Intelligent query routing with DSPy optimization
   Capabilities: routing, entity_extraction, query_enhancement
@@ -493,10 +528,12 @@ SummarizerAgent:
 
 ```python
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
+from cogniverse_foundation.config.utils import create_default_config_manager
 import json
 
-# Initialize tool
-player_tool = VideoPlayerTool()
+# Initialize tool with required config_manager
+config_manager = create_default_config_manager()
+player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
 
 # Search results with frame timestamps
 search_results = json.dumps({
@@ -537,11 +574,17 @@ if result["success"]:
 ```
 
 **Generated HTML Player Features:**
+
 - Video loaded from HTTP server (localhost:8888)
+
 - 3 clickable timeline markers at 45.2s, 68.7s, 92.3s
+
 - Markers color-coded by relevance score
+
 - Auto-start at 45.0 seconds
+
 - Playback speed controls: 0.5x, 1x, 1.5x, 2x
+
 - Keyboard shortcuts enabled
 
 ---
@@ -575,7 +618,7 @@ for query in queries:
 ```
 
 **Output:**
-```
+```text
 Query: 'videos from yesterday'
 Pattern: yesterday
 Date Range: 2025-10-06 to 2025-10-06
@@ -610,6 +653,7 @@ Date Range: 2024-01-10 to 2024-01-20
 ### Example 5: Multi-Agent Workflow with A2A
 
 ```python
+import json
 from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
 
 client = A2AClient()
@@ -624,11 +668,12 @@ modality = routing_response["routing_decision"]["search_modality"]
 print(f"Routed to: {modality} search")
 
 # Step 2: Extract temporal pattern
-from cogniverse_agents.tools.temporal_extractor import enhanced_temporal
-pattern = enhanced_temporal.extract_temporal_pattern(
+from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
+extractor = EnhancedTemporalExtractor()
+pattern = extractor.extract_temporal_pattern(
     "show me fire scenes from last week"
 )
-dates = enhanced_temporal.resolve_temporal_pattern(pattern)
+dates = extractor.resolve_temporal_pattern(pattern)
 print(f"Date range: {dates['start_date']} to {dates['end_date']}")
 
 # Step 3: Search videos
@@ -650,7 +695,14 @@ print(f"\nSearch Results:\n{formatted}")
 # Step 5: Generate video player for top result
 if search_response["results"]:
     top_result = search_response["results"][0]
-    player_result = await VideoPlayerTool().execute(
+
+    # Initialize VideoPlayerTool with config_manager
+    from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    config_manager = create_default_config_manager()
+    player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
+
+    player_result = await player_tool.execute(
         video_id=top_result["video_id"],
         search_results=json.dumps(search_response["results"]),
         start_time=top_result["timestamp"]
@@ -665,16 +717,25 @@ if search_response["results"]:
 ### Test Coverage
 
 **Unit Tests:**
+
 - ✅ A2A message construction and validation
-- ✅ Temporal pattern extraction (40+ patterns)
+
+- ✅ Temporal pattern extraction (26 patterns)
+
 - ✅ Video file discovery
+
 - ✅ Frame marker extraction
+
 - ✅ Date resolution logic
 
 **Integration Tests:**
+
 - ✅ A2A client communication with real agents
+
 - ✅ Video player HTML generation
+
 - ✅ Agent discovery via agent cards
+
 - ✅ End-to-end temporal query processing
 
 ### Key Test Scenarios
@@ -743,12 +804,16 @@ def test_date_resolution():
 
 #### Test Video Player Tool
 ```python
+import json
 import pytest
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 @pytest.mark.asyncio
-async def test_video_player_generation():
-    tool = VideoPlayerTool()
+async def test_video_player_generation(config_manager):
+    # Use config_manager fixture (passed as pytest fixture)
+    # Or create one: config_manager = create_default_config_manager()
+    tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
 
     search_results = json.dumps({
         "results": [
@@ -774,25 +839,35 @@ async def test_video_player_generation():
 ### 1. Performance Characteristics
 
 **A2A Client:**
+
 - **Overhead**: ~10-20ms per HTTP request
+
 - **Timeout**: Configurable (default 60s)
+
 - **Recommendations**:
   - Use connection pooling for multiple requests
   - Set appropriate timeouts based on agent complexity
   - Implement retry logic for transient failures
 
 **Video Player Tool:**
+
 - **HTML Generation**: ~5-10ms
+
 - **File Discovery**: ~1-5ms for local files
+
 - **Video Server**: Requires HTTP server running on port 8888
+
 - **Recommendations**:
   - Pre-index video files for faster discovery
   - Cache generated HTML players
   - Use CDN for large video files in production
 
 **Temporal Extractor:**
+
 - **Pattern Extraction**: ~1-2ms per query
+
 - **Memory**: Minimal (~1KB for pattern maps)
+
 - **Recommendations**:
   - Use singleton instance (already provided)
   - Cache resolution results for repeated queries
@@ -822,7 +897,12 @@ except httpx.HTTPStatusError as e:
 
 **Video Player Errors:**
 ```python
-result = await VideoPlayerTool().execute(
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
+player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
+
+result = await player_tool.execute(
     video_id="missing_video",
     search_results=None
 )
@@ -835,16 +915,17 @@ if not result["success"]:
 
 **Temporal Pattern Errors:**
 ```python
-from cogniverse_agents.tools.temporal_extractor import enhanced_temporal
+from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
 
-pattern = enhanced_temporal.extract_temporal_pattern("invalid query")
+extractor = EnhancedTemporalExtractor()
+pattern = extractor.extract_temporal_pattern("invalid query")
 
 if pattern is None:
     # No temporal pattern found
     # Proceed without date filtering
     dates = {}
 else:
-    dates = enhanced_temporal.resolve_temporal_pattern(pattern)
+    dates = extractor.resolve_temporal_pattern(pattern)
     if not dates:
         # Pattern recognized but resolution failed
         logger.warning(f"Failed to resolve pattern: {pattern}")
@@ -996,7 +1077,7 @@ The Tools Module provides essential utilities for agent communication, video pla
 
 1. **A2A Protocol**: Standard protocol for agent-to-agent communication following Google's specification
 2. **Video Player Tool**: Interactive HTML5 video player with clickable timeline markers and ADK integration
-3. **Temporal Extraction**: Enhanced pattern recognition for 40+ temporal expressions with automatic date resolution
+3. **Temporal Extraction**: Enhanced pattern recognition for 26 temporal expressions with automatic date resolution
 4. **Agent Discovery**: Automatic capability discovery via standardized agent cards
 5. **Production Ready**: Comprehensive error handling, monitoring, and performance optimization
 
@@ -1018,11 +1099,17 @@ The Tools Module provides essential utilities for agent communication, video pla
 ---
 
 **Related Guides:**
+
 - `01_AGENTS_MODULE.md` - Agent implementations using A2A protocol
+
 - `09_SEARCH_RERANKING_MODULE.md` - Search results fed to video player
+
 - `12_UTILS_MODULE.md` - Shared utilities and configuration
 
 **Key Source Files:**
+
 - `libs/agents/cogniverse_agents/tools/a2a_utils.py` - A2A protocol implementation
+
 - `libs/agents/cogniverse_agents/tools/video_player_tool.py` - Interactive video player
+
 - `libs/agents/cogniverse_agents/tools/temporal_extractor.py` - Temporal pattern recognition

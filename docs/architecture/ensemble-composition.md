@@ -8,29 +8,52 @@ Ensemble composition allows the system to query multiple backend profiles (embed
 
 ### Components
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      SearchAgent                             │
-│  (Multi-modal search with ensemble support)                 │
-└────────────┬────────────────────────────────────────────────┘
-             │
-             ├─ Single Profile Mode (Standard)
-             │  └─> Query → Encode → Search → Results
-             │
-             └─ Ensemble Mode (Multi-Profile)
-                │
-                ├─> Profile 1 (e.g., ColPali) ──┐
-                ├─> Profile 2 (e.g., VideoPrism)├─> Parallel
-                └─> Profile 3 (e.g., Qwen)      ┘   Execution
-                         │
-                         ↓
-                   RRF Fusion Algorithm
-                         │
-                         ↓
-                  MultiModalReranker
-                         │
-                         ↓
-                   Fused Results
+```mermaid
+flowchart TB
+    subgraph Agent["<span style='color:#000'><b>SearchAgent</b></span>"]
+        Query["<span style='color:#000'>Query</span>"]
+    end
+
+    subgraph Single["<span style='color:#000'><b>Single Profile Mode</b></span>"]
+        Encode["<span style='color:#000'>Encode</span>"]
+        Search["<span style='color:#000'>Search</span>"]
+        Results1["<span style='color:#000'>Results</span>"]
+    end
+
+    subgraph Ensemble["<span style='color:#000'><b>Ensemble Mode</b></span>"]
+        P1["<span style='color:#000'>Profile 1<br/>ColPali</span>"]
+        P2["<span style='color:#000'>Profile 2<br/>VideoPrism</span>"]
+        P3["<span style='color:#000'>Profile 3<br/>Qwen</span>"]
+    end
+
+    RRF["<span style='color:#000'>RRF Fusion</span>"]
+    Fused["<span style='color:#000'>Fused Results</span>"]
+
+    Query --> Encode
+    Encode --> Search
+    Search --> Results1
+
+    Query --> P1
+    Query --> P2
+    Query --> P3
+    P1 --> RRF
+    P2 --> RRF
+    P3 --> RRF
+    RRF --> Fused
+
+    style Agent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Single fill:#90caf9,stroke:#1565c0,color:#000
+    style Ensemble fill:#a5d6a7,stroke:#388e3c,color:#000
+
+    style Query fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Encode fill:#64b5f6,stroke:#1565c0,color:#000
+    style Search fill:#64b5f6,stroke:#1565c0,color:#000
+    style Results1 fill:#64b5f6,stroke:#1565c0,color:#000
+    style P1 fill:#81c784,stroke:#388e3c,color:#000
+    style P2 fill:#81c784,stroke:#388e3c,color:#000
+    style P3 fill:#81c784,stroke:#388e3c,color:#000
+    style RRF fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Fused fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ## Reciprocal Rank Fusion (RRF)
@@ -40,26 +63,28 @@ Ensemble composition allows the system to query multiple backend profiles (embed
 RRF is a simple yet effective rank aggregation method that combines rankings from multiple sources without requiring score calibration.
 
 **Formula**:
-```
+```text
 score(doc) = Σ_profiles (1 / (k + rank_in_profile))
 ```
 
 Where:
+
 - `doc`: Document/result being scored
 - `k`: Constant (default: 60) - controls the weight of top-ranked documents
-- `rank_in_profile`: Rank of document in a specific profile's results (1-indexed)
+- `rank_in_profile`: Rank of document in a specific profile's results (0-indexed)
 
 ### Example
 
-Given 3 profiles ranking a document differently:
-- Profile 1 (ColPali): rank = 2
-- Profile 2 (VideoPrism): rank = 5
-- Profile 3 (Qwen): rank = 1
+Given 3 profiles ranking a document differently (0-indexed):
 
-RRF score = 1/(60+2) + 1/(60+5) + 1/(60+1)
-         = 1/62 + 1/65 + 1/61
-         = 0.0161 + 0.0154 + 0.0164
-         = 0.0479
+- Profile 1 (ColPali): rank = 1 (2nd position)
+- Profile 2 (VideoPrism): rank = 4 (5th position)
+- Profile 3 (Qwen): rank = 0 (1st position)
+
+RRF score = 1/(60+1) + 1/(60+4) + 1/(60+0)
+         = 1/61 + 1/64 + 1/60
+         = 0.0164 + 0.0156 + 0.0167
+         = 0.0487
 
 ### Properties
 
@@ -71,6 +96,7 @@ RRF score = 1/(60+2) + 1/(60+5) + 1/(60+1)
 ### Parameter k
 
 The constant `k` controls the influence of ranking position:
+
 - **Lower k** (e.g., 30): More weight to top-ranked documents, aggressive fusion
 - **Higher k** (e.g., 100): More equal treatment across ranks, conservative fusion
 - **Default k=60**: Balanced - empirically proven effective across IR tasks
@@ -79,91 +105,107 @@ The constant `k` controls the influence of ranking position:
 
 ### SearchAgent Ensemble Methods
 
-#### 1. Profile Selection
+#### 1. Ensemble Search Method
 ```python
-async def search_ensemble(
+async def _search_ensemble(
     self,
     query: str,
     profiles: List[str],
     modality: str = "video",
-    limit: int = 20
-) -> List[SearchResult]:
+    top_k: int = 10,
+    rrf_k: int = 60,
+    **kwargs
+) -> List[Dict[str, Any]]:
     """
-    Execute ensemble search across multiple profiles.
+    Execute parallel search across multiple profiles and fuse with RRF.
 
     Args:
-        query: Search query
-        profiles: List of profile names (e.g., ["colpali", "videoprism"])
-        modality: Content modality
-        limit: Number of results to return
+        query: Text search query
+        profiles: List of profile names to query
+        modality: Content modality to search
+        top_k: Number of final results to return
+        rrf_k: RRF constant for fusion
+        **kwargs: Additional search parameters
 
     Returns:
-        Fused and reranked search results
+        Fused results from all profiles
     """
 ```
 
 #### 2. Parallel Execution
-```python
-async def _execute_parallel_searches(
-    self,
-    query: str,
-    profiles: List[str],
-    modality: str
-) -> Dict[str, List[SearchResult]]:
-    """
-    Execute searches across all profiles in parallel.
+The ensemble search implementation uses `asyncio.gather` to execute searches across all profiles concurrently:
 
-    Uses asyncio.gather for concurrent execution with connection pooling.
-    """
-    tasks = [
-        self._search_single(query, profile, modality)
-        for profile in profiles
+```python
+# Inside _search_ensemble method:
+# Encode queries in parallel
+encoding_tasks = [encode_for_profile(p) for p in profiles]
+profile_embeddings = await asyncio.gather(*encoding_tasks)
+
+# Execute searches in parallel using shared thread pool
+with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_embeddings)) as executor:
+    search_tasks = [
+        search_profile(profile, embeddings, executor)
+        for profile, embeddings in valid_embeddings.items()
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    return dict(zip(profiles, results))
+    profile_results_list = await asyncio.gather(*search_tasks)
 ```
 
 #### 3. RRF Fusion
 ```python
-def _fuse_with_rrf(
+def _fuse_results_rrf(
     self,
-    profile_results: Dict[str, List[SearchResult]],
+    profile_results: Dict[str, List[Dict[str, Any]]],
     k: int = 60,
-    limit: int = 20
-) -> List[SearchResult]:
+    top_k: int = 10
+) -> List[Dict[str, Any]]:
     """
-    Fuse results from multiple profiles using RRF.
+    Fuse results from multiple profiles using Reciprocal Rank Fusion (RRF).
 
-    Algorithm:
-    1. For each document across all profiles:
-       - Calculate RRF score: sum(1/(k + rank_in_profile))
-    2. Sort by RRF score (descending)
-    3. Return top N results
+    Formula: score(doc) = Σ_profiles (1 / (k + rank_in_profile))
 
-    Complexity: O(n_profiles × n_results) ~ 5-10ms for typical case
+    Args:
+        profile_results: Dict mapping profile names to their result lists
+        k: RRF constant (default 60, typical range: 20-100)
+        top_k: Number of final results to return
+
+    Returns:
+        Fused and re-ranked results
     """
-    rrf_scores = {}
-    doc_objects = {}
+    # Accumulate RRF scores by document ID
+    doc_scores = {}  # doc_id -> {score, result_data}
 
-    for profile, results in profile_results.items():
-        for rank, result in enumerate(results, start=1):
-            doc_id = result.document_id
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1 / (k + rank)
-            if doc_id not in doc_objects:
-                doc_objects[doc_id] = result
+    # Calculate RRF scores
+    for profile_name, results in profile_results.items():
+        for rank, result in enumerate(results):
+            doc_id = result["id"]
+            rrf_score = 1.0 / (k + rank)
+
+            if doc_id not in doc_scores:
+                doc_scores[doc_id] = {
+                    "score": 0.0,
+                    "result": result,
+                    "profile_ranks": {},
+                    "profile_scores": {},
+                }
+
+            doc_scores[doc_id]["score"] += rrf_score
+            doc_scores[doc_id]["profile_ranks"][profile_name] = rank
+            doc_scores[doc_id]["profile_scores"][profile_name] = result.get("score", 0.0)
 
     # Sort by RRF score
-    sorted_docs = sorted(
-        rrf_scores.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    fused_results = []
+    for doc_id, doc_data in doc_scores.items():
+        result = doc_data["result"].copy()
+        result["rrf_score"] = doc_data["score"]
+        result["profile_ranks"] = doc_data["profile_ranks"]
+        result["profile_scores"] = doc_data["profile_scores"]
+        result["num_profiles"] = len(doc_data["profile_ranks"])
+        fused_results.append(result)
 
-    # Return top results with updated scores
-    return [
-        doc_objects[doc_id]._replace(relevance_score=rrf_score)
-        for doc_id, rrf_score in sorted_docs[:limit]
-    ]
+    # Sort by RRF score (descending)
+    fused_results.sort(key=lambda x: x["rrf_score"], reverse=True)
+
+    return fused_results[:top_k]
 ```
 
 ## When to Use Ensemble
@@ -171,33 +213,42 @@ def _fuse_with_rrf(
 ### Use Cases
 
 **Ensemble is beneficial for**:
+
 1. **Complex queries**: Multiple semantic aspects (e.g., "show me video of robots playing soccer in tournaments")
 2. **Ambiguous queries**: Queries that could match multiple interpretations
 3. **Multi-modal content**: Content with both visual and textual components
 4. **Recall-critical tasks**: When missing relevant documents is costly
 
 **Single profile is sufficient for**:
+
 1. **Simple keyword queries**: Direct term matches (e.g., "cat videos")
 2. **Latency-critical applications**: When <100ms difference matters
 3. **High-confidence queries**: When one profile clearly dominates
 
 ### Automatic Selection
 
-ProfileSelectionAgent can automatically decide whether to use ensemble:
+ProfileSelectionAgent can help select the best profile for a query:
 
 ```python
 class ProfileSelectionSignature(dspy.Signature):
-    """Analyze query and select profile(s) for search."""
-    query: str
-    entities: str
-    relationships: str
-    available_profiles: str
+    """Select optimal backend profile based on query analysis"""
 
-    selected_profiles: list[str]  # 1-3 profiles
-    use_ensemble: bool            # True if >1 profile
-    reasoning: str
-    confidence: float
+    query: str = dspy.InputField(desc="User query to analyze")
+    available_profiles: str = dspy.InputField(
+        desc="Comma-separated list of available profiles"
+    )
+
+    selected_profile: str = dspy.OutputField(desc="Best matching profile name")
+    confidence: str = dspy.OutputField(desc="Confidence score 0.0-1.0")
+    reasoning: str = dspy.OutputField(desc="Explanation for profile selection")
+    query_intent: str = dspy.OutputField(
+        desc="Detected intent: text_search, video_search, image_search, etc."
+    )
+    modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
+    complexity: str = dspy.OutputField(desc="Query complexity: simple, medium, complex")
 ```
+
+Note: ProfileSelectionAgent currently selects a single profile. For ensemble search, you can explicitly provide multiple profiles via the `profiles` parameter in SearchInput.
 
 ## Performance Characteristics
 
@@ -214,13 +265,15 @@ class ProfileSelectionSignature(dspy.Signature):
 
 ### Quality Improvements
 
-Based on evaluation across 50 complex queries:
+Ensemble search typically provides significant quality improvements for complex queries. Expected improvements based on information retrieval research:
 
-| Metric | Single Best Profile | Ensemble (3 profiles) | Improvement |
+| Metric | Single Best Profile | Ensemble (3 profiles) | Expected Improvement |
 |--------|-------------------|---------------------|-------------|
-| NDCG@10 | 0.72 | 0.83 | +15.3% |
-| MRR | 0.65 | 0.72 | +10.8% |
-| Recall@20 | 0.81 | 0.97 | +19.8% |
+| NDCG@10 | Baseline | Higher | +10-20% typical |
+| MRR | Baseline | Higher | +8-15% typical |
+| Recall@20 | Baseline | Higher | +15-25% typical |
+
+**Note**: Actual improvements vary by query complexity, profile diversity, and content characteristics. Complex queries with multiple semantic aspects tend to benefit most.
 
 **Complex queries** = queries with >3 entities, >2 relationships, or multi-aspect semantics
 
@@ -242,25 +295,31 @@ Profiles are defined in `config.json`:
     "type": "vespa",
     "profiles": {
       "video_colpali_smol500_mv_frame": {
-        "description": "ColPali vision model, multi-vector frame embeddings",
+        "type": "video",
+        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings",
         "embedding_model": "vidore/colsmol-500m",
-        "embedding_dim": 128,
-        "strategy": "multi_vector_max_sim",
-        "strengths": ["visual_content", "ocr", "diagrams", "charts"]
+        "embedding_type": "frame_based",
+        "schema_config": {
+          "embedding_dim": 128
+        }
       },
       "video_videoprism_base_mv_chunk_30s": {
-        "description": "VideoPrism global video embeddings",
-        "embedding_model": "google/videoprism-base",
-        "embedding_dim": 768,
-        "strategy": "single_vector",
-        "strengths": ["temporal_understanding", "action_recognition", "scenes"]
+        "type": "video",
+        "description": "VideoPrism base model for 30-second chunk embeddings with 768-dim global representations",
+        "embedding_model": "videoprism_public_v1_base_hf",
+        "embedding_type": "direct_video_segment",
+        "schema_config": {
+          "embedding_dim": 768
+        }
       },
       "video_colqwen_omni_mv_chunk_30s": {
-        "description": "ColQwen omni-modal embeddings",
-        "embedding_model": "vidore/colqwen2-v1.0",
-        "embedding_dim": 1152,
-        "strategy": "multi_vector_max_sim",
-        "strengths": ["cross_modal", "text_video_alignment", "reasoning"]
+        "type": "video",
+        "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding",
+        "embedding_model": "vidore/colqwen-omni-v0.1",
+        "embedding_type": "video_chunks",
+        "schema_config": {
+          "embedding_dim": 128
+        }
       }
     }
   }
@@ -269,15 +328,19 @@ Profiles are defined in `config.json`:
 
 ### Ensemble Configuration
 
+Ensemble search is configured via SearchInput parameters:
+
 ```python
-# In SearchAgent initialization
-self.ensemble_config = {
-    "rrf_k": 60,                    # RRF constant
-    "max_profiles": 3,              # Max profiles per ensemble
-    "parallel_timeout": 5.0,        # Timeout for parallel execution
-    "enable_reranking": True,       # Use MultiModalReranker after RRF
-    "min_overlap": 0.1,             # Min result overlap to consider ensemble
-}
+from cogniverse_agents.search_agent import SearchInput
+
+# Configure ensemble search
+search_input = SearchInput(
+    query="robots playing soccer",
+    modality="video",
+    profiles=["video_colpali_smol500_mv_frame", "video_videoprism_base_mv_chunk_30s"],
+    top_k=10,
+    rrf_k=60,  # RRF constant for fusion
+)
 ```
 
 ## Best Practices
@@ -285,14 +348,16 @@ self.ensemble_config = {
 ### 1. Profile Diversity
 
 **Choose profiles with complementary strengths**:
+
 - ✅ Good: ColPali (visual) + VideoPrism (temporal) + Qwen (cross-modal)
 - ❌ Poor: ColPali + ColPali-Large + ColPali-XL (redundant)
 
 ### 2. Limit Ensemble Size
 
 **Use 2-3 profiles maximum**:
+
 - More profiles = diminishing returns
-- Complexity increases: O(n_profiles²) for some operations
+- Complexity increases: O(n_profiles × top_k) for RRF fusion
 - Network overhead grows linearly
 
 ### 3. Profile Ordering
@@ -332,11 +397,13 @@ metrics = {
 **Symptom**: Ensemble doesn't improve over single best profile
 
 **Possible causes**:
+
 1. Profiles too similar (high overlap)
 2. Query too simple (single aspect)
 3. RRF k value suboptimal
 
 **Solutions**:
+
 - Choose more diverse profiles
 - Use single profile for simple queries
 - Tune k parameter (try 30, 60, 100)
@@ -346,11 +413,13 @@ metrics = {
 **Symptom**: Ensemble takes >1s
 
 **Possible causes**:
+
 1. Sequential execution (bug)
 2. Slow profiles in ensemble
 3. Network issues
 
 **Solutions**:
+
 - Verify parallel execution (check logs)
 - Remove slow profiles from ensemble
 - Increase connection pool size
@@ -360,11 +429,13 @@ metrics = {
 **Symptom**: RRF produces sparse results (few documents ranked by multiple profiles)
 
 **Possible causes**:
+
 1. Profiles searching different indices
 2. Profiles optimized for different modalities
 3. Query mismatch
 
 **Solutions**:
+
 - Ensure all profiles search same content
 - Check profile compatibility
 - Log profile results for debugging
@@ -421,6 +492,6 @@ reranked = cross_modal_reranker(
 
 ## See Also
 
-- [A2A Multi-Agent System](./a2a-multi-agent-system.md) - Overall architecture
-- [Intelligent Profile Selection](./intelligent-profile-selection.md) - How profiles are selected
-- [Multi-Agent Guide](../user/multi-agent-guide.md) - User documentation
+- [Multi-Agent Interactions](./multi-agent-interactions.md) - Overall architecture
+- [Dynamic Profiles](./dynamic-profiles.md) - Profile management
+- [Profile Management](../user/profile-management.md) - User documentation

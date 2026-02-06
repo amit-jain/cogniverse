@@ -1,8 +1,4 @@
 # Multi-Tenant Architecture Diagrams
-
-**Last Updated:** 2026-01-25
-**Purpose:** Comprehensive visual documentation of multi-tenant architecture patterns with 11-package layered structure
-
 ---
 
 ## Table of Contents
@@ -20,35 +16,35 @@
 ### Multi-Tenant System Architecture
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Tenant A - acme_corp"
-        TenantA[Tenant: acme_corp]
-        ConfigA[SystemConfig<br/>tenant_id=acme_corp]
-        SchemaA[Vespa Schemas<br/>video_*_acme_corp]
-        PhoenixA[Phoenix Project<br/>acme_corp_project]
-        MemoryA[Mem0 Memory<br/>user_id=acme_corp_*]
+        TenantA["<span style='color:#000'>Tenant: acme_corp</span>"]
+        ConfigA["<span style='color:#000'>SystemConfig<br/>tenant_id=acme_corp</span>"]
+        SchemaA["<span style='color:#000'>Vespa Schemas<br/>video_*_acme_corp</span>"]
+        PhoenixA["<span style='color:#000'>Phoenix Project<br/>cogniverse-acme_corp-video-search</span>"]
+        MemoryA["<span style='color:#000'>Mem0 Memory<br/>user_id=acme_corp_*</span>"]
     end
 
     subgraph "Tenant B - globex_inc"
-        TenantB[Tenant: globex_inc]
-        ConfigB[SystemConfig<br/>tenant_id=globex_inc]
-        SchemaB[Vespa Schemas<br/>video_*_globex_inc]
-        PhoenixB[Phoenix Project<br/>globex_inc_project]
-        MemoryB[Mem0 Memory<br/>user_id=globex_inc_*]
+        TenantB["<span style='color:#000'>Tenant: globex_inc</span>"]
+        ConfigB["<span style='color:#000'>SystemConfig<br/>tenant_id=globex_inc</span>"]
+        SchemaB["<span style='color:#000'>Vespa Schemas<br/>video_*_globex_inc</span>"]
+        PhoenixB["<span style='color:#000'>Phoenix Project<br/>cogniverse-globex_inc-video-search</span>"]
+        MemoryB["<span style='color:#000'>Mem0 Memory<br/>user_id=globex_inc_*</span>"]
     end
 
     subgraph "Tenant C - default"
-        TenantC[Tenant: default]
-        ConfigC[SystemConfig<br/>tenant_id=default]
-        SchemaC[Vespa Schemas<br/>video_*_default]
-        PhoenixC[Phoenix Project<br/>default_project]
-        MemoryC[Mem0 Memory<br/>user_id=default_*]
+        TenantC["<span style='color:#000'>Tenant: default</span>"]
+        ConfigC["<span style='color:#000'>SystemConfig<br/>tenant_id=default</span>"]
+        SchemaC["<span style='color:#000'>Vespa Schemas<br/>video_*_default</span>"]
+        PhoenixC["<span style='color:#000'>Phoenix Project<br/>cogniverse-default-video-search</span>"]
+        MemoryC["<span style='color:#000'>Mem0 Memory<br/>user_id=default_*</span>"]
     end
 
     subgraph "Shared Infrastructure"
-        Vespa[Vespa Instance<br/>Port 8080, 19071]
-        Phoenix[Phoenix Instance<br/>Port 6006, 4317]
-        Mem0[Mem0 Backend<br/>Vespa Schema]
+        Vespa["<span style='color:#000'>Vespa Instance<br/>Port 8080, 19071</span>"]
+        Phoenix["<span style='color:#000'>Phoenix Instance<br/>Port 6006, 4317</span>"]
+        Mem0["<span style='color:#000'>Mem0 Backend<br/>Vespa Schema</span>"]
     end
 
     TenantA --> ConfigA
@@ -78,43 +74,55 @@ graph TB
     MemoryB --> Mem0
     MemoryC --> Mem0
 
-    style TenantA fill:#e1f5ff
-    style TenantB fill:#fff4e1
-    style TenantC fill:#ffe1f5
-    style Vespa fill:#e1ffe1
-    style Phoenix fill:#f5e1ff
-    style Mem0 fill:#ffe0e0
+    style TenantA fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigA fill:#b0bec5,stroke:#546e7a,color:#000
+    style SchemaA fill:#90caf9,stroke:#1565c0,color:#000
+    style PhoenixA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryA fill:#90caf9,stroke:#1565c0,color:#000
+    style TenantB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConfigB fill:#b0bec5,stroke:#546e7a,color:#000
+    style SchemaB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PhoenixB fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ConfigC fill:#b0bec5,stroke:#546e7a,color:#000
+    style SchemaC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PhoenixC fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Vespa fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Phoenix fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Mem0 fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
-### Tenant Isolation Layers (11-Package Architecture)
+### Tenant Isolation Layers (Layered Architecture)
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Application Layer"
-        Request[HTTP Request<br/>tenant_id in header/body]
-        Runtime[cogniverse_runtime]
+        Request["<span style='color:#000'>HTTP Request<br/>tenant_id in header/body</span>"]
+        Runtime["<span style='color:#000'>cogniverse_runtime</span>"]
     end
 
     subgraph "Foundation Layer"
-        ConfigMgr[ConfigManager<br/>cogniverse_foundation]
-        TenantConfig[UnifiedConfig<br/>per tenant]
-        TelemetryBase[TelemetryManager<br/>cogniverse_foundation]
+        ConfigMgr["<span style='color:#000'>ConfigManager<br/>cogniverse_foundation</span>"]
+        TenantConfig["<span style='color:#000'>Tenant Configuration<br/>(SystemConfig + other configs)</span>"]
+        TelemetryBase["<span style='color:#000'>TelemetryManager<br/>cogniverse_foundation</span>"]
     end
 
     subgraph "Core Layer"
-        Agent[Agent Context<br/>cogniverse_core]
-        Memory[MemoryManager<br/>cogniverse_core]
+        Agent["<span style='color:#000'>Agent Context<br/>cogniverse_core</span>"]
+        Memory["<span style='color:#000'>Mem0MemoryManager<br/>cogniverse_core</span>"]
     end
 
     subgraph "Implementation Layer"
-        VespaBackend[VespaBackend<br/>cogniverse_vespa]
-        AgentImpl[Agent Implementations<br/>cogniverse_agents]
+        VespaBackend["<span style='color:#000'>VespaBackend<br/>cogniverse_vespa</span>"]
+        AgentImpl["<span style='color:#000'>Agent Implementations<br/>cogniverse_agents</span>"]
     end
 
     subgraph "Storage Layer"
-        VespaSchema[Vespa Schema<br/>schema_name_tenant_id]
-        PhoenixProject[Phoenix Project<br/>tenant_project]
-        MemoryStore[Memory Store<br/>user_id prefix]
+        VespaSchema["<span style='color:#000'>Vespa Schema<br/>schema_name_tenant_id</span>"]
+        PhoenixProject["<span style='color:#000'>Phoenix Project<br/>cogniverse-{tenant_id}-{service}</span>"]
+        MemoryStore["<span style='color:#000'>Memory Store<br/>user_id prefix</span>"]
     end
 
     Request --> Runtime
@@ -129,18 +137,18 @@ graph TB
     TelemetryBase --> PhoenixProject
     Memory --> MemoryStore
 
-    style Request fill:#B4A7D6,color:#fff
-    style Runtime fill:#B4A7D6,color:#fff
-    style ConfigMgr fill:#5BA3F5,color:#fff
-    style TenantConfig fill:#5BA3F5,color:#fff
-    style TelemetryBase fill:#5BA3F5,color:#fff
-    style Agent fill:#FF6B9D,color:#fff
-    style Memory fill:#FF6B9D,color:#fff
-    style VespaBackend fill:#93C47D
-    style AgentImpl fill:#FFD966
-    style VespaSchema fill:#e1ffe1
-    style PhoenixProject fill:#e1ffe1
-    style MemoryStore fill:#e1ffe1
+    style Request fill:#90caf9,stroke:#1565c0,color:#000
+    style Runtime fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigMgr fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TenantConfig fill:#b0bec5,stroke:#546e7a,color:#000
+    style TelemetryBase fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Agent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Memory fill:#90caf9,stroke:#1565c0,color:#000
+    style VespaBackend fill:#90caf9,stroke:#1565c0,color:#000
+    style AgentImpl fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaSchema fill:#90caf9,stroke:#1565c0,color:#000
+    style PhoenixProject fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryStore fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ---
@@ -150,23 +158,23 @@ graph TB
 ### Vespa Schema Naming Convention
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph "Base Schemas"
-        ColPali[video_colpali_smol500_mv_frame]
-        VideoPrism[video_videoprism_base_mv_chunk_30s]
-        ColQwen[video_colqwen_omni_mv_chunk_30s]
+        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame</span>"]
+        VideoPrism["<span style='color:#000'>video_videoprism_base_mv_chunk_30s</span>"]
+        ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s</span>"]
     end
 
     subgraph "Tenant A - acme_corp"
-        ColPaliA[video_colpali_smol500_mv_frame_acme_corp]
-        VideoPrismA[video_videoprism_base_mv_chunk_30s_acme_corp]
-        ColQwenA[video_colqwen_omni_mv_chunk_30s_acme_corp]
+        ColPaliA["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_corp</span>"]
+        VideoPrismA["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_corp</span>"]
+        ColQwenA["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_corp</span>"]
     end
 
     subgraph "Tenant B - globex_inc"
-        ColPaliB[video_colpali_smol500_mv_frame_globex_inc]
-        VideoPrismB[video_videoprism_base_mv_chunk_30s_globex_inc]
-        ColQwenB[video_colqwen_omni_mv_chunk_30s_globex_inc]
+        ColPaliB["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_inc</span>"]
+        VideoPrismB["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_inc</span>"]
+        ColQwenB["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_globex_inc</span>"]
     end
 
     ColPali -->|+ _acme_corp| ColPaliA
@@ -177,197 +185,218 @@ graph LR
     VideoPrism -->|+ _globex_inc| VideoPrismB
     ColQwen -->|+ _globex_inc| ColQwenB
 
-    style ColPali fill:#e1f5ff
-    style VideoPrism fill:#e1f5ff
-    style ColQwen fill:#e1f5ff
-    style ColPaliA fill:#fff4e1
-    style VideoPrismA fill:#fff4e1
-    style ColQwenA fill:#fff4e1
-    style ColPaliB fill:#ffe1f5
-    style VideoPrismB fill:#ffe1f5
-    style ColQwenB fill:#ffe1f5
+    style ColPali fill:#90caf9,stroke:#1565c0,color:#000
+    style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
+    style ColQwen fill:#90caf9,stroke:#1565c0,color:#000
+    style ColPaliA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style VideoPrismA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ColQwenA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ColPaliB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VideoPrismB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ColQwenB fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### Schema Deployment Flow (Multi-Tenant)
 
+**Primary Path: Tenant Provisioning**
+
+When an admin creates a tenant via `POST /admin/tenants`, schemas are automatically deployed:
+
 ```mermaid
 sequenceDiagram
-    participant Script as deploy_all_schemas.py
-    participant Parser as JsonSchemaParser
-    participant Manager as VespaSchemaManager
+    participant Admin as Admin
+    participant API as POST /admin/tenants
+    participant TenantMgr as tenant_manager.py
+    participant Registry as schema_registry
     participant Vespa as Vespa Config Server
 
-    Note over Script: Define tenants: [acme_corp, globex_inc, default]
+    Admin->>API: POST /admin/tenants<br/>{"tenant_id": "acme:production", "base_schemas": [...]}
 
-    loop For each tenant
-        Script->>Script: tenant_id = "acme_corp"
+    API->>TenantMgr: create_tenant(request)
+    TenantMgr->>TenantMgr: Parse tenant_id → org_id="acme", tenant_name="production"
+    TenantMgr->>TenantMgr: Auto-create org if not exists
 
-        loop For each schema file
-            Script->>Parser: load_schema("video_colpali.json")
-            Parser-->>Script: Schema object (base_name="video_colpali")
+    loop For each base_schema in request.base_schemas
+        TenantMgr->>Registry: deploy_schema(tenant_id="acme:production", base_schema_name)
+        Registry->>Registry: tenant_schema = "video_colpali_smol500_mv_frame_acme_production"
+        Registry->>Vespa: Deploy tenant-specific schema
+        Vespa-->>Registry: Schema deployed
+        Registry-->>TenantMgr: Success
+    end
 
-            Script->>Manager: deploy_schema(schema, tenant_id, suffix="_acme_corp")
-            Manager->>Manager: tenant_schema = "video_colpali_acme_corp"
-            Manager->>Manager: Create ApplicationPackage
-            Manager->>Manager: Add tenant-suffixed schema
+    TenantMgr->>TenantMgr: Store tenant metadata with schemas_deployed list
+    TenantMgr-->>API: Tenant created with deployed schemas
+    API-->>Admin: {"tenant_full_id": "acme:production", "schemas_deployed": [...]}
+```
 
-            Manager->>Vespa: POST /prepareandactivate
-            Note over Manager,Vespa: Deploy video_colpali_acme_corp
-            Vespa-->>Manager: 200 OK
+**Helper Script: deploy_all_schemas.py**
 
-            Manager-->>Script: Deployment success
+The script supports both base schema deployment and tenant-specific deployment:
 
-            Script->>Script: Log: ✓ Deployed video_colpali_acme_corp
+```mermaid
+sequenceDiagram
+    participant Admin as Admin
+    participant Script as deploy_all_schemas.py
+    participant Registry as SchemaRegistry
+    participant Vespa as Vespa Config Server
+
+    alt No --tenant-id (Base Schema Mode)
+        Admin->>Script: python deploy_all_schemas.py
+        Script->>Script: Load all configs/schemas/*.json
+        Script->>Vespa: Deploy base schema templates
+        Vespa-->>Script: Base schemas deployed
+    else With --tenant-id (Tenant Mode)
+        Admin->>Script: python deploy_all_schemas.py --tenant-id acme:prod
+        loop For each base schema
+            Script->>Registry: deploy_schema(tenant_id, base_schema_name)
+            Registry->>Vespa: Deploy tenant-specific schema
+            Vespa-->>Registry: Schema deployed
         end
-
-        Script->>Script: Log: All schemas deployed for acme_corp
+        Script-->>Admin: Tenant schemas deployed
     end
 ```
 
 ### Schema Isolation in Vespa
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Vespa Instance"
         subgraph "Tenant: acme_corp"
-            SchemaA1[video_colpali_acme_corp<br/>Documents: 1000]
-            SchemaA2[video_videoprism_acme_corp<br/>Documents: 500]
+            SchemaA1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_corp<br/>Documents: 1000</span>"]
+            SchemaA2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_corp<br/>Documents: 500</span>"]
         end
 
         subgraph "Tenant: globex_inc"
-            SchemaB1[video_colpali_globex_inc<br/>Documents: 2000]
-            SchemaB2[video_videoprism_globex_inc<br/>Documents: 800]
+            SchemaB1["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_inc<br/>Documents: 2000</span>"]
+            SchemaB2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_inc<br/>Documents: 800</span>"]
         end
 
         subgraph "Tenant: default"
-            SchemaC1[video_colpali_default<br/>Documents: 300]
-            SchemaC2[video_videoprism_default<br/>Documents: 150]
+            SchemaC1["<span style='color:#000'>video_colpali_smol500_mv_frame_default<br/>Documents: 300</span>"]
+            SchemaC2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_default<br/>Documents: 150</span>"]
         end
     end
 
-    QueryA[Query from acme_corp] -->|Targets| SchemaA1
+    QueryA["<span style='color:#000'>Query from acme_corp</span>"] -->|Targets| SchemaA1
     QueryA -->|Targets| SchemaA2
     QueryA -.->|❌ Cannot access| SchemaB1
     QueryA -.->|❌ Cannot access| SchemaC1
 
-    QueryB[Query from globex_inc] -->|Targets| SchemaB1
+    QueryB["<span style='color:#000'>Query from globex_inc</span>"] -->|Targets| SchemaB1
     QueryB -->|Targets| SchemaB2
     QueryB -.->|❌ Cannot access| SchemaA1
     QueryB -.->|❌ Cannot access| SchemaC1
 
-    style SchemaA1 fill:#e1f5ff
-    style SchemaA2 fill:#e1f5ff
-    style SchemaB1 fill:#fff4e1
-    style SchemaB2 fill:#fff4e1
-    style SchemaC1 fill:#ffe1f5
-    style SchemaC2 fill:#ffe1f5
-    style QueryA fill:#cce5ff
-    style QueryB fill:#ffebcc
+    style SchemaA1 fill:#90caf9,stroke:#1565c0,color:#000
+    style SchemaA2 fill:#90caf9,stroke:#1565c0,color:#000
+    style SchemaB1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SchemaB2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SchemaC1 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SchemaC2 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style QueryA fill:#90caf9,stroke:#1565c0,color:#000
+    style QueryB fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ---
 
 ## Tenant Data Flow
 
-### Video Ingestion Flow (Tenant-Specific - 11-Package Architecture)
+### Video Ingestion Flow (Tenant-Specific - Layered Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User (acme_corp)
     participant Script as run_ingestion.py
     participant Foundation as cogniverse_foundation
-    participant Core as cogniverse_core
-    participant Agents as cogniverse_agents
-    participant Vespa as cogniverse_vespa
-    participant Schema as Vespa Schema
+    participant Builder as VideoIngestionPipelineBuilder
+    participant Pipeline as VideoIngestionPipeline
+    participant Registry as BackendRegistry
+    participant Vespa as VespaBackend
 
-    User->>Script: Ingest video for tenant: acme_corp
+    User->>Script: Run with --tenant-id acme_corp --profile video_colpali_smol500_mv_frame
 
-    Script->>Foundation: UnifiedConfig(tenant_id="acme_corp")
-    Foundation-->>Script: Config with tenant isolation
+    Script->>Foundation: create_default_config_manager()
+    Foundation-->>Script: config_manager
 
-    Script->>Agents: VideoIngestionPipeline(config, profile="frame_based")
-    Agents->>Core: Initialize agent context
-    Core->>Foundation: Get TelemetryManager
-    Foundation-->>Core: Telemetry manager
-    Core-->>Agents: Context ready
+    Script->>Foundation: get_config(tenant_id="default", config_manager)
+    Foundation-->>Script: app_config
 
-    Agents->>Agents: Extract frames
-    Agents->>Agents: Generate embeddings
+    Script->>Builder: build_simple_pipeline(tenant_id, video_dir, schema, backend)
+    Builder->>Builder: Validate tenant_id and config_manager
+    Builder->>Builder: Create PipelineConfig
+    Builder->>Pipeline: Initialize VideoIngestionPipeline
+    Pipeline->>Registry: get_ingestion_backend("vespa", tenant_id, config)
+    Registry->>Vespa: Create VespaBackend instance
+    Vespa->>Vespa: Apply tenant suffix to schema_name
+    Registry-->>Pipeline: Backend instance
+    Builder-->>Script: Configured pipeline
 
-    Agents->>Vespa: VespaBackend(config)
-    Vespa->>Foundation: Get tenant_id from config
-    Vespa->>Vespa: schema_name = "video_colpali_smol500_mv_frame_acme_corp"
+    Script->>Pipeline: process_videos_concurrent(video_files, max_concurrent)
+    Pipeline->>Pipeline: Extract frames
+    Pipeline->>Pipeline: Generate embeddings
+    Pipeline->>Vespa: ingest_documents(docs, tenant_schema)
+    Vespa->>Vespa: Insert into video_colpali_smol500_mv_frame_acme_corp
+    Vespa-->>Pipeline: Ingestion success
 
-    Agents->>Vespa: feed_documents(docs, schema_name)
-    Vespa->>Schema: Insert into video_colpali_smol500_mv_frame_acme_corp
-    Schema-->>Vespa: Documents inserted
-
-    Vespa-->>Agents: Upload success
-    Agents->>Foundation: Record telemetry span
-    Agents-->>Script: Processing complete
+    Pipeline-->>Script: Processing results
     Script-->>User: Video ingested for acme_corp
 ```
 
-### Search Flow (Tenant-Isolated - 11-Package Architecture)
+### Search Flow (Tenant-Isolated - Layered Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User (acme_corp)
     participant Runtime as cogniverse_runtime
     participant Foundation as cogniverse_foundation
-    participant Core as cogniverse_core
-    participant Agents as cogniverse_agents
-    participant Vespa as cogniverse_vespa
-    participant Phoenix as Phoenix Telemetry
+    participant Agent as VideoSearchAgent
+    participant Backend as VespaBackend
+    participant Telemetry as TelemetryManager
 
     User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
 
-    Runtime->>Foundation: UnifiedConfig(tenant_id="acme_corp")
-    Foundation-->>Runtime: Tenant config
+    Runtime->>Foundation: get_config(tenant_id="acme_corp")
+    Foundation-->>Runtime: SystemConfig with tenant_id
 
-    Runtime->>Agents: VideoSearchAgent(config, profile="frame_based")
-    Agents->>Core: Initialize agent context
-    Core->>Foundation: Get TelemetryManager
-    Foundation-->>Core: Telemetry manager
-    Core-->>Agents: Context ready
+    Runtime->>Agent: create_video_search_agent(config, tenant_id)
+    Agent->>Backend: get_search_backend(tenant_id, schema_name)
+    Backend->>Backend: Apply tenant suffix: video_colpali_smol500_mv_frame_acme_corp
+    Backend-->>Agent: Backend with tenant schema
 
-    Agents->>Agents: Generate query embedding
+    Agent->>Agent: Generate query embedding
 
-    Agents->>Vespa: search(query, schema="video_colpali_smol500_mv_frame_acme_corp")
-    Note over Vespa: Query only searches acme_corp schema
-    Vespa-->>Agents: Search results (acme_corp documents only)
+    Agent->>Backend: search(query, tenant_schema)
+    Note over Backend: Query targets acme_corp schema only
+    Backend-->>Agent: Search results (acme_corp documents only)
 
-    Agents->>Agents: Multi-modal reranking
+    Agent->>Agent: Rerank results
 
-    Agents->>Foundation: Record span with tenant_id="acme_corp"
-    Foundation->>Phoenix: Send to project: acme_corp_project
-    Phoenix-->>Foundation: Span recorded
+    Note over Agent,Telemetry: Telemetry spans recorded automatically via context manager
 
-    Agents-->>Runtime: Reranked results
+    Agent-->>Runtime: Reranked results
     Runtime-->>User: Search results (acme_corp data only)
 ```
 
 ### Cross-Tenant Isolation Verification
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Tenant A Request"
-        RequestA[Query: tenant_id=acme_corp]
-        ProcessA[Process with acme_corp config]
-        SearchA[Search: video_*_acme_corp]
-        ResultsA[Results: acme_corp data only]
+        RequestA["<span style='color:#000'>Query: tenant_id=acme_corp</span>"]
+        ProcessA["<span style='color:#000'>Process with acme_corp config</span>"]
+        SearchA["<span style='color:#000'>Search: video_*_acme_corp</span>"]
+        ResultsA["<span style='color:#000'>Results: acme_corp data only</span>"]
     end
 
     subgraph "Tenant B Request"
-        RequestB[Query: tenant_id=globex_inc]
-        ProcessB[Process with globex_inc config]
-        SearchB[Search: video_*_globex_inc]
-        ResultsB[Results: globex_inc data only]
+        RequestB["<span style='color:#000'>Query: tenant_id=globex_inc</span>"]
+        ProcessB["<span style='color:#000'>Process with globex_inc config</span>"]
+        SearchB["<span style='color:#000'>Search: video_*_globex_inc</span>"]
+        ResultsB["<span style='color:#000'>Results: globex_inc data only</span>"]
     end
 
     subgraph "Isolation Boundary"
-        Firewall[Schema-level Isolation]
+        Firewall["<span style='color:#000'>Schema-level Isolation</span>"]
     end
 
     RequestA --> ProcessA
@@ -383,15 +412,15 @@ graph TB
     SearchA -.->|❌ BLOCKED| ResultsB
     SearchB -.->|❌ BLOCKED| ResultsA
 
-    style RequestA fill:#e1f5ff
-    style ProcessA fill:#e1f5ff
-    style SearchA fill:#e1f5ff
-    style ResultsA fill:#e1f5ff
-    style RequestB fill:#fff4e1
-    style ProcessB fill:#fff4e1
-    style SearchB fill:#fff4e1
-    style ResultsB fill:#fff4e1
-    style Firewall fill:#ffcccc
+    style RequestA fill:#90caf9,stroke:#1565c0,color:#000
+    style ProcessA fill:#90caf9,stroke:#1565c0,color:#000
+    style SearchA fill:#90caf9,stroke:#1565c0,color:#000
+    style ResultsA fill:#90caf9,stroke:#1565c0,color:#000
+    style RequestB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProcessB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SearchB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ResultsB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Firewall fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ---
@@ -401,48 +430,51 @@ graph TB
 ### Per-Tenant Phoenix Projects
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Phoenix Instance (Port 6006)"
-        subgraph "Project: acme_corp_project"
-            SpansA[Spans<br/>All acme_corp traces]
-            ExperimentsA[Experiments<br/>acme_corp evaluations]
-            DatasetsA[Datasets<br/>acme_corp queries]
+        subgraph "Project: cogniverse-acme_corp-video-search"
+            SpansA["<span style='color:#000'>Spans<br/>All acme_corp traces</span>"]
+            ExperimentsA["<span style='color:#000'>Experiments<br/>acme_corp evaluations</span>"]
+            DatasetsA["<span style='color:#000'>Datasets<br/>acme_corp queries</span>"]
         end
 
-        subgraph "Project: globex_inc_project"
-            SpansB[Spans<br/>All globex_inc traces]
-            ExperimentsB[Experiments<br/>globex_inc evaluations]
-            DatasetsB[Datasets<br/>globex_inc queries]
+        subgraph "Project: cogniverse-globex_inc-video-search"
+            SpansB["<span style='color:#000'>Spans<br/>All globex_inc traces</span>"]
+            ExperimentsB["<span style='color:#000'>Experiments<br/>globex_inc evaluations</span>"]
+            DatasetsB["<span style='color:#000'>Datasets<br/>globex_inc queries</span>"]
         end
 
-        subgraph "Project: default_project"
-            SpansC[Spans<br/>All default traces]
-            ExperimentsC[Experiments<br/>default evaluations]
-            DatasetsC[Datasets<br/>default queries]
+        subgraph "Project: cogniverse-default-video-search"
+            SpansC["<span style='color:#000'>Spans<br/>All default traces</span>"]
+            ExperimentsC["<span style='color:#000'>Experiments<br/>default evaluations</span>"]
+            DatasetsC["<span style='color:#000'>Datasets<br/>default queries</span>"]
         end
     end
 
-    TenantA[Tenant: acme_corp] --> SpansA
+    TenantA["<span style='color:#000'>Tenant: acme_corp</span>"] --> SpansA
     TenantA --> ExperimentsA
     TenantA --> DatasetsA
 
-    TenantB[Tenant: globex_inc] --> SpansB
+    TenantB["<span style='color:#000'>Tenant: globex_inc</span>"] --> SpansB
     TenantB --> ExperimentsB
     TenantB --> DatasetsB
 
-    TenantC[Tenant: default] --> SpansC
+    TenantC["<span style='color:#000'>Tenant: default</span>"] --> SpansC
     TenantC --> ExperimentsC
     TenantC --> DatasetsC
 
-    style SpansA fill:#e1f5ff
-    style ExperimentsA fill:#e1f5ff
-    style DatasetsA fill:#e1f5ff
-    style SpansB fill:#fff4e1
-    style ExperimentsB fill:#fff4e1
-    style DatasetsB fill:#fff4e1
-    style SpansC fill:#ffe1f5
-    style ExperimentsC fill:#ffe1f5
-    style DatasetsC fill:#ffe1f5
+    style TenantA fill:#90caf9,stroke:#1565c0,color:#000
+    style TenantB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SpansA fill:#90caf9,stroke:#1565c0,color:#000
+    style ExperimentsA fill:#90caf9,stroke:#1565c0,color:#000
+    style DatasetsA fill:#90caf9,stroke:#1565c0,color:#000
+    style SpansB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ExperimentsB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DatasetsB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SpansC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExperimentsC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DatasetsC fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### Telemetry Flow (Per-Tenant Phoenix Projects)
@@ -452,46 +484,46 @@ sequenceDiagram
     participant AgentA as Agent (acme_corp)
     participant TelemetryA as TelemetryManager<br/>(acme_corp)
     participant Phoenix as Phoenix Collector<br/>(Port 4317)
-    participant ProjectA as acme_corp_project
+    participant ProjectA as cogniverse-acme_corp-video-search
     participant UI as Phoenix UI<br/>(Port 6006)
 
-    AgentA->>TelemetryA: start_span("search")
+    AgentA->>TelemetryA: with span("search", tenant_id="acme_corp")
     TelemetryA->>TelemetryA: Attach attributes:<br/>tenant_id=acme_corp
-    TelemetryA->>TelemetryA: Set project: acme_corp_project
+    TelemetryA->>TelemetryA: Set project: cogniverse-acme_corp-video-search
 
     AgentA->>AgentA: Execute search operation
 
-    AgentA->>TelemetryA: end_span(status="success")
-    TelemetryA->>Phoenix: Export span via OTLP<br/>project=acme_corp_project
-    Phoenix->>ProjectA: Store span in acme_corp_project
+    TelemetryA->>TelemetryA: Span context ends
+    TelemetryA->>Phoenix: Export span via OTLP<br/>project=cogniverse-acme_corp-video-search
+    Phoenix->>ProjectA: Store span in cogniverse-acme_corp-video-search
 
-    Note over ProjectA: Span visible ONLY in acme_corp_project
+    Note over ProjectA: Span visible ONLY in cogniverse-acme_corp-video-search
 
-    ProjectA-->>UI: Spans for acme_corp_project
+    ProjectA-->>UI: Spans for cogniverse-acme_corp-video-search
     UI-->>User: View acme_corp traces<br/>(no cross-tenant visibility)
 ```
 
 ### Phoenix UI Access Pattern
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph "Phoenix UI"
-        Dashboard[Phoenix Dashboard<br/>localhost:6006]
+        Dashboard["<span style='color:#000'>Phoenix Dashboard<br/>localhost:6006</span>"]
     end
 
     subgraph "Project Selection"
-        DropDown[Project Dropdown]
-        ProjectA[acme_corp_project]
-        ProjectB[globex_inc_project]
-        ProjectC[default_project]
+        DropDown["<span style='color:#000'>Project Dropdown</span>"]
+        ProjectA["<span style='color:#000'>cogniverse-acme_corp-video-search</span>"]
+        ProjectB["<span style='color:#000'>cogniverse-globex_inc-video-search</span>"]
+        ProjectC["<span style='color:#000'>cogniverse-default-video-search</span>"]
     end
 
     subgraph "Tenant A View"
-        ViewA[Spans: acme_corp only<br/>Experiments: acme_corp only<br/>Datasets: acme_corp only]
+        ViewA["<span style='color:#000'>Spans: acme_corp only<br/>Experiments: acme_corp only<br/>Datasets: acme_corp only</span>"]
     end
 
     subgraph "Tenant B View"
-        ViewB[Spans: globex_inc only<br/>Experiments: globex_inc only<br/>Datasets: globex_inc only]
+        ViewB["<span style='color:#000'>Spans: globex_inc only<br/>Experiments: globex_inc only<br/>Datasets: globex_inc only</span>"]
     end
 
     Dashboard --> DropDown
@@ -505,9 +537,13 @@ graph LR
     ProjectA -.->|❌ Cannot see| ViewB
     ProjectB -.->|❌ Cannot see| ViewA
 
-    style Dashboard fill:#e1f5ff
-    style ViewA fill:#fff4e1
-    style ViewB fill:#ffe1f5
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style DropDown fill:#b0bec5,stroke:#546e7a,color:#000
+    style ProjectA fill:#90caf9,stroke:#1565c0,color:#000
+    style ProjectB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProjectC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ViewA fill:#90caf9,stroke:#1565c0,color:#000
+    style ViewB fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ---
@@ -517,36 +553,38 @@ graph LR
 ### Mem0 Memory Isolation with User ID Prefix
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Mem0 Memory Store (Vespa Backend)"
         subgraph "Tenant A Memories"
-            MemA1[user_id: acme_corp_user1<br/>Conversation history]
-            MemA2[user_id: acme_corp_user2<br/>Preferences]
+            MemA1["<span style='color:#000'>user_id: acme_corp_user1<br/>Conversation history</span>"]
+            MemA2["<span style='color:#000'>user_id: acme_corp_user2<br/>Preferences</span>"]
         end
 
         subgraph "Tenant B Memories"
-            MemB1[user_id: globex_inc_user1<br/>Conversation history]
-            MemB2[user_id: globex_inc_admin<br/>Preferences]
+            MemB1["<span style='color:#000'>user_id: globex_inc_user1<br/>Conversation history</span>"]
+            MemB2["<span style='color:#000'>user_id: globex_inc_admin<br/>Preferences</span>"]
         end
 
         subgraph "Default Memories"
-            MemC1[user_id: default_user1<br/>Conversation history]
+            MemC1["<span style='color:#000'>user_id: default_user1<br/>Conversation history</span>"]
         end
     end
 
-    AgentA[Agent: acme_corp] -->|Search memories| MemA1
+    AgentA["<span style='color:#000'>Agent: acme_corp</span>"] -->|Search memories| MemA1
     AgentA -->|Search memories| MemA2
     AgentA -.->|❌ Cannot access| MemB1
 
-    AgentB[Agent: globex_inc] -->|Search memories| MemB1
+    AgentB["<span style='color:#000'>Agent: globex_inc</span>"] -->|Search memories| MemB1
     AgentB -->|Search memories| MemB2
     AgentB -.->|❌ Cannot access| MemA1
 
-    style MemA1 fill:#e1f5ff
-    style MemA2 fill:#e1f5ff
-    style MemB1 fill:#fff4e1
-    style MemB2 fill:#fff4e1
-    style MemC1 fill:#ffe1f5
+    style AgentA fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style AgentB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MemA1 fill:#90caf9,stroke:#1565c0,color:#000
+    style MemA2 fill:#90caf9,stroke:#1565c0,color:#000
+    style MemB1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MemB2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MemC1 fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### Memory Manager Flow (Tenant-Aware)
@@ -555,50 +593,55 @@ graph TB
 sequenceDiagram
     participant Agent as Agent (acme_corp)
     participant Memory as Mem0MemoryManager
-    participant Vespa as Vespa Backend
+    participant Mem0 as Mem0 Library
+    participant Backend as BackendVectorStore
     participant Schema as agent_memories_acme_corp
 
-    Agent->>Memory: search_memories(user_id="acme_corp_user1", query="previous conversations")
+    Agent->>Memory: search_memory(query="previous conversations", tenant_id="acme_corp", agent_name="video_agent")
 
-    Memory->>Memory: Construct user_id: acme_corp_user1
-    Memory->>Memory: Schema: agent_memories_acme_corp
+    Memory->>Memory: Validate inputs
+    Memory->>Mem0: memory.search(query, user_id=tenant_id, agent_id=agent_name)
 
-    Memory->>Vespa: search(schema="agent_memories_acme_corp", filter=user_id)
-    Vespa->>Schema: Query with user_id filter
-    Schema-->>Vespa: Memories for acme_corp_user1 only
+    Mem0->>Backend: search(query, filters)
+    Backend->>Schema: Query agent_memories_acme_corp with user_id filter
+    Schema-->>Backend: Memories for acme_corp tenant only
 
-    Vespa-->>Memory: Search results
+    Backend-->>Mem0: Search results
+    Mem0-->>Memory: Formatted results
     Memory-->>Agent: Memories (tenant-isolated)
 
-    Note over Agent,Schema: User cannot access memories from other tenants
+    Note over Agent,Schema: Tenant isolation via schema suffix and user_id prefix
 ```
 
 ### Memory Schema Naming (Per-Tenant)
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph "Base Memory Schema"
-        BaseSchema[agent_memories]
+        BaseSchema["<span style='color:#000'>agent_memories</span>"]
     end
 
     subgraph "Tenant-Specific Memory Schemas"
-        SchemaA[agent_memories_acme_corp]
-        SchemaB[agent_memories_globex_inc]
-        SchemaC[agent_memories_default]
+        SchemaA["<span style='color:#000'>agent_memories_acme_corp</span>"]
+        SchemaB["<span style='color:#000'>agent_memories_globex_inc</span>"]
+        SchemaC["<span style='color:#000'>agent_memories_default</span>"]
     end
 
     BaseSchema -->|+ _acme_corp| SchemaA
     BaseSchema -->|+ _globex_inc| SchemaB
     BaseSchema -->|+ _default| SchemaC
 
-    SchemaA --> DocA[Documents:<br/>user_id prefix: acme_corp_*]
-    SchemaB --> DocB[Documents:<br/>user_id prefix: globex_inc_*]
-    SchemaC --> DocC[Documents:<br/>user_id prefix: default_*]
+    SchemaA --> DocA["<span style='color:#000'>Documents:<br/>user_id prefix: acme_corp_*</span>"]
+    SchemaB --> DocB["<span style='color:#000'>Documents:<br/>user_id prefix: globex_inc_*</span>"]
+    SchemaC --> DocC["<span style='color:#000'>Documents:<br/>user_id prefix: default_*</span>"]
 
-    style BaseSchema fill:#e1f5ff
-    style SchemaA fill:#fff4e1
-    style SchemaB fill:#ffe1f5
-    style SchemaC fill:#e1ffe1
+    style BaseSchema fill:#90caf9,stroke:#1565c0,color:#000
+    style SchemaA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SchemaB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SchemaC fill:#a5d6a7,stroke:#388e3c,color:#000
+    style DocA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DocB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DocC fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -608,27 +651,27 @@ graph LR
 ### Single Vespa Instance Multi-Tenant Deployment
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "Infrastructure"
-        Vespa[Vespa Instance<br/>Single deployment]
-        Phoenix[Phoenix Instance<br/>Single deployment]
-        Mem0Backend[Mem0 Vespa Backend<br/>Shared]
+        Vespa["<span style='color:#000'>Vespa Instance<br/>Single deployment</span>"]
+        Phoenix["<span style='color:#000'>Phoenix Instance<br/>Single deployment</span>"]
+        Mem0Backend["<span style='color:#000'>Mem0 Vespa Backend<br/>Shared</span>"]
     end
 
     subgraph "Tenant A - acme_corp"
-        AppA[Application: acme_corp]
-        ConfigA[Config: acme_corp]
-        SchemasA[Schemas: *_acme_corp]
-        ProjectA[Phoenix: acme_corp_project]
-        MemoryA[Memory: user_id=acme_corp_*]
+        AppA["<span style='color:#000'>Application: acme_corp</span>"]
+        ConfigA["<span style='color:#000'>Config: acme_corp</span>"]
+        SchemasA["<span style='color:#000'>Schemas: *_acme_corp</span>"]
+        ProjectA["<span style='color:#000'>Phoenix: cogniverse-acme_corp-video-search</span>"]
+        MemoryA["<span style='color:#000'>Memory: user_id=acme_corp_*</span>"]
     end
 
     subgraph "Tenant B - globex_inc"
-        AppB[Application: globex_inc]
-        ConfigB[Config: globex_inc]
-        SchemasB[Schemas: *_globex_inc]
-        ProjectB[Phoenix: globex_inc_project]
-        MemoryB[Memory: user_id=globex_inc_*]
+        AppB["<span style='color:#000'>Application: globex_inc</span>"]
+        ConfigB["<span style='color:#000'>Config: globex_inc</span>"]
+        SchemasB["<span style='color:#000'>Schemas: *_globex_inc</span>"]
+        ProjectB["<span style='color:#000'>Phoenix: cogniverse-globex_inc-video-search</span>"]
+        MemoryB["<span style='color:#000'>Memory: user_id=globex_inc_*</span>"]
     end
 
     AppA --> ConfigA
@@ -648,11 +691,19 @@ graph TB
     MemoryA --> Mem0Backend
     MemoryB --> Mem0Backend
 
-    style Vespa fill:#e1ffe1
-    style Phoenix fill:#f5e1ff
-    style Mem0Backend fill:#ffe0e0
-    style AppA fill:#e1f5ff
-    style AppB fill:#fff4e1
+    style Vespa fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Phoenix fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Mem0Backend fill:#90caf9,stroke:#1565c0,color:#000
+    style AppA fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigA fill:#b0bec5,stroke:#546e7a,color:#000
+    style SchemasA fill:#90caf9,stroke:#1565c0,color:#000
+    style ProjectA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryA fill:#90caf9,stroke:#1565c0,color:#000
+    style AppB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConfigB fill:#b0bec5,stroke:#546e7a,color:#000
+    style SchemasB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProjectB fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MemoryB fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ### Tenant Lifecycle Management
@@ -680,7 +731,7 @@ sequenceDiagram
     end
     SchemaManager-->>TenantMgr: Schemas deployed
 
-    TenantMgr->>Phoenix: create_project("new_corp_project")
+    TenantMgr->>Phoenix: create_project("cogniverse-new_corp-video-search")
     Phoenix-->>TenantMgr: Project created
 
     TenantMgr->>Mem0: Deploy memory schema: agent_memories_new_corp
@@ -718,7 +769,7 @@ sequenceDiagram
     end
     SchemaManager-->>TenantMgr: Schemas deleted
 
-    TenantMgr->>Phoenix: delete_project("old_corp_project")
+    TenantMgr->>Phoenix: delete_project("cogniverse-old_corp-video-search")
     Phoenix-->>TenantMgr: Project deleted
 
     TenantMgr->>TenantMgr: Remove tenant config
@@ -729,14 +780,14 @@ sequenceDiagram
 ### Multi-Region Deployment (Future)
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "US Region"
-        VespaUS[Vespa US]
-        PhoenixUS[Phoenix US]
+        VespaUS["<span style='color:#000'>Vespa US</span>"]
+        PhoenixUS["<span style='color:#000'>Phoenix US</span>"]
 
         subgraph "US Tenants"
-            TenantUS1[acme_corp_us]
-            TenantUS2[globex_us]
+            TenantUS1["<span style='color:#000'>acme_corp_us</span>"]
+            TenantUS2["<span style='color:#000'>globex_us</span>"]
         end
 
         TenantUS1 --> VespaUS
@@ -746,12 +797,12 @@ graph TB
     end
 
     subgraph "EU Region"
-        VespaEU[Vespa EU]
-        PhoenixEU[Phoenix EU]
+        VespaEU["<span style='color:#000'>Vespa EU</span>"]
+        PhoenixEU["<span style='color:#000'>Phoenix EU</span>"]
 
         subgraph "EU Tenants"
-            TenantEU1[acme_corp_eu]
-            TenantEU2[globex_eu]
+            TenantEU1["<span style='color:#000'>acme_corp_eu</span>"]
+            TenantEU2["<span style='color:#000'>globex_eu</span>"]
         end
 
         TenantEU1 --> VespaEU
@@ -760,51 +811,72 @@ graph TB
         TenantEU2 --> PhoenixEU
     end
 
-    LoadBalancer[Global Load Balancer<br/>Route by tenant region]
+    LoadBalancer["<span style='color:#000'>Global Load Balancer<br/>Route by tenant region</span>"]
     LoadBalancer --> VespaUS
     LoadBalancer --> VespaEU
 
-    style VespaUS fill:#e1f5ff
-    style VespaEU fill:#e1f5ff
-    style PhoenixUS fill:#fff4e1
-    style PhoenixEU fill:#fff4e1
-    style LoadBalancer fill:#ffe1f5
+    style VespaUS fill:#90caf9,stroke:#1565c0,color:#000
+    style VespaEU fill:#90caf9,stroke:#1565c0,color:#000
+    style PhoenixUS fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PhoenixEU fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TenantUS1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantUS2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantEU1 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TenantEU2 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style LoadBalancer fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 ---
 
 ## Summary
 
-This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **11-package layered structure**:
+This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **layered structure**:
 
 1. **Tenant Isolation**: Complete separation at schema, project, and memory levels across all layers
-2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse-vespa
+2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse_vespa
 3. **Data Flow**: Tenant-specific routing from ingestion to search through layered architecture
-4. **Phoenix Projects**: Per-tenant observability via cogniverse-telemetry-phoenix plugin
-5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse-core
+4. **Phoenix Projects**: Per-tenant observability via cogniverse_telemetry_phoenix plugin
+5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse_core
 6. **Lifecycle Management**: Tenant creation, deletion, and backup workflows
 
 **Key Principles:**
+
 - **Schema Isolation**: Each tenant has dedicated Vespa schemas (Implementation Layer)
-- **Project Isolation**: Each tenant has dedicated Phoenix project (Core Layer Plugin)
+
+- **Project Isolation**: Each tenant has dedicated Phoenix project (Implementation Layer Plugin)
+
 - **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer)
-- **No Cross-Tenant Access**: Firewall at every layer of the 11-package architecture
+
+- **No Cross-Tenant Access**: Firewall at every layer of the layered architecture
+
 - **Shared Infrastructure**: Single Vespa/Phoenix instances serve all tenants
-- **Configuration-Driven**: Tenant isolation configured via cogniverse-foundation
+
+- **Configuration-Driven**: Tenant isolation configured via cogniverse_foundation
 
 **Tenant Naming Conventions:**
-- Vespa schemas: `{base_schema}_{tenant_id}` (cogniverse-vespa)
-- Phoenix projects: `{tenant_id}_project` (cogniverse-telemetry-phoenix)
-- Memory user IDs: `{tenant_id}_{user_id}` (cogniverse-core)
 
-**11-Package Architecture Integration:**
-- **Foundation Layer**: Provides UnifiedConfig with tenant_id, TelemetryManager base
+- Vespa schemas: `{base_schema}_{tenant_id}` (cogniverse_vespa)
+
+- Phoenix projects: `cogniverse-{tenant_id}-{service}` (cogniverse_telemetry_phoenix)
+
+- Memory user IDs: `{tenant_id}_{user_id}` (cogniverse_core)
+
+**Layered Architecture Integration:**
+
+- **Foundation Layer**: Provides SystemConfig with tenant_id, TelemetryManager base
+
 - **Core Layer**: Manages agent context, memory, and cache with tenant isolation
+
 - **Implementation Layer**: Vespa backend applies tenant suffixes, agents enforce isolation
+
 - **Application Layer**: Runtime and dashboard respect tenant boundaries
 
 **Related Documentation:**
-- [11-Package Architecture Guide](../architecture/overview.md)
+
+- [Layered Architecture Guide](../architecture/overview.md)
+
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
+
 - [Multi-Tenant Operations](../operations/multi-tenant-ops.md)
+
 - [Configuration Guide](../operations/configuration.md)

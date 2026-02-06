@@ -1,9 +1,5 @@
 # Troubleshooting Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages in layered architecture
-**Purpose:** Common issues and solutions for the Cogniverse multi-agent AI platform
-
 ---
 
 ## Table of Contents
@@ -22,7 +18,7 @@
 ### Segmentation Faults in Async Tests
 
 **Symptoms:**
-```
+```text
 Fatal Python error: Segmentation fault
 
 Thread 0x000000033614f000 (most recent call first):
@@ -32,8 +28,11 @@ Thread 0x000000033614f000 (most recent call first):
 
 **Cause:**
 Threading conflicts between pytest async event loops and background threads from:
+
 - **tqdm** (transformers progress bars)
+
 - **posthog** (mem0ai telemetry)
+
 - **torch** (multi-threaded operations)
 
 **Solution:**
@@ -55,8 +54,11 @@ If you still see segfaults:
 4. **Update conftest.py**: Ensure using latest version with background thread cleanup
 
 **Prevention:**
+
 - Always run tests with: `JAX_PLATFORM_NAME=cpu uv run pytest`
+
 - Don't override threading environment variables
+
 - Use smaller models in tests (colsmol-500m vs colpali-v1.2)
 
 ---
@@ -64,7 +66,7 @@ If you still see segfaults:
 ### DSPy Training Data Errors
 
 **Symptoms:**
-```python
+```text
 AttributeError: 'Example' object has no attribute 'primary_intent'
 ```
 
@@ -93,12 +95,17 @@ example = dspy.Example(
 ```
 
 **Required Fields by Module:**
+
 - **Query Analysis**: primary_intent, complexity_level, needs_video_search, needs_text_search, multimodal_query, temporal_pattern
+
 - **Agent Routing**: recommended_workflow, primary_agent, routing_confidence
 
 **Prevention:**
+
 - Validate training data before optimization (see docs/modules/optimization.md)
-- Use example templates from `libs/agents/cogniverse_agents/dspy_agent_optimizer.py:327-385`
+
+- Use example templates from `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py:327-385`
+
 - Run unit tests for training data loading
 
 ---
@@ -106,7 +113,7 @@ example = dspy.Example(
 ### Model Loading Hangs or Crashes
 
 **Symptoms:**
-```
+```text
 Fetching 5 files: 100%|██████████| 5/5 [00:00<00:00, 80000.00it/s]
 [Test hangs or segfaults]
 ```
@@ -125,14 +132,20 @@ model_name = "vidore/colpali-v1.2"  # 1.2B params, unstable in tests
 model_name = "vidore/colsmol-500m"  # 500M params, stable
 ```
 
-**Default Models (as of 2025-10-08):**
+**Default Models:**
+
 - ColPali: `vidore/colsmol-500m` (recommended)
+
 - VideoPrism: `google/videoprism-base`
+
 - ColQwen: `vidore/colqwen-omni-v0.1`
 
 **Prevention:**
+
 - Check ingestion pipeline configuration for default models
+
 - Update documentation when changing models
+
 - Run ingestion tests before committing model changes
 
 ---
@@ -142,37 +155,39 @@ model_name = "vidore/colsmol-500m"  # 500M params, stable
 ### Module Import Timing Issues
 
 **Symptoms:**
-```python
-KeyError: 'src.common.vespa_memory_config'
+```text
+KeyError: Module not found in sys.modules
+ImportError: Cannot import module at function call time
 ```
 
 **Cause:**
-Function tries to access `sys.modules` before `sys` is imported.
-
-**Example Problem:**
-```python
-def _register_vespa_provider():
-    import sys  # ❌ Too late! Function called at module import time
-    sys.modules["mem0.configs.vector_stores.vespa"] = ...
-```
+Function tries to access `sys.modules` or import modules after the module has already started loading, or imports modules in the wrong order.
 
 **Solution:**
-Move `import sys` to module level:
+Import system modules (`sys`, `os`, `logging`) at module level, not inside functions:
 
 ```python
-import sys  # ✅ Import at module level
+# ✅ Correct: Import at module level
+import sys
+import os
 
-def _register_vespa_provider():
-    sys.modules["mem0.configs.vector_stores.vespa"] = ...
+def function_using_modules():
+    # Now can safely use sys, os, etc.
+    sys.modules["some.module"] = ...
 ```
 
 **Affected Files:**
+
 - Configuration and memory management modules in core package
-- Note: With 11-package architecture, ensure imports from correct layers (sdk, foundation, core)
+
+- Note: With layered architecture, ensure imports from correct layers (foundation, core, implementation, application)
 
 **Prevention:**
+
 - Import system modules (`sys`, `os`, `logging`) at module level
+
 - Only use function-level imports for optional dependencies
+
 - Run test collection before committing: `pytest --collect-only`
 
 ---
@@ -180,7 +195,7 @@ def _register_vespa_provider():
 ### Missing Dependencies
 
 **Symptoms:**
-```python
+```text
 ImportError: No module named 'colpali_engine'
 ModuleNotFoundError: No module named 'mem0'
 ```
@@ -190,21 +205,26 @@ ModuleNotFoundError: No module named 'mem0'
 # Sync all dependencies
 uv sync
 
-# For specific modules
-pip install colpali-engine  # ColPali models
-pip install mem0ai          # Memory management
-pip install gliner          # Entity extraction
+# Dependencies are managed in pyproject.toml
+# All required packages will be installed via uv sync
 ```
 
 **Common Missing Dependencies:**
+
 - `colpali-engine`: ColPali/ColQwen models
+
 - `mem0ai`: Memory management (includes posthog)
+
 - `gliner`: Relationship extraction
+
 - `phoenix-otel`: Telemetry
 
 **Prevention:**
+
 - Always run `uv sync` after pulling changes
+
 - Check `pyproject.toml` for required dependencies
+
 - Use `uv run` instead of direct python execution
 
 ---
@@ -214,7 +234,7 @@ pip install gliner          # Entity extraction
 ### First-Time Model Download
 
 **Symptoms:**
-```
+```text
 Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]
 [Very slow or timeout]
 ```
@@ -223,18 +243,27 @@ Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]
 First-time model downloads from HuggingFace can be large (several GB).
 
 **Solution:**
+
 1. **Be patient**: Initial download takes time
+
 2. **Check disk space**: Models cache in `~/.cache/huggingface/`
+
 3. **Use smaller models**: colsmol-500m vs colpali-v1.2
 
 **Model Sizes:**
+
 - `vidore/colsmol-500m`: ~2GB
+
 - `vidore/colpali-v1.2`: ~5GB
+
 - `google/videoprism-base`: ~3GB
 
 **Prevention:**
+
 - Pre-download models before running tests
+
 - Use Docker with pre-cached models
+
 - Set HF_HOME for custom cache location
 
 ---
@@ -242,7 +271,7 @@ First-time model downloads from HuggingFace can be large (several GB).
 ### Model Cache Corruption
 
 **Symptoms:**
-```
+```text
 RuntimeError: Error loading model
 OSError: Unable to load weights
 ```
@@ -254,13 +283,16 @@ Clear the HuggingFace cache:
 # Remove corrupted cache
 rm -rf ~/.cache/huggingface/hub/models--vidore--colsmol-500m
 
-# Re-run to re-download
-JAX_PLATFORM_NAME=cpu uv run pytest tests/test_model_loading.py
+# Re-run ingestion or tests to re-download
+JAX_PLATFORM_NAME=cpu uv run pytest
 ```
 
 **Prevention:**
+
 - Don't interrupt model downloads
+
 - Ensure sufficient disk space
+
 - Use stable internet connection
 
 ---
@@ -270,7 +302,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/test_model_loading.py
 ### Out of Memory (OOM)
 
 **Symptoms:**
-```
+```text
 RuntimeError: CUDA out of memory
 MemoryError: Unable to allocate array
 ```
@@ -294,8 +326,11 @@ model.gradient_checkpointing_enable()
 ```
 
 **Prevention:**
+
 - Monitor memory usage: `nvidia-smi` (GPU) or `htop` (CPU)
+
 - Use smaller models for development
+
 - Batch processing for large datasets
 
 ---
@@ -303,7 +338,9 @@ model.gradient_checkpointing_enable()
 ### Slow Test Execution
 
 **Symptoms:**
+
 - Test suite takes >30 minutes
+
 - Individual tests timeout
 
 **Solution:**
@@ -325,8 +362,11 @@ uv run pytest -m unit -m "not slow"
 ```
 
 **Prevention:**
+
 - Mark slow tests with `@pytest.mark.slow`
+
 - Use mocks for external dependencies
+
 - Cache model loading in test fixtures
 
 ---
@@ -336,7 +376,7 @@ uv run pytest -m unit -m "not slow"
 ### Connection Refused
 
 **Symptoms:**
-```
+```text
 ConnectionError: [Errno 111] Connection refused
 requests.exceptions.ConnectionError: http://localhost:8080
 ```
@@ -357,8 +397,11 @@ curl http://localhost:8080/state/v1/health
 ```
 
 **Prevention:**
+
 - Add Vespa to docker-compose
+
 - Use health checks in tests
+
 - Document Vespa requirement in README
 
 ---
@@ -366,7 +409,7 @@ curl http://localhost:8080/state/v1/health
 ### Schema Deployment Failures
 
 **Symptoms:**
-```
+```text
 VespaError: Schema deployment failed
 400 Bad Request: Unknown field 'embeddings'
 ```
@@ -384,80 +427,107 @@ curl http://localhost:8080/application/v2/tenant/default/application/default
 ```
 
 **Prevention:**
+
 - Version your schemas
+
 - Test schema changes before deploying
+
 - Use schema validation in CI/CD
 
 ---
 
 ## Agent Communication
 
-### A2A Protocol Errors
+### Agent Input Validation Errors
 
 **Symptoms:**
-```
-A2AProtocolError: Invalid request format
+```text
+ValidationError: Invalid input format
 KeyError: 'query' in agent request
+pydantic.ValidationError: Field required
 ```
 
 **Cause:**
-Request doesn't match expected A2A message format.
+Request doesn't match expected `AgentInput` schema or missing required fields.
 
 **Solution:**
-Ensure requests follow A2A protocol:
+Ensure requests follow the agent's input model:
 
 ```python
-# ✅ Correct format
-request = {
-    "message_id": "unique-id",
-    "query": "user query here",
-    "context": {},
-    "request_time": "2025-10-08T12:00:00Z"
-}
+# ✅ Correct format - inherit from AgentInput
+from cogniverse_core.agents.base import AgentInput
+
+class SearchInput(AgentInput):
+    query: str
+    top_k: int = 10
+
+# Create valid input
+input = SearchInput(query="user query here", top_k=5)
 
 # ❌ Missing required fields
-request = {"query": "user query"}  # Missing message_id, request_time
+input = SearchInput(top_k=5)  # ValidationError: query is required
 ```
 
 **Prevention:**
-- Use `A2ARequest` model for validation
-- Check agent interface documentation
-- Add schema validation in tests
+
+- Use `AgentInput` subclasses for type-safe inputs
+
+- Check agent interface documentation for required fields
+
+- Add Pydantic validation in tests
 
 ---
 
 ### Health Check Failures
 
 **Symptoms:**
-```
-HealthCheckError: Agent not ready
-GET /health returned 503 Service Unavailable
+```text
+GET /health/ready returns {"status": "not_ready", "reason": "No backends registered"}
+Health check shows 0 agents or backends
 ```
 
 **Cause:**
-Agent initialization incomplete or dependencies unavailable.
+Runtime initialization incomplete or dependencies unavailable.
 
 **Solution:**
 
-1. **Check agent logs**:
+1. **Check service logs**:
 ```bash
-docker logs <agent-container>
+docker logs <container-name>
+# Or for local development
+tail -f outputs/logs/*.log
 ```
 
 2. **Verify dependencies**:
-- Vespa running and accessible
-- Required models loaded
-- Environment variables set
 
-3. **Restart agent**:
+- Backend (Vespa/Elasticsearch) running and accessible
+- Environment variables set (BACKEND_URL, BACKEND_PORT)
+- Configuration manager initialized
+
+3. **Check health endpoints**:
 ```bash
-docker restart <agent-container>
+# Basic health check
+curl http://localhost:8000/health
+
+# Kubernetes readiness probe
+curl http://localhost:8000/health/ready
+
+# Kubernetes liveness probe
+curl http://localhost:8000/health/live
+```
+
+4. **Restart service**:
+```bash
+docker restart <container-name>
 ```
 
 **Prevention:**
-- Implement proper health checks
-- Add startup probes in Kubernetes
-- Monitor agent metrics
+
+- Use /health/ready for readiness probes in Kubernetes
+
+- Use /health/live for liveness probes
+
+- Monitor backend and agent registry status
 
 ---
 
@@ -485,7 +555,7 @@ docker-compose down && docker-compose up -d
 
 ### Log Locations
 
-```
+```text
 Test logs:       outputs/logs/*.log
 Agent logs:      docker logs <container>
 Vespa logs:      docker logs vespa
@@ -500,5 +570,3 @@ Phoenix traces:  http://localhost:6006
 - **API Reference**: docs/modules/
 
 ---
-
-**Last Updated:** 2026-01-25

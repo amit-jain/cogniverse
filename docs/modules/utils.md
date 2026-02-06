@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_core` (Core Layer)
 **Module Location:** `libs/core/cogniverse_core/common/utils/`
-**Last Updated:** 2026-01-25
-**Purpose:** Production utilities for retry logic, logging, query processing, and configuration management
 
 ---
 
@@ -20,7 +18,7 @@
 ## Module Overview
 
 ### Purpose
-The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling, structured logging, query processing, and configuration management.
+The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling, structured logging, query processing, and prompt management.
 
 ### Key Capabilities
 - **Retry Logic**: Exponential backoff with jitter for transient failure handling
@@ -32,7 +30,7 @@ The Utils Module provides production-ready utilities that support the entire Cog
 
 ### Dependencies
 ```python
-# External
+# External (used across utils modules)
 import logging
 import time
 import random
@@ -41,20 +39,24 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# Internal
-from cogniverse_core.config.unified_config import get_config
+# Internal (prompt_manager.py only)
+from cogniverse_foundation.config.utils import get_config, create_default_config_manager
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from cogniverse_foundation.config.manager import ConfigManager
 ```
 
 ## Package Structure
-```
+```text
 libs/core/cogniverse_core/common/utils/
-├── retry.py                           # Retry utilities with exponential backoff
-├── logging_config.py                  # Centralized logging configuration
+├── async_polling.py                   # Production async polling utilities
 ├── comprehensive_query_utils.py       # Query building for all ranking strategies
-├── vespa_query_utils.py              # Vespa-specific query construction
-├── prompt_manager.py                  # Prompt template management
+├── logging_config.py                  # Centralized logging configuration
+├── output_manager.py                  # Output directory management
 ├── profile_utils.py                   # Profile to strategy mapping
-└── output_manager.py                  # Output directory management
+├── prompt_manager.py                  # Prompt template management
+├── retry.py                           # Retry utilities with exponential backoff
+└── vespa_query_utils.py              # Vespa-specific query construction
 ```
 
 ---
@@ -64,67 +66,68 @@ libs/core/cogniverse_core/common/utils/
 ### 1. Retry System Architecture
 
 ```mermaid
-graph TB
-    RC[RetryConfig<br/>• max_attempts: int = 3<br/>• initial_delay: float = 1.0<br/>• max_delay: float = 60.0<br/>• exponential_base: float = 2.0<br/>• jitter: bool = True<br/>• exceptions: Tuple Type Exception = Exception]
-    DEC[@retry_with_backoff Decorator<br/>• Function wrapper with retry logic<br/>• on_retry callback<br/>• on_failure callback]
-    CTX[RetryableOperation Context Manager<br/>• Execute operations with retry logic<br/>• Correlation ID tracking]
-    FORMULA[Exponential Backoff Formula:<br/>delay = min initial_delay * base^attempt max_delay<br/>if jitter: delay *= 0.5 + random * 0.5]
+flowchart TB
+    RC["<span style='color:#000'>RetryConfig<br/>• max_attempts: int = 3<br/>• initial_delay: float = 1.0<br/>• max_delay: float = 60.0<br/>• exponential_base: float = 2.0<br/>• jitter: bool = True<br/>• exceptions: Tuple Type Exception = Exception</span>"]
+    DEC["<span style='color:#000'>@retry_with_backoff Decorator<br/>• Function wrapper with retry logic<br/>• on_retry callback<br/>• on_failure callback</span>"]
+    CTX["<span style='color:#000'>RetryableOperation Context Manager<br/>• Execute operations with retry logic<br/>• Correlation ID tracking</span>"]
+    FORMULA["<span style='color:#000'>Exponential Backoff Formula:<br/>delay = min initial_delay * base^attempt max_delay<br/>if jitter: delay *= 0.5 + random * 0.5</span>"]
 
     RC --> DEC
     DEC --> CTX
     CTX -.-> FORMULA
 
-    style RC fill:#e1f5ff
-    style DEC fill:#fff4e1
-    style CTX fill:#ffe1f5
-    style FORMULA fill:#e1ffe1
+    style RC fill:#90caf9,stroke:#1565c0,color:#000
+    style DEC fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CTX fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FORMULA fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Logging System Architecture
 
 ```mermaid
-graph TB
-    SETUP[setup_logging<br/>• Component name<br/>• Log level INFO DEBUG ERROR<br/>• File/console output options]
-    OM[OutputManager Integration<br/>• Centralized log directory<br/>• Timestamped log files<br/>• Component-specific log files]
+flowchart TB
+    SETUP["<span style='color:#000'>setup_logging<br/>• Component name<br/>• Log level INFO DEBUG ERROR<br/>• File/console output options</span>"]
+    OM["<span style='color:#000'>OutputManager Integration<br/>• Centralized log directory<br/>• Timestamped log files<br/>• Component-specific log files</span>"]
 
-    subgraph DUAL[Dual Handlers]
-        FH[File Handler<br/>• Detailed logs<br/>• Timestamp<br/>• Full context]
-        CH[Console Handler<br/>• Simple format<br/>• Colored output<br/>• Real-time display]
+    subgraph DUAL["<span style='color:#000'>Dual Handlers</span>"]
+        FH["<span style='color:#000'>File Handler<br/>• Detailed logs<br/>• Timestamp<br/>• Full context</span>"]
+        CH["<span style='color:#000'>Console Handler<br/>• Simple format<br/>• Colored output<br/>• Real-time display</span>"]
     end
 
-    FMTS[Formats:<br/>File: 2025-10-07 14:30:15 - VideoAgent - INFO - Processing...<br/>Console: 14:30:15 - INFO - Processing...]
+    FMTS["<span style='color:#000'>Formats:<br/>File: 2025-10-07 14:30:15 - VideoAgent - INFO - Processing...<br/>Console: 14:30:15 - INFO - Processing...</span>"]
 
     SETUP --> OM
     OM --> DUAL
     DUAL --> FMTS
 
-    style SETUP fill:#e1f5ff
-    style OM fill:#fff4e1
-    style FH fill:#ffe1f5
-    style CH fill:#ffe1f5
-    style FMTS fill:#e1ffe1
+    style SETUP fill:#90caf9,stroke:#1565c0,color:#000
+    style OM fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DUAL fill:#b0bec5,stroke:#546e7a,color:#000
+    style FH fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CH fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FMTS fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Query Building Architecture
 
 ```mermaid
-graph TB
-    INPUT[Input Processing<br/>• Query text for BM25<br/>• Float tensors ColPali VideoPrism<br/>• Binary tensors binarized embeddings]
+flowchart TB
+    INPUT["<span style='color:#000'>Input Processing<br/>• Query text for BM25<br/>• Float tensors ColPali VideoPrism<br/>• Binary tensors binarized embeddings</span>"]
 
-    BUILD[build_query_params ranking_profile ...<br/>Routing to 9 Ranking Strategies:<br/>1. bm25_only → Text-only search<br/>2. float_float → Float visual search<br/>3. binary_binary → Binary visual search<br/>4. float_binary → Float→Binary 2-phase<br/>5. phased → Multi-phase ranking<br/>6. hybrid_float_bm25 → Hybrid float + text<br/>7. binary_bm25 → Hybrid binary + text<br/>8. bm25_binary_rerank → BM25 candidates binary rerank<br/>9. bm25_float_rerank → BM25 candidates float rerank]
+    BUILD["<span style='color:#000'>build_query_params ranking_profile ...<br/>Routing to 9 Ranking Strategies:<br/>1. bm25_only → Text-only search<br/>2. float_float → Float visual search<br/>3. binary_binary → Binary visual search<br/>4. float_binary → Float→Binary 2-phase<br/>5. phased → Multi-phase ranking<br/>6. hybrid_float_bm25 → Hybrid float + text<br/>7. binary_bm25 → Hybrid binary + text<br/>8. bm25_binary_rerank → BM25 candidates binary rerank<br/>9. bm25_float_rerank → BM25 candidates float rerank</span>"]
 
-    ASSEMBLE[Query Parameter Assembly<br/>• YQL Vespa query language<br/>• Ranking profile<br/>• Tensor inputs qt qtb<br/>• Hits count]
+    ASSEMBLE["<span style='color:#000'>Query Parameter Assembly<br/>• YQL Vespa query language<br/>• Ranking profile<br/>• Tensor inputs qt qtb<br/>• Hits count</span>"]
 
-    OUTPUT[Example Output for float_binary:<br/>yql: select * from sources * where true<br/>ranking: float_binary<br/>hits: 10<br/>input.query qt .querytoken0: 0.1 0.2 ...<br/>input.query qtb .querytoken0: a1b2c3d4...]
+    OUTPUT["<span style='color:#000'>Example Output for float_binary:<br/>yql: select * from sources * where true<br/>ranking: float_binary<br/>hits: 10<br/>input.query qt .querytoken0: 0.1 0.2 ...<br/>input.query qtb .querytoken0: a1b2c3d4...</span>"]
 
     INPUT --> BUILD
     BUILD --> ASSEMBLE
     ASSEMBLE --> OUTPUT
 
-    style INPUT fill:#e1f5ff
-    style BUILD fill:#fff4e1
-    style ASSEMBLE fill:#ffe1f5
-    style OUTPUT fill:#e1ffe1
+    style INPUT fill:#90caf9,stroke:#1565c0,color:#000
+    style BUILD fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ASSEMBLE fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style OUTPUT fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -162,9 +165,13 @@ class RetryConfig:
 ```
 
 **Key Features:**
+
 - Exponential backoff prevents thundering herd
+
 - Jitter adds randomness to avoid synchronized retries
+
 - Configurable exception types for selective retrying
+
 - Delay capping prevents excessive wait times
 
 **Source:** `libs/core/cogniverse_core/common/utils/retry.py:19-45`
@@ -193,9 +200,13 @@ def retry_with_backoff(
 ```
 
 **Key Features:**
+
 - Wraps any function with retry logic
+
 - Optional callbacks for retry and failure events
+
 - Preserves function signature with @wraps
+
 - Supports both parameterized and non-parameterized usage
 
 **Source:** `libs/core/cogniverse_core/common/utils/retry.py:48-122`
@@ -220,12 +231,16 @@ class RetryableOperation:
 ```
 
 **Key Features:**
+
 - Context manager interface for retry operations
+
 - Correlation ID for tracking retries across logs
+
 - Automatic cleanup on exit
+
 - Lambda-friendly execution interface
 
-**Source:** `libs/core/cogniverse_core/common/utils/retry.py:125-179`
+**Source:** `libs/core/cogniverse_core/common/utils/retry.py:125-180`
 
 ---
 
@@ -256,19 +271,23 @@ def setup_logging(
 ```
 
 **Key Features:**
+
 - Dual output (file + console) with different formats
+
 - Integration with OutputManager for centralized log directory
+
 - Timestamped log files per component
+
 - Prevents duplicate handlers
 
 **File Output Format:**
-```
+```text
 2025-10-07 14:30:15 - VideoAgent - INFO - Processing query: "fire scene"
 2025-10-07 14:30:16 - VideoAgent - DEBUG - Encoded query with 2 tokens
 ```
 
 **Console Output Format:**
-```
+```text
 14:30:15 - INFO - Processing query: "fire scene"
 14:30:16 - DEBUG - Encoded query with 2 tokens
 ```
@@ -301,11 +320,14 @@ def binarize_token_vectors_hex(vectors: torch.Tensor) -> Dict[str, str]:
 ```
 
 **Binarization Process:**
+
 1. Threshold at 0: `vectors > 0` → {0, 1}
+
 2. Pack bits: 8 binary values → 1 byte
+
 3. Convert to hex string for Vespa
 
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:11-21`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:11-22`
 
 ---
 
@@ -337,12 +359,16 @@ def build_query_params(
 ```
 
 **Strategy-Specific Logic:**
+
 - **Text-only (bm25_only)**: Uses YQL text search on `video_title`, `frame_description`, `audio_transcript`
+
 - **Visual-only (float_float, binary_binary)**: Uses tensor inputs, YQL "where true"
+
 - **Hybrid**: Combines text filtering with visual ranking
+
 - **Rerank**: BM25 candidates, then neural reranking
 
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:32-114`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:32-115`
 
 ---
 
@@ -382,7 +408,7 @@ def benchmark_all_strategies(
 }
 ```
 
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:117-208`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:117-209`
 
 ---
 
@@ -413,10 +439,12 @@ def build_binary_query_params(
 ```
 
 **2-Phase Strategy:**
+
 1. **Phase 1 (Binary)**: Fast candidate retrieval using binary embeddings
+
 2. **Phase 2 (Float)**: Accurate reranking using float embeddings
 
-**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:48-92`
+**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:48-93`
 
 ---
 
@@ -439,7 +467,7 @@ def build_hybrid_query_params(
     """
 ```
 
-**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:140-177`
+**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:140-178`
 
 ---
 
@@ -453,10 +481,16 @@ class PromptManager:
     """Manages routing prompts and few-shot examples"""
 
     def __init__(self,
-                 config_path: str = "config.json",
-                 artifacts_path: Optional[str] = None):
+                 artifacts_path: Optional[str] = None,
+                 config_manager: "ConfigManager" = None,
+                 tenant_id: str = "default"):
         """
         Initialize with optional optimization artifacts.
+
+        Args:
+            artifacts_path: Optional path to optimization artifacts
+            config_manager: ConfigManager instance for dependency injection (required)
+            tenant_id: Tenant identifier for config retrieval
 
         Priority order for artifact loading:
         1. Provided artifacts_path
@@ -496,7 +530,7 @@ class PromptManager:
 }
 ```
 
-**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:15-230`
+**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:18-244`
 
 ---
 
@@ -519,13 +553,13 @@ def get_supported_ranking_strategies(profile: str) -> list:
 
 **Profile → Strategy Mapping:**
 
-| Profile | Text-Only | Visual-Only | Hybrid |
-|---------|-----------|-------------|--------|
-| `frame_based_colpali` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25 |
-| `direct_video_frame*` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25 |
+| Profile | Text-Only | Visual-Only | Hybrid (with text fields) |
+|---------|-----------|-------------|---------------------------|
+| `frame_based_colpali` | ✅ bm25_only, bm25_no_description | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float (all with optional no_description variants) |
+| `direct_video_frame*` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float |
 | `colqwen profiles` | ❌ | ✅ float_float, binary_binary, float_binary, phased | ❌ |
 
-**Source:** `libs/core/cogniverse_core/common/utils/profile_utils.py:6-61`
+**Source:** `libs/core/cogniverse_core/common/utils/profile_utils.py:6-62`
 
 ---
 
@@ -540,7 +574,7 @@ class OutputManager:
 
     def __init__(self, base_dir: Optional[str] = None):
         """Initialize with base directory (default: outputs/)"""
-        self.base_dir = Path(base_dir or config.get("output_base_dir", "outputs"))
+        self.base_dir = Path(base_dir or "outputs")
 
         # Subdirectories
         self.subdirs = {
@@ -559,20 +593,17 @@ class OutputManager:
 
 1. **get_path(component, filename)**: Get path for specific component
 2. **get_logs_dir()**: Get logs directory
-3. **get_processing_dir()**: Get processing directory (embeddings, transcripts, etc.)
+3. **get_processing_dir(subtype=None)**: Get processing directory (embeddings, transcripts, etc.)
 4. **clean_temp()**: Clean temporary directory
 5. **print_structure()**: Print directory structure
 
 **Directory Structure:**
-```
+```text
 outputs/
 ├── logs/                    # All log files
 ├── test_results/           # Test outputs
 ├── optimization/           # DSPy/GRPO artifacts
-├── processing/            # Video processing artifacts
-│   ├── embeddings/        # Generated embeddings
-│   ├── transcripts/       # Whisper transcripts
-│   └── keyframes/         # Extracted frames
+├── processing/            # Video processing artifacts (profiles create subdirs)
 ├── agents/                # Agent-specific outputs
 ├── vespa/                 # Vespa deployment artifacts
 ├── exports/               # User-facing exports
@@ -589,7 +620,7 @@ def get_output_manager() -> OutputManager:
     return _output_manager
 ```
 
-**Source:** `libs/core/cogniverse_core/common/utils/output_manager.py:12-128`
+**Source:** `libs/core/cogniverse_core/common/utils/output_manager.py:10-125`
 
 ---
 
@@ -625,10 +656,15 @@ except requests.RequestException as e:
 ```
 
 **Retry Timeline:**
+
 - Attempt 1: Immediate
+
 - Attempt 2: ~1.0s delay (1.0 * 2^0 = 1.0)
+
 - Attempt 3: ~2.0s delay (1.0 * 2^1 = 2.0)
+
 - Attempt 4: ~4.0s delay (1.0 * 2^2 = 4.0)
+
 - Attempt 5: ~8.0s delay (1.0 * 2^3 = 8.0)
 
 Total time: ~15 seconds with jitter
@@ -661,7 +697,7 @@ logger.error("Vespa connection failed", exc_info=True)
 ```
 
 **Log File Contents:**
-```
+```text
 2025-10-07 14:30:15 - VideoSearchAgent - INFO - Agent initialized
 2025-10-07 14:30:16 - VideoSearchAgent - DEBUG - Processing query: fire scene
 2025-10-07 14:30:17 - VideoSearchAgent - WARNING - ColPali model not found, using fallback
@@ -715,7 +751,7 @@ for strategy in strategies:
 ```
 
 **Output:**
-```
+```text
 float_float:
   YQL: select * from sources * where true...
   Ranking: float_float
@@ -743,9 +779,13 @@ hybrid_float_bm25:
 
 ```python
 from cogniverse_core.common.utils.prompt_manager import PromptManager
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
-# Initialize with default artifact search
-pm = PromptManager()
+# Initialize with required config_manager and store
+store = VespaConfigStore(vespa_url="http://localhost", vespa_port=8080)
+config_manager = ConfigManager(store=store)
+pm = PromptManager(config_manager=config_manager, tenant_id="default")
 
 # Check status
 status = pm.get_status()
@@ -770,7 +810,7 @@ else:
 ```
 
 **Generated Prompt Example:**
-```
+```text
 You are a precise and efficient routing agent. Analyze the query and output a JSON object...
 
 Examples:
@@ -799,7 +839,7 @@ output_mgr.print_structure()
 
 # Get component-specific paths
 log_file = output_mgr.get_path("logs", "agent_run_123.log")
-embedding_dir = output_mgr.get_processing_dir("embeddings")
+processing_dir = output_mgr.get_processing_dir()
 optimization_results = output_mgr.get_path("optimization", "grpo_checkpoint.pt")
 
 # Write to centralized location
@@ -810,12 +850,12 @@ with open(log_file, "w") as f:
 output_mgr.clean_temp()
 
 print(f"\nLog file: {log_file}")
-print(f"Embedding dir: {embedding_dir}")
+print(f"Processing dir: {processing_dir}")
 print(f"Optimization results: {optimization_results}")
 ```
 
 **Output:**
-```
+```text
 Output Directory Structure:
 Base: /Users/amjain/source/hobby/cogniverse/outputs
   agents: /Users/amjain/source/hobby/cogniverse/outputs/agents
@@ -828,7 +868,7 @@ Base: /Users/amjain/source/hobby/cogniverse/outputs
   vespa: /Users/amjain/source/hobby/cogniverse/outputs/vespa
 
 Log file: outputs/logs/agent_run_123.log
-Embedding dir: outputs/processing
+Processing dir: outputs/processing
 Optimization results: outputs/optimization/grpo_checkpoint.pt
 ```
 
@@ -839,29 +879,39 @@ Optimization results: outputs/optimization/grpo_checkpoint.pt
 ### Test Coverage
 
 **Unit Tests:**
+
 - ✅ Retry logic: Exponential backoff calculation, jitter, exception filtering
+
 - ✅ Query building: All 9 ranking strategies, tensor format conversion
+
 - ✅ Prompt management: Artifact loading, fallback to defaults
+
 - ✅ Output management: Directory creation, path resolution
 
 **Integration Tests:**
+
 - ✅ Logging: File and console output verification
+
 - ✅ Vespa queries: End-to-end query execution for all strategies
+
 - ✅ Retry with real services: HTTP retry behavior
+
 - ✅ Prompt optimization: Artifact hot-reload
 
 ### Key Test Files
 
 ```python
-# Common utilities tests (if they exist)
-tests/common/unit/test_retry_utils.py
-tests/common/unit/test_logging_config.py
-tests/common/unit/test_query_utils.py
-tests/common/unit/test_prompt_manager.py
-tests/common/unit/test_output_manager.py
+# Common module tests - currently focused on config and profile utilities
+tests/common/unit/test_agent_config.py
+tests/common/unit/test_config_api_mixin.py
+tests/common/unit/test_profile_validator.py
+tests/common/unit/test_vespa_config_store.py
 
-tests/common/integration/test_vespa_query_integration.py
-tests/common/integration/test_retry_real_services.py
+tests/common/integration/test_config_persistence.py
+tests/common/integration/test_dynamic_config_integration.py
+
+# Note: Dedicated utils tests (retry, logging, query, prompt, output)
+# are tested indirectly through agent and integration tests
 ```
 
 ### Manual Testing
@@ -922,25 +972,35 @@ print_benchmark_results(results)
 ### 1. Performance Characteristics
 
 **Retry System:**
+
 - **Overhead**: Minimal (microseconds for config)
+
 - **Memory**: ~1KB per RetryableOperation instance
+
 - **Latency**: Adds exponential backoff delays (configurable)
+
 - **Recommendations**:
   - Use selective exception filtering to avoid retrying non-transient errors
   - Set `max_delay` to prevent excessive wait times
   - Enable jitter for distributed systems
 
 **Query Building:**
+
 - **Overhead**: ~1-2ms for query parameter assembly
+
 - **Memory**: ~100KB for tensor storage (depends on num_tokens)
+
 - **Recommendations**:
   - Cache query parameters for repeated queries
   - Use binary tensors for faster candidate retrieval
   - Batch multiple queries when possible
 
 **Logging:**
+
 - **File I/O**: ~5-10ms per log write (buffered)
+
 - **Disk usage**: Grows unbounded without log rotation
+
 - **Recommendations**:
   - Use `logging.handlers.RotatingFileHandler` for production
   - Set appropriate log levels (INFO for prod, DEBUG for dev)
@@ -1165,13 +1225,21 @@ The Utils Module provides production-ready utilities that support the entire Cog
 ---
 
 **Related Guides:**
-- `03_COMMON_MODULE.md` - Shared utilities and configuration
-- `04_BACKENDS_MODULE.md` - Vespa search integration
-- `11_CACHE_MODULE.md` - Caching system utilities
+
+- `common.md` - Shared utilities and configuration
+
+- `backends.md` - Vespa search integration
+
+- `cache.md` - Caching system utilities
 
 **Key Source Files:**
+
 - `libs/core/cogniverse_core/common/utils/retry.py` - Retry logic
+
 - `libs/core/cogniverse_core/common/utils/logging_config.py` - Logging configuration
+
 - `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py` - Query building
+
 - `libs/core/cogniverse_core/common/utils/prompt_manager.py` - Prompt management
+
 - `libs/core/cogniverse_core/common/utils/output_manager.py` - Output directory management

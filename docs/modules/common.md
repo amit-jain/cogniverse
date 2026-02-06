@@ -1,9 +1,10 @@
 # Common Module Study Guide
 
 **Package:** `cogniverse_core` (Core Layer)
-**Location:** `libs/core/cogniverse_core/common/` and `libs/core/cogniverse_core/config/`
-**Last Updated:** 2026-01-25
-**Purpose:** Foundational infrastructure for configuration, memory, DSPy integration, and tenant utilities
+**Location:** `libs/core/cogniverse_core/common/`
+
+> **Note**: Configuration classes (`SystemConfig`, `RoutingConfigUnified`, etc.) are in the Foundation
+> layer at `libs/foundation/cogniverse_foundation/config/unified_config.py`, not in Core.
 
 ---
 
@@ -26,20 +27,18 @@
 The Common module provides foundational infrastructure shared across all system components in the SDK architecture. It includes multi-tenant configuration management, persistent memory systems, DSPy integration, and tenant isolation utilities.
 
 ### Key Features
-- **Multi-Tenant Configuration**: SQLite-based versioned config with per-tenant isolation
-- **Memory Management**: Mem0-based memory with schema-per-tenant isolation via Vespa
+- **Multi-Tenant Configuration**: Backend-based versioned config with per-tenant isolation (e.g., Vespa)
+- **Memory Management**: Mem0-based memory with schema-per-tenant isolation via backend
 - **Tenant Utilities**: Org:tenant ID parsing and storage path management
 - **DSPy Integration**: Runtime DSPy module/optimizer configuration
-- **Config Store**: Versioned configuration persistence with history tracking
+- **Config Store**: Versioned configuration persistence with history tracking via `ConfigStore` interface
 - **Type Definitions**: Shared data models and configuration schemas
 
 ### Package Structure
-```
+```text
 libs/core/cogniverse_core/
-├── common/                           # Shared utilities (15 files)
+├── common/                           # Shared utilities
 │   ├── tenant_utils.py              # Tenant ID parsing and storage paths
-│   ├── config_store.py              # SQLite config storage
-│   ├── mem0_memory_manager.py       # Per-tenant memory manager
 │   ├── dynamic_dspy_mixin.py        # DSPy runtime configuration
 │   ├── dspy_module_registry.py      # DSPy module/optimizer registry
 │   ├── a2a_mixin.py                 # Agent-to-agent communication
@@ -48,16 +47,31 @@ libs/core/cogniverse_core/
 │   ├── vlm_interface.py             # Vision-language model interface
 │   ├── agent_models.py              # Agent data models
 │   ├── document.py                  # Document models
-│   └── config_store_interface.py    # Config store interface
-└── config/                           # Configuration schemas (10 files)
-    ├── unified_config.py            # System/routing/telemetry configs
-    ├── agent_config.py              # Agent-specific configuration
-    ├── config_manager.py            # Configuration management
-    ├── store.py                     # SQLite config store implementation
-    ├── store_interface.py           # Storage abstraction
+│   ├── cache/                       # Caching infrastructure
+│   ├── models/                      # Model loaders (VideoPrism, etc.)
+│   └── utils/                       # Utility functions
+├── memory/                           # Memory management
+│   ├── manager.py                   # Mem0MemoryManager
+│   ├── backend_config.py            # Backend config for Mem0
+│   └── backend_vector_store.py      # Backend vector store adapter
+└── config/                           # Backward compatibility shim
+    └── __init__.py                  # Re-exports from foundation
+
+# Configuration is provided by:
+libs/foundation/cogniverse_foundation/config/
+    ├── unified_config.py            # SystemConfig, RoutingConfigUnified
+    ├── agent_config.py              # AgentConfig, ModuleConfig, OptimizerConfig
     ├── api_mixin.py                 # Config API mixin
-    ├── utils.py                     # Config utilities
-    └── schema.py                    # Config schemas
+    ├── utils.py                     # create_default_config_manager()
+    ├── schema.py                    # Config schemas
+    └── manager.py                   # ConfigManager (central API)
+
+# Configuration storage is provided by:
+libs/sdk/cogniverse_sdk/interfaces/
+    └── config_store.py              # ConfigStore ABC, ConfigScope, ConfigEntry
+
+libs/vespa/cogniverse_vespa/config/
+    └── config_store.py              # VespaConfigStore implementation
 ```
 
 ---
@@ -67,50 +81,54 @@ libs/core/cogniverse_core/
 ### Configuration System Architecture
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "cogniverse_agents Package"
-        AgentLayer[Agent Layer<br/>RoutingAgent, VideoSearchAgent, etc.]
+        AgentLayer["<span style='color:#000'>Agent Layer<br/>RoutingAgent, VideoSearchAgent, etc.</span>"]
     end
 
-    subgraph "cogniverse_core Package"
-        subgraph "Config Module"
-            ConfigManager[Config Manager<br/>• SystemConfig - global settings<br/>• RoutingConfigUnified - per-tenant<br/>• TelemetryConfigUnified - per-tenant<br/>• AgentConfigUnified - per-agent]
-        end
+    subgraph "cogniverse_foundation Package"
+        ConfigManager["<span style='color:#000'>Config Manager<br/>• SystemConfig - global settings<br/>• RoutingConfigUnified - per-tenant<br/>• TelemetryConfig - per-tenant<br/>• AgentConfigUnified - per-agent</span>"]
+    end
 
-        subgraph "Common Module"
-            ConfigStore[SQLite Config Store<br/>• Versioned persistence<br/>• History tracking<br/>• Tenant isolation]
-        end
+    subgraph "cogniverse_sdk Package"
+        ConfigStoreABC["<span style='color:#000'>ConfigStore ABC<br/>• ConfigScope enum<br/>• ConfigEntry dataclass<br/>• Abstract interface</span>"]
+    end
+
+    subgraph "cogniverse_vespa Package"
+        VespaConfigStore["<span style='color:#000'>Vespa Config Store<br/>• Versioned persistence<br/>• History tracking<br/>• Tenant isolation</span>"]
     end
 
     AgentLayer --> ConfigManager
-    ConfigManager --> ConfigStore
-    ConfigStore -.-> DB[(SQLite Database<br/>data/config/config.db)]
+    ConfigManager --> ConfigStoreABC
+    VespaConfigStore -.-> ConfigStoreABC
+    VespaConfigStore -.-> Vespa[("<span style='color:#000'>Vespa<br/>config_metadata schema</span>")]
 
-    style AgentLayer fill:#e1f5ff
-    style ConfigManager fill:#fff4e1
-    style ConfigStore fill:#ffe1e1
-    style DB fill:#e1ffe1
+    style AgentLayer fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigManager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ConfigStoreABC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaConfigStore fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Vespa fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ### Memory Management Architecture
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph "cogniverse_agents Package"
-        AgentLayer[Agents<br/>with MemoryAwareMixin]
+        AgentLayer["<span style='color:#000'>Agents<br/>with MemoryAwareMixin</span>"]
     end
 
     subgraph "cogniverse_core Package"
-        MemoryManager[Mem0MemoryManager<br/>Per-tenant singleton<br/>• add_memory<br/>• search_memory<br/>• get_all_memories<br/>• clear_agent_memory]
+        MemoryManager["<span style='color:#000'>Mem0MemoryManager<br/>Per-tenant singleton<br/>• add_memory<br/>• search_memory<br/>• get_all_memories<br/>• clear_agent_memory</span>"]
     end
 
     subgraph "cogniverse_vespa Package"
-        SchemaManager[TenantSchemaManager<br/>Schema: agent_memories_tenant_id]
+        SchemaManager["<span style='color:#000'>VespaSchemaManager<br/>Schema: agent_memories_tenant_id</span>"]
     end
 
     subgraph External
-        Mem0Lib[Mem0 Library<br/>• LLM: Ollama llama3.2<br/>• Embedder: nomic-embed-text<br/>• Vector Store: Vespa]
-        VespaDB[(Vespa<br/>Schema per tenant<br/>agent_memories_acme)]
+        Mem0Lib["<span style='color:#000'>Mem0 Library<br/>• LLM: Ollama llama3.2<br/>• Embedder: nomic-embed-text<br/>• Vector Store: Vespa</span>"]
+        VespaDB[("<span style='color:#000'>Vespa<br/>Schema per tenant<br/>agent_memories_acme</span>")]
     end
 
     AgentLayer --> MemoryManager
@@ -119,35 +137,35 @@ graph TB
     SchemaManager --> VespaDB
     Mem0Lib --> VespaDB
 
-    style AgentLayer fill:#e1f5ff
-    style MemoryManager fill:#fff4e1
-    style SchemaManager fill:#ffe1e1
-    style Mem0Lib fill:#e1ffe1
-    style VespaDB fill:#d4edda
+    style AgentLayer fill:#90caf9,stroke:#1565c0,color:#000
+    style MemoryManager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SchemaManager fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Mem0Lib fill:#a5d6a7,stroke:#388e3c,color:#000
+    style VespaDB fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### Tenant Utilities Flow
 
 ```mermaid
-graph LR
-    TenantID["Tenant ID<br/>acme:production"]
+flowchart LR
+    TenantID["<span style='color:#000'>Tenant ID<br/>acme:production</span>"]
 
     subgraph "cogniverse_core Package"
-        Parse[tenant_utils.parse_tenant_id]
-        StoragePath[tenant_utils.get_tenant_storage_path]
+        Parse["<span style='color:#000'>tenant_utils.parse_tenant_id</span>"]
+        StoragePath["<span style='color:#000'>tenant_utils.get_tenant_storage_path</span>"]
     end
 
-    OrgTenant["org_id: acme<br/>tenant_name: production"]
-    Path["Path:<br/>data/optimization/acme/production"]
+    OrgTenant["<span style='color:#000'>org_id: acme<br/>tenant_name: production</span>"]
+    Path["<span style='color:#000'>Path:<br/>data/optimization/acme/production</span>"]
 
     TenantID --> Parse --> OrgTenant
     TenantID --> StoragePath --> Path
 
-    style TenantID fill:#e1f5ff
-    style Parse fill:#fff4e1
-    style StoragePath fill:#fff4e1
-    style OrgTenant fill:#ffe1e1
-    style Path fill:#d4edda
+    style TenantID fill:#90caf9,stroke:#1565c0,color:#000
+    style Parse fill:#ffcc80,stroke:#ef6c00,color:#000
+    style StoragePath fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OrgTenant fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Path fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -156,13 +174,13 @@ graph LR
 
 ### SystemConfig
 
-**Location:** `libs/core/cogniverse_core/config/unified_config.py:29-115`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:29-`
 
 **Purpose:** System-level configuration for global settings
 
 **Import:**
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 ```
 
 **Key Attributes:**
@@ -178,10 +196,15 @@ class SystemConfig:
     summarizer_agent_url: str = "http://localhost:8004"
     text_analysis_agent_url: str = "http://localhost:8005"
 
+    # API service URLs
+    ingestion_api_url: str = "http://localhost:8000"
+
     # Search backend
     search_backend: str = "vespa"
-    vespa_url: str = "http://localhost"
-    vespa_port: int = 8080
+    backend_url: str = "http://localhost"
+    backend_port: int = 8080
+    application_name: str = "cogniverse"
+    elasticsearch_url: Optional[str] = None
 
     # LLM configuration
     llm_model: str = "ollama/gemma3:4b"
@@ -192,24 +215,32 @@ class SystemConfig:
     phoenix_url: str = "http://localhost:6006"
     phoenix_collector_endpoint: str = "localhost:4317"
 
+    # Video processing
+    video_processing_profiles: List[str] = field(default_factory=list)
+
+    # Agent Registry
+    agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    agent_registry_url: str = "http://localhost:8000"
+
     # Metadata
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
 ```
 
 **Methods:**
+
 - `to_dict() -> Dict[str, Any]` - Convert to dictionary
 - `from_dict(data: Dict) -> SystemConfig` - Create from dictionary
 
 **Usage:**
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Create system config
 config = SystemConfig(
     tenant_id="acme",
-    vespa_url="http://prod-vespa.example.com",
-    vespa_port=8080,
+    backend_url="http://prod-vespa.example.com",
+    backend_port=8080,
     environment="production"
 )
 
@@ -224,13 +255,13 @@ loaded_config = SystemConfig.from_dict(config_dict)
 
 ### RoutingConfigUnified
 
-**Location:** `libs/core/cogniverse_core/config/unified_config.py:118-236`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:136-`
 
 **Purpose:** Per-tenant routing configuration
 
 **Import:**
 ```python
-from cogniverse_core.config.unified_config import RoutingConfigUnified
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 ```
 
 **Key Attributes:**
@@ -245,6 +276,7 @@ class RoutingConfigUnified:
     # Tier thresholds
     enable_fast_path: bool = True
     enable_slow_path: bool = True
+    enable_fallback: bool = True
     fast_path_confidence_threshold: float = 0.7
     slow_path_confidence_threshold: float = 0.6
     max_routing_time_ms: int = 1000
@@ -267,16 +299,22 @@ class RoutingConfigUnified:
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
+    dspy_enabled: bool = True
+    dspy_max_bootstrapped_demos: int = 10
+    dspy_max_labeled_demos: int = 50
 
     # Caching
     enable_caching: bool = True
     cache_ttl_seconds: int = 300
     max_cache_size: int = 1000
+
+    # Metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
 ```
 
 **Usage:**
 ```python
-from cogniverse_core.config.unified_config import RoutingConfigUnified
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 # Create tenant-specific routing config
 config = RoutingConfigUnified(
@@ -290,192 +328,68 @@ config = RoutingConfigUnified(
 
 ---
 
-### TelemetryConfigUnified
+### TelemetryConfig
 
-**Location:** `libs/core/cogniverse_core/config/unified_config.py:239-321`
+**Location:** `libs/foundation/cogniverse_foundation/telemetry/config.py:46-`
 
-**Purpose:** Per-tenant telemetry configuration
+**Purpose:** Generic telemetry configuration with persistence support
 
 **Import:**
 ```python
-from cogniverse_core.config.unified_config import TelemetryConfigUnified
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 ```
 
 **Key Attributes:**
 ```python
 @dataclass
-class TelemetryConfigUnified:
-    tenant_id: str = "default"
-
+class TelemetryConfig:
     # Core settings
     enabled: bool = True
-    level: str = "detailed"  # disabled, basic, detailed, verbose
+    level: TelemetryLevel = TelemetryLevel.DETAILED
     environment: str = "development"
 
-    # Phoenix settings
-    phoenix_enabled: bool = True
-    phoenix_endpoint: str = "localhost:4317"
-    phoenix_use_tls: bool = False
+    # OpenTelemetry span export (generic OTLP) - backend-agnostic
+    otlp_enabled: bool = True
+    otlp_endpoint: str = "localhost:4317"
+    otlp_use_tls: bool = False
+
+    # Provider selection (for querying spans/annotations/datasets)
+    provider: Optional[str] = None  # "phoenix" | "langsmith" | None (auto-detect)
+    provider_config: Dict[str, Any] = field(default_factory=dict)
 
     # Multi-tenant settings
-    tenant_project_template: str = "cogniverse-{tenant_id}-{service}"
+    tenant_project_template: str = "cogniverse-{tenant_id}"
+    tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
+    default_tenant_id: str = "default"
     max_cached_tenants: int = 100
     tenant_cache_ttl_seconds: int = 3600
 
     # Batch export settings
-    max_queue_size: int = 2048
-    max_export_batch_size: int = 512
-    export_timeout_millis: int = 30000
-    schedule_delay_millis: int = 500
-    use_sync_export: bool = False
+    batch_config: BatchExportConfig = field(default_factory=BatchExportConfig)
+
+    # Service identification
+    service_name: str = "video-search"
+    service_version: str = field(default_factory=lambda: os.getenv("SERVICE_VERSION", "1.0.0"))
+
+    # Resource attributes
+    extra_resource_attributes: Dict[str, str] = field(default_factory=dict)
 ```
 
 **Usage:**
 ```python
-from cogniverse_core.config.unified_config import TelemetryConfigUnified
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 
-# Create tenant-specific telemetry config
-config = TelemetryConfigUnified(
-    tenant_id="acme",
-    level="detailed",
-    phoenix_enabled=True,
-    phoenix_endpoint="prod-phoenix.internal:4317",
-    tenant_project_template="cogniverse-{tenant_id}-{service}"
-)
-```
-
----
-
-### SQLiteConfigStore
-
-**Location:** `libs/core/cogniverse_core/common/config_store.py:18-605`
-
-**Purpose:** Versioned configuration storage with multi-tenant support
-
-**Import:**
-```python
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
-```
-
-**Key Methods:**
-
-#### set_config()
-```python
-def set_config(
-    self,
-    tenant_id: str,
-    scope: ConfigScope,
-    service: str,
-    config_key: str,
-    config_value: Dict[str, Any],
-) -> ConfigEntry:
-    """
-    Set configuration value (creates new version).
-
-    Args:
-        tenant_id: Tenant identifier
-        scope: Configuration scope (SYSTEM, AGENT, SERVICE)
-        service: Service name (e.g., "routing_agent")
-        config_key: Configuration key (e.g., "routing_config")
-        config_value: Configuration value as dictionary
-
-    Returns:
-        ConfigEntry with new version
-    """
-```
-
-#### get_config()
-```python
-def get_config(
-    self,
-    tenant_id: str,
-    scope: ConfigScope,
-    service: str,
-    config_key: str,
-    version: Optional[int] = None,
-) -> Optional[ConfigEntry]:
-    """
-    Get configuration value.
-
-    Args:
-        tenant_id: Tenant identifier
-        scope: Configuration scope
-        service: Service name
-        config_key: Configuration key
-        version: Specific version (None for latest)
-
-    Returns:
-        ConfigEntry or None if not found
-    """
-```
-
-#### get_config_history()
-```python
-def get_config_history(
-    self,
-    tenant_id: str,
-    scope: ConfigScope,
-    service: str,
-    config_key: str,
-    limit: int = 10,
-) -> List[ConfigEntry]:
-    """
-    Get configuration history.
-
-    Returns:
-        List of ConfigEntry ordered by version descending
-    """
-```
-
-**Usage:**
-```python
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
-from cogniverse_core.config.unified_config import RoutingConfigUnified
-
-# Initialize store
-store = SQLiteConfigStore()
-
-# Create routing config
-routing_config = RoutingConfigUnified(
-    tenant_id="acme",
-    routing_mode="ensemble"
+# Create telemetry config with OTLP export
+config = TelemetryConfig(
+    level=TelemetryLevel.DETAILED,
+    otlp_enabled=True,
+    otlp_endpoint="prod-collector.internal:4317",
+    tenant_project_template="cogniverse-{tenant_id}"
 )
 
-# Save config (creates version 1)
-entry = store.set_config(
-    tenant_id="acme",
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    config_value=routing_config.to_dict()
-)
-
-print(f"Saved config version: {entry.version}")
-
-# Load latest config
-entry = store.get_config(
-    tenant_id="acme",
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config"
-)
-
-if entry:
-    routing_config = RoutingConfigUnified.from_dict(entry.config_value)
-    print(f"Loaded routing mode: {routing_config.routing_mode}")
-
-# Get config history
-history = store.get_config_history(
-    tenant_id="acme",
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    limit=10
-)
-
-print(f"Config has {len(history)} versions")
+# Persistence via ConfigManager
+config_manager.set_telemetry_config(config, tenant_id="acme")
+loaded = config_manager.get_telemetry_config("acme")
 ```
 
 ---
@@ -484,16 +398,15 @@ print(f"Config has {len(history)} versions")
 
 ### Mem0MemoryManager
 
-**Location:** `libs/core/cogniverse_core/common/mem0_memory_manager.py:53-494`
+**Location:** `libs/core/cogniverse_core/memory/manager.py`
 
 **Purpose:** Per-tenant memory management using Mem0 with Vespa backend
 
 **Import:**
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 ```
 
-**Architecture:**
 - **Per-Tenant Singleton**: One instance per tenant_id
 - **Schema Isolation**: Each tenant gets dedicated Vespa schema: `agent_memories_{tenant_id}`
 - **Agent Namespacing**: Within tenant, memories are namespaced by agent_name
@@ -505,17 +418,19 @@ from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 ```python
 def initialize(
     self,
-    vespa_host: str = "localhost",
-    vespa_port: int = 8080,
-    vespa_config_port: Optional[int] = None,
+    backend_host: str = "localhost",
+    backend_port: int = 8080,
+    backend_config_port: Optional[int] = None,
     base_schema_name: str = "agent_memories",
     llm_model: str = "llama3.2",
     embedding_model: str = "nomic-embed-text",
     ollama_base_url: str = "http://localhost:11434/v1",
     auto_create_schema: bool = True,
+    config_manager=None,
+    schema_loader=None,
 ) -> None:
     """
-    Initialize Mem0 with Vespa backend using tenant-specific schema.
+    Initialize Mem0 with backend using tenant-specific schema.
 
     Configuration:
     - LLM: Ollama llama3.2 for memory processing
@@ -525,8 +440,8 @@ def initialize(
     Example:
         manager = Mem0MemoryManager(tenant_id="acme")
         manager.initialize(
-            vespa_host="localhost",
-            vespa_port=8080,
+            backend_host="localhost",
+            backend_port=8080,
             llm_model="llama3.2",
             embedding_model="nomic-embed-text"
         )
@@ -668,18 +583,21 @@ def clear_agent_memory(
 sequenceDiagram
     participant Agent as RoutingAgent<br/>cogniverse_agents
     participant MemMgr as Mem0MemoryManager<br/>cogniverse_core
-    participant SchMgr as TenantSchemaManager<br/>cogniverse_vespa
+    participant Backend as VespaBackend<br/>cogniverse_vespa
     participant Vespa as Vespa<br/>agent_memories_acme
 
     Agent->>MemMgr: Mem0MemoryManager(tenant_id="acme")
     Note over MemMgr: Per-tenant singleton created
 
-    Agent->>MemMgr: initialize(vespa_host, vespa_port)
-    MemMgr->>SchMgr: get_tenant_schema_name("acme", "agent_memories")
-    SchMgr-->>MemMgr: "agent_memories_acme"
-    MemMgr->>SchMgr: ensure_tenant_schema_exists("acme", "agent_memories")
-    SchMgr->>Vespa: Deploy schema agent_memories_acme
-    Vespa-->>SchMgr: Schema deployed
+    Agent->>MemMgr: initialize(backend_host, backend_port)
+    MemMgr->>Backend: get_tenant_schema_name("acme", "agent_memories")
+    Backend-->>MemMgr: "agent_memories_acme"
+    MemMgr->>Backend: schema_registry.deploy_schema(tenant_id, base_schema_name)
+    Backend->>Vespa: Deploy schema agent_memories_acme
+    Vespa-->>Backend: Schema deployed
+    Backend-->>MemMgr: Schema ready
+    MemMgr->>MemMgr: Memory.from_config(config)
+    Note over MemMgr: Configure Mem0 with backend storage
     MemMgr-->>Agent: Initialized
 
     Agent->>MemMgr: add_memory("User prefers videos", "acme", "routing_agent")
@@ -811,7 +729,7 @@ path.mkdir(parents=True, exist_ok=True)
 
 ### validate_tenant_id()
 
-**Location:** `libs/core/cogniverse_core/common/tenant_utils.py:87-119`
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py:87-118`
 
 **Purpose:** Validate tenant ID format
 
@@ -865,14 +783,14 @@ except ValueError as e:
 
 ### DynamicDSPyMixin
 
-**Location:** `libs/core/cogniverse_core/common/dynamic_dspy_mixin.py:16-247`
+**Location:** `libs/core/cogniverse_core/common/dynamic_dspy_mixin.py:23-255`
 
 **Purpose:** Mixin for runtime DSPy module and optimizer configuration
 
 **Import:**
 ```python
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
-from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
+from cogniverse_foundation.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
 ```
 
 **Key Methods:**
@@ -894,12 +812,18 @@ def initialize_dynamic_dspy(self, config: AgentConfig):
             def __init__(self):
                 config = AgentConfig(
                     agent_name="my_agent",
+                    agent_version="1.0.0",
+                    agent_description="Example agent with dynamic DSPy",
+                    agent_url="http://localhost:8000",
+                    capabilities=["text_processing"],
+                    skills=[],
                     llm_model="ollama/llama3.2",
                     module_config=ModuleConfig(
-                        module_type=ModuleType.CHAIN_OF_THOUGHT
+                        module_type=DSPyModuleType.CHAIN_OF_THOUGHT,
+                        signature="default"
                     ),
                     optimizer_config=OptimizerConfig(
-                        optimizer_type=OptimizerType.MIPROV2
+                        optimizer_type=OptimizerType.MIPRO_V2
                     )
                 )
                 self.initialize_dynamic_dspy(config)
@@ -935,6 +859,7 @@ def create_module(
     - Predict: Direct prediction
     - ChainOfThought: Reasoning before answer
     - ReAct: Reasoning + Action + Observation loop
+    - MultiChainComparison: Multiple reasoning chains with comparison
     - ProgramOfThought: Code generation
 
     Example:
@@ -980,8 +905,8 @@ def create_optimizer(
 **Complete Usage Example:**
 ```python
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
-from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
-from cogniverse_core.config.agent_config import ModuleType, OptimizerType
+from cogniverse_foundation.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
+from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerType
 import dspy
 
 class SmartAgent(DynamicDSPyMixin):
@@ -989,14 +914,20 @@ class SmartAgent(DynamicDSPyMixin):
         # Configure agent
         config = AgentConfig(
             agent_name="smart_agent",
+            agent_version="1.0.0",
+            agent_description="Smart agent with query analysis",
+            agent_url="http://localhost:8000",
+            capabilities=["query_analysis"],
+            skills=[],
             llm_model="ollama/llama3.2",
             llm_base_url="http://localhost:11434",
             module_config=ModuleConfig(
-                module_type=ModuleType.CHAIN_OF_THOUGHT,
+                module_type=DSPyModuleType.CHAIN_OF_THOUGHT,
+                signature="analyze",
                 max_retries=3
             ),
             optimizer_config=OptimizerConfig(
-                optimizer_type=OptimizerType.MIPROV2,
+                optimizer_type=OptimizerType.MIPRO_V2,
                 max_bootstrapped_demos=4,
                 max_labeled_demos=8
             )
@@ -1034,57 +965,31 @@ print(f"Intent: {result.intent}, Confidence: {result.confidence}")
 ### Example 1: Multi-Tenant Configuration
 
 ```python
-from cogniverse_core.config.unified_config import SystemConfig, RoutingConfigUnified
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import SystemConfig
 
-# Initialize system
-system_config = SystemConfig(
-    tenant_id="acme",
-    vespa_url="http://localhost",
-    vespa_port=8080,
-    environment="production"
-)
-
-store = SQLiteConfigStore()
+# Initialize config manager
+config_manager = create_default_config_manager()
 
 # Create configs for multiple tenants
 tenants = ["acme", "acme:production", "acme:staging"]
 
 for tenant_id in tenants:
-    # Tenant-specific routing config
-    routing_config = RoutingConfigUnified(
+    # Create tenant-specific system config
+    system_config = SystemConfig(
         tenant_id=tenant_id,
-        routing_mode="tiered",
-        fast_path_confidence_threshold=0.75,
-        enable_auto_optimization=True,
-        cache_ttl_seconds=3600 if "production" in tenant_id else 300
+        backend_url="http://localhost",
+        backend_port=8080,
+        environment="production" if "production" in tenant_id else "staging"
     )
+    print(f"Created config for {tenant_id}")
 
-    # Save to store
-    entry = store.set_config(
-        tenant_id=tenant_id,
-        scope=ConfigScope.SERVICE,
-        service="routing_agent",
-        config_key="routing_config",
-        config_value=routing_config.to_dict()
-    )
-    print(f"Saved routing config for {tenant_id} (version {entry.version})")
-
-# Load tenant config in agent
+# Get tenant config
 tenant_id = "acme:production"
-entry = store.get_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config"
-)
-
-if entry:
-    routing_config = RoutingConfigUnified.from_dict(entry.config_value)
-    print(f"Loaded config for {tenant_id}:")
-    print(f"  Routing mode: {routing_config.routing_mode}")
-    print(f"  Cache TTL: {routing_config.cache_ttl_seconds}s")
+system_config = config_manager.get_system_config(tenant_id=tenant_id)
+print(f"Loaded config for {tenant_id}:")
+print(f"  Backend URL: {system_config.backend_url}")
+print(f"  Environment: {system_config.environment}")
 ```
 
 ---
@@ -1092,14 +997,14 @@ if entry:
 ### Example 2: Memory-Aware Agent
 
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Initialize memory manager (per-tenant singleton)
 tenant_id = "acme"
 memory = Mem0MemoryManager(tenant_id=tenant_id)
 memory.initialize(
-    vespa_host="localhost",
-    vespa_port=8080,
+    backend_host="localhost",
+    backend_port=8080,
     llm_model="llama3.2",
     embedding_model="nomic-embed-text"
 )
@@ -1202,127 +1107,31 @@ except ValueError as e:
 
 ---
 
-### Example 4: Configuration Versioning
-
-```python
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
-from cogniverse_core.config.unified_config import RoutingConfigUnified
-
-store = SQLiteConfigStore()
-tenant_id = "acme"
-
-# Version 1: Initial config
-config_v1 = RoutingConfigUnified(
-    tenant_id=tenant_id,
-    routing_mode="tiered",
-    fast_path_confidence_threshold=0.7
-)
-
-entry = store.set_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    config_value=config_v1.to_dict()
-)
-print(f"Created version {entry.version}")
-
-# Version 2: Update threshold
-config_v2 = RoutingConfigUnified(
-    tenant_id=tenant_id,
-    routing_mode="tiered",
-    fast_path_confidence_threshold=0.8  # Increased threshold
-)
-
-entry = store.set_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    config_value=config_v2.to_dict()
-)
-print(f"Created version {entry.version}")
-
-# Version 3: Switch to ensemble mode
-config_v3 = RoutingConfigUnified(
-    tenant_id=tenant_id,
-    routing_mode="ensemble",  # Changed mode
-    fast_path_confidence_threshold=0.8
-)
-
-entry = store.set_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    config_value=config_v3.to_dict()
-)
-print(f"Created version {entry.version}")
-
-# Get latest version
-latest = store.get_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config"
-)
-print(f"Latest version: {latest.version}, mode: {latest.config_value['routing_mode']}")
-
-# Get specific version
-v1 = store.get_config(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    version=1
-)
-print(f"Version 1: mode={v1.config_value['routing_mode']}, threshold={v1.config_value['fast_path_confidence_threshold']}")
-
-# Get history
-history = store.get_config_history(
-    tenant_id=tenant_id,
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    limit=10
-)
-
-print(f"\nConfiguration history ({len(history)} versions):")
-for entry in history:
-    config = RoutingConfigUnified.from_dict(entry.config_value)
-    print(f"  v{entry.version}: mode={config.routing_mode}, "
-          f"threshold={config.fast_path_confidence_threshold}, "
-          f"updated={entry.updated_at.isoformat()}")
-```
-
----
-
 ## Production Considerations
 
 ### Configuration Management Best Practices
 
 **1. Environment-Specific Configs:**
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 environments = {
     "development": SystemConfig(
         tenant_id="dev",
-        vespa_url="http://localhost",
-        vespa_port=8080,
+        backend_url="http://localhost",
+        backend_port=8080,
         environment="development"
     ),
     "staging": SystemConfig(
         tenant_id="staging",
-        vespa_url="http://staging-vespa.internal",
-        vespa_port=8080,
+        backend_url="http://staging-vespa.internal",
+        backend_port=8080,
         environment="staging"
     ),
     "production": SystemConfig(
         tenant_id="prod",
-        vespa_url="http://prod-vespa.example.com",
-        vespa_port=8080,
+        backend_url="http://prod-vespa.example.com",
+        backend_port=8080,
         environment="production"
     )
 }
@@ -1334,17 +1143,17 @@ config = environments[env]
 
 **2. Validate Configs Before Use:**
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 def validate_config(config: SystemConfig):
-    assert config.vespa_url, "Vespa URL required"
-    assert config.vespa_port > 0, "Valid Vespa port required"
+    assert config.backend_url, "Backend URL required"
+    assert config.backend_port > 0, "Valid backend port required"
     assert config.llm_model, "LLM model required"
 
     # Test connectivity
     import requests
     try:
-        response = requests.get(f"{config.vespa_url}:{config.vespa_port}/ApplicationStatus")
+        response = requests.get(f"{config.backend_url}:{config.backend_port}/ApplicationStatus")
         assert response.status_code == 200
     except:
         raise RuntimeError("Cannot connect to Vespa")
@@ -1353,55 +1162,19 @@ config = SystemConfig.from_dict(config_dict)
 validate_config(config)
 ```
 
-**3. Use Config Versioning:**
-```python
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
-
-store = SQLiteConfigStore()
-
-# Always create new version on update
-entry = store.set_config(
-    tenant_id="acme",
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config",
-    config_value=new_config.to_dict()
-)
-
-# Get history for rollback if needed
-history = store.get_config_history(
-    tenant_id="acme",
-    scope=ConfigScope.SERVICE,
-    service="routing_agent",
-    config_key="routing_config"
-)
-
-# Rollback to previous version
-if performance_degraded:
-    previous_version = history[1]  # Get version before latest
-    store.set_config(
-        tenant_id="acme",
-        scope=ConfigScope.SERVICE,
-        service="routing_agent",
-        config_key="routing_config",
-        config_value=previous_version.config_value
-    )
-```
-
 ### Memory Management Best Practices
 
 **1. Initialize Once at Startup:**
 ```python
 from functools import lru_cache
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 @lru_cache(maxsize=100)  # Cache per tenant
 def get_memory_manager(tenant_id: str) -> Mem0MemoryManager:
     manager = Mem0MemoryManager(tenant_id=tenant_id)
     manager.initialize(
-        vespa_host=config.vespa_url,
-        vespa_port=config.vespa_port
+        backend_host=config.backend_url,
+        backend_port=config.backend_port
     )
     return manager
 
@@ -1411,7 +1184,7 @@ memory = get_memory_manager("acme")
 
 **2. Memory Storage Policy:**
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 class MemoryPolicy:
     def should_store(self, content: str) -> bool:
@@ -1443,7 +1216,7 @@ if policy.should_store(content):
 **3. Periodic Memory Cleanup:**
 ```python
 from datetime import datetime, timedelta
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 async def cleanup_old_memories(tenant_id: str, agent_name: str, days: int = 90):
     """Remove memories older than specified days"""
@@ -1472,10 +1245,13 @@ for tenant_id in get_active_tenants():
 
 **1. Verify Schema Isolation:**
 ```python
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
-schema_manager = TenantSchemaManager()
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080
+)
 
 # Each tenant should have dedicated schema
 tenant1 = "acme"
@@ -1493,7 +1269,7 @@ print(f"✓ Schema isolation verified: {schema1} vs {schema2}")
 
 **2. Verify Memory Isolation:**
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Add memory for tenant 1
 memory1 = Mem0MemoryManager(tenant_id="acme")
@@ -1523,27 +1299,31 @@ print("✓ Memory isolation verified")
 ## Testing
 
 ### Unit Tests
-**Location:** `tests/common/unit/`
 
 **Key Test Files:**
-- `test_config_store.py` - Configuration storage tests
-- `test_mem0_memory_manager.py` - Memory manager tests
-- `test_tenant_utils.py` - Tenant utilities tests
-- `test_dynamic_dspy_mixin.py` - DSPy mixin tests
+
+- `tests/common/unit/test_vespa_config_store.py` - Configuration storage tests
+- `tests/memory/unit/test_mem0_memory_manager.py` - Memory manager tests
+- `tests/unit/test_tenant_utils.py` - Tenant utilities tests
+- `tests/common/unit/test_dynamic_dspy_mixin.py` - DSPy mixin tests
+- `tests/common/unit/test_agent_config.py` - Agent configuration tests
+- `tests/common/unit/test_config_api_mixin.py` - Config API mixin tests
 
 ### Integration Tests
-**Location:** `tests/common/integration/`
 
 **Key Test Files:**
-- `test_config_store_integration.py` - Config store with SQLite
-- `test_mem0_vespa_integration.py` - Memory manager with Vespa
-- `test_tenant_isolation.py` - Multi-tenant isolation verification
+
+- `tests/common/integration/test_config_persistence.py` - Config persistence with backend
+- `tests/common/integration/test_dynamic_config_integration.py` - Dynamic config integration
+- `tests/memory/integration/test_mem0_vespa_integration.py` - Memory manager with Vespa backend
+- `tests/memory/integration/test_mem0_complete_e2e.py` - Complete memory system end-to-end tests
+- `tests/backends/integration/test_tenant_schema_lifecycle.py` - Multi-tenant schema isolation verification
 
 ### Example Test
 
 ```python
 import pytest
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_storage_path
 
 @pytest.mark.integration
@@ -1616,10 +1396,15 @@ def test_tenant_storage_path():
 ## Next Steps
 
 For related modules:
+
 - **Agents Module** (`agents.md`) - Uses Common module for config and memory (libs/agents/cogniverse_agents/)
+
 - **Backends Module** (`backends.md`) - Vespa integration details (libs/vespa/cogniverse_vespa/)
-- **Telemetry Module** (`telemetry.md`) - Multi-tenant telemetry (libs/core/cogniverse_core/telemetry/)
+
+- **Telemetry Module** (`telemetry.md`) - Multi-tenant telemetry (libs/foundation/cogniverse_foundation/telemetry/)
+
 - **SDK Architecture** (`../architecture/sdk-architecture.md`) - UV workspace and package structure
+
 - **Multi-Tenant Architecture** (`../architecture/multi-tenant.md`) - Tenant isolation patterns
 
 ---
@@ -1632,7 +1417,7 @@ For related modules:
    - Import from `cogniverse_core` package
 
 2. **Multi-Tenant Configuration**
-   - SQLite-based versioned configuration storage
+   - Backend-based versioned configuration storage (e.g., Vespa)
    - Per-tenant configuration with history tracking
    - ConfigScope for service/agent/system level configs
 

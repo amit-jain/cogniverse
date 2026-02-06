@@ -1,7 +1,7 @@
 # Synthetic Data Generation System
 
-**Package**: `cogniverse-synthetic` (Implementation Layer)
-**Location**: `/home/user/cogniverse/packages/cogniverse-synthetic`
+**Package**: `cogniverse-synthetic` (Core Layer)
+**Location**: `libs/synthetic/cogniverse_synthetic`
 
 The synthetic data generation system creates high-quality training examples for all Cogniverse optimizers by sampling real content from backend storage and generating realistic queries using DSPy-driven LLM modules with validation.
 
@@ -22,52 +22,64 @@ The system extends DSPy optimization to all routing and orchestration components
 ### System Overview
 
 ```mermaid
-graph TB
-    subgraph "Synthetic Data Generation Service"
-        Service[SyntheticDataService<br/>Main Orchestrator]
+flowchart TB
+    subgraph SyntheticService["<span style='color:#000'>Synthetic Data Generation Service</span>"]
+        Service["<span style='color:#000'>SyntheticDataService<br/>Main Orchestrator</span>"]
 
         Service --> ProfileSelector
         Service --> BackendQuerier
         Service --> Generators
 
-        ProfileSelector[ProfileSelector<br/>LLM or Rule-based]
-        BackendQuerier[BackendQuerier<br/>Backend Sampling]
+        ProfileSelector["<span style='color:#000'>ProfileSelector<br/>LLM or Rule-based</span>"]
+        BackendQuerier["<span style='color:#000'>BackendQuerier<br/>Backend Sampling</span>"]
 
-        subgraph "Generators"
-            ModalityGen[ModalityGenerator]
-            CrossModalGen[CrossModalGenerator]
-            RoutingGen[RoutingGenerator]
-            WorkflowGen[WorkflowGenerator]
+        subgraph Generators["<span style='color:#000'>Generators</span>"]
+            ModalityGen["<span style='color:#000'>ModalityGenerator</span>"]
+            CrossModalGen["<span style='color:#000'>CrossModalGenerator</span>"]
+            RoutingGen["<span style='color:#000'>RoutingGenerator</span>"]
+            WorkflowGen["<span style='color:#000'>WorkflowGenerator</span>"]
         end
 
-        subgraph "Utilities"
-            PatternExtractor[PatternExtractor<br/>Topics, Entities]
-            AgentInferrer[AgentInferrer<br/>Agent Mapping]
+        subgraph Utilities["<span style='color:#000'>Utilities</span>"]
+            PatternExtractor["<span style='color:#000'>PatternExtractor<br/>Topics, Entities</span>"]
+            AgentInferrer["<span style='color:#000'>AgentInferrer<br/>Agent Mapping</span>"]
         end
 
         Generators --> PatternExtractor
         Generators --> AgentInferrer
     end
 
-    subgraph "External Systems"
-        Backend[(Backend<br/>Vespa/Other)]
-        LLM[LLM Client<br/>Optional]
-        BackendConfig[Backend Config<br/>Profiles]
+    subgraph ExternalSystems["<span style='color:#000'>External Systems</span>"]
+        Backend[("<span style='color:#000'>Backend<br/>Vespa/Other</span>")]
+        LLM["<span style='color:#000'>LLM Client<br/>Optional</span>"]
+        BackendConfig["<span style='color:#000'>Backend Config<br/>Profiles</span>"]
     end
 
     ProfileSelector -.-> LLM
     ProfileSelector --> BackendConfig
     BackendQuerier --> Backend
 
-    subgraph "Data Flow"
-        Request[SyntheticDataRequest] --> Service
-        Service --> Response[SyntheticDataResponse<br/>Generated Examples]
+    subgraph DataFlow["<span style='color:#000'>Data Flow</span>"]
+        Request["<span style='color:#000'>SyntheticDataRequest</span>"] --> Service
+        Service --> Response["<span style='color:#000'>SyntheticDataResponse<br/>Generated Examples</span>"]
     end
 
-    style Service fill:#4A90E2,stroke:#2E5C8A,color:#fff
-    style Generators fill:#7ED321,stroke:#5FA319,color:#000
-    style Utilities fill:#F5A623,stroke:#C4841D,color:#000
-    style Backend fill:#BD10E0,stroke:#8B0CA6,color:#fff
+    style Service fill:#90caf9,stroke:#1565c0,color:#000
+    style ProfileSelector fill:#ffcc80,stroke:#ef6c00,color:#000
+    style BackendQuerier fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Generators fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ModalityGen fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CrossModalGen fill:#a5d6a7,stroke:#388e3c,color:#000
+    style RoutingGen fill:#a5d6a7,stroke:#388e3c,color:#000
+    style WorkflowGen fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Utilities fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PatternExtractor fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AgentInferrer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Backend fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style LLM fill:#b0bec5,stroke:#546e7a,color:#000
+    style BackendConfig fill:#b0bec5,stroke:#546e7a,color:#000
+    style Request fill:#90caf9,stroke:#1565c0,color:#000
+    style Response fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### Generation Pipeline
@@ -100,7 +112,7 @@ sequenceDiagram
     Service->>Gen: generate(content, count)
     Gen->>Utils: extract_topics(content)
     Gen->>Utils: extract_entities(content)
-    Gen->>Utils: infer_agents(characteristics)
+    Gen->>Utils: infer_from_characteristics(...)
     Utils-->>Gen: patterns
     Gen->>DSPy: Generate queries with<br/>validation & reasoning
     DSPy-->>Gen: validated queries
@@ -117,7 +129,7 @@ sequenceDiagram
 Central configuration mapping optimizers to generators and schemas:
 
 ```python
-from cogniverse_synthetic import OPTIMIZER_REGISTRY, get_optimizer_config
+from cogniverse_synthetic.registry import OPTIMIZER_REGISTRY, get_optimizer_config
 
 # Get optimizer configuration
 config = get_optimizer_config("cross_modal")
@@ -151,6 +163,7 @@ profiles, reasoning = await selector.select_profiles(
 ```
 
 **Selection Strategies**:
+
 - **LLM-based**: Uses reasoning to match profile characteristics to optimizer needs
 - **Rule-based**: Heuristic scoring with diversity selection (fallback)
 
@@ -159,11 +172,35 @@ Samples content from backend storage (Vespa or other) using Backend interface:
 
 ```python
 from cogniverse_synthetic.backend_querier import BackendQuerier
-from cogniverse_retrieval.vespa_backend import VespaBackend
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize with backend instance
-backend = VespaBackend(config=backend_config)
-querier = BackendQuerier(backend=backend)
+# Initialize configuration
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Get backend from registry (handles instantiation and caching)
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="acme",
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
+
+# Initialize backend querier with config and field mappings
+from cogniverse_foundation.config.unified_config import BackendConfig, FieldMappingConfig
+
+# Load or create backend configuration
+backend_config = BackendConfig()  # Uses defaults, or load from config manager
+field_mappings = FieldMappingConfig()  # Uses defaults, or load from config manager
+
+querier = BackendQuerier(
+    backend=backend,
+    backend_config=backend_config,
+    field_mappings=field_mappings
+)
 
 samples = await querier.query_profiles(
     profile_configs=[{"profile_name": "video_colpali_smol500_mv_frame"}],
@@ -173,6 +210,7 @@ samples = await querier.query_profiles(
 ```
 
 **Sampling Strategies**:
+
 - `diverse` - Random sampling across all content
 - `temporal_recent` - Recent content (time-based)
 - `entity_rich` - Content with many named entities
@@ -192,19 +230,17 @@ Four concrete generators implementing the `BaseGenerator` interface:
 # "show me TensorFlow videos"
 # "find machine learning documents"
 
-from cogniverse_sdk.config.types import OptimizerGenerationConfig, DSPyModuleConfig
+# ModalityGenerator requires configuration (created by SyntheticDataService)
+# When used directly:
+from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.utils import PatternExtractor, AgentInferrer
 
-modality_config = OptimizerGenerationConfig(
-    optimizer_type="modality",
-    dspy_modules={
-        "query_generator": DSPyModuleConfig(
-            signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
-            module_type="ChainOfThought"
-        )
-    }
+optimizer_config = OptimizerGenerationConfig(...)  # With DSPy modules and agent mappings
+modality_gen = ModalityGenerator(
+    pattern_extractor=PatternExtractor(),
+    agent_inferrer=AgentInferrer(),
+    optimizer_config=optimizer_config
 )
-
-modality_gen = ModalityGenerator(optimizer_config=modality_config)
 examples = await modality_gen.generate(
     sampled_content=backend_samples,
     target_count=100,
@@ -234,19 +270,17 @@ examples = await cross_modal_gen.generate(
 # Enhanced: "find TensorFlow(TECHNOLOGY) object detection tutorial"
 # entities: [{"text": "TensorFlow", "type": "TECHNOLOGY"}]
 
-from cogniverse_sdk.config.types import OptimizerGenerationConfig, DSPyModuleConfig
+# RoutingGenerator requires configuration (created by SyntheticDataService)
+# When used directly:
+from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.utils import PatternExtractor, AgentInferrer
 
-routing_config = OptimizerGenerationConfig(
-    optimizer_type="routing",
-    dspy_modules={
-        "query_generator": DSPyModuleConfig(
-            signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
-            module_type="ChainOfThought"  # LLM reasons about which entities to include
-        )
-    }
+optimizer_config = OptimizerGenerationConfig(...)  # With DSPy modules
+routing_gen = RoutingGenerator(
+    pattern_extractor=PatternExtractor(),
+    agent_inferrer=AgentInferrer(),
+    optimizer_config=optimizer_config
 )
-
-routing_gen = RoutingGenerator(optimizer_config=routing_config)
 examples = await routing_gen.generate(
     sampled_content=backend_samples,
     target_count=100
@@ -271,16 +305,25 @@ examples = await workflow_gen.generate(
 #### 6. Utilities (`utils/`)
 
 **PatternExtractor** (`utils/pattern_extraction.py`):
+
 - Extract topics (bigrams, trigrams)
+
 - Extract entities (capitalized terms)
+
 - Extract temporal patterns (years, dates)
+
 - Extract content types (tutorial, guide, overview)
+
 - Extract relationships (co-occurrence)
 
 **AgentInferrer** (`utils/agent_inference.py`):
+
 - Map modality → agent
+
 - Infer agents from content characteristics
+
 - Generate workflow sequences
+
 - Validate agent sequences
 
 #### 7. DSPy Signatures and Modules
@@ -312,6 +355,7 @@ class GenerateEntityQuery(dspy.Signature):
 ```
 
 **Available Signatures**:
+
 - `GenerateModalityQuery` - Generate modality-specific queries
 - `GenerateEntityQuery` - Generate entity-rich queries with reasoning
 - `InferAgentFromModality` - Infer correct agent for modality/query
@@ -348,6 +392,7 @@ class ValidatedEntityQueryGenerator(dspy.Module):
 ```
 
 **Key Features**:
+
 - **ChainOfThought**: LLM reasons before generating (better quality)
 - **Validation**: Ensures output meets requirements (e.g., entity presence)
 - **Retry Logic**: Up to 3 attempts to generate valid output
@@ -361,22 +406,42 @@ class ValidatedEntityQueryGenerator(dspy.Module):
 ```python
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_retrieval.vespa_backend import VespaBackend
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize backend
-backend = VespaBackend(config=backend_config)
+# Initialize configuration
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Get backend from registry (handles instantiation and caching)
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="acme",
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
 
 # Initialize service
+from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+
+# Load or create configuration
+backend_config = BackendConfig()  # Uses defaults, or load from config manager
+generator_config = SyntheticGeneratorConfig()  # Uses defaults, or load from config manager
+
 service = SyntheticDataService(
-    backend=backend,            # Backend interface (Vespa, Pinecone, etc.)
-    llm_client=llm_client,      # Optional for profile selection
+    backend=backend,                # Backend interface (Vespa, Pinecone, etc.)
+    backend_config=backend_config,  # Backend configuration with profiles
+    generator_config=generator_config,  # Generator configuration
+    llm_client=None,                # Optional LLM client for profile selection (None = rule-based)
 )
 
 # Generate training data
 request = SyntheticDataRequest(
     optimizer="cross_modal",
     count=100,
-    sample_size=200,            # Number of documents to sample from backend
+    vespa_sample_size=200,      # Number of documents to sample from backend
     strategies=["diverse"],
     max_profiles=3,
     tenant_id="default"
@@ -398,13 +463,47 @@ for example in response.data:
 ```python
 from fastapi import FastAPI
 from cogniverse_synthetic import router, configure_service
-from cogniverse_retrieval.vespa_backend import VespaBackend
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 app = FastAPI()
 
-# Configure service (optional)
-backend = VespaBackend(config=backend_config)
-configure_service(backend=backend)
+# Initialize configuration
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Get backend from registry
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="default",
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
+
+# Configure service with backend and configuration
+from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+
+# Load or create configuration
+backend_config_obj = BackendConfig()  # Uses defaults, or load from config manager
+generator_config_obj = SyntheticGeneratorConfig()  # Uses defaults, or load from config manager
+
+# Option 1: Use configure_service to set global instance
+configure_service(
+    backend=backend,
+    backend_config=backend_config_obj,
+    generator_config=generator_config_obj,
+    llm_client=None
+)
+
+# Option 2: Or instantiate directly if you need more control
+service = SyntheticDataService(
+    backend=backend,
+    backend_config=backend_config_obj,
+    generator_config=generator_config_obj,
+    llm_client=None
+)
 
 # Mount router
 app.include_router(router)
@@ -453,7 +552,7 @@ curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&c
 ### ModalityOptimizer
 
 ```python
-from src.app.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
@@ -463,39 +562,39 @@ request = SyntheticDataRequest(optimizer="modality", count=200)
 response = await service.generate(request)
 
 # Convert to ModalityExample objects
-from src.app.routing.modality_optimizer import ModalityExample
+from cogniverse_agents.routing.modality_example import ModalityExample
 examples = [ModalityExample(**ex) for ex in response.data]
 
-# Train optimizer
-optimizer = ModalityOptimizer()
-optimizer.compile(trainset=examples)
+# Train optimizer (uses async methods)
+optimizer = ModalityOptimizer(tenant_id="acme")
+await optimizer.optimize_all_modalities(lookback_hours=24, min_confidence=0.7)
 ```
 
 ### CrossModalOptimizer
 
 ```python
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_synthetic import SyntheticDataService
-from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_synthetic.schemas import SyntheticDataRequest, FusionHistorySchema
 
 # Generate fusion training data
 service = SyntheticDataService()
 request = SyntheticDataRequest(optimizer="cross_modal", count=200)
 response = await service.generate(request)
 
-# Convert to FusionHistory objects
-from src.app.routing.cross_modal_optimizer import FusionHistory
-fusion_histories = [FusionHistory(**ex) for ex in response.data]
+# Convert to FusionHistorySchema objects (from cogniverse_synthetic)
+fusion_histories = [FusionHistorySchema(**ex) for ex in response.data]
 
-# Train optimizer
-optimizer = CrossModalOptimizer()
-optimizer.compile(trainset=fusion_histories)
+# Train optimizer (uses internal fusion history)
+optimizer = CrossModalOptimizer(tenant_id="acme")
+# First, record fusion histories (method not shown, done via predict_fusion_benefit tracking)
+optimizer.train_fusion_model()  # Trains on recorded internal history
 ```
 
 ### Advanced Routing
 
 ```python
-from src.app.routing.advanced_optimizer import AdvancedOptimizer
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
@@ -505,18 +604,30 @@ request = SyntheticDataRequest(optimizer="routing", count=200)
 response = await service.generate(request)
 
 # Convert to RoutingExperience
-from src.app.routing.advanced_optimizer import RoutingExperience
 experiences = [RoutingExperience(**ex) for ex in response.data]
 
-# Train optimizer
-optimizer = AdvancedOptimizer()
-optimizer.compile(trainset=experiences)
+# Record experiences and optimize
+optimizer = AdvancedRoutingOptimizer(tenant_id="default")
+for exp in experiences:
+    await optimizer.record_routing_experience(
+        query=exp.query,
+        entities=exp.entities,
+        relationships=exp.relationships,
+        enhanced_query=exp.enhanced_query,
+        chosen_agent=exp.chosen_agent,
+        routing_confidence=exp.routing_confidence,
+        search_quality=exp.search_quality,
+        agent_success=exp.agent_success,
+        user_satisfaction=exp.user_satisfaction,
+        processing_time=exp.processing_time
+    )
+result = await optimizer.optimize_routing_policy()  # Uses recorded experiences
 ```
 
 ### Workflow Intelligence
 
 ```python
-from src.app.agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
@@ -526,39 +637,50 @@ request = SyntheticDataRequest(optimizer="workflow", count=200)
 response = await service.generate(request)
 
 # Convert to WorkflowExecution
-from src.app.agents.workflow_intelligence import WorkflowExecution
+from cogniverse_agents.workflow.intelligence import WorkflowExecution
 executions = [WorkflowExecution(**ex) for ex in response.data]
 
-# Train workflow optimizer
-workflow_intel = WorkflowIntelligence()
-workflow_intel.compile(trainset=executions)
+# Record workflow executions and optimize
+workflow_intel = WorkflowIntelligence(tenant_id="default")
+for execution in executions:
+    workflow_intel.record_execution(execution)
+result = await workflow_intel.optimize_from_ground_truth()  # Uses recorded executions
 ```
 
 ## Configuration
 
 ### Backend Configuration
 
-The service accepts a backend configuration dictionary with video processing profiles:
+The service accepts a BackendConfig instance with backend profiles:
 
 ```python
-backend_config = {
-    "video_processing_profiles": {
-        "video_colpali_smol500_mv_frame": {
-            "model": "vidore/colpali-v1.2",
-            "embedding_dimension": 128,
-            "chunk_strategy": "frame",
-            # ... other config
-        },
-        "video_videoprism_base_mv_chunk_30s": {
-            "model": "google/videoprism-base",
-            "embedding_dimension": 768,
-            "chunk_strategy": "temporal",
-            # ... other config
-        }
-    }
-}
+from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
 
-service = SyntheticDataService(backend_config=backend_config)
+# Create backend config with profiles
+backend_config = BackendConfig(
+    tenant_id="acme",
+    backend_type="vespa",
+    url="http://localhost",
+    port=8080,
+    profiles={
+        "video_colpali_smol500_mv_frame": BackendProfileConfig(
+            profile_name="video_colpali_smol500_mv_frame",
+            type="video",
+            schema_name="video_colpali_smol500_mv",
+            embedding_model="vidore/colpali-v1.2",
+            pipeline_config={"chunk_strategy": "frame"}
+        ),
+        "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
+            profile_name="video_videoprism_base_mv_chunk_30s",
+            type="video",
+            schema_name="video_videoprism_base_mv",
+            embedding_model="google/videoprism-base",
+            pipeline_config={"chunk_strategy": "temporal"}
+        )
+    }
+)
+
+service = SyntheticDataService(backend=backend, backend_config=backend_config)
 ```
 
 ### Profile Selection
@@ -590,12 +712,15 @@ uv run pytest tests/routing/unit/synthetic/test_generators_integration.py -v
 ```
 
 **Test Coverage**:
+
 - 11 base generator tests
 - 7 generator integration tests
-- 23 registry tests
-- 22 schema tests
+- 25 registry tests
+- 20 schema tests
 - 19 service tests
-- **Total: 82 tests**
+- 14 approval system tests
+- 8 synthetic integration tests
+- **Total: 104 tests**
 
 ## Development
 
@@ -684,11 +809,11 @@ async def test_new_optimizer_generator():
 
 ## Package Location
 
-The synthetic data generation package is part of the Implementation Layer:
+The synthetic data generation package is part of the Core Layer:
 
-```
-packages/
-└── cogniverse-synthetic/
+```text
+libs/
+└── synthetic/                      # cogniverse-synthetic package
     ├── cogniverse_synthetic/
     │   ├── service.py              # Main service orchestrator
     │   ├── api.py                  # FastAPI router
@@ -704,10 +829,18 @@ packages/
     │   │   ├── cross_modal.py
     │   │   ├── routing.py
     │   │   └── workflow.py
-    │   └── utils/                  # Pattern extraction utilities
-    │       ├── pattern_extraction.py
-    │       └── agent_inference.py
-    └── tests/
+    │   ├── utils/                  # Pattern extraction utilities
+    │   │   ├── pattern_extraction.py
+    │   │   └── agent_inference.py
+    │   └── approval/               # Human-in-loop approval system
+    │       ├── confidence_extractor.py
+    │       └── feedback_handler.py
+    └── pyproject.toml
+
+# Tests are located at project root:
+tests/
+├── synthetic/integration/          # Synthetic package integration tests (1 test file)
+└── routing/unit/synthetic/         # Synthetic unit tests (6 test files + conftest.py)
 ```
 
 ## Related Documentation
@@ -718,9 +851,14 @@ packages/
 
 ## API Reference
 
-See `packages/cogniverse-synthetic/cogniverse_synthetic/` for detailed docstrings:
+See `libs/synthetic/cogniverse_synthetic/` for detailed docstrings:
+
 - `service.py` - SyntheticDataService class
+
 - `api.py` - FastAPI router
+
 - `schemas.py` - All Pydantic models
+
 - `registry.py` - Optimizer registry
+
 - `generators/` - All generator implementations

@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_runtime`
 **Location:** `libs/runtime/cogniverse_runtime/`
-**Purpose:** FastAPI server with video ingestion pipeline and multi-modal search APIs
-**Last Updated:** 2026-01-13
 
 ---
 
@@ -42,7 +40,7 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 
 ## Package Structure
 
-```
+```text
 cogniverse_runtime/
 ├── main.py                          # FastAPI app entry point
 ├── config_loader.py                 # Dynamic backend/agent loading
@@ -55,9 +53,11 @@ cogniverse_runtime/
 │   └── admin.py                     # Admin/tenant management
 ├── ingestion/                       # Video processing pipeline
 │   ├── pipeline.py                  # VideoIngestionPipeline
+│   ├── pipeline_builder.py          # Pipeline builder utilities
 │   ├── processor_base.py            # BaseProcessor, BaseStrategy
 │   ├── processor_manager.py         # ProcessorManager for auto-discovery
 │   ├── strategies.py                # Processing strategy implementations
+│   ├── strategy.py                  # Strategy base classes
 │   ├── strategy_factory.py          # StrategyFactory for profile-based config
 │   ├── processing_strategy_set.py   # Strategy orchestration
 │   ├── exceptions.py                # Pipeline-specific exceptions
@@ -69,14 +69,17 @@ cogniverse_runtime/
 │       ├── video_chunk_extractor.py # Chunk extraction utilities
 │       ├── audio_transcriber.py     # Whisper transcription
 │       ├── audio_processor.py       # Audio processing utilities
+│       ├── audio_embedding_generator.py # Audio embedding generation
 │       ├── vlm_processor.py         # VLM description generation
 │       ├── vlm_descriptor.py        # VLM descriptor implementation
 │       ├── single_vector_processor.py # Single-vector embeddings
-│       └── embedding_generator/     # Embedding generation
+│       ├── embedding_processor.py   # Generic embedding processor
+│       └── embedding_generator/     # Embedding generation subsystem
 │           ├── embedding_generator.py # Main generator interface
 │           ├── embedding_generator_impl.py # Implementation
+│           ├── embedding_generator_factory.py # Generator factory
 │           ├── embedding_processors.py # Model-specific processors
-│           ├── document_builders.py # Vespa document builders
+│           ├── document_builders.py # Document builders (internal)
 │           └── backend_factory.py   # Backend initialization
 ├── search/                          # Search service
 │   ├── service.py                   # SearchService implementation
@@ -131,6 +134,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 3. Set dependencies on routers
     admin.set_config_manager(config_manager)
+    admin.set_schema_loader(schema_loader)
     ingestion.set_config_manager(config_manager)
     ingestion.set_schema_loader(schema_loader)
 
@@ -162,6 +166,7 @@ The server uses modular routers for different functionality:
 | `ingestion` | `/ingestion` | Video upload and processing |
 | `agents` | `/agents` | Agent orchestration endpoints |
 | `admin` | `/admin` | Tenant and profile management |
+| `events` | `/events` | SSE streaming for real-time notifications |
 
 ```python
 # Router registration in main.py
@@ -187,11 +192,14 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 # Initialize pipeline
 config_manager = create_default_config_manager()
 pipeline = VideoIngestionPipeline(
-    tenant_id="acme",
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-    schema_name="video_colpali_mv_frame",  # Processing profile
-    debug_mode=True
+    tenant_id="acme",                       # Required - no default
+    config=None,                            # Optional PipelineConfig
+    app_config=None,                        # Optional application config dict
+    config_manager=config_manager,          # Required if config/app_config not provided
+    schema_loader=schema_loader,            # Optional for backend operations
+    schema_name="video_colpali_mv_frame",   # Processing profile
+    debug_mode=True,                        # Enable detailed logging
+    event_queue=None,                       # Optional EventQueue for real-time notifications
 )
 
 # Process single video
@@ -205,9 +213,13 @@ results = pipeline.process_directory(
 ```
 
 **Key Features:**
+
 - **Profile-based configuration**: Each `schema_name` maps to a processing profile
+
 - **Concurrent processing**: Process multiple videos in parallel
+
 - **Caching**: Optional caching of intermediate results (keyframes, transcripts)
+
 - **Strategy-driven**: Processing steps determined by strategy configuration
 
 **PipelineConfig:**
@@ -228,7 +240,7 @@ class PipelineConfig:
     vlm_batch_size: int = 500
 
     # Backend selection
-    search_backend: str = "vespa"
+    search_backend: str = "byaldi"  # "byaldi" or "vespa"
 ```
 
 ### Processing Strategies
@@ -337,13 +349,12 @@ manager.list_processors()
 
 | Processor | Name | Purpose |
 |-----------|------|---------|
-| `KeyframeExtractor` | `keyframe` | Extract frames using similarity |
-| `KeyframeExtractorFPS` | `keyframe_fps` | Extract frames at fixed FPS |
-| `VideoChunkExtractor` | `chunk` | Extract video chunks |
-| `AudioTranscriber` | `audio` | Whisper transcription |
-| `VLMDescriptor` | `vlm` | Generate frame descriptions |
+| `KeyframeProcessor` | `keyframe` | Extract frames using similarity |
+| `ChunkProcessor` | `chunk` | Extract video chunks |
+| `AudioProcessor` | `audio` | Audio processing utilities |
+| `VLMProcessor` | `vlm` | Generate frame descriptions |
 | `SingleVectorProcessor` | `single_vector` | Process for single-vector embeddings |
-| `EmbeddingGenerator` | `embedding` | Generate and store embeddings |
+| `EmbeddingProcessor` | `embedding` | Generate and store embeddings |
 
 ---
 
@@ -354,24 +365,33 @@ The search service provides multi-modal search with tenant isolation:
 ```python
 from cogniverse_runtime.search.service import SearchService
 from cogniverse_foundation.config.utils import get_config, create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 config = get_config(tenant_id="acme", config_manager=config_manager)
 
-# Create service
+# Create service - config_manager and schema_loader are REQUIRED
 search_service = SearchService(
     config=config,
-    profile="video_colpali_mv_frame"
+    profile="video_colpali_mv_frame",
+    tenant_id="acme",
+    config_manager=config_manager,  # Required
+    schema_loader=schema_loader,    # Required
 )
 
 # Execute search
 results = search_service.search(
     query="find videos about machine learning",
     top_k=10,
-    strategy="hybrid",
+    ranking_strategy="hybrid",  # SearchService method parameter
     filters={"modality": "video"},
     tenant_id="acme"
 )
+
+# Note: The API endpoint uses "strategy" field in SearchRequest,
+# but SearchService.search() method uses "ranking_strategy" parameter
 ```
 
 **Search Strategies:**
@@ -427,16 +447,25 @@ curl -X POST http://localhost:8000/search/rerank \
 
 ### Ingestion Endpoints
 
-**POST /ingestion/videos** - Process video
+**POST /ingestion/start** - Start batch video ingestion
 ```bash
-curl -X POST http://localhost:8000/ingestion/videos \
+curl -X POST http://localhost:8000/ingestion/start \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme" \
   -d '{
-    "video_path": "/data/videos/tutorial.mp4",
-    "profile": "video_colpali_mv_frame",
-    "metadata": {"title": "ML Tutorial"}
+    "video_dir": "/data/videos",
+    "profile": "video_colpali_smol500_mv_frame",
+    "backend": "vespa",
+    "tenant_id": "acme",
+    "batch_size": 10
   }'
+```
+
+**POST /ingestion/upload** - Upload single video
+```bash
+curl -X POST http://localhost:8000/ingestion/upload \
+  -F "file=@tutorial.mp4" \
+  -F "profile=video_colpali_smol500_mv_frame" \
+  -F "tenant_id=acme"
 ```
 
 **GET /ingestion/status/{job_id}** - Check processing status
@@ -444,12 +473,67 @@ curl -X POST http://localhost:8000/ingestion/videos \
 curl http://localhost:8000/ingestion/status/job-123
 ```
 
+### Agents Endpoints
+
+The agents router provides A2A (Agent-to-Agent) registry endpoints for agent discovery and management.
+
+**POST /agents/register** - Register an agent (A2A self-registration pattern)
+```bash
+curl -X POST http://localhost:8000/agents/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "video-search-agent",
+    "url": "http://localhost:8001",
+    "capabilities": ["video_search", "semantic_retrieval"],
+    "health_endpoint": "/health",
+    "process_endpoint": "/tasks/send",
+    "timeout": 30
+  }'
+```
+
+**GET /agents/** - List all registered agents
+```bash
+curl http://localhost:8000/agents/
+```
+
+**GET /agents/stats** - Get registry statistics including health status
+```bash
+curl http://localhost:8000/agents/stats
+```
+
+**GET /agents/by-capability/{capability}** - Find agents by capability
+```bash
+curl http://localhost:8000/agents/by-capability/video_search
+```
+
+**GET /agents/{agent_name}** - Get agent information
+```bash
+curl http://localhost:8000/agents/video-search-agent
+```
+
+**GET /agents/{agent_name}/card** - Get A2A agent card
+```bash
+curl http://localhost:8000/agents/video-search-agent/card
+```
+
+**DELETE /agents/{agent_name}** - Unregister an agent
+```bash
+curl -X DELETE http://localhost:8000/agents/video-search-agent
+```
+
+**POST /agents/{agent_name}/process** - Process task with agent (returns redirect to agent URL)
+
+**POST /agents/{agent_name}/upload** - Upload file to agent (returns redirect to agent URL)
+
 ### Admin Endpoints
 
-**GET /admin/tenants** - List tenants
-**POST /admin/tenants** - Create tenant
+**GET /admin/system/stats** - Get system statistics
 **GET /admin/profiles** - List processing profiles
-**POST /admin/profiles** - Create/update profile
+**GET /admin/profiles/{profile_name}** - Get profile details
+**POST /admin/profiles** - Create profile
+**PUT /admin/profiles/{profile_name}** - Update profile
+**DELETE /admin/profiles/{profile_name}** - Delete profile
+**POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile
 
 ### Health Endpoints
 
@@ -492,7 +576,7 @@ See [Events Module](./events.md) for complete documentation.
 
 ## Configuration
 
-### Profile Configuration (config.yml)
+### Profile Configuration
 
 Processing profiles are defined in the backend configuration:
 
@@ -644,39 +728,62 @@ services:
 
 ## Architecture Position
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Application Layer                             │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │           cogniverse-runtime ◄─── YOU ARE HERE              ││
-│  │  FastAPI server, ingestion pipeline, search API             ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                     cogniverse-dashboard                         │
-└─────────────────────────────────────────────────────────────────┘
-                                ↑
-┌─────────────────────────────────────────────────────────────────┐
-│                 Implementation Layer                             │
-│  cogniverse-agents │ cogniverse-vespa │ cogniverse-synthetic    │
-└─────────────────────────────────────────────────────────────────┘
-                                ↑
-┌─────────────────────────────────────────────────────────────────┐
-│                       Core Layer                                 │
-│  cogniverse-core │ cogniverse-evaluation │ cogniverse-telemetry │
-└─────────────────────────────────────────────────────────────────┘
-                                ↑
-┌─────────────────────────────────────────────────────────────────┐
-│                    Foundation Layer                              │
-│           cogniverse-foundation │ cogniverse-sdk                │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
+        Runtime["<span style='color:#000'>cogniverse-runtime ◄─ YOU ARE HERE<br/>FastAPI server, ingestion pipeline, search API</span>"]
+        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
+    end
+
+    subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
+        Agents["<span style='color:#000'>cogniverse-agents</span>"]
+        Vespa["<span style='color:#000'>cogniverse-vespa</span>"]
+        Synthetic["<span style='color:#000'>cogniverse-synthetic</span>"]
+    end
+
+    subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
+        Core["<span style='color:#000'>cogniverse-core</span>"]
+        Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
+        Telemetry["<span style='color:#000'>cogniverse-telemetry</span>"]
+    end
+
+    subgraph FoundationLayer["<span style='color:#000'>Foundation Layer</span>"]
+        Foundation["<span style='color:#000'>cogniverse-foundation</span>"]
+        SDK["<span style='color:#000'>cogniverse-sdk</span>"]
+    end
+
+    AppLayer --> ImplLayer
+    ImplLayer --> CoreLayer
+    CoreLayer --> FoundationLayer
+
+    style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
+    style Runtime fill:#90caf9,stroke:#1565c0,color:#000
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CoreLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Telemetry fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Dependencies:**
+
 - `cogniverse-core`: Registries, orchestration, memory
+
 - `cogniverse-agents`: Agent implementations
+
 - `cogniverse-vespa`: Vespa backend operations
+
 - `cogniverse-foundation`: Configuration and telemetry
 
 **Dependents:**
+
 - `cogniverse-dashboard`: Uses runtime APIs
 
 ---
@@ -684,23 +791,280 @@ services:
 ## Testing
 
 ```bash
-# Run all runtime tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/runtime/ -v
+# Run all runtime tests (ingestion pipeline tests)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v
 
 # Run integration tests (requires services)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/runtime/integration/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/integration/ -v
 
 # Run specific tests
-uv run pytest tests/runtime/unit/test_pipeline.py -v
-uv run pytest tests/runtime/unit/test_search_service.py -v
+uv run pytest tests/ingestion/unit/ -v
 
 # Test with coverage
-uv run pytest tests/runtime/ --cov=cogniverse_runtime --cov-report=html
+uv run pytest tests/ingestion/ --cov=cogniverse_runtime --cov-report=html
 ```
 
 **Test Categories:**
-- `tests/runtime/unit/` - Unit tests for pipeline, processors, strategies
-- `tests/runtime/integration/` - Integration tests with Vespa, Phoenix
+
+- `tests/ingestion/unit/` - Unit tests for pipeline, processors, strategies
+
+- `tests/ingestion/integration/` - Integration tests with Vespa, Phoenix
+
+---
+
+## Admin System
+
+The admin system provides multi-tenant organization and profile management.
+
+### TenantManager API
+
+**Location:** `admin/tenant_manager.py`
+
+FastAPI endpoints for organization and tenant CRUD operations:
+
+```python
+# Architecture: org:tenant format
+# Examples: "acme:production", "startup:dev"
+
+# Create organization
+POST /admin/organizations
+{
+    "org_id": "acme",
+    "org_name": "Acme Corp",
+    "created_by": "admin"
+}
+
+# Create tenant (auto-creates org if needed)
+POST /admin/tenants
+{
+    "tenant_id": "acme:production",
+    "created_by": "admin",
+    "base_schemas": ["video_colpali_mv_frame"]
+}
+
+# List tenants for organization
+GET /admin/organizations/acme/tenants
+
+# Delete tenant
+DELETE /admin/tenants/acme:production
+```
+
+**Key Functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `validate_org_id(org_id)` | Validate org ID format (alphanumeric + underscore) |
+| `validate_tenant_name(tenant_name)` | Validate tenant name format |
+| `get_backend()` | Get/create backend for metadata operations |
+| `set_schema_loader(schema_loader)` | Inject SchemaLoader during app startup |
+
+### Admin Models
+
+**Location:** `admin/models.py`
+
+Data models for organization and tenant management:
+
+```python
+@dataclass
+class Organization:
+    org_id: str           # e.g., "acme"
+    org_name: str         # e.g., "Acme Corporation"
+    created_at: int       # Unix timestamp (ms)
+    created_by: str       # User/service that created
+    status: str = "active"  # active | suspended | deleted
+    tenant_count: int = 0
+    config: Optional[Dict] = None
+
+@dataclass
+class Tenant:
+    tenant_full_id: str   # e.g., "acme:production"
+    org_id: str           # e.g., "acme"
+    tenant_name: str      # e.g., "production"
+    created_at: int       # Unix timestamp (ms)
+    created_by: str
+    status: str = "active"
+    schemas_deployed: List[str] = []  # Vespa schemas for this tenant
+    config: Optional[Dict] = None
+```
+
+### Profile Models
+
+**Location:** `admin/profile_models.py`
+
+Pydantic models for backend profile CRUD operations:
+
+```python
+class ProfileCreateRequest(BaseModel):
+    profile_name: str          # Unique identifier
+    tenant_id: str = "default"
+    type: str = "video"        # video, image, audio, text
+    description: str = ""
+    schema_name: str           # Base schema (must have template)
+    embedding_model: str       # e.g., "vidore/colsmol-500m"
+    pipeline_config: Dict      # keyframe extraction, transcription, etc.
+    strategies: Dict           # segmentation, embedding strategies
+    embedding_type: str        # frame_based, video_chunks, direct_video_segment, single_vector
+    schema_config: Dict        # dimensions, model_name, patches
+    deploy_schema: bool = False  # Deploy to Vespa immediately
+
+class ProfileDetail(BaseModel):
+    profile_name: str
+    tenant_id: str
+    type: str
+    description: str
+    schema_name: str
+    embedding_model: str
+    pipeline_config: Dict[str, Any]
+    strategies: Dict[str, Any]
+    embedding_type: str
+    schema_config: Dict[str, Any]
+    model_specific: Optional[Dict[str, Any]] = None
+    schema_deployed: bool
+    tenant_schema_name: Optional[str]
+    created_at: str
+    version: int
+```
+
+---
+
+## Embedding Generator Subsystem
+
+**Location:** `ingestion/processors/embedding_generator/`
+
+The embedding generator subsystem provides backend-agnostic embedding generation.
+
+### EmbeddingGenerator
+
+**Location:** `embedding_generator.py`
+
+Backend-agnostic embedding generator that passes raw embeddings:
+
+```python
+from cogniverse_runtime.ingestion.processors.embedding_generator import (
+    EmbeddingGenerator,
+    EmbeddingResult,
+)
+
+generator = EmbeddingGenerator(
+    config=config,
+    logger=logger,
+    profile_config={
+        "process_type": "frame_based",
+        "embedding_model": "vidore/colsmol-500m"
+    },
+    backend_client=vespa_backend
+)
+
+result = generator.generate_embeddings(
+    video_data={"video_id": "vid123", "frames": frames},
+    output_dir=Path("outputs/")
+)
+
+# EmbeddingResult contains:
+# - video_id: str
+# - total_documents: int
+# - documents_processed: int
+# - documents_fed: int
+# - processing_time: float
+# - errors: list[str]
+# - metadata: dict
+```
+
+**Processing Types:**
+
+| Type | Method | Use Case |
+|------|--------|----------|
+| `single_vector` | `_generate_single_vector_embeddings` | VideoPrism LVT |
+| `video_chunks` | `_generate_video_chunks_embeddings` | ColQwen, VideoPrism |
+| `direct_video` | `_generate_direct_video_embeddings` | Direct video processing |
+| `frame_based` | `_generate_frame_based_embeddings` | ColPali frame-by-frame |
+
+### EmbeddingGeneratorFactory
+
+**Location:** `embedding_generator_factory.py`
+
+Factory for creating embedding generators based on backend type:
+
+```python
+from cogniverse_runtime.ingestion.processors.embedding_generator import (
+    EmbeddingGeneratorFactory,
+    create_embedding_generator,
+)
+
+# Via factory
+generator = EmbeddingGeneratorFactory.create(
+    backend="vespa",
+    tenant_id="acme",           # REQUIRED
+    config=config,
+    logger=logger,
+    profile_config=profile_config,
+    config_manager=config_manager,  # REQUIRED (DI)
+    schema_loader=schema_loader,    # REQUIRED (DI)
+)
+
+# Via convenience function
+generator = create_embedding_generator(
+    config=config,
+    schema_name="video_colpali_mv_frame",
+    tenant_id="acme",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
+```
+
+### DocumentBuilder
+
+**Location:** `document_builders.py`
+
+The document builder classes (`DocumentBuilder`, `DocumentBuilderFactory`, `DocumentMetadata`) exist in the codebase but are **not exported** from the embedding_generator package. They are used internally by the backend implementations and are not part of the public API.
+
+**Note:** Document building is now handled internally by backend implementations. Users should not need to create documents manually - the `EmbeddingGenerator` and backend clients handle this automatically.
+
+**Internal Document Fields** (for reference):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `video_id` | str | Video identifier |
+| `video_title` | str | Video title |
+| `creation_timestamp` | int | Unix timestamp |
+| `segment_id` | int | Segment index |
+| `start_time` | float | Segment start (seconds) |
+| `end_time` | float | Segment end (seconds) |
+| `embedding` | tensor | Float embeddings |
+| `embedding_binary` | tensor | Binary embeddings |
+| `audio_transcript` | str | Optional transcription |
+| `segment_description` | str | Optional VLM description |
+
+### BackendFactory
+
+**Location:** `backend_factory.py`
+
+Creates backend clients using the backend registry:
+
+```python
+from cogniverse_runtime.ingestion.processors.embedding_generator import (
+    BackendFactory,
+)
+
+backend = BackendFactory.create(
+    backend_type="vespa",
+    tenant_id="acme",           # REQUIRED
+    config=config,
+    logger=logger,
+    config_manager=config_manager,  # REQUIRED (DI)
+    schema_loader=schema_loader,    # REQUIRED (DI)
+)
+
+# Returns IngestionBackend instance
+```
+
+**Dependency Injection Requirements:**
+
+All factory methods require explicit dependency injection:
+
+- `config_manager`: ConfigManager instance
+- `schema_loader`: SchemaLoader instance
+- `tenant_id`: Required, no default allowed
 
 ---
 

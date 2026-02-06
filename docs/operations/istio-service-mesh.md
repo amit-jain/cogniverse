@@ -1,9 +1,8 @@
 # Istio Service Mesh Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages in layered architecture
-**Purpose:** Deploy Istio service mesh for mTLS, traffic control, and observability on K3s/K8s
 **Telemetry:** Integrated with Phoenix (no Jaeger needed)
+
+**Service Naming:** This guide assumes Helm deployment with release name "cogniverse". Service names follow the pattern `cogniverse-<component>` (e.g., `cogniverse-runtime`, `cogniverse-phoenix`, `cogniverse-vespa`). If using a different release name, adjust service names accordingly.
 
 ---
 
@@ -14,21 +13,25 @@ Istio provides production-grade service mesh capabilities for Cogniverse:
 ### Key Benefits
 
 **Security**:
+
 - Automatic mTLS between all services (zero code changes)
 - Certificate rotation and management
 - Fine-grained access control policies
 
 **Resilience**:
+
 - Automatic retries with exponential backoff
 - Circuit breakers to prevent cascade failures
 - Timeouts and connection pooling
 
 **Traffic Control**:
+
 - Canary deployments (send 10% traffic to new version)
 - A/B testing (route by headers)
 - DNS-based multi-cluster routing
 
 **Observability**:
+
 - Distributed tracing via Phoenix (already deployed)
 - Service topology visualization via Kiali
 - Metrics collection (optional with default/production profiles)
@@ -58,21 +61,33 @@ kubectl get nodes
 ### Resource Requirements
 
 **Minimal Profile** (recommended for home/development):
+
 - **CPU**: 2 cores minimum
+
 - **RAM**: 8-12GB total (Istio uses ~700MB)
+
 - **Disk**: 20GB
+
 - **Services**: Istiod (control plane), Ingress Gateway
 
 **Default Profile** (production-like):
+
 - **CPU**: 4 cores minimum
+
 - **RAM**: 16GB total (Istio uses ~2GB)
+
 - **Disk**: 40GB
+
 - **Services**: Istiod, Ingress Gateway, Egress Gateway, Prometheus, Grafana
 
 **Production Profile** (enterprise scale):
+
 - **CPU**: 8+ cores
+
 - **RAM**: 32GB+ total (Istio uses ~4GB)
+
 - **Disk**: 100GB+
+
 - **Services**: All services with high availability (multi-replica)
 
 ---
@@ -120,14 +135,14 @@ spec:
       tracing:
         sampling: 100.0  # 100% sampling for development (reduce for production)
         openCensusAgent:
-          address: phoenix.default.svc.cluster.local:4317
+          address: cogniverse-phoenix.default.svc.cluster.local:4317
           context: [W3C_TRACE_CONTEXT]
 
     # Extension providers (Phoenix for tracing)
     extensionProviders:
     - name: phoenix-tracing
       opentelemetry:
-        service: phoenix.default.svc.cluster.local
+        service: cogniverse-phoenix.default.svc.cluster.local
         port: 4317
 
   # Component configuration
@@ -231,12 +246,74 @@ kubectl get namespace -L istio-injection
 # istio-system      Active   2m
 ```
 
-### Step 5: Deploy Phoenix (if not already deployed)
+### Step 5: Deploy Phoenix with OTLP Support (if not already deployed)
 
-Phoenix must be deployed for distributed tracing:
+**IMPORTANT**: The default Helm chart for Phoenix only exposes port 6006 (HTTP). For Istio tracing to work, you need OTLP port 4317 exposed.
+
+**Option A: Modify Helm chart values** (recommended):
+
+You need to modify `charts/cogniverse/values.yaml` to add OTLP port. Change the Phoenix service configuration from:
+
+```yaml
+phoenix:
+  service:
+    type: ClusterIP
+    port: 6006
+    annotations: {}
+```
+
+To support multiple ports:
+
+```yaml
+phoenix:
+  service:
+    type: ClusterIP
+    ports:
+      http: 6006
+      otlpGrpc: 4317
+    annotations: {}
+```
+
+Then modify `charts/cogniverse/templates/all-resources.yaml` Phoenix Service section to expose both ports:
+
+```yaml
+spec:
+  type: {{ .Values.phoenix.service.type }}
+  ports:
+  - port: {{ .Values.phoenix.service.ports.http }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  - port: {{ .Values.phoenix.service.ports.otlpGrpc }}
+    targetPort: otlp-grpc
+    protocol: TCP
+    name: otlp-grpc
+```
+
+And add the OTLP container port to the Phoenix StatefulSet:
+
+```yaml
+ports:
+- name: http
+  containerPort: 6006
+- name: otlp-grpc
+  containerPort: 4317
+```
+
+After modifications, install/upgrade:
 
 ```bash
-# Create Phoenix deployment
+# Install/upgrade with OTLP support
+helm upgrade --install cogniverse ./charts/cogniverse
+
+# Verify Phoenix service has both ports
+kubectl get svc cogniverse-phoenix -o yaml | grep -A 10 "ports:"
+```
+
+**Option B: Manual deployment** (for testing only):
+
+```bash
+# Create standalone Phoenix deployment with OTLP support
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Service
@@ -310,11 +387,13 @@ spec:
 EOF
 
 # Verify Phoenix is running
-kubectl get pods -l app=phoenix
+kubectl get pods -l app.kubernetes.io/component=phoenix
 
 # Check Phoenix logs
-kubectl logs -l app=phoenix -f
+kubectl logs -l app.kubernetes.io/component=phoenix -f
 ```
+
+**Note**: Manual deployment uses `app: phoenix` label, while Helm uses `app.kubernetes.io/component: phoenix`. The examples in this guide assume Helm deployment with release name "cogniverse".
 
 ### Step 6: Restart Services for Sidecar Injection
 
@@ -324,20 +403,25 @@ Restart existing Cogniverse services to inject Istio sidecars:
 # Restart all deployments in default namespace
 kubectl rollout restart deployment -n default
 
+# If using StatefulSets, restart them too
+kubectl rollout restart statefulset -n default
+
 # Verify sidecars are injected (should show 2/2 READY)
 kubectl get pods -n default
 
-# Expected output:
-# NAME                              READY   STATUS    RESTARTS   AGE
-# cogniverse-runtime-xxxxx-xxxxx    2/2     Running   0          1m
-# cogniverse-dashboard-xxxxx-xxxxx  2/2     Running   0          1m
-# vespa-0                           2/2     Running   0          1m
-# phoenix-xxxxx-xxxxx               2/2     Running   0          1m
-# ollama-0                          2/2     Running   0          1m
+# Expected output (with Helm release name "cogniverse"):
+# NAME                                    READY   STATUS    RESTARTS   AGE
+# cogniverse-runtime-xxxxx-xxxxx          2/2     Running   0          1m
+# cogniverse-dashboard-xxxxx-xxxxx        2/2     Running   0          1m
+# cogniverse-vespa-0                      2/2     Running   0          1m
+# cogniverse-phoenix-0                    2/2     Running   0          1m
+# cogniverse-ollama-0                     2/2     Running   0          1m
 ```
 
 **Explanation of 2/2 READY:**
-- Container 1: Application (cogniverse-runtime, etc.)
+
+- Container 1: Application (runtime, dashboard, etc.)
+
 - Container 2: Envoy proxy sidecar (injected by Istio)
 
 ### Step 7: Enable mTLS (Strict Mode)
@@ -358,7 +442,10 @@ spec:
 EOF
 
 # Verify mTLS is enabled
-istioctl authn tls-check $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}')
+# Note: Use label selector matching your deployment method
+# Helm deployment: app.kubernetes.io/component=runtime
+# Manual deployment: app=runtime
+istioctl authn tls-check $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
 ```
 
 ### Step 8: Configure Tracing (Phoenix Integration)
@@ -386,14 +473,14 @@ kubectl get telemetry -n istio-system
 
 ### Step 9: Verify Tracing Works
 
-Test that traces are being sent to Phoenix:
+Test that traces are being sent to Phoenix via OTLP:
 
 ```bash
-# Generate some traffic
-kubectl exec -it $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}') -c cogniverse-runtime -- curl -v http://localhost:8000/health
+# Generate some traffic (note: use app.kubernetes.io/component label)
+kubectl exec -it $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}') -c runtime -- curl -v http://localhost:8000/health
 
 # Port-forward Phoenix UI
-kubectl port-forward svc/phoenix 6006:6006
+kubectl port-forward svc/cogniverse-phoenix 6006:6006
 
 # Open browser to http://localhost:6006
 # Navigate to "Traces" section
@@ -401,9 +488,13 @@ kubectl port-forward svc/phoenix 6006:6006
 ```
 
 **What you'll see in Phoenix:**
+
 - Service-to-service calls with timing
+
 - HTTP headers, status codes, methods
+
 - Trace spans showing Envoy proxy routing
+
 - Service topology graph
 
 ---
@@ -431,10 +522,15 @@ kubectl port-forward svc/kiali -n istio-system 20001:20001
 ```
 
 **Kiali Features:**
+
 - Service topology graph (visual map of all services)
+
 - Traffic flow visualization (request rates, error rates)
+
 - Configuration validation (detect misconfigurations)
+
 - Distributed tracing integration (links to Phoenix traces)
+
 - mTLS status indicators (see which services have mTLS enabled)
 
 ### Resource Monitoring
@@ -446,8 +542,8 @@ For minimal profile, use kubectl to monitor resources:
 kubectl top pods -n istio-system
 kubectl top pods -n default
 
-# Check Istio proxy memory/CPU per pod
-kubectl exec -it $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}') -c istio-proxy -- sh -c 'curl -s http://localhost:15000/stats/prometheus | grep -E "(memory|cpu)"'
+# Check Istio proxy memory/CPU per pod (use correct label)
+kubectl exec -it $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}') -c istio-proxy -- sh -c 'curl -s http://localhost:15000/stats/prometheus | grep -E "(memory|cpu)"'
 ```
 
 ---
@@ -458,28 +554,28 @@ Use Istio for **zero-code multi-cluster routing** based on tenant headers.
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────┐
-│         Load Balancer (tenant-aware)            │
-│  Reads X-Tenant-ID header, routes to cluster    │
-└─────────────────────────────────────────────────┘
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-        ▼                       ▼
-┌──────────────┐        ┌──────────────┐
-│  Cluster US  │        │  Cluster EU  │
-│  (tenant_a)  │        │  (tenant_b)  │
-│              │        │              │
-│  Istio VirtualService │  Istio VirtualService
-│  Routes internally    │  Routes internally
-└──────────────┘        └──────────────┘
+```mermaid
+flowchart TD
+    LB["<span style='color:#000'><b>Load Balancer</b><br/>Tenant-aware routing<br/>Reads X-Tenant-ID header</span>"]
+    US["<span style='color:#000'><b>Cluster US</b><br/>tenant_a<br/><br/>Istio VirtualService<br/>Routes internally</span>"]
+    EU["<span style='color:#000'><b>Cluster EU</b><br/>tenant_b<br/><br/>Istio VirtualService<br/>Routes internally</span>"]
+
+    LB -->|tenant_a| US
+    LB -->|tenant_b| EU
+
+    style LB fill:#b0bec5,stroke:#546e7a,color:#000
+    style US fill:#90caf9,stroke:#1565c0,color:#000
+    style EU fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 **Key Points:**
+
 - ✅ Load balancer routes based on `X-Tenant-ID` header
+
 - ✅ Istio handles internal routing within cluster
+
 - ✅ **Zero application code changes** needed
+
 - ✅ Each cluster has separate Vespa, Phoenix, Ollama instances
 
 ### Load Balancer Configuration
@@ -698,7 +794,7 @@ metadata:
   name: vespa-circuit-breaker
   namespace: default
 spec:
-  host: vespa
+  host: cogniverse-vespa
   trafficPolicy:
     connectionPool:
       tcp:
@@ -727,11 +823,11 @@ metadata:
   namespace: default
 spec:
   hosts:
-  - vespa
+  - cogniverse-vespa
   http:
   - route:
     - destination:
-        host: vespa
+        host: cogniverse-vespa
     timeout: 10s
     retries:
       attempts: 3
@@ -771,12 +867,12 @@ spec:
       tracing:
         sampling: 1.0  # 1% sampling for production
         openCensusAgent:
-          address: phoenix.default.svc.cluster.local:4317
+          address: cogniverse-phoenix.default.svc.cluster.local:4317
           context: [W3C_TRACE_CONTEXT]
     extensionProviders:
     - name: phoenix-tracing
       opentelemetry:
-        service: phoenix.default.svc.cluster.local
+        service: cogniverse-phoenix.default.svc.cluster.local
         port: 4317
 
   components:
@@ -857,14 +953,14 @@ kubectl rollout restart deployment/cogniverse-runtime
 ### mTLS Connection Errors
 
 ```bash
-# Check mTLS status for a pod
-istioctl authn tls-check $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}')
+# Check mTLS status for a pod (use correct label)
+istioctl authn tls-check $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
 
 # Check peer authentication policy
 kubectl get peerauthentication -n default
 
-# View Envoy proxy logs
-kubectl logs -l app=cogniverse-runtime -c istio-proxy
+# View Envoy proxy logs (use correct label)
+kubectl logs -l app.kubernetes.io/component=runtime -c istio-proxy
 ```
 
 ### Tracing Not Appearing in Phoenix
@@ -873,14 +969,14 @@ kubectl logs -l app=cogniverse-runtime -c istio-proxy
 # Check Telemetry resource
 kubectl get telemetry -n istio-system
 
-# Check Phoenix is receiving traces
-kubectl logs -l app=phoenix | grep -i otlp
+# Check Phoenix is receiving traces (note: manual deployment uses app=phoenix)
+kubectl logs -l app.kubernetes.io/component=phoenix | grep -i otlp
 
-# Verify Envoy is sending traces
-kubectl exec -it $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}') -c istio-proxy -- curl -s http://localhost:15000/config_dump | grep tracing
+# Verify Envoy is sending traces (use correct labels)
+kubectl exec -it $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}') -c istio-proxy -- curl -s http://localhost:15000/config_dump | grep tracing
 
 # Test manual trace generation
-kubectl exec -it $(kubectl get pod -l app=cogniverse-runtime -o jsonpath='{.items[0].metadata.name}') -c cogniverse-runtime -- curl -v http://localhost:8000/health
+kubectl exec -it $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}') -c runtime -- curl -v http://localhost:8000/health
 ```
 
 ### High Resource Usage
@@ -919,24 +1015,39 @@ kubectl port-forward -n istio-system svc/istio-ingressgateway 8080:80
 ## Summary
 
 **Minimal Profile** (recommended for home/development):
+
 - ✅ Core service mesh features (mTLS, retries, circuit breakers)
+
 - ✅ Phoenix integration (no Jaeger needed)
+
 - ✅ Kiali for visualization
+
 - ✅ ~700MB resource usage
+
 - ✅ Single replica for all components
 
 **Production Profile** (enterprise scale):
+
 - ✅ All minimal features
+
 - ✅ High availability (multi-replica)
+
 - ✅ Egress gateway
+
 - ✅ Prometheus + Grafana
+
 - ✅ ~4GB resource usage
 
 **Key Takeaways:**
+
 1. **Phoenix replaces Jaeger** - single telemetry stack
+
 2. **DNS-based multi-cluster** - zero code changes needed
+
 3. **Automatic mTLS** - secure by default
+
 4. **Traffic control** - canary, A/B testing, circuit breakers
+
 5. **Kiali visualization** - see your mesh in real-time
 
 ---

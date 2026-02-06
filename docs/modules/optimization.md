@@ -2,14 +2,12 @@
 
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Module Location:** `libs/agents/cogniverse_agents/routing/` (optimization components)
-**Purpose:** DSPy-based multi-stage optimization for routing, modality-specific, and cross-modal decision-making
-**Last Updated:** 2026-01-25
 
 ---
 
 ## Package Structure
 
-```
+```text
 libs/agents/cogniverse_agents/routing/
 ├── optimization_orchestrator.py    # Complete optimization pipeline orchestrator
 ├── advanced_optimizer.py           # GRPO routing optimizer with DSPy
@@ -23,6 +21,7 @@ libs/synthetic/                     # Synthetic data generation system
 ├── cogniverse_synthetic/
 │   ├── service.py                 # Main SyntheticDataService
 │   ├── generators/                # Optimizer-specific generators
+│   │   ├── base.py               # Base generator classes
 │   │   ├── modality.py           # ModalityOptimizer training data
 │   │   ├── cross_modal.py        # CrossModalOptimizer training data
 │   │   ├── routing.py            # AdvancedRoutingOptimizer training data
@@ -58,8 +57,11 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 - **Complete Optimization Pipeline**: Automatic span evaluation, annotation, and feedback loops
 
 ### Dependencies
+
+**Note**: Optimizer classes require full module path imports as they are not exported at package level.
+
 ```python
-# Optimizers
+# Optimizers (require full module paths)
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
@@ -67,7 +69,7 @@ from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 
-# Synthetic Data Generation
+# Synthetic Data Generation (exported at package level)
 from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest, SyntheticDataResponse
 from cogniverse_synthetic import OPTIMIZER_REGISTRY
 ```
@@ -79,58 +81,58 @@ from cogniverse_synthetic import OPTIMIZER_REGISTRY
 ### 1. Multi-Stage Optimization Architecture
 
 ```mermaid
-graph TB
-    Orchestrator[Optimization Orchestrator<br/>• Continuous span evaluation every 15m<br/>• Annotation workflow every 30m<br/>• Feedback loop integration every 15m<br/>• Automatic optimization triggering]
+flowchart TB
+    Orchestrator["<span style='color:#000'>Optimization Orchestrator<br/>• Continuous span evaluation every 15m<br/>• Annotation workflow every 30m<br/>• Feedback loop integration every 15m<br/>• Automatic optimization triggering</span>"]
 
-    Orchestrator --> Unified[Unified Optimizer Bidirectional Learning<br/>• Routing Optimization ←→ Orchestration Outcomes<br/>• Workflow Intelligence integration<br/>• Cross-pollination of insights]
+    Orchestrator --> Unified["<span style='color:#000'>Unified Optimizer Bidirectional Learning<br/>• Routing Optimization ←→ Orchestration Outcomes<br/>• Workflow Intelligence integration<br/>• Cross-pollination of insights</span>"]
 
-    Unified --> AdvRouting[Advanced<br/>Routing<br/>Optimizer]
-    Unified --> Modality[Modality<br/>Optimizer]
-    Unified --> CrossModal[Cross-Modal<br/>Optimizer]
-    Unified --> Coordinator[Optimizer<br/>Coordinator<br/>Facade]
+    Unified --> AdvRouting["<span style='color:#000'>Advanced<br/>Routing<br/>Optimizer</span>"]
+    Unified --> Modality["<span style='color:#000'>Modality<br/>Optimizer</span>"]
+    Unified --> CrossModal["<span style='color:#000'>Cross-Modal<br/>Optimizer</span>"]
+    Unified --> Coordinator["<span style='color:#000'>Optimizer<br/>Coordinator<br/>Facade</span>"]
 
-    style Orchestrator fill:#e1f5ff
-    style Unified fill:#fff4e1
-    style AdvRouting fill:#ffe1e1
-    style Modality fill:#ffe1e1
-    style CrossModal fill:#ffe1e1
-    style Coordinator fill:#ffe1e1
+    style Orchestrator fill:#90caf9,stroke:#1565c0,color:#000
+    style Unified fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AdvRouting fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Modality fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CrossModal fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Coordinator fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### 2. Advanced Routing Optimizer Architecture (GRPO)
 
 ```mermaid
-graph TB
-    Collection[Routing Experience Collection<br/>• Query, entities, relationships, enhanced_query<br/>• Chosen agent, routing confidence<br/>• Search quality, agent success, user satisfaction<br/>• Processing time → Computed reward]
+flowchart TB
+    Collection["<span style='color:#000'>Routing Experience Collection<br/>• Query, entities, relationships, enhanced_query<br/>• Chosen agent, routing confidence<br/>• Search quality, agent success, user satisfaction<br/>• Processing time → Computed reward</span>"]
 
-    Collection --> Buffer[Experience Replay Buffer<br/>• Store routing experiences max 1000<br/>• Sample batches for training batch_size=32<br/>• Track metrics: avg_reward, success_rate, confidence_accuracy]
+    Collection --> Buffer["<span style='color:#000'>Experience Replay Buffer<br/>• Store routing experiences max 1000<br/>• Sample batches for training batch_size=32<br/>• Track metrics: avg_reward, success_rate, confidence_accuracy</span>"]
 
-    Buffer --> Pipeline[Multi-Stage DSPy Optimization Pipeline<br/>Dataset Size < 20: BootstrapFewShot<br/>Dataset Size >= 50: SIMBA similarity-based memory<br/>Dataset Size >= 100: MIPROv2 metric-aware instruction<br/>Dataset Size >= 200: GEPA reflective prompt evolution<br/>Optimizer Selection: adaptive, gepa, mipro, simba]
+    Buffer --> Pipeline["<span style='color:#000'>Multi-Stage DSPy Optimization Pipeline<br/>Dataset Size < 20: BootstrapFewShot<br/>Dataset Size >= 50: SIMBA similarity-based memory<br/>Dataset Size >= 100: MIPROv2 metric-aware instruction<br/>Dataset Size >= 200: GEPA reflective prompt evolution<br/>Optimizer Selection: adaptive, gepa, mipro, simba</span>"]
 
-    Pipeline --> Policy[Optimized Routing Policy Module<br/>• RoutingPolicySignature query → recommended_agent + confidence<br/>• ChainOfThought reasoning<br/>• Confidence calibration<br/>• Exploration vs Exploitation epsilon-greedy]
+    Pipeline --> Policy["<span style='color:#000'>Optimized Routing Policy Module<br/>• RoutingPolicySignature query → recommended_agent + confidence<br/>• ChainOfThought reasoning<br/>• Confidence calibration<br/>• Exploration vs Exploitation epsilon-greedy</span>"]
 
-    style Collection fill:#e1f5ff
-    style Buffer fill:#fff4e1
-    style Pipeline fill:#ffe1e1
-    style Policy fill:#e1ffe1
+    style Collection fill:#90caf9,stroke:#1565c0,color:#000
+    style Buffer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Pipeline fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Policy fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Modality Optimizer Architecture (XGBoost Meta-Learning)
 
 ```mermaid
-graph TB
-    SpanCollection[Modality Span Collection<br/>• Collect spans per modality VIDEO, IMAGE, AUDIO, DOCUMENT<br/>• Extract modality features from telemetry<br/>• Filter by confidence threshold]
+flowchart TB
+    SpanCollection["<span style='color:#000'>Modality Span Collection<br/>• Collect spans per modality VIDEO, IMAGE, AUDIO, DOCUMENT<br/>• Extract modality features from telemetry<br/>• Filter by confidence threshold</span>"]
 
-    SpanCollection --> XGBoost[XGBoost Meta-Models Decision Making<br/>1. TrainingDecisionModel:<br/>• should_train context → bool + expected_improvement<br/>• Features: sample_count, success_rate, days_since_training<br/><br/>2. TrainingStrategyModel:<br/>• select_strategy context → SKIP / SYNTHETIC / HYBRID / REAL<br/>• Progressive strategies based on data availability]
+    SpanCollection --> XGBoost["<span style='color:#000'>XGBoost Meta-Models Decision Making<br/>1. TrainingDecisionModel:<br/>• should_train context → bool + expected_improvement<br/>• Features: sample_count, success_rate, days_since_training<br/><br/>2. TrainingStrategyModel:<br/>• select_strategy context → SKIP / SYNTHETIC / HYBRID / REAL<br/>• Progressive strategies based on data availability</span>"]
 
-    XGBoost --> SyntheticService[Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples backend content using DSPy modules<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects]
+    XGBoost --> SyntheticService["<span style='color:#000'>Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples backend content using DSPy modules<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects</span>"]
 
-    SyntheticService --> Training[Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality]
+    SyntheticService --> Training["<span style='color:#000'>Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality</span>"]
 
-    style SpanCollection fill:#e1f5ff
-    style XGBoost fill:#fff4e1
-    style SyntheticService fill:#ffe1e1
-    style Training fill:#e1ffe1
+    style SpanCollection fill:#90caf9,stroke:#1565c0,color:#000
+    style XGBoost fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SyntheticService fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Training fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -165,7 +167,14 @@ async def run_once(self) -> Dict[str, Any]:
     """
 
 def get_metrics(self) -> Dict[str, Any]:
-    """Get orchestrator metrics including uptime and component stats"""
+    """
+    Get orchestrator metrics including uptime and component stats
+
+    Returns:
+        Dict with keys: spans_evaluated, experiences_created, annotations_requested,
+        annotations_completed, optimizations_triggered, total_improvement, started_at,
+        last_optimization, uptime_seconds
+    """
 ```
 
 **Constructor Parameters:**
@@ -182,11 +191,17 @@ __init__(
 ```
 
 **Internal Components:**
-- `PhoenixSpanEvaluator` - Extract routing experiences from telemetry
+
+- `RoutingSpanEvaluator` - Extract routing experiences from telemetry
+
 - `AnnotationAgent` - Identify low-quality spans
+
 - `LLMAutoAnnotator` - Generate annotations automatically
-- `AnnotationStorage` - Store annotations in Phoenix
+
+- `RoutingAnnotationStorage` - Store annotations in Phoenix
+
 - `AnnotationFeedbackLoop` - Feed annotations to optimizer
+
 - `AdvancedRoutingOptimizer` - GRPO optimization
 
 **File:** `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py`
@@ -381,9 +396,13 @@ __init__(
 ```
 
 **Learning Signals:**
+
 - `orchestration_was_beneficial`: success + user_satisfaction > 0.7
+
 - `multi_agent_synergy`: len(agent_sequence) > 1
+
 - `parallel_efficiency`: From workflow metadata
+
 - `orchestration_pattern`: Sequential, parallel, or conditional
 
 **File:** `libs/agents/cogniverse_agents/routing/unified_optimizer.py`
@@ -514,8 +533,11 @@ class ModalityRoutingModule(dspy.Module):
 ```
 
 **Training:**
+
 - Uses **MIPROv2** if ≥50 examples (metric-aware instruction optimization)
+
 - Uses **BootstrapFewShot** if <50 examples (few-shot learning)
+
 - Saves trained models per modality to `model_dir/{modality}_routing_module.json`
 
 **File:** `libs/agents/cogniverse_agents/routing/modality_optimizer.py`
@@ -570,10 +592,10 @@ def get_optimization_status(self) -> Dict[str, Any]:
 **Lazy Loading:**
 ```python
 # Optimizers loaded on-demand to minimize memory usage
-_get_routing_optimizer()     # AdvancedRoutingOptimizer
-_get_modality_optimizer()    # ModalityOptimizer
-_get_cross_modal_optimizer() # CrossModalOptimizer
-_get_unified_optimizer()     # UnifiedOptimizer
+_get_routing_optimizer()     # AdvancedRoutingOptimizer(tenant_id, base_storage_dir)
+_get_modality_optimizer()    # ModalityOptimizer(tenant_id, model_dir)
+_get_cross_modal_optimizer() # CrossModalOptimizer(tenant_id, model_dir)
+_get_unified_optimizer()     # UnifiedOptimizer(routing_optimizer, workflow_intelligence)
 ```
 
 **OptimizationType Enum:**
@@ -752,9 +774,11 @@ config = AdvancedOptimizerConfig(
     processing_time_penalty=0.1
 )
 
+# Initialize optimizer with required tenant_id parameter
 optimizer = AdvancedRoutingOptimizer(
+    tenant_id="production",  # REQUIRED parameter
     config=config,
-    storage_dir="data/optimization"
+    base_storage_dir="data/optimization"
 )
 
 # Record routing experience
@@ -799,14 +823,17 @@ print(f"Confidence accuracy: {status['metrics']['confidence_accuracy']}")  # 0.7
 ### Example 3: Modality-Specific Optimization with XGBoost
 
 ```python
-from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer, QueryModality
+from pathlib import Path
 
 # Initialize modality optimizer
+# vespa_client and backend_config parameters are optional (default to None)
+# Provide them only if using synthetic data generation
 optimizer = ModalityOptimizer(
     tenant_id="production",
     model_dir=Path("outputs/models/modality"),
-    backend=backend  # For synthetic data generation
+    vespa_client=None,  # Optional VespaClient instance for synthetic data generation
+    backend_config=None  # Optional backend config dict for synthetic data generation
 )
 
 # Optimize all modalities automatically
@@ -865,10 +892,10 @@ for modality, details in summary['modalities'].items():
 ```python
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
 # Initialize components
-routing_optimizer = AdvancedRoutingOptimizer()
+routing_optimizer = AdvancedRoutingOptimizer(tenant_id="production")
 workflow_intelligence = WorkflowIntelligence()
 
 # Create unified optimizer
@@ -1077,11 +1104,13 @@ batch_experiences = np.random.choice(
 ```python
 # Each tenant has isolated optimization state
 optimizer_tenant_a = AdvancedRoutingOptimizer(
-    storage_dir="data/optimization/tenant_a"
+    tenant_id="tenant_a",
+    base_storage_dir="data/optimization"
 )
 
 optimizer_tenant_b = AdvancedRoutingOptimizer(
-    storage_dir="data/optimization/tenant_b"
+    tenant_id="tenant_b",
+    base_storage_dir="data/optimization"
 )
 
 # Separate experience storage per tenant
@@ -1233,36 +1262,50 @@ The optimization module includes production-ready deployment infrastructure with
 
 ```bash
 # Optimize specific module
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+uv run python scripts/run_module_optimization.py \
   --module modality \
   --tenant-id default \
   --use-synthetic-data \
   --output results.json
 
 # Optimize all modules
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+uv run python scripts/run_module_optimization.py \
   --module all \
   --tenant-id default \
   --lookback-hours 48 \
   --min-confidence 0.8 \
   --output results.json
+
+# Note: JAX_PLATFORM_NAME=cpu prefix only needed if using VideoPrism profiles
 ```
 
 **Available Options:**
+
 - `--module`: Which module to optimize (modality/cross_modal/routing/workflow/unified/all)
+
 - `--tenant-id`: Tenant identifier (default: "default")
+
 - `--use-synthetic-data`: Generate synthetic training data if insufficient Phoenix traces
+
 - `--lookback-hours`: Hours to look back for Phoenix spans (default: 24)
+
 - `--min-confidence`: Minimum confidence threshold for span collection (default: 0.7)
+
 - `--force-training`: Force training regardless of XGBoost decision
+
 - `--max-iterations`: Maximum DSPy training iterations (default: 100)
+
 - `--output`: Output JSON file path (default: /tmp/optimization_results.json)
 
 **Automatic DSPy Optimizer Selection:**
 The CLI automatically selects the best DSPy optimizer based on training data size:
+
 - < 100 examples → Bootstrap
+
 - 100-500 examples → SIMBA
+
 - 500-1000 examples → MIPRO
+
 - \> 1000 examples → GEPA
 
 #### Argo Workflows Integration
@@ -1286,7 +1329,9 @@ argo submit workflows/batch-optimization.yaml \
 
 Automatic optimization on schedule:
 
-**Weekly Optimization** (Sunday 3 AM UTC):
+**Scheduled CronWorkflows** (`workflows/auto-optimization-cron.yaml`, `workflows/scheduled-optimization.yaml`, `workflows/scheduled-maintenance.yaml`):
+
+Weekly Optimization (Sunday 3 AM UTC):
 ```bash
 # View schedule
 kubectl get cronworkflow weekly-optimization -n cogniverse
@@ -1298,9 +1343,9 @@ argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=weekly-op
 argo submit --from cronwf/weekly-optimization -n cogniverse
 ```
 
-**Daily Optimization Check** (4 AM UTC):
+Daily Optimization Check (4 AM UTC):
 ```bash
-# View schedule
+# View schedule (once implemented)
 kubectl get cronworkflow daily-optimization-check -n cogniverse
 
 # Suspend/resume
@@ -1309,28 +1354,43 @@ argo cron resume daily-optimization-check -n cogniverse
 ```
 
 **What Gets Optimized:**
+
 - Weekly: All modules (modality, cross_modal, routing, workflow) + DSPy optimizer
+
 - Daily: Quick routing optimization only
 
 **Automatic Execution:**
+
 - Checks Phoenix for annotation count
+
 - Runs optimization if annotation threshold met (weekly: 50, daily: 20)
+
 - Generates synthetic data from backend storage using DSPy modules
+
 - Auto-selects DSPy optimizer based on data size
+
 - Deploys if improvement > 5%
 
 #### Module Optimization vs DSPy Optimization
 
 **Module Optimization** (`optimizer-category: routing`):
+
 - **What**: modality, cross_modal, routing, workflow, unified modules
+
 - **How**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
+
 - **Data**: Phoenix traces + synthetic data generation
+
 - **Use case**: Optimize routing decisions and workflow planning
 
 **DSPy Optimization** (`optimizer-category: dspy`):
+
 - **What**: DSPy modules (prompt templates, reasoning chains)
+
 - **How**: Explicit DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO)
+
 - **Data**: Golden evaluation datasets
+
 - **Use case**: Teacher-student distillation for local models
 
 #### Monitoring Workflows
@@ -1353,14 +1413,21 @@ argo get <workflow-name> -n cogniverse -o json | \
 The optimization infrastructure integrates with the Streamlit dashboard:
 
 **Module Optimization Tab:**
+
 - Submit Argo workflows on-demand
+
 - Configure optimization parameters
+
 - Generate synthetic training data
+
 - Monitor workflow progress
+
 - View optimization results
 
 **Execution Modes:**
+
 1. **Automatic (Scheduled)**: CronWorkflows check Phoenix and optimize when criteria met
+
 2. **Manual (UI-triggered)**: Submit workflows from dashboard on demand
 
 See `docs/development/ui-dashboard.md` for full UI documentation.
@@ -1412,16 +1479,24 @@ def _load_stored_data(self):
 ### Test Files
 
 **Optimization Orchestrator:**
-- Location: `tests/routing/integration/test_optimization_orchestrator_integration.py`
+
+- Location: `tests/routing/integration/test_orchestration_optimization_integration.py`
+
 - Focus: End-to-end optimization pipeline, span evaluation, annotation workflow
+
 - Key Tests:
   - `test_optimization_orchestrator_initialization`
   - `test_run_once_optimization_cycle`
   - `test_continuous_optimization_loop`
 
+- Note: Unit tests are in `tests/routing/unit/test_orchestration_optimization.py` (different focus)
+
 **Advanced Routing Optimizer:**
-- Location: `tests/routing/unit/test_advanced_routing_optimizer.py`
+
+- Location: `tests/agents/unit/test_advanced_routing_optimizer.py`
+
 - Focus: GRPO optimization, experience replay, multi-stage optimizer selection
+
 - Key Tests:
   - `test_record_routing_experience`
   - `test_multi_stage_optimizer_selection`
@@ -1429,8 +1504,11 @@ def _load_stored_data(self):
   - `test_confidence_calibration`
 
 **Modality Optimizer:**
+
 - Location: `tests/routing/unit/test_modality_optimizer.py`
+
 - Focus: Per-modality optimization, XGBoost meta-learning, synthetic data
+
 - Key Tests:
   - `test_optimize_modality_with_synthetic_data`
   - `test_xgboost_training_decision_model`
@@ -1438,20 +1516,21 @@ def _load_stored_data(self):
   - `test_predict_agent_with_trained_model`
 
 **Unified Optimizer:**
-- Location: `tests/routing/integration/test_unified_optimizer_integration.py`
+
+- Location: `tests/routing/integration/test_complete_optimization_integration.py`
+
 - Focus: Bidirectional learning between routing and orchestration
+
 - Key Tests:
   - `test_integrate_orchestration_outcomes`
   - `test_unified_policy_optimization`
   - `test_workflow_to_routing_experience_conversion`
 
 **Optimizer Coordinator:**
+
 - Location: `tests/routing/unit/test_optimizer_coordinator.py`
+
 - Focus: Facade pattern, lazy loading, optimizer routing
-- Key Tests:
-  - `test_optimizer_coordination_routing`
-  - `test_lazy_loading_optimizers`
-  - `test_get_optimization_status`
 
 ---
 
@@ -1589,9 +1668,13 @@ async def test_complete_optimization_cycle():
 ---
 
 **Coverage:**
+
 - **Unit tests**: 95%+ coverage of optimizer logic, reward computation, meta-models
+
 - **Integration tests**: Complete optimization cycles, span evaluation, modality optimization
+
 - **Performance tests**: Optimization speed, memory usage, convergence rates
+
 - **Error handling tests**: Graceful degradation, checkpoint recovery, fallback strategies
 
 ---
@@ -1627,11 +1710,17 @@ example = dspy.Example(
 ### Query Analysis Training Data
 
 **Required Output Fields:**
+
 - `primary_intent`: Main intent category
+
 - `complexity_level`: "simple" | "complex"
+
 - `needs_video_search`: "true" | "false"
+
 - `needs_text_search`: "true" | "false"
+
 - `multimodal_query`: "true" | "false"
+
 - `temporal_pattern`: Temporal info or "none"
 
 **Example:**
@@ -1665,8 +1754,11 @@ training_data = [
 ### Agent Routing Training Data
 
 **Required Output Fields:**
+
 - `recommended_workflow`: Workflow type
+
 - `primary_agent`: Main agent to use
+
 - `routing_confidence`: Confidence score (0.0-1.0 as string)
 
 **Example:**
@@ -1761,8 +1853,382 @@ validate_training_data(training_data, required)
 
 ### File References
 
-- `libs/agents/cogniverse_agents/agents/dspy_agent_optimizer.py` - Training data loading
+- `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py` - Training data loading
 - `tests/agents/integration/test_dspy_optimization_integration.py` - Example tests with proper format
+
+---
+
+## DSPy Agent Optimization Infrastructure
+
+The `libs/agents/cogniverse_agents/optimizer/` package provides infrastructure for running DSPy optimization with configurable model providers (Modal GPU, local Ollama, cloud APIs).
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/`
+
+```mermaid
+flowchart TB
+    subgraph "Configuration"
+        Config["<span style='color:#000'>SystemConfig</span>"]
+    end
+
+    subgraph "Orchestration"
+        Orch["<span style='color:#000'>OptimizationOrchestrator</span>"]
+        Client["<span style='color:#000'>ModelClient</span>"]
+    end
+
+    subgraph "Providers"
+        Factory["<span style='color:#000'>ProviderFactory</span>"]
+        Modal["<span style='color:#000'>ModalModelProvider</span>"]
+        Local["<span style='color:#000'>LocalModelProvider</span>"]
+        API["<span style='color:#000'>Anthropic/OpenAI</span>"]
+    end
+
+    subgraph "DSPy Optimization"
+        Router["<span style='color:#000'>RouterModule</span>"]
+        AgentOpt["<span style='color:#000'>DSPyAgentPromptOptimizer</span>"]
+        MIPRO["<span style='color:#000'>MIPROv2</span>"]
+    end
+
+    subgraph "Output"
+        Artifacts["<span style='color:#000'>Prompt Artifacts</span>"]
+    end
+
+    Config --> Orch
+    Orch --> Client
+    Client --> Factory
+
+    Factory --> Modal
+    Factory --> Local
+    Factory --> API
+
+    Modal --> Router
+    Local --> Router
+    API --> Router
+
+    Router --> MIPRO
+    AgentOpt --> MIPRO
+    MIPRO --> Artifacts
+
+    style Config fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Orch fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Client fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Factory fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Modal fill:#90caf9,stroke:#1565c0,color:#000
+    style Local fill:#90caf9,stroke:#1565c0,color:#000
+    style API fill:#90caf9,stroke:#1565c0,color:#000
+    style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style AgentOpt fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MIPRO fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Artifacts fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+### Provider Interfaces
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/providers/base_provider.py`
+
+| Interface | Purpose |
+|-----------|---------|
+| `ModelProvider` | Abstract base for model hosting (Modal, Ollama, cloud APIs) |
+| `ArtifactProvider` | Abstract base for artifact storage |
+| `DSPyLMProvider` | DSPy LM wrapper for any `ModelProvider` |
+| `ProviderFactory` | Factory for creating providers by type |
+
+```python
+from cogniverse_agents.optimizer.providers.base_provider import (
+    ModelProvider,
+    ArtifactProvider,
+    DSPyLMProvider,
+    ProviderFactory,
+)
+
+# Register a custom provider
+ProviderFactory.register_model_provider("my_provider", MyModelProvider)
+
+# Create provider from config
+provider = ProviderFactory.create_model_provider("modal", {
+    "volume_name": "cogniverse-artifacts",
+    "app_name": "cogniverse-inference"
+})
+
+# Wrap any provider for DSPy
+dspy_lm = DSPyLMProvider(provider, model_id="google/gemma-7b", model_type="student")
+```
+
+### Provider Implementations
+
+#### ModalModelProvider
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/providers/modal_provider.py`
+
+Deploys models on Modal GPU infrastructure with vLLM serving.
+
+```python
+from cogniverse_agents.optimizer.providers.modal_provider import ModalModelProvider
+
+provider = ModalModelProvider({
+    "volume_name": "cogniverse-artifacts",
+    "app_name": "cogniverse-inference"
+})
+
+# Deploy model service (requires SystemConfig)
+endpoints = provider.deploy_model_service(
+    model_id="google/gemma-7b",
+    config=system_config
+)
+# Returns: {"inference_endpoint": "https://...", "health_endpoint": "https://..."}
+
+# Call deployed model
+response = provider.call_model(
+    model_id="google/gemma-7b",
+    prompt="Analyze this query...",
+    temperature=0.1,
+    max_tokens=150
+)
+```
+
+#### LocalModelProvider
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/providers/local_provider.py`
+
+Uses Ollama for local model hosting.
+
+```python
+from cogniverse_agents.optimizer.providers.local_provider import LocalModelProvider
+
+provider = LocalModelProvider({
+    "ollama_base_url": "http://localhost:11434"
+})
+
+# Check available models
+endpoints = provider.deploy_model_service(model_id="llama3:8b")
+# Returns: {"inference_endpoint": "...", "models_available": ["llama3:8b", ...]}
+
+# Call local model
+response = provider.call_model(
+    model_id="llama3:8b",
+    prompt="Route this query...",
+    temperature=0.1
+)
+```
+
+### OptimizationOrchestrator
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/orchestrator.py`
+
+Orchestrates the full optimization pipeline with teacher/student model coordination.
+
+```python
+from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
+
+# Initialize from config.json
+orchestrator = OptimizationOrchestrator()
+
+# Setup services (deploy models if needed)
+orchestrator.setup_services()
+
+# Run full optimization
+results = orchestrator.run_optimization()
+# Returns: {
+#   "instructions": "...",
+#   "demonstrations": [...],
+#   "metrics": {"baseline": {...}, "optimized": {...}, "improvement": {...}},
+#   "optimization_time": 120.5
+# }
+```
+
+#### Configuration Structure
+
+```json
+{
+  "optimization": {
+    "enabled": true,
+    "type": "dspy",
+    "teacher": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-20241022"
+    },
+    "student": {
+      "provider": "modal",
+      "model": "google/gemma-7b"
+    },
+    "providers": {
+      "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
+      "modal": {"volume_name": "cogniverse-artifacts"}
+    },
+    "settings": {
+      "num_examples": 50,
+      "train_split": 0.8
+    },
+    "output": {
+      "dir": "optimization_results"
+    }
+  }
+}
+```
+
+### DSPyAgentPromptOptimizer
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py`
+
+Optimizes prompts for multiple agent types using DSPy signatures.
+
+```python
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+    DSPyAgentPromptOptimizer,
+    DSPyAgentOptimizerPipeline,
+)
+
+# Initialize optimizer
+optimizer = DSPyAgentPromptOptimizer(config={
+    "optimization": {
+        "max_bootstrapped_demos": 8,
+        "max_labeled_demos": 16,
+        "max_rounds": 3,
+        "stop_at_score": 0.95
+    }
+})
+
+# Initialize language model
+optimizer.initialize_language_model(
+    api_base="http://localhost:11434/v1",
+    model="llama3:8b"
+)
+
+# Create and run pipeline
+pipeline = DSPyAgentOptimizerPipeline(optimizer)
+optimized_modules = await pipeline.optimize_all_modules()
+
+# Save optimized prompts
+pipeline.save_optimized_prompts("optimized_prompts/")
+```
+
+#### Optimizable Modules
+
+| Module | DSPy Signature | Purpose |
+|--------|----------------|---------|
+| `query_analysis` | `QueryAnalysisSignature` | Intent detection, complexity analysis |
+| `agent_routing` | `AgentRoutingSignature` | Agent selection, workflow recommendation |
+| `summary_generation` | `SummaryGenerationSignature` | Summary quality optimization |
+| `detailed_report` | `DetailedReportSignature` | Report structure optimization |
+
+### RouterModule & MIPROv2 Optimization
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/router_optimizer.py`
+
+DSPy module for routing decisions with MIPROv2 optimization.
+
+```python
+from cogniverse_agents.optimizer.router_optimizer import (
+    RouterModule,
+    optimize_router,
+    OptimizedRouter,
+    evaluate_routing_accuracy,
+)
+from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
+
+# Create router module
+router = RouterModule()
+
+# Run MIPROv2 optimization
+results = optimize_router(
+    student_model="google/gemma-3-1b-it",
+    teacher_model="claude-3-5-sonnet-20241022",
+    num_teacher_examples=50,
+    output_dir="optimization_results"
+)
+
+# Load optimized router for production
+optimized = OptimizedRouter("optimization_results/router_prompt_artifact.json")
+decision = optimized.route(
+    user_query="Show me how to bake a cake",
+    conversation_history=""
+)
+# Returns: RoutingDecision(search_modality="video", generation_type="raw_results")
+```
+
+### Schemas
+
+**Location:** `libs/agents/cogniverse_agents/optimizer/schemas.py`
+
+```python
+from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
+
+# Pydantic model for routing output
+decision = RoutingDecision(
+    search_modality="video",      # "video" or "text"
+    generation_type="raw_results" # "detailed_report", "summary", "raw_results"
+)
+
+# DSPy signature for router
+class AgenticRouter(dspy.Signature):
+    conversation_history: str = dspy.InputField()
+    user_query: str = dspy.InputField()
+    routing_decision: RoutingDecision = dspy.OutputField()
+```
+
+### CLI Usage
+
+```bash
+# Run optimization orchestrator
+uv run python -m cogniverse_agents.optimizer.orchestrator \
+    --config config.json
+
+# Setup services only
+uv run python -m cogniverse_agents.optimizer.orchestrator \
+    --config config.json --setup-only
+
+# Run router optimizer directly
+uv run python -m cogniverse_agents.optimizer.router_optimizer \
+    --student-model google/gemma-3-1b-it \
+    --teacher-model claude-3-5-sonnet-20241022 \
+    --num-examples 50
+
+# Run agent prompt optimization
+uv run python -m cogniverse_agents.optimizer.dspy_agent_optimizer
+```
+
+### Output Artifacts
+
+After optimization, artifacts are saved to `optimization_results/`:
+
+```text
+optimization_results/
+├── unified_optimization_20241215_143022.json  # Full results with metrics
+├── unified_router_prompt_artifact.json        # Integration artifact
+├── router_prompt_artifact.json                # Router-specific artifact
+└── teacher_training_cache.json                # Cached teacher examples
+```
+
+**Integration artifact structure:**
+
+```json
+{
+  "system_prompt": "Optimized instructions...",
+  "few_shot_examples": [
+    {
+      "conversation_history": "",
+      "user_query": "Show me tutorials on Python",
+      "routing_decision": {"search_modality": "video", "generation_type": "raw_results"}
+    }
+  ],
+  "model_config": {
+    "student_model": "google/gemma-3-1b-it",
+    "temperature": 0.1,
+    "max_tokens": 100
+  }
+}
+```
+
+### File References
+
+| File | Purpose |
+|------|---------|
+| `optimizer/dspy_agent_optimizer.py` | Multi-agent prompt optimization |
+| `optimizer/orchestrator.py` | Provider-based optimization orchestration |
+| `optimizer/router_optimizer.py` | Router MIPROv2 optimization |
+| `optimizer/schemas.py` | RoutingDecision, AgenticRouter schemas |
+| `optimizer/providers/base_provider.py` | Abstract provider interfaces |
+| `optimizer/providers/modal_provider.py` | Modal GPU provider |
+| `optimizer/providers/local_provider.py` | Ollama local provider |
 
 ---
 
@@ -1772,22 +2238,34 @@ validate_training_data(training_data, required)
 - **Agents Module Study Guide**: `docs/modules/agents.md` - RoutingAgent integration
 - **Telemetry Module Study Guide**: `docs/modules/telemetry.md` - Phoenix span collection
 - **Evaluation Module Study Guide**: `docs/modules/evaluation.md` - RoutingEvaluator
+- **Modal Deployment Guide**: `docs/modal/deployment_guide.md` - Modal infrastructure setup
 
 ---
 
 **Next Steps:**
+
 1. Review DSPy 3.0 documentation for GEPA, MIPROv2, SIMBA optimizers
+
 2. Experiment with different optimizer strategies (adaptive vs forced)
+
 3. Monitor optimization metrics in production (avg_reward, success_rate, improvement_rate)
+
 4. Tune reward weights for your use case (search_quality_weight, agent_success_weight)
+
 5. Test synthetic data generation for modality optimization cold start
 
 ---
 
 **File References:**
+
 - `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py` - Complete optimization pipeline
+
 - `libs/agents/cogniverse_agents/routing/advanced_optimizer.py` - GRPO optimization with multi-stage DSPy
+
 - `libs/agents/cogniverse_agents/routing/unified_optimizer.py` - Bidirectional routing + orchestration learning
+
 - `libs/agents/cogniverse_agents/routing/modality_optimizer.py` - Per-modality optimization with XGBoost
+
 - `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py` - Facade for optimizer routing
+
 - `libs/agents/cogniverse_agents/routing/optimizer.py` - Base optimizer with auto-tuning

@@ -2,242 +2,284 @@
 
 Complete guide for deploying LLMs and VLMs on Modal for the Cogniverse multi-agent video search system.
 
-## 🎯 Overview
+## Overview
 
 Modal provides serverless GPU infrastructure for:
-- **DSPy Optimization**: Teacher/student models for Bootstrap, SIMBA, MIPRO, GEPA optimizers
+
+- **DSPy Optimization**: Teacher/student models using MIPROv2 optimizer
+
 - **Video Processing**: VLMs for frame description generation during ingestion
-- **Embedding Models**: ColPali, VideoPrism, ColQwen for video embeddings
+
+- **Model Fine-tuning**: SFT and DPO training on cloud GPUs
+
 - **Agent LLMs**: Deploy agent models on GPUs instead of local Ollama
 
-## 🚀 Use Cases in Cogniverse
+## Use Cases in Cogniverse
 
 ### 1. DSPy Optimization (Teacher/Student)
 
-Our routing optimizer uses teacher/student patterns:
+The routing optimizer uses teacher/student patterns with DSPy optimizers:
 
 ```python
-# GEPA Optimizer with teacher/student
-from cogniverse_agents.routing.gepa_optimizer import GEPAOptimizer
+# Run the optimization orchestrator
+from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
 
-optimizer = GEPAOptimizer(
-    teacher_model="claude-3-opus",  # API or Modal
-    student_model="gemma-7b",       # Modal deployment
-    experience_buffer=buffer
-)
+# Config loaded from COGNIVERSE_CONFIG_PATH env var or configs/config.json
+orchestrator = OptimizationOrchestrator()
+result = orchestrator.run_optimization()
 
-# Bootstrap/SIMBA/MIPRO also use teacher/student
-from dspy import BootstrapFewShot, SIMBA, MIPRO
+# Available DSPy optimizers (MIPROv2 is used in the orchestrator):
+from dspy.teleprompt import MIPROv2
 
-# Teacher generates examples, student learns routing
-bootstrap = BootstrapFewShot(
-    teacher_model=gpt4_model,    # Strong teacher
-    student_model=modal_gemma,   # Efficient student on Modal
-)
+# Teacher (Claude/GPT-4) generates training examples
+# Student (SmolLM3-3B on Modal) learns from teacher examples via MIPROv2
+# Optimized prompts saved to get_output_manager().get_optimization_dir()
 ```
 
 ### 2. VLM for Video Processing
 
-Deploy Qwen2-VL or LLaVA for frame descriptions:
+The VLM service uses Qwen2-VL-7B for video frame descriptions:
 
 ```python
-# Modal VLM for frame descriptions
-from scripts.modal_vlm_service import VLMModel
+# Actual location: scripts/modal_vlm_service.py
+# Deploy with: modal deploy scripts/modal_vlm_service.py
 
-vlm = VLMModel()
-description = vlm.generate_description(frame_image)
-```
+# Call via HTTP endpoint after deployment
+import requests
 
-### 3. Embedding Models
-
-Deploy heavy embedding models on Modal GPUs:
-
-```python
-# ColPali on Modal instead of local
-from cogniverse_runtime.embeddings.modal_colpali import ModalColPali
-
-colpali = ModalColPali(endpoint="modal://colpali-deployment")
-embeddings = await colpali.encode_frames(frames)
-```
-
-## 📦 Modal Deployments
-
-### DSPy Optimizer Deployment
-
-```python
-# cogniverse_agents/modal/dspy_optimizer_service.py
-import modal
-
-app = modal.App("cogniverse-dspy-optimizer")
-
-@app.cls(
-    gpu="A10G",
-    image=modal.Image.debian_slim()
-        .pip_install("dspy-ai", "torch", "transformers")
+response = requests.post(
+    "https://your-username--cogniverse-vlm-vlmmodel-generate-description.modal.run",
+    json={
+        "frame_base64": frame_base64_data,
+        "prompt": "Describe this video frame in detail"
+    }
 )
-class DSPyOptimizerService:
-    def __init__(self):
-        # Load student model (Gemma, Llama, etc.)
-        self.student_model = load_model("google/gemma-7b")
+description = response.json()["description"]
+```
 
-    @modal.method()
-    def optimize_routing(self,
-                        teacher_examples: list,
-                        routing_data: dict) -> dict:
-        """Run DSPy optimization with teacher examples"""
-        # Bootstrap, SIMBA, MIPRO, or GEPA optimization
-        optimizer = self.select_optimizer(len(teacher_examples))
-        return optimizer.compile(
-            student=self.student_model,
-            trainset=teacher_examples
-        )
+### 3. Embedding Model Training
+
+Embedding fine-tuning on Modal GPUs via `train_embedding_remote()` in `modal_app.py`:
+
+```python
+from cogniverse_finetuning.training.modal_runner import ModalTrainingRunner, ModalJobConfig
+
+config = ModalJobConfig(gpu="A10G", timeout=3600)
+runner = ModalTrainingRunner(config)
+
+# Train embedding model with triplet loss on Modal GPU
+result = await runner.run_embedding(
+    dataset=triplet_data,          # List of {anchor, positive, negative} dicts
+    base_model="jinaai/jina-embeddings-v3",
+    output_dir="./adapters",
+    embedding_config={"learning_rate": 2e-5, "epochs": 3, "triplet_margin": 0.5},
+)
+# result.adapter_path contains the trained adapter
 ```
 
 Deploy:
 ```bash
-modal deploy cogniverse_agents/modal/dspy_optimizer_service.py
+modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
+```
+
+## Modal Deployments
+
+### LLM Inference Service
+
+The main inference service provides OpenAI-compatible endpoints:
+
+# Actual location: libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
+# App name: general-inference-service
+# Endpoints: serve (vLLM OpenAI-compatible), /generate, /chat-completions, /health, /models
+
+# Uses vLLM with configurable models (default: HuggingFaceTB/SmolLM3-3B via env var DEFAULT_MODEL)
+# GPU: A100-80GB by default (configurable via DEFAULT_GPU env var)
+
+Deploy:
+```bash
+modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
+```
+
+### DSPy with Modal (via ProviderFactory)
+
+Use the existing provider infrastructure to run DSPy optimization with Modal:
+
+```python
+from cogniverse_agents.optimizer.providers.base_provider import (
+    ProviderFactory,
+    DSPyLMProvider
+)
+
+# Create Modal model provider
+modal_provider = ProviderFactory.create_model_provider(
+    provider_type="modal",
+    config={}  # Provider config from config.json
+)
+
+# Wrap for DSPy compatibility
+dspy_lm = DSPyLMProvider(
+    model_provider=modal_provider,
+    model_id="HuggingFaceTB/SmolLM3-3B",  # Or any model deployed to Modal
+    model_type="modal"
+)
+
+# Use with DSPy optimizers
+import dspy
+dspy.configure(lm=dspy_lm)
 ```
 
 ### VLM Service Deployment
 
-```python
-# cogniverse_vlm/modal_vlm_service.py
-import modal
+# Actual location: scripts/modal_vlm_service.py
+# App name: cogniverse-vlm
+# Uses: SGLang + Qwen2-VL-7B-Instruct
+# GPU: H100 by default (configurable via GPU_TYPE env var)
 
-app = modal.App("cogniverse-vlm")
+# The VLMModel class provides:
+# - generate_description: Single frame description (supports frame_base64, frame_path, remote_frame_path)
+# - upload_and_process_frames: Batch processing via zip upload
 
-@app.cls(
-    gpu="L40S",  # or T4 for cost savings
-    image=modal.Image.debian_slim()
-        .pip_install("transformers", "qwen-vl-utils")
-)
-class VLMModel:
-    def __init__(self):
-        self.model = AutoModelForVision2Seq.from_pretrained(
-            "Qwen/Qwen2-VL-7B-Instruct"
-        )
+# Key endpoints after deployment:
+# POST /generate_description - Single frame analysis
+# POST /upload_and_process_frames - Batch frame processing
 
-    @modal.method()
-    def generate_description(self, image_base64: str) -> str:
-        """Generate description for video frame"""
-        return self.model.generate(image_base64)
+Deploy:
+```bash
+modal deploy scripts/modal_vlm_service.py
 ```
 
-### Embedding Model Deployment
+### Fine-tuning Service
 
-```python
-# cogniverse_processing/modal/embedding_service.py
-import modal
+Train models on Modal GPUs with the finetuning module:
 
-app = modal.App("cogniverse-embeddings")
+# Actual location: libs/finetuning/cogniverse_finetuning/training/modal_app.py
+# App name: cogniverse-finetuning
 
-@app.cls(
-    gpu="A10G",
-    image=modal.Image.debian_slim()
-        .pip_install("colpali", "videopris", "torch")
-)
-class EmbeddingService:
-    def __init__(self):
-        self.colpali = ColPali.from_pretrained("vidore/colsmol-500m")
-        self.videoprism = VideoPrism.from_pretrained("google/videoprism-base")
+# The ModalTrainingRunner provides:
+# - SFT (Supervised Fine-Tuning) on Modal GPUs
+# - DPO (Direct Preference Optimization) on Modal GPUs
+# - Configurable GPU selection (T4, A10G, A100-40GB, A100-80GB, H100)
+# - Direct dataset passing (no upload needed) and adapter download
 
-    @modal.method()
-    def encode_frames(self, frames: list, model: str = "colpali") -> np.array:
-        """Generate embeddings for video frames"""
-        if model == "colpali":
-            return self.colpali.encode(frames)
-        elif model == "videoprism":
-            return self.videoprism.encode(frames)
+Deploy:
+```bash
+modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ```
 
-## 🔧 Integration with Cogniverse
+Usage:
+```python
+from cogniverse_finetuning.training.modal_runner import ModalTrainingRunner, ModalJobConfig
+
+config = ModalJobConfig(gpu="A10G", timeout=3600)
+runner = ModalTrainingRunner(config)
+
+# SFT (Supervised Fine-Tuning)
+result = await runner.run_sft(
+    dataset=training_data,
+    base_model="HuggingFaceTB/SmolLM3-3B",  # Or any HuggingFace model
+    output_dir="./adapters",
+    sft_config={"learning_rate": 2e-5}
+)
+
+# DPO (Direct Preference Optimization) also available
+result = await runner.run_dpo(dataset, base_model, output_dir, dpo_config)
+```
+
+### Embedding Model Training on Modal
+
+Embedding fine-tuning runs on Modal GPUs using triplet loss (sentence-transformers). The `train_embedding_remote()` Modal function in `modal_app.py` supports:
+
+- Contrastive learning with triplet datasets (anchor/positive/negative)
+- Configurable distance metrics (cosine, euclidean) and margins
+- Automatic adapter serialization and transfer back to local
+
+## Integration with Cogniverse
 
 ### Configuration
 
-Update `configs/config.json`:
+Update your configuration file with your Modal endpoints. The config structure follows this format (see configs/config.json):
 
 ```json
 {
   "optimization": {
-    "dspy": {
-      "teacher": {
-        "provider": "anthropic",
-        "model": "claude-3-opus"
+    "enabled": true,
+    "type": "dspy",
+    "teacher": {
+      "model": "claude-3-5-sonnet-20241022",
+      "provider": "anthropic"
+    },
+    "student": {
+      "model": "HuggingFaceTB/SmolLM3-3B",
+      "provider": "modal"
+    },
+    "providers": {
+      "modal": {
+        "gpu_config": "A10G",
+        "memory_mb": 16000,
+        "timeout_seconds": 3600
       },
-      "student": {
-        "provider": "modal",
-        "endpoint": "https://username--cogniverse-dspy-optimizer.modal.run",
-        "model": "gemma-7b"
+      "anthropic": {
+        "api_key_env": "ANTHROPIC_API_KEY"
       }
+    },
+    "settings": {
+      "num_examples": 50,
+      "num_candidates": 10,
+      "num_trials": 20
     }
   },
-  "ingestion": {
-    "vlm": {
-      "provider": "modal",
-      "endpoint": "https://username--cogniverse-vlm.modal.run"
-    },
-    "embeddings": {
-      "provider": "modal",
-      "endpoint": "https://username--cogniverse-embeddings.modal.run"
-    }
-  }
+  "inference": {
+    "provider": "modal",
+    "modal_endpoint": "https://username--general-inference-service-serve.modal.run",
+    "model": "HuggingFaceTB/SmolLM3-3B"
+  },
+  "vlm_endpoint_url": "https://username--cogniverse-vlm-vlmmodel-generate-description.modal.run/"
 }
 ```
 
+The teacher/student optimization workflow:
+1. **Teacher** (Claude/GPT-4) generates high-quality training examples
+2. **Student** (SmolLM3-3B on Modal) learns from these examples via MIPROv2
+3. Optimized prompts are saved to `get_output_manager().get_optimization_dir()`
+
 ### Using Modal Services
-
-#### For DSPy Optimization
-
-```python
-from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
-
-factory = OptimizerFactory()
-
-# Modal student, API teacher
-optimizer = factory.create_gepa_optimizer(
-    teacher_provider="anthropic",
-    student_provider="modal"
-)
-
-# Run optimization
-optimized_router = optimizer.optimize(
-    routing_examples=experience_buffer.sample(1000)
-)
-```
 
 #### For Video Ingestion
 
-```python
-from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+The VLM service can be used for frame descriptions during ingestion:
 
-pipeline = VideoIngestionPipeline(
-    vlm_provider="modal",  # Use Modal VLM
-    embedding_provider="modal",  # Use Modal embeddings
-    profile="video_colpali_smol500_mv_frame"
-)
+```bash
+# Deploy the VLM service first
+modal deploy scripts/modal_vlm_service.py
 
-# Process videos with Modal acceleration
-await pipeline.process_video(video_path)
+# Run ingestion with the standard pipeline
+# The Modal VLM endpoint can be configured via vlm_endpoint_url in config.json
+uv run python scripts/run_ingestion.py \
+    --video_dir path/to/your/videos \
+    --backend vespa \
+    --profile video_colpali_smol500_mv_frame
 ```
 
-## 📊 Performance & Cost
+> **Note**: Embedding *fine-tuning* runs on Modal GPUs (see `ModalTrainingRunner.run_embedding()`). Embedding *inference* during ingestion runs locally.
+
+## Performance & Cost
 
 ### DSPy Optimization
-```
+```text
 Teacher (Claude/GPT-4):
 - Cost: ~$0.01-0.10 per example
 - Total: ~$5-50 for full optimization
 
-Student (Modal Gemma-7B):
-- GPU: A10G (24GB)
+Student (Modal SmolLM3-3B):
+- GPU: A10G (24GB) - configured in optimization.providers.modal
 - Duration: 15-30 minutes
 - Cost: ~$1.10/hour = ~$0.55
 ```
 
 ### Video Processing
-```
+```text
 VLM (Qwen2-VL-7B):
-- GPU: L40S or T4
+- GPU: H100 by default (configurable via GPU_TYPE env var)
 - Speed: 2-4 seconds per frame
 - Cost: ~$0.01-0.05 per frame
 
@@ -248,7 +290,7 @@ Embeddings (ColPali):
 ```
 
 ### Production Inference
-```
+```text
 Agents with Modal LLMs:
 - GPU: T4 (16GB) minimum
 - Scaling: 1-10 instances auto-scale
@@ -256,75 +298,85 @@ Agents with Modal LLMs:
 - Latency: 50-200ms per query
 ```
 
-## 🚀 Deployment Commands
+## Deployment Commands
 
 ### Full System Deployment
 
 ```bash
-# 1. Deploy all Modal services
-modal deploy cogniverse_agents/modal/dspy_optimizer_service.py
-modal deploy cogniverse_vlm/modal_vlm_service.py
-modal deploy cogniverse_processing/modal/embedding_service.py
+# 1. Deploy available Modal services
+modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
+modal deploy scripts/modal_vlm_service.py
+modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 
 # 2. Get endpoints
 modal app list
 
-# 3. Update config.json with endpoints
-vim configs/config.json
+# 3. Update your configuration file with endpoints
+# Edit the config to include Modal endpoint in inference.modal_endpoint
 
 # 4. Test integration
-python tests/test_modal_integration.py
+uv run python -c "
+from cogniverse_agents.optimizer.providers.base_provider import ProviderFactory
+provider = ProviderFactory.create_model_provider('modal', {'endpoint': 'YOUR_ENDPOINT'})
+print(provider.health_check())
+"
 ```
 
 ### Development Workflow
 
 ```bash
-# Local development with Modal services
-export MODAL_ENDPOINTS=true
+# 1. Deploy Modal inference service
+modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
 
-# Run video ingestion with Modal
+# 2. Get your Modal endpoint
+modal app list  # Note the general-inference-service endpoint
+
+# 3. Update your configuration with the Modal endpoint
+# Set inference.modal_endpoint in config.json to your deployed endpoint
+
+# 4. Run DSPy optimization with teacher/student
+# Note: Orchestrator uses create_default_config_manager() - ensure config.json is properly configured
+uv run python -m cogniverse_agents.optimizer.orchestrator
+
+# 5. Run video ingestion with Modal VLM
+modal deploy scripts/modal_vlm_service.py
 uv run python scripts/run_ingestion.py \
-    --video_dir data/videos \
-    --use-modal-vlm \
-    --use-modal-embeddings
-
-# Run DSPy optimization with Modal
-uv run python scripts/run_optimization.py \
-    --optimizer GEPA \
-    --use-modal-student
+    --video_dir path/to/your/videos \
+    --backend vespa \
+    --profile video_colpali_smol500_mv_frame
 ```
 
-## 🔄 Hybrid Configurations
+## Hybrid Configurations
 
-### Option 1: Modal for Heavy Compute
+### Current Recommended Setup
 ```yaml
-# Heavy models on Modal, light models local
-VLM: Modal (Qwen2-VL-7B)
-Embeddings: Modal (ColPali, VideoPrism)
-Agents: Local (Ollama Llama3)
-DSPy Student: Modal (Gemma-7B)
+# What works today:
+VLM: Modal (Qwen2-VL-7B via scripts/modal_vlm_service.py)
+LLM Inference: Modal (vLLM via modal_inference_service.py)
+Embeddings: Local (ColPali, VideoPrism computed locally)
+DSPy Student: Modal (SmolLM3-3B on general-inference-service)
 DSPy Teacher: API (Claude/GPT-4)
 ```
 
-### Option 2: Full Modal
+### Full Local (Development)
 ```yaml
-# Everything on Modal
-VLM: Modal
-Embeddings: Modal
-Agents: Modal (deployed LLMs)
-DSPy: Modal (both teacher and student)
-```
-
-### Option 3: Cost-Optimized
-```yaml
-# Balance cost and performance
+# For local development without Modal:
 VLM: Local (Ollama LLaVA)
-Embeddings: Modal (only for batch processing)
-Agents: Local
-DSPy: Teacher API, Student Modal
+LLM: Local (Ollama)
+Embeddings: Local
+DSPy: Local only
 ```
 
-## 🎯 Benefits vs Local
+### Cost-Optimized
+```yaml
+# Use Modal only where needed:
+VLM: Modal (only for batch processing)
+LLM: Local (Ollama)
+Embeddings: Local
+DSPy: Teacher API (Claude/GPT-4), Student Modal (SmolLM3-3B)
+```
+
+## Benefits vs Local
 
 ### For DSPy Optimization
 - **Parallel Training**: Run multiple optimizers simultaneously
@@ -341,33 +393,35 @@ DSPy: Teacher API, Student Modal
 - **High Availability**: No single point of failure
 - **Global Deployment**: Deploy close to users
 
-## 🧪 Testing
+## Testing
 
 ### Test Modal Services
 ```bash
-# Test VLM
-curl -X POST https://your-vlm.modal.run/describe \
-  -d '{"image_base64": "..."}'
+# Test VLM service
+curl -X POST https://your-username--cogniverse-vlm-vlmmodel-generate-description.modal.run \
+  -H "Content-Type: application/json" \
+  -d '{"frame_base64": "...", "prompt": "Describe this frame"}'
 
-# Test embeddings
-curl -X POST https://your-embeddings.modal.run/encode \
-  -d '{"frames": [...], "model": "colpali"}'
+# Test LLM inference service (OpenAI-compatible)
+# Note: The serve() endpoint provides vLLM's OpenAI-compatible API
+curl -X POST https://your-username--general-inference-service-serve.modal.run/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "HuggingFaceTB/SmolLM3-3B", "messages": [{"role": "user", "content": "Hello"}]}'
 
-# Test DSPy optimizer
-curl -X POST https://your-optimizer.modal.run/optimize \
-  -d '{"examples": [...], "config": {...}}'
+# Health check
+curl https://your-username--general-inference-service-health.modal.run
 ```
 
 ### Integration Tests
 ```bash
-# Full pipeline test with Modal
-uv run pytest tests/integration/test_modal_pipeline.py
+# Test Modal provider factory
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -k "provider" -v
 
-# DSPy optimization test
-uv run pytest tests/routing/test_modal_optimization.py
+# Test VLM service locally (requires Modal CLI)
+modal run scripts/modal_vlm_service.py::test_vlm --frame-path path/to/frame.jpg
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Authentication Issues
 ```bash
@@ -397,7 +451,7 @@ modal billing current
 modal billing limit set --monthly 100
 ```
 
-## 📈 Monitoring
+## Monitoring
 
 ### Modal Dashboard
 - View all deployments: `modal app list`
@@ -407,33 +461,46 @@ modal billing limit set --monthly 100
 ### Phoenix Integration
 ```python
 # Track Modal service calls in Phoenix
-from cogniverse_foundation.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-telemetry = MultiTenantTelemetryManager()
+# Get telemetry config
+config_manager = create_default_config_manager()
+telemetry_config = config_manager.get_telemetry_config("default")
+telemetry = TelemetryManager(telemetry_config)
 
-with telemetry.span("modal.vlm.describe", tenant_id) as span:
+# Note: span() requires tenant_id parameter
+with telemetry.span("modal.vlm.describe", tenant_id="default") as span:
     span.set_attribute("provider", "modal")
     span.set_attribute("model", "qwen2-vl-7b")
     result = await modal_vlm.describe(frame)
 ```
 
-## 🎯 When to Use Modal
+## When to Use Modal
 
 ### Use Modal When:
-- 🎯 Running DSPy optimization with large student models
-- 🎯 Processing large video batches (>100 videos)
-- 🎯 Need GPU acceleration without local hardware
-- 🎯 Scaling to multiple concurrent users
-- 🎯 Running experiments with different models
+
+- Running DSPy optimization with large student models
+
+- Processing large video batches (>100 videos)
+
+- Need GPU acceleration without local hardware
+
+- Scaling to multiple concurrent users
+
+- Running experiments with different models
 
 ### Use Local When:
-- 💻 Developing and testing
-- 💻 Processing small batches (<10 videos)
-- 💻 Have powerful local GPU
-- 💻 Need lowest latency
-- 💻 Cost-sensitive for small workloads
+
+- Developing and testing
+
+- Processing small batches (<10 videos)
+
+- Have powerful local GPU
+
+- Need lowest latency
+
+- Cost-sensitive for small workloads
 
 ---
 
-**Last Updated:** 2026-01-25
-**Status**: Production Ready - Integrated with 11-Package Architecture

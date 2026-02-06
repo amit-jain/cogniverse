@@ -6,7 +6,7 @@ This guide covers testing the Vespa search client with all available ranking str
 
 ```bash
 # Run comprehensive search client test
-python tests/test_search_client.py
+uv run python tests/test_search_client.py
 ```
 
 ## Prerequisites
@@ -18,9 +18,9 @@ python tests/test_search_client.py
 ## Test Coverage
 
 ### Text-Only Search
-- **Strategy**: `bm25_only`
+- **Strategies**: `bm25_only`, `bm25_no_description`
 - **Requirements**: Text query
-- **Tests**: BM25 search across video titles, descriptions, and transcripts
+- **Tests**: BM25 search across video titles, descriptions, and transcripts (or title/transcript only)
 
 ### Visual Search
 - **Strategies**: `float_float`, `binary_binary`, `float_binary`, `phased`
@@ -56,7 +56,7 @@ python tests/test_search_client.py
 
 ## Expected Output
 
-```
+```text
 === Testing Text-Only Strategies ===
 ✅ bm25_only: Got 3 results
   1. Score: 0.7625, Video: big_buck_bunny_clip
@@ -82,9 +82,16 @@ Visual query with embeddings → hybrid_float_bm25
 
 ### Initialize Client
 ```python
-from cogniverse_retrieval.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-client = VespaSearchClient()
+config_manager = create_default_config_manager()
+client = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="test_tenant",
+    config_manager=config_manager
+)
 ```
 
 ### Test Text Search
@@ -92,17 +99,19 @@ client = VespaSearchClient()
 results = client.search({
     "query": "buck",
     "ranking": "bm25_only",
-    "top_k": 3
+    "top_k": 3,
+    "schema": "video_colpali_smol500_mv_frame"
 })
 ```
 
 ### Test Visual Search
 ```python
-# Requires embeddings
+# Requires embeddings (generate using ColPali model)
 results = client.search({
     "query": "person walking",
     "ranking": "float_float",
-    "top_k": 3
+    "top_k": 3,
+    "schema": "video_colpali_smol500_mv_frame"
 }, embeddings=query_embeddings)
 ```
 
@@ -111,14 +120,15 @@ results = client.search({
 results = client.search({
     "query": "buck",
     "ranking": "hybrid_float_bm25",
-    "top_k": 3
+    "top_k": 3,
+    "schema": "video_colpali_smol500_mv_frame"
 }, embeddings=query_embeddings)
 ```
 
 ### Get Strategy Recommendations
 ```python
 recommended = client.recommend_strategy(
-    "show me videos about robots",
+    query_text="show me videos about robots",
     has_embeddings=True,
     speed_priority=False
 )
@@ -137,11 +147,12 @@ curl localhost:8080/ApplicationStatus
 
 ### Test Failures
 ```bash
-# Verify schema deployment
-python scripts/deploy_all_schemas.py
+# Check if data is indexed (replace schema name with your deployed schema)
+curl "localhost:8080/search/?yql=select * from video_colpali_smol500_mv_frame where true&hits=1"
 
-# Check if data is indexed
-curl "localhost:8080/search/?yql=select * from video_frame where true&hits=1"
+# Deploy schemas using the following commands:
+# uv run python scripts/deploy_all_schemas.py
+# uv run python scripts/deploy_json_schema.py <path_to_schema.json>
 ```
 
 ### Model Loading Issues
@@ -152,28 +163,38 @@ curl "localhost:8080/search/?yql=select * from video_frame where true&hits=1"
 ## Performance Metrics
 
 The test provides:
+
 - **Response times** for each strategy
+
 - **Relevance scores** comparison
+
 - **Strategy effectiveness** analysis
+
 - **Speed vs accuracy** trade-offs
 
 ### Performance Benchmarks
 - **Response Times**: Measures search latency for each strategy
 - **Relevance Scores**: Compares scoring effectiveness
 - **Strategy Comparison**: Shows speed vs. accuracy trade-offs
-- **Memory Usage**: Tracks resource consumption during testing
 
 ## Available Ranking Strategies
 
 | Strategy | Type | Speed | Accuracy | Requirements |
 |----------|------|--------|----------|-------------|
 | `bm25_only` | Text | Fast | Good | Text query |
+| `bm25_no_description` | Text | Fast | Good | Text query |
 | `float_float` | Visual | Slow | Highest | Embeddings |
 | `binary_binary` | Visual | Fastest | Good | Embeddings |
+| `float_binary` | Visual | Fast | Very Good | Embeddings |
+| `phased` | Visual | Fast | High | Embeddings |
 | `hybrid_float_bm25` | Hybrid | Slow | Highest | Text + embeddings |
 | `hybrid_binary_bm25` | Hybrid | Fast | Good | Text + embeddings |
 | `hybrid_bm25_binary` | Hybrid | Fast | Good | Text + embeddings |
 | `hybrid_bm25_float` | Hybrid | Medium | Very Good | Text + embeddings |
+| `hybrid_float_bm25_no_description` | Hybrid | Slow | High | Text + embeddings |
+| `hybrid_binary_bm25_no_description` | Hybrid | Fast | Good | Text + embeddings |
+| `hybrid_bm25_binary_no_description` | Hybrid | Fast | Good | Text + embeddings |
+| `hybrid_bm25_float_no_description` | Hybrid | Medium | Very Good | Text + embeddings |
 
 ## Test Data Requirements
 

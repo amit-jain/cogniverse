@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_vespa` (Implementation Layer)
 **Location:** `libs/vespa/cogniverse_vespa/`
-**Purpose:** Vespa backend integration with multi-tenant schema management
-**Last Updated:** 2026-01-25
 
 ---
 
@@ -36,18 +34,22 @@ The Vespa package (`cogniverse-vespa`) provides backend integration for vector a
 
 - **Tenant-Aware**: All clients require tenant-specific schema names
 - **Schema-Per-Tenant**: Physical data isolation via dedicated Vespa schemas
-- **Core Integration**: Depends only on `cogniverse_core` package
+- **Core Integration**: Depends on `cogniverse_sdk` and `cogniverse_core` packages
 - **Production-Ready**: Retry logic, health checks, batch processing
 
 ### Package Dependencies
 
 ```python
 # Vespa package depends on:
-from cogniverse_core.config.unified_config import SystemConfig
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_sdk.document import Document
+from cogniverse_sdk.interfaces.backend import Backend, SearchBackend
+from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import get_config  # Lazy import
 ```
 
 **External Dependencies**:
+
 - `pyvespa>=0.59.0`: Official Vespa Python client
 - `numpy>=1.24.0`: Array operations
 
@@ -55,36 +57,46 @@ from cogniverse_core.telemetry.manager import TelemetryManager
 
 ## Package Structure
 
-```
+```text
 libs/vespa/cogniverse_vespa/
 ├── __init__.py
-├── tenant_schema_manager.py        # Multi-tenant schema management (702 lines)
-├── vespa_schema_manager.py         # Schema deployment
-├── vespa_search_client.py          # Search operations (975 lines)
-├── ingestion_client.py             # Ingestion client (VespaPyClient class)
-├── json_schema_parser.py           # JSON schema parsing (238 lines)
 ├── backend.py                      # Backend abstraction
-├── search_backend.py               # Search backend implementation
-├── tenant_aware_search_client.py   # Tenant-aware search wrapper
+├── config/
+│   ├── __init__.py
+│   └── config_store.py             # Vespa-based config storage
+├── config_utils.py                 # Configuration utilities
 ├── embedding_processor.py          # Embedding processing
-├── config.py                       # Configuration management
-├── config_store.py                 # Config storage
+├── ingestion_client.py             # Ingestion client (VespaPyClient class)
+├── json_schema_parser.py           # JSON schema parsing
 ├── memory_config.py                # Memory configuration
-├── memory_store.py                 # Memory storage
+├── memory_store.py                 # Memory storage (Mem0 backend)
 ├── metadata_schemas.py             # Metadata schema definitions
 ├── ranking_strategy_extractor.py   # Ranking strategy extraction
-└── strategy_aware_processor.py     # Strategy-aware processing
+├── registry/
+│   ├── __init__.py
+│   └── adapter_store.py            # Adapter registry storage
+├── search_backend.py               # Search backend implementation
+├── strategy_aware_processor.py     # Strategy-aware processing
+├── tenant_aware_search_client.py   # Tenant-aware search wrapper
+├── vespa_schema_manager.py         # Multi-tenant schema management
+├── vespa_search_client.py          # Search operations
+└── workflow/
+    ├── __init__.py
+    └── workflow_store.py           # Workflow intelligence storage
 ```
 
-**Total Files**: 17 Python files (all at top level, NO subdirectories)
+**Total Files**: 21 Python files (including 3 subdirectories: config/, workflow/, registry/)
 
 **Key Files**:
-- `tenant_schema_manager.py`: 702 lines - Core tenant management
-- `vespa_search_client.py`: 975 lines - Search operations
-- `json_schema_parser.py`: 238 lines - Schema parsing
-- `ingestion_client.py`: PyVespa wrapper for ingestion
 
-**Note**: Schema templates (.sd files) are located in `configs/schemas/` at project root, not in the package
+- `vespa_schema_manager.py`: 1539 lines - Core tenant management
+- `vespa_search_client.py`: 1156 lines - Search operations
+- `json_schema_parser.py`: 235 lines - Schema parsing
+- `ingestion_client.py`: 521 lines - PyVespa wrapper for ingestion
+- `search_backend.py`: 1525 lines - Search backend with connection pooling
+- `backend.py`: 1102 lines - Unified backend abstraction
+
+**Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
 ---
 
@@ -95,6 +107,7 @@ libs/vespa/cogniverse_vespa/
 Cogniverse uses a **profile-based backend configuration system** with multi-tenant support. Configuration is loaded from `config.json` with auto-discovery and supports deep merging of system base config with tenant-specific overlays.
 
 **Key Features**:
+
 - **Auto-Discovery**: Automatic config.json discovery from standard locations
 - **Profile-Based**: Multiple processing profiles per backend (ColPali, VideoPrism, ColQwen-Omni, etc.)
 - **Tenant Overlays**: Tenant-specific config merges with system base
@@ -103,7 +116,7 @@ Cogniverse uses a **profile-based backend configuration system** with multi-tena
 
 ### Configuration Auto-Discovery
 
-**Search Order** (defined in `cogniverse_core/config/utils.py:_discover_config_file()`):
+**Search Order** (defined in `cogniverse_foundation/config/utils.py:_discover_config_file()`):
 
 1. `COGNIVERSE_CONFIG` environment variable (if set)
 2. `configs/config.json` (from current directory)
@@ -112,9 +125,10 @@ Cogniverse uses a **profile-based backend configuration system** with multi-tena
 
 ```python
 # Automatic discovery - no environment variables needed!
-from cogniverse_core.config.utils import ConfigUtils
+from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
 
-config_utils = ConfigUtils(tenant_id="acme")
+config_manager = create_default_config_manager()
+config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
 backend_config = config_utils.get("backend")  # Auto-discovered and merged
 ```
 
@@ -122,45 +136,61 @@ backend_config = config_utils.get("backend")  # Auto-discovered and merged
 
 ```mermaid
 flowchart TD
-    Start[SystemConfig initialized<br/>tenant_id: acme] --> CheckEnv{COGNIVERSE_CONFIG<br/>env var set?}
+    Start["<span style='color:#000'>SystemConfig initialized<br/>tenant_id: acme</span>"] --> CheckEnv{"<span style='color:#000'>COGNIVERSE_CONFIG<br/>env var set?</span>"}
 
-    CheckEnv -->|Yes| LoadEnv[Load from env var path]
-    CheckEnv -->|No| Check1[Check: configs/config.json]
+    CheckEnv -->|Yes| LoadEnv["<span style='color:#000'>Load from env var path</span>"]
+    CheckEnv -->|No| Check1["<span style='color:#000'>Check: configs/config.json</span>"]
 
-    Check1 --> Exists1{File exists?}
-    Exists1 -->|Yes| Load1[Load configs/config.json]
-    Exists1 -->|No| Check2[Check: ../configs/config.json]
+    Check1 --> Exists1{"<span style='color:#000'>File exists?</span>"}
+    Exists1 -->|Yes| Load1["<span style='color:#000'>Load configs/config.json</span>"]
+    Exists1 -->|No| Check2["<span style='color:#000'>Check: ../configs/config.json</span>"]
 
-    Check2 --> Exists2{File exists?}
-    Exists2 -->|Yes| Load2[Load ../configs/config.json]
-    Exists2 -->|No| Check3[Check: ../../configs/config.json]
+    Check2 --> Exists2{"<span style='color:#000'>File exists?</span>"}
+    Exists2 -->|Yes| Load2["<span style='color:#000'>Load ../configs/config.json</span>"]
+    Exists2 -->|No| Check3["<span style='color:#000'>Check: ../../configs/config.json</span>"]
 
-    Check3 --> Exists3{File exists?}
-    Exists3 -->|Yes| Load3[Load ../../configs/config.json]
-    Exists3 -->|No| UseDefaults[Use hardcoded defaults]
+    Check3 --> Exists3{"<span style='color:#000'>File exists?</span>"}
+    Exists3 -->|Yes| Load3["<span style='color:#000'>Load ../../configs/config.json</span>"]
+    Exists3 -->|No| UseDefaults["<span style='color:#000'>Use hardcoded defaults</span>"]
 
-    LoadEnv --> Parse[Parse JSON]
+    LoadEnv --> Parse["<span style='color:#000'>Parse JSON</span>"]
     Load1 --> Parse
     Load2 --> Parse
     Load3 --> Parse
     UseDefaults --> Merge
 
-    Parse --> SystemBase[System Base Config]
-    SystemBase --> GetTenantOverride[Check for tenant override<br/>ConfigScope.BACKEND<br/>tenant_id: acme]
+    Parse --> SystemBase["<span style='color:#000'>System Base Config</span>"]
+    SystemBase --> GetTenantOverride["<span style='color:#000'>Check for tenant override<br/>ConfigScope.BACKEND<br/>tenant_id: acme</span>"]
 
-    GetTenantOverride --> HasOverride{Tenant override<br/>exists?}
+    GetTenantOverride --> HasOverride{"<span style='color:#000'>Tenant override<br/>exists?</span>"}
 
-    HasOverride -->|Yes| LoadOverride[Load tenant config from<br/>ConfigManager]
-    HasOverride -->|No| Merge{Deep Merge}
+    HasOverride -->|Yes| LoadOverride["<span style='color:#000'>Load tenant config from<br/>ConfigManager</span>"]
+    HasOverride -->|No| Merge{"<span style='color:#000'>Deep Merge</span>"}
 
     LoadOverride --> Merge
 
-    Merge --> FinalConfig[Final Backend Config<br/>System base + Tenant overlays]
+    Merge --> FinalConfig["<span style='color:#000'>Final Backend Config<br/>System base + Tenant overlays</span>"]
 
-    style Start fill:#e1f5ff
-    style FinalConfig fill:#e1ffe1
-    style Merge fill:#f5e1ff
-    style Parse fill:#fff4e1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style CheckEnv fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadEnv fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Check1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Check2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Check3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Exists1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Exists2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Exists3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Load1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Load2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Load3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style UseDefaults fill:#b0bec5,stroke:#546e7a,color:#000
+    style Parse fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SystemBase fill:#b0bec5,stroke:#546e7a,color:#000
+    style GetTenantOverride fill:#ffcc80,stroke:#ef6c00,color:#000
+    style HasOverride fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadOverride fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Merge fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FinalConfig fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### Backend Configuration Structure
@@ -214,7 +244,7 @@ flowchart TD
 #### BackendProfileConfig Dataclass
 
 ```python
-from cogniverse_core.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
 profile = BackendProfileConfig(
     profile_name="video_colpali_smol500_mv_frame",
@@ -241,6 +271,7 @@ profile = BackendProfileConfig(
 ```
 
 **Profile Fields**:
+
 - `profile_name`: Unique identifier for the profile
 - `schema_name`: Vespa schema name (without tenant suffix)
 - `embedding_model`: HuggingFace model ID or local path
@@ -252,7 +283,7 @@ profile = BackendProfileConfig(
 #### BackendConfig Dataclass
 
 ```python
-from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
 
 config = BackendConfig(
     tenant_id="acme",
@@ -279,14 +310,20 @@ config.add_profile(new_profile)
 System base config + Tenant-specific overrides = Merged configuration
 
 ```mermaid
-graph TB
-    SystemConfig[System Base Config<br/>config.json backend section] --> Merge[Deep Merge Algorithm]
-    TenantConfig[Tenant Override Config<br/>ConfigManager.get_backend_config] --> Merge
-    Merge --> MergedConfig[Merged BackendConfig<br/>System profiles + Tenant profiles]
+flowchart TB
+    SystemConfig["<span style='color:#000'>System Base Config<br/>config.json backend section</span>"] --> Merge["<span style='color:#000'>Deep Merge Algorithm</span>"]
+    TenantConfig["<span style='color:#000'>Tenant Override Config<br/>ConfigManager.get_backend_config</span>"] --> Merge
+    Merge --> MergedConfig["<span style='color:#000'>Merged BackendConfig<br/>System profiles + Tenant profiles</span>"]
 
     SystemConfig -.->|"type: vespa<br/>url: localhost<br/>profiles: [colpali, videoprism]"| Merge
     TenantConfig -.->|"url: custom-vespa.acme.com<br/>profiles: [acme_custom_profile]"| Merge
-    MergedConfig -.->|"All system profiles +<br/>Tenant custom profiles +<br/>Tenant URL override"| Result[Available to Application]
+    MergedConfig -.->|"All system profiles +<br/>Tenant custom profiles +<br/>Tenant URL override"| Result["<span style='color:#000'>Available to Application</span>"]
+
+    style SystemConfig fill:#b0bec5,stroke:#546e7a,color:#000
+    style TenantConfig fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Merge fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MergedConfig fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Result fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 **Merge Rules** (from `config/utils.py:_ensure_backend_config()`):
@@ -328,7 +365,7 @@ tenant_config = BackendConfig(
 #### Partial Profile Updates
 
 ```python
-from cogniverse_core.config.unified_config import BackendConfig
+from cogniverse_foundation.config.unified_config import BackendConfig
 
 # Merge overrides into existing profile
 modified_profile = config.merge_profile(
@@ -347,10 +384,11 @@ modified_profile = config.merge_profile(
 #### Example 1: Load Merged Config for Tenant
 
 ```python
-from cogniverse_core.config.utils import ConfigUtils
+from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
 
 # Auto-discovers config.json and merges with tenant overrides
-config_utils = ConfigUtils(tenant_id="acme")
+config_manager = create_default_config_manager()
+config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
 
 # Get merged backend config
 backend_dict = config_utils.get("backend")
@@ -363,10 +401,10 @@ colpali_profile = profiles["video_colpali_smol500_mv_frame"]
 #### Example 2: Get BackendConfig Object
 
 ```python
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.unified_config import BackendConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import BackendConfig
 
-manager = ConfigManager()
+manager = create_default_config_manager()
 
 # Get tenant backend config (includes system base + tenant overlay merge)
 backend_config: BackendConfig = manager.get_backend_config(tenant_id="acme")
@@ -382,10 +420,10 @@ print(f"Strategies: {profile.strategies.keys()}")
 #### Example 3: Set Tenant-Specific Backend Config
 
 ```python
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
 
-manager = ConfigManager()
+manager = create_default_config_manager()
 
 # Create tenant-specific profile
 tenant_profile = BackendProfileConfig(
@@ -409,29 +447,46 @@ manager.set_backend_config(tenant_backend)
 ### Architecture Diagram
 
 ```mermaid
-graph TB
-    App[Application] --> ConfigUtils[ConfigUtils<br/>tenant_id='acme']
+flowchart TB
+    App["<span style='color:#000'>Application</span>"] --> ConfigUtils["<span style='color:#000'>ConfigUtils<br/>tenant_id='acme'</span>"]
 
-    ConfigUtils --> AutoDiscover[Auto-Discover<br/>config.json]
-    AutoDiscover --> SearchPath1[1. COGNIVERSE_CONFIG env]
-    AutoDiscover --> SearchPath2[2. configs/config.json]
-    AutoDiscover --> SearchPath3[3. ../configs/config.json]
+    ConfigUtils --> AutoDiscover["<span style='color:#000'>Auto-Discover<br/>config.json</span>"]
+    AutoDiscover --> SearchPath1["<span style='color:#000'>1. COGNIVERSE_CONFIG env</span>"]
+    AutoDiscover --> SearchPath2["<span style='color:#000'>2. configs/config.json</span>"]
+    AutoDiscover --> SearchPath3["<span style='color:#000'>3. ../configs/config.json</span>"]
 
-    ConfigUtils --> LoadSystem[Load System Base<br/>backend section]
-    ConfigUtils --> LoadTenant[Load Tenant Override<br/>ConfigManager]
+    ConfigUtils --> LoadSystem["<span style='color:#000'>Load System Base<br/>backend section</span>"]
+    ConfigUtils --> LoadTenant["<span style='color:#000'>Load Tenant Override<br/>ConfigManager</span>"]
 
-    LoadSystem --> Merge[Deep Merge]
+    LoadSystem --> Merge["<span style='color:#000'>Deep Merge</span>"]
     LoadTenant --> Merge
 
-    Merge --> MergedBackend[Merged BackendConfig]
-    MergedBackend --> Profiles{Available Profiles}
+    Merge --> MergedBackend["<span style='color:#000'>Merged BackendConfig</span>"]
+    MergedBackend --> Profiles{"<span style='color:#000'>Available Profiles</span>"}
 
-    Profiles --> ColPali[video_colpali<br/>System]
-    Profiles --> VideoPrism[video_videoprism<br/>System]
-    Profiles --> AcmeCustom[acme_custom<br/>Tenant Override]
+    Profiles --> ColPali["<span style='color:#000'>video_colpali<br/>System</span>"]
+    Profiles --> VideoPrism["<span style='color:#000'>video_videoprism<br/>System</span>"]
+    Profiles --> AcmeCustom["<span style='color:#000'>acme_custom<br/>Tenant Override</span>"]
 
-    MergedBackend --> VespaBackend[VespaBackend]
-    VespaBackend --> Application[Application Logic]
+    MergedBackend --> VespaBackend["<span style='color:#000'>VespaBackend</span>"]
+    VespaBackend --> Application["<span style='color:#000'>Application Logic</span>"]
+
+    style App fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigUtils fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AutoDiscover fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SearchPath1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style SearchPath2 fill:#b0bec5,stroke:#546e7a,color:#000
+    style SearchPath3 fill:#b0bec5,stroke:#546e7a,color:#000
+    style LoadSystem fill:#ffcc80,stroke:#ef6c00,color:#000
+    style LoadTenant fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Merge fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MergedBackend fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Profiles fill:#b0bec5,stroke:#546e7a,color:#000
+    style ColPali fill:#90caf9,stroke:#1565c0,color:#000
+    style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
+    style AcmeCustom fill:#ffcc80,stroke:#ef6c00,color:#000
+    style VespaBackend fill:#90caf9,stroke:#1565c0,color:#000
+    style Application fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -444,29 +499,45 @@ graph TB
 
 **Purpose**: Unified backend interface that wraps VespaSearchBackend and VespaPyClient, providing a single abstraction for both search and ingestion operations.
 
-```python
-from cogniverse_vespa.backend import VespaBackend
+**Recommended Pattern**: Use the BackendRegistry to obtain backend instances:
 
-# Initialize with merged config
-backend = VespaBackend()
-backend.initialize({
-    "tenant_id": "acme",
-    "schema_name": "video_colpali_smol500_mv_frame_acme",
-    "backend": {
-        "url": "http://localhost",
-        "port": 8080,
-        "profiles": {...}
-    }
-})
+```python
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
+# Create required dependencies
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Get backend from registry (handles instantiation and caching)
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="acme",
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
 
 # Search
-results = await backend.search(query="cooking video", top_k=10)
+results = backend.search({
+    "query": "cooking video",
+    "type": "video",
+    "top_k": 10
+})
 
-# Ingest
-await backend.ingest_documents(documents)
+# For ingestion, use get_ingestion_backend
+ingestion_backend = BackendRegistry.get_ingestion_backend(
+    name="vespa",
+    tenant_id="acme",
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
+ingestion_backend.ingest_documents(documents)
 ```
 
 **Key Features**:
+
 - **Unified Interface**: Single class for search + ingestion
 - **Profile-Aware**: Automatically uses profile config from BackendConfig
 - **Tenant-Aware**: Handles tenant schema routing internally
@@ -475,27 +546,37 @@ await backend.ingest_documents(documents)
 ### Architecture Diagram
 
 ```mermaid
-graph TB
-    App[Application Code] --> VespaBackend[VespaBackend<br/>Unified Interface]
+flowchart TB
+    App["<span style='color:#000'>Application Code</span>"] --> VespaBackend["<span style='color:#000'>VespaBackend<br/>Unified Interface</span>"]
 
-    VespaBackend --> SearchBackend[VespaSearchBackend]
-    VespaBackend --> IngestionClient[VespaPyClient]
+    VespaBackend --> SearchBackend["<span style='color:#000'>VespaSearchBackend</span>"]
+    VespaBackend --> IngestionClient["<span style='color:#000'>VespaPyClient</span>"]
 
-    VespaBackend --> SchemaManager[VespaSchemaManager]
-    VespaBackend --> TenantManager[TenantSchemaManager]
+    VespaBackend --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
+    VespaBackend --> TenantManager["<span style='color:#000'>VespaSchemaManager</span>"]
 
-    SearchBackend --> VespaSearchClient[VespaSearchClient]
-    VespaSearchClient --> Vespa[Vespa Instance]
+    SearchBackend --> VespaVideoSearchClient["<span style='color:#000'>VespaVideoSearchClient</span>"]
+    VespaVideoSearchClient --> VespaInst["<span style='color:#000'>Vespa Instance</span>"]
 
-    IngestionClient --> PyVespa[PyVespa feed_iterable]
-    PyVespa --> Vespa
+    IngestionClient --> PyVespa["<span style='color:#000'>PyVespa feed_iterable</span>"]
+    PyVespa --> VespaInst
 
-    SchemaManager --> Vespa
-    TenantManager --> Vespa
+    SchemaManager --> VespaInst
+    TenantManager --> VespaInst
+
+    style App fill:#90caf9,stroke:#1565c0,color:#000
+    style VespaBackend fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SearchBackend fill:#ffcc80,stroke:#ef6c00,color:#000
+    style IngestionClient fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SchemaManager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantManager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style VespaVideoSearchClient fill:#b0bec5,stroke:#546e7a,color:#000
+    style VespaInst fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PyVespa fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 **Why VespaBackend?**
-- **Eliminates Vespa-specific imports**: Application code doesn't import VespaSearchClient or VespaPyClient directly
+- **Eliminates Vespa-specific imports**: Application code doesn't import VespaVideoSearchClient or VespaPyClient directly
 - **Simplified API**: One class instead of multiple clients
 - **Consistent interface**: Same initialization and method signatures
 - **Future-proof**: Can swap Vespa with other backends without changing application code
@@ -519,35 +600,49 @@ A **profile** is a complete video processing configuration that defines:
 
 ```mermaid
 flowchart TB
-    subgraph Profiles[Backend Profiles]
-        ColPali[video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 128-dim<br/>Binary embeddings]
-        VideoPrism[video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks]
-        ColQwen[video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual]
+    subgraph Profiles["<span style='color:#000'>Backend Profiles</span>"]
+        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 128-dim<br/>Binary embeddings</span>"]
+        VideoPrism["<span style='color:#000'>video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks</span>"]
+        ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual</span>"]
     end
 
-    subgraph QueryTime[Query-Time Selection]
-        Query[User Query] --> AutoSelect{Auto-Select Profile}
+    subgraph QueryTime["<span style='color:#000'>Query-Time Selection</span>"]
+        Query["<span style='color:#000'>User Query</span>"] --> AutoSelect{"<span style='color:#000'>Auto-Select Profile</span>"}
         AutoSelect -->|has_video| SelectVideoPrism
         AutoSelect -->|Fine-grained search| SelectColPali
         AutoSelect -->|Multimodal| SelectColQwen
     end
 
-    subgraph Strategies[Processing Strategies]
-        SelectColPali[ColPali] --> FrameSeg[FrameSegmentationStrategy<br/>1 FPS keyframe extraction]
-        SelectVideoPrism[VideoPrism] --> DirectVideo[DirectVideoStrategy<br/>No frame extraction]
-        SelectColQwen[ColQwen] --> ChunkSeg[ChunkSegmentationStrategy<br/>30s audio+visual chunks]
+    subgraph Strategies["<span style='color:#000'>Processing Strategies</span>"]
+        SelectColPali["<span style='color:#000'>ColPali</span>"] --> FrameSeg["<span style='color:#000'>FrameSegmentationStrategy<br/>1 FPS keyframe extraction</span>"]
+        SelectVideoPrism["<span style='color:#000'>VideoPrism</span>"] --> DirectVideo["<span style='color:#000'>DirectVideoStrategy<br/>No frame extraction</span>"]
+        SelectColQwen["<span style='color:#000'>ColQwen</span>"] --> ChunkSeg["<span style='color:#000'>ChunkSegmentationStrategy<br/>30s audio+visual chunks</span>"]
     end
 
-    subgraph VespaSchemas[Vespa Schemas per Tenant]
-        FrameSeg --> ColPaliSchema[video_colpali_smol500_mv_frame_acme<br/>Multi-vector binary]
-        DirectVideo --> VideoPrismSchema[video_videoprism_base_mv_chunk_30s_acme<br/>Global float vectors]
-        ChunkSeg --> ColQwenSchema[video_colqwen_omni_mv_chunk_30s_acme<br/>Multi-modal vectors]
+    subgraph VespaSchemas["<span style='color:#000'>Vespa Schemas per Tenant</span>"]
+        FrameSeg --> ColPaliSchema["<span style='color:#000'>video_colpali_smol500_mv_frame_acme<br/>Multi-vector binary</span>"]
+        DirectVideo --> VideoPrismSchema["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme<br/>Global float vectors</span>"]
+        ChunkSeg --> ColQwenSchema["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme<br/>Multi-modal vectors</span>"]
     end
 
-    style Profiles fill:#e1f5ff
-    style QueryTime fill:#fff4e1
-    style Strategies fill:#f5e1ff
-    style VespaSchemas fill:#e1ffe1
+    style Profiles fill:#90caf9,stroke:#1565c0,color:#000
+    style QueryTime fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Strategies fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaSchemas fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ColPali fill:#90caf9,stroke:#1565c0,color:#000
+    style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
+    style ColQwen fill:#90caf9,stroke:#1565c0,color:#000
+    style Query fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AutoSelect fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SelectColPali fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SelectVideoPrism fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SelectColQwen fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FrameSeg fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DirectVideo fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ChunkSeg fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ColPaliSchema fill:#a5d6a7,stroke:#388e3c,color:#000
+    style VideoPrismSchema fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ColQwenSchema fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 #### Frame-Based Profiles
@@ -574,29 +669,32 @@ flowchart TB
 ### Profile Selection at Query Time
 
 ```python
-from cogniverse_core.config.utils import ConfigUtils
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_vespa.backend import VespaBackend
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-config = ConfigUtils(tenant_id="acme")
-backend_config = config.get("backend")
+# Get configuration
+config_manager = create_default_config_manager()
+config = get_config(tenant_id="acme", config_manager=config_manager)
 
-# List available profiles
-profiles = backend_config["profiles"].keys()
+# List available profiles from backend config
+backend_config = config_manager.get_backend_config("acme")
+profiles = list(backend_config.profiles.keys())
 # → ['video_colpali_smol500_mv_frame', 'video_videoprism_base_mv_chunk_30s', ...]
 
 # Select profile dynamically
 profile_name = "video_colpali_smol500_mv_frame"
-profile = backend_config["profiles"][profile_name]
 
-# Initialize backend with selected profile
-from cogniverse_vespa.backend import VespaBackend
-
-backend = VespaBackend()
-backend.initialize({
-    "tenant_id": "acme",
-    "schema_name": profile["schema_name"],
-    "profile": profile_name,
-    "backend": backend_config
-})
+# Get backend from registry with profile configuration
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+backend = BackendRegistry.get_search_backend(
+    name="vespa",
+    tenant_id="acme",
+    config={"profile": profile_name},
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
 ```
 
 ### Creating Custom Profiles
@@ -630,161 +728,151 @@ manager.set_backend_config(backend_config)
 
 ### Advanced Query-Time Resolution
 
-The `VespaSearchBackend` implements sophisticated 3-step query-time resolution for profiles and strategies:
+The `VespaSearchBackend` implements query-time resolution for profiles and strategies directly in the `search()` method with a 4-step fallback approach:
 
 #### Resolution Flow
 
 ```mermaid
 flowchart TD
-    Start[Query Request] --> ProfileCheck{Has explicit<br/>profile param?}
+    Start["<span style='color:#000'>Query Request<br/>with type + query</span>"] --> ProfileCheck{"<span style='color:#000'>Has explicit<br/>profile param?</span>"}
 
-    ProfileCheck -->|Yes| UseExplicitProfile[Use Explicit Profile]
-    ProfileCheck -->|No| AutoSelect{Query has<br/>video/image?}
+    ProfileCheck -->|Yes| ValidateProfile["<span style='color:#000'>Validate profile exists</span>"]
+    ProfileCheck -->|No| CountTypeProfiles["<span style='color:#000'>Count profiles<br/>matching type</span>"]
 
-    AutoSelect -->|has_video| UseVideoPrism[Profile: video_videoprism]
-    AutoSelect -->|has_image| UseImage[Profile: image_colpali]
-    AutoSelect -->|Neither| UseDefault[Use Default Profile]
+    ValidateProfile --> UseExplicit["<span style='color:#000'>Use Explicit Profile</span>"]
 
-    UseExplicitProfile --> StrategyCheck
-    UseVideoPrism --> StrategyCheck
-    UseImage --> StrategyCheck
+    CountTypeProfiles --> CheckCount{"<span style='color:#000'>How many<br/>profiles?</span>"}
+
+    CheckCount -->|"1"| AutoSelect["<span style='color:#000'>Auto-select<br/>single profile</span>"]
+    CheckCount -->|"> 1"| CheckDefault{"<span style='color:#000'>Has default<br/>for type?</span>"}
+    CheckCount -->|"0"| ErrorNoProfile["<span style='color:#000'>Error:<br/>No profiles for type</span>"]
+
+    CheckDefault -->|Yes| UseDefault["<span style='color:#000'>Use Default Profile</span>"]
+    CheckDefault -->|No| ErrorMultiple["<span style='color:#000'>Error:<br/>Multiple profiles,<br/>no default</span>"]
+
+    UseExplicit --> StrategyCheck
+    AutoSelect --> StrategyCheck
     UseDefault --> StrategyCheck
 
-    StrategyCheck{Has explicit<br/>ranking param?} -->|Yes| UseExplicitStrategy[Use Explicit Strategy]
-    StrategyCheck -->|No| EmbeddingCheck{Embedding<br/>type?}
-
-    EmbeddingCheck -->|binary| UseBinary[Strategy: hybrid_binary_bm25]
-    EmbeddingCheck -->|float| UseFloat[Strategy: hybrid_float_bm25]
-    EmbeddingCheck -->|other| UseDefaultStrategy[Use Profile Default]
+    StrategyCheck{"<span style='color:#000'>Has explicit<br/>strategy param?</span>"} -->|Yes| UseExplicitStrategy["<span style='color:#000'>Use Explicit Strategy</span>"]
+    StrategyCheck -->|No| StrategySimilar["<span style='color:#000'>Similar logic:<br/>Count → Auto-select → Default</span>"]
 
     UseExplicitStrategy --> TenantScoping
-    UseBinary --> TenantScoping
-    UseFloat --> TenantScoping
-    UseDefaultStrategy --> TenantScoping
+    StrategySimilar --> TenantScoping
 
-    TenantScoping[Step 3: Tenant Scoping<br/>schema_name + tenant_id] --> ExecuteSearch[Execute Search]
+    TenantScoping["<span style='color:#000'>Tenant Schema Scoping<br/>base_schema + tenant_id</span>"] --> ExecuteSearch["<span style='color:#000'>Execute Search</span>"]
 
-    style Start fill:#e1f5ff
-    style ExecuteSearch fill:#e1ffe1
-    style ProfileCheck fill:#fff4e1
-    style StrategyCheck fill:#fff4e1
-    style EmbeddingCheck fill:#fff4e1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style ExecuteSearch fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ErrorNoProfile fill:#ffcccc,stroke:#c62828,color:#000
+    style ErrorMultiple fill:#ffcccc,stroke:#c62828,color:#000
+    style ProfileCheck fill:#ffcc80,stroke:#ef6c00,color:#000
+    style StrategyCheck fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckCount fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckDefault fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CountTypeProfiles fill:#b0bec5,stroke:#546e7a,color:#000
+    style ValidateProfile fill:#b0bec5,stroke:#546e7a,color:#000
+    style UseExplicit fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style AutoSelect fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style UseDefault fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style UseExplicitStrategy fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style StrategySimilar fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TenantScoping fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 #### Implementation Details
 
-**1. Profile Resolution** (`_resolve_profile_for_query`):
+**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (lines 585-864)
+
+**Profile Resolution Logic** (inline in search() method):
 ```python
-def _resolve_profile_for_query(
-    self,
-    query: Dict[str, Any],
-    tenant_id: str
-) -> str:
-    """
-    Resolve profile name from query request.
+# Priority order:
+# 1. Explicit 'profile' parameter in query_dict
+requested_profile = query_dict.get("profile")
+if requested_profile:
+    if requested_profile not in self.profiles:
+        raise ValueError(f"Requested profile '{requested_profile}' not found")
+    profile_name = requested_profile
+else:
+    # 2. Auto-select if only one profile for content type
+    type_profiles = {
+        name: config
+        for name, config in self.profiles.items()
+        if config.get("type") == content_type
+    }
 
-    Priority order:
-    1. Explicit 'profile' parameter in query
-    2. Auto-selection based on query type (has_video, has_image)
-    3. Default profile from backend config
-    """
-    # Explicit profile
-    if "profile" in query:
-        return query["profile"]
-
-    # Auto-selection
-    if query.get("has_video"):
-        return "video_videoprism_base_mv_chunk_30s"
-    elif query.get("has_image"):
-        return "image_colpali_frame"
-
-    # Default
-    return self.backend_config.default_profile
+    if len(type_profiles) == 1:
+        profile_name = list(type_profiles.keys())[0]
+    elif len(type_profiles) > 1:
+        # 3. Use default profile for type
+        default_config = self.default_profiles.get(content_type, {})
+        profile_name = default_config.get("profile")
+        if not profile_name:
+            raise ValueError(
+                f"Multiple profiles for '{content_type}' but no default configured"
+            )
+    else:
+        # 4. No profiles for type - error
+        raise ValueError(f"No profiles found for type '{content_type}'")
 ```
 
-**2. Strategy Resolution** (`_resolve_strategy_for_profile`):
+**Strategy Resolution Logic** (similar fallback approach):
 ```python
-def _resolve_strategy_for_profile(
-    self,
-    profile_name: str,
-    query: Dict[str, Any]
-) -> str:
-    """
-    Resolve ranking strategy for profile.
-
-    Priority order:
-    1. Explicit 'ranking' parameter in query
-    2. Auto-selection based on embedding type
-    3. Default strategy from profile config
-    """
-    # Explicit strategy
-    if "ranking" in query:
-        return query["ranking"]
-
-    # Get profile
-    profile = self.backend_config.profiles[profile_name]
-
-    # Auto-select based on embedding type
-    if profile.embedding_type == "binary":
-        return "hybrid_binary_bm25_no_description"
-    elif profile.embedding_type == "float":
-        return "hybrid_float_bm25"
-
-    # Default
-    return profile.default_ranking_strategy
+# Same 4-step fallback:
+# 1. Explicit strategy in query_dict
+# 2. Auto-select if single strategy for profile
+# 3. Use default strategy for profile/type
+# 4. Error if no strategies found
+requested_strategy = query_dict.get("strategy")
+# ... similar logic pattern ...
 ```
 
-**3. Tenant Schema Scoping** (`_apply_tenant_scoping`):
+**Tenant Schema Scoping** (inline construction):
 ```python
-def _apply_tenant_scoping(
-    self,
-    profile: BackendProfileConfig,
-    tenant_id: str
-) -> str:
-    """
-    Transform schema name to include tenant suffix.
-
-    Examples:
-      video_colpali_smol500_mv_frame + "acme"
-        → video_colpali_smol500_mv_frame_acme
-    """
-    return f"{profile.schema_name}_{tenant_id}"
+# Schema name construction
+base_schema_name = profile_config.get("schema_name", profile_name)
+schema_name = f"{base_schema_name}_{self.tenant_id}"
+# Example: "video_colpali_smol500_mv_frame_acme"
 ```
 
 #### Usage Example
 
 **Request with Auto-Resolution**:
 ```python
-# Client request without explicit profile/strategy
-query = {
-    "query_text": "machine learning tutorial",
+# Client request without explicit profile/strategy (REQUIRES 'type' key)
+query_dict = {
+    "query": "machine learning tutorial",
+    "type": "video",  # REQUIRED for profile resolution
     "top_k": 10,
-    # No 'profile' or 'ranking' specified
+    # No 'profile' or 'strategy' specified
 }
 
 # Backend auto-resolves:
-# 1. Profile: Uses default "video_colpali_smol500_mv_frame"
-# 2. Strategy: Auto-selects "hybrid_binary_bm25_no_description" (binary embedding)
-# 3. Schema: Transforms to "video_colpali_smol500_mv_frame_acme"
+# 1. Filters profiles by type="video"
+# 2. If single profile → auto-select
+#    If multiple → uses default_profiles["video"]["profile"]
+# 3. Similar logic for strategy
+# 4. Schema: base_schema_name + "_" + tenant_id
 
-results = backend.search(query, tenant_id="acme")
+results = backend.search(query_dict)  # tenant_id already set in backend config
 ```
 
 **Request with Explicit Parameters**:
 ```python
-query = {
-    "query_text": "cooking videos",
+query_dict = {
+    "query": "cooking videos",
+    "type": "video",  # REQUIRED
     "profile": "video_videoprism_base_mv_chunk_30s",  # Explicit
-    "ranking": "float_float",  # Explicit
+    "strategy": "float_float",  # Explicit
     "top_k": 20
 }
 
 # Backend uses explicit values:
 # 1. Profile: "video_videoprism_base_mv_chunk_30s" (explicit)
-# 2. Strategy: "float_float" (explicit)
+# 2. Strategy: "float_float" (explicit, validated against profile)
 # 3. Schema: "video_videoprism_base_mv_chunk_30s_acme" (tenant-scoped)
 
-results = backend.search(query, tenant_id="acme")
+results = backend.search(query_dict)
 ```
 
 #### Benefits
@@ -804,6 +892,7 @@ results = backend.search(query, tenant_id="acme")
 The `VespaSearchBackend` implements connection pooling for efficient Vespa client management with health monitoring and automatic recovery.
 
 **Key Features**:
+
 - **Connection Reuse**: Pool of healthy Vespa clients per schema
 - **Health Monitoring**: Background health checks with circuit breaker pattern
 - **Automatic Recovery**: Failed connections marked unhealthy and recovered
@@ -814,108 +903,69 @@ The `VespaSearchBackend` implements connection pooling for efficient Vespa clien
 
 ```mermaid
 flowchart TB
-    Backend[VespaSearchBackend] --> GetPool[Get ConnectionPool<br/>for schema]
+    Backend["<span style='color:#000'>VespaSearchBackend</span>"] --> GetPool["<span style='color:#000'>Get ConnectionPool<br/>for schema</span>"]
 
-    GetPool --> CheckHealthy{Healthy<br/>connections<br/>available?}
+    GetPool --> CheckHealthy{"<span style='color:#000'>Healthy<br/>connections<br/>available?</span>"}
 
-    CheckHealthy -->|Yes| SelectConn[Select Connection<br/>Round-Robin]
-    CheckHealthy -->|No| Error[Raise NoHealthyConnectionsError]
+    CheckHealthy -->|Yes| SelectConn["<span style='color:#000'>Select Connection<br/>Round-Robin</span>"]
+    CheckHealthy -->|No| Error["<span style='color:#000'>Raise NoHealthyConnectionsError</span>"]
 
-    SelectConn --> ExecuteQuery[Execute Query]
+    SelectConn --> ExecuteQuery["<span style='color:#000'>Execute Query</span>"]
 
-    ExecuteQuery --> QuerySuccess{Query<br/>successful?}
+    ExecuteQuery --> QuerySuccess{"<span style='color:#000'>Query<br/>successful?</span>"}
 
-    QuerySuccess -->|Yes| ResetErrors[Reset error_count = 0]
-    QuerySuccess -->|No| IncrementErrors[Increment error_count]
+    QuerySuccess -->|Yes| ResetErrors["<span style='color:#000'>Reset error_count = 0</span>"]
+    QuerySuccess -->|No| IncrementErrors["<span style='color:#000'>Increment error_count</span>"]
 
-    IncrementErrors --> CheckThreshold{error_count >= 3?}
+    IncrementErrors --> CheckThreshold{"<span style='color:#000'>error_count >= 3?</span>"}
 
-    CheckThreshold -->|Yes| MarkUnhealthy[Mark Connection Unhealthy<br/>is_healthy = False]
-    CheckThreshold -->|No| ReturnConn[Return Connection to Pool]
+    CheckThreshold -->|Yes| MarkUnhealthy["<span style='color:#000'>Mark Connection Unhealthy<br/>is_healthy = False</span>"]
+    CheckThreshold -->|No| ReturnConn["<span style='color:#000'>Return Connection to Pool</span>"]
 
-    MarkUnhealthy --> TriggerRecovery[Background Health Check<br/>Attempts Recovery]
+    MarkUnhealthy --> TriggerRecovery["<span style='color:#000'>Background Health Check<br/>Attempts Recovery</span>"]
 
-    TriggerRecovery --> HealthCheckLoop{Health Check<br/>Query Succeeds?}
+    TriggerRecovery --> HealthCheckLoop{"<span style='color:#000'>Health Check<br/>Query Succeeds?</span>"}
 
-    HealthCheckLoop -->|Yes| RecoverConn[Mark Healthy<br/>is_healthy = True<br/>error_count = 0]
-    HealthCheckLoop -->|No| StayUnhealthy[Remain Unhealthy<br/>Retry Next Interval]
+    HealthCheckLoop -->|Yes| RecoverConn["<span style='color:#000'>Mark Healthy<br/>is_healthy = True<br/>error_count = 0</span>"]
+    HealthCheckLoop -->|No| StayUnhealthy["<span style='color:#000'>Remain Unhealthy<br/>Retry Next Interval</span>"]
 
     ResetErrors --> ReturnConn
     RecoverConn --> ReturnConn
 
-    style Backend fill:#e1f5ff
-    style ExecuteQuery fill:#fff4e1
-    style MarkUnhealthy fill:#ffe1e1
-    style RecoverConn fill:#e1ffe1
-    style Error fill:#ffe1e1
+    style Backend fill:#90caf9,stroke:#1565c0,color:#000
+    style GetPool fill:#90caf9,stroke:#1565c0,color:#000
+    style CheckHealthy fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SelectConn fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExecuteQuery fill:#ffcc80,stroke:#ef6c00,color:#000
+    style QuerySuccess fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ResetErrors fill:#a5d6a7,stroke:#388e3c,color:#000
+    style IncrementErrors fill:#b0bec5,stroke:#546e7a,color:#000
+    style CheckThreshold fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MarkUnhealthy fill:#ffcccc,stroke:#c62828,color:#000
+    style TriggerRecovery fill:#b0bec5,stroke:#546e7a,color:#000
+    style HealthCheckLoop fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RecoverConn fill:#a5d6a7,stroke:#388e3c,color:#000
+    style StayUnhealthy fill:#ffcccc,stroke:#c62828,color:#000
+    style ReturnConn fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Error fill:#ffcccc,stroke:#c62828,color:#000
 ```
 
 ### Connection Pool Implementation
 
-**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 106-256)
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 45-256)
 
-#### ConnectionPool Class
+#### ConnectionPoolConfig Class
 
 ```python
-class ConnectionPool:
-    """
-    Manage pool of Vespa connections with health monitoring.
+@dataclass
+class ConnectionPoolConfig:
+    """Configuration for connection pool."""
 
-    Features:
-    - Connection reuse for performance
-    - Health checks with circuit breaker
-    - Automatic connection recovery
-    - Thread-safe operations
-    """
-
-    def __init__(
-        self,
-        schema_name: str,
-        max_connections: int = 10,
-        health_check_interval: float = 30.0
-    ):
-        self.schema_name = schema_name
-        self.max_connections = max_connections
-        self.health_check_interval = health_check_interval
-
-        self._connections: List[VespaConnection] = []
-        self._lock = threading.Lock()
-        self._health_check_thread = None
-
-    def get_connection(self) -> VespaConnection:
-        """Get healthy connection from pool (round-robin)"""
-        with self._lock:
-            healthy = [c for c in self._connections if c.is_healthy]
-
-            if not healthy:
-                raise NoHealthyConnectionsError(
-                    f"No healthy connections for schema {self.schema_name}"
-                )
-
-            # Round-robin selection
-            conn = healthy[0]
-            self._connections.remove(conn)
-            self._connections.append(conn)
-
-            return conn
-
-    def mark_unhealthy(self, connection: VespaConnection):
-        """Mark connection as unhealthy for recovery"""
-        with self._lock:
-            connection.is_healthy = False
-            connection.last_error = datetime.now()
-
-    def health_check_loop(self):
-        """Background thread for connection health monitoring"""
-        while True:
-            time.sleep(self.health_check_interval)
-
-            with self._lock:
-                for conn in self._connections:
-                    if not conn.is_healthy:
-                        # Try to recover
-                        if conn.check_health():
-                            logger.info(f"Connection recovered: {conn}")
+    max_connections: int = 10           # Maximum connections in pool
+    min_connections: int = 2            # Minimum connections to maintain
+    connection_timeout: float = 30.0    # Timeout waiting for connection (seconds)
+    idle_timeout: float = 300.0         # Remove idle connections after (seconds)
+    health_check_interval: float = 60.0 # Health check frequency (seconds)
 ```
 
 #### VespaConnection Class
@@ -923,77 +973,140 @@ class ConnectionPool:
 ```python
 class VespaConnection:
     """
-    Wrapper for Vespa client with health tracking.
+    Managed Vespa connection with health checking.
 
     Attributes:
-        client: Vespa application instance
-        schema_name: Target schema name
+        url: Vespa endpoint URL
+        connection_id: Unique connection identifier
+        vespa: Vespa client instance (created internally)
+        created_at: Connection creation timestamp
+        last_used: Last query execution timestamp
         is_healthy: Current health status
-        last_error: Timestamp of last failure
-        error_count: Consecutive error count
     """
 
-    def __init__(self, client: Vespa, schema_name: str):
-        self.client = client
-        self.schema_name = schema_name
+    def __init__(self, url: str, connection_id: str):
+        self.url = url
+        self.connection_id = connection_id
+        self.vespa = Vespa(url=url)  # Created internally, not passed in
+        self.created_at = time.time()
+        self.last_used = time.time()
         self.is_healthy = True
-        self.last_error: Optional[datetime] = None
-        self.error_count = 0
+        self._lock = threading.Lock()
 
-    def check_health(self) -> bool:
+    def query(self, *args, **kwargs):
+        """Execute query and update last used time."""
+        with self._lock:
+            self.last_used = time.time()
+        return self.vespa.query(*args, **kwargs)
+
+    def health_check(self) -> bool:
         """
-        Execute health check query.
+        Check connection health with simple query.
 
         Returns:
             True if connection is healthy
         """
         try:
-            # Simple query to test connection
-            result = self.client.query(
-                yql=f"select * from {self.schema_name} limit 1",
-                timeout=5
-            )
-
-            self.is_healthy = True
-            self.error_count = 0
-            return True
-
+            result = self.vespa.query(yql="select * from sources * where true limit 1")
+            self.is_healthy = result is not None
+            return self.is_healthy
         except Exception as e:
-            self.error_count += 1
-            self.last_error = datetime.now()
-
-            # Circuit breaker: too many failures
-            if self.error_count >= 3:
-                self.is_healthy = False
-                logger.error(f"Connection failed health check: {e}")
-
+            logger.warning(f"Health check failed for {self.connection_id}: {e}")
+            self.is_healthy = False
             return False
 
-    def execute_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
+    @property
+    def idle_time(self) -> float:
+        """Time since last use in seconds."""
+        return time.time() - self.last_used
+```
+
+#### ConnectionPool Class
+
+```python
+class ConnectionPool:
+    """
+    Thread-safe connection pool with health monitoring.
+
+    Features:
+    - Connection reuse for performance
+    - Automatic health checks in background thread
+    - Dynamic connection creation up to max limit
+    - Idle connection cleanup
+    - Context manager pattern for safe connection handling
+    """
+
+    def __init__(self, url: str, config: ConnectionPoolConfig):
+        self.url = url
+        self.config = config
+        self._connections: List[VespaConnection] = []
+        self._available: List[VespaConnection] = []
+        self._lock = threading.Lock()
+        self._stop_health_check = threading.Event()
+
+        # Initialize minimum connections
+        self._initialize_connections()
+
+        # Start background health check thread
+        self._health_check_thread = threading.Thread(
+            target=self._health_check_loop, daemon=True
+        )
+        self._health_check_thread.start()
+
+    @contextmanager
+    def get_connection(self):
         """
-        Execute query with automatic health tracking.
+        Get a connection from the pool (context manager).
+
+        Usage:
+            with pool.get_connection() as conn:
+                result = conn.query(yql="...")
+
+        Yields:
+            VespaConnection: A healthy connection
 
         Raises:
-            ConnectionError: If connection is unhealthy
+            TimeoutError: If no connection available within timeout
         """
-        if not self.is_healthy:
-            raise ConnectionError(
-                f"Connection unhealthy for {self.schema_name}"
-            )
+        conn = None
+        start_time = time.time()
 
         try:
-            result = self.client.query(**query)
-            self.error_count = 0
-            return result
+            # Try to get available connection or create new one
+            with self._lock:
+                if self._available:
+                    conn = self._available.pop()
+                elif len(self._connections) < self.config.max_connections:
+                    conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
+                    self._connections.append(conn)
 
-        except Exception as e:
-            self.error_count += 1
-            self.last_error = datetime.now()
+            # Wait for connection if none available
+            while conn is None and (time.time() - start_time) < self.config.connection_timeout:
+                time.sleep(0.1)
+                with self._lock:
+                    if self._available:
+                        conn = self._available.pop()
 
-            if self.error_count >= 3:
-                self.is_healthy = False
+            if conn is None:
+                raise TimeoutError("No connections available")
 
-            raise
+            yield conn
+
+        finally:
+            # Return connection to pool
+            if conn is not None:
+                with self._lock:
+                    self._available.append(conn)
+
+    def close(self):
+        """Close all connections and stop health checks."""
+        self._stop_health_check.set()
+        if self._health_check_thread.is_alive():
+            self._health_check_thread.join(timeout=5)
+
+        with self._lock:
+            self._connections.clear()
+            self._available.clear()
 ```
 
 ### Usage in VespaSearchBackend
@@ -1001,57 +1114,46 @@ class VespaConnection:
 ```python
 class VespaSearchBackend:
     def __init__(self, config: Dict[str, Any]):
-        # Connection pools per schema
-        self._connection_pools: Dict[str, ConnectionPool] = {}
+        self.url = config.get("url", "http://localhost:8080")
+        self._pool_config = ConnectionPoolConfig(
+            max_connections=config.get("max_connections", 10),
+            min_connections=config.get("min_connections", 2),
+            health_check_interval=config.get("health_check_interval", 60.0),
+        )
+        # Single connection pool (connections are URL-based, not schema-based)
+        self._pool: Optional[ConnectionPool] = None
 
-    def _get_connection_pool(self, schema_name: str) -> ConnectionPool:
-        """Get or create connection pool for schema"""
-        if schema_name not in self._connection_pools:
-            pool = ConnectionPool(
-                schema_name=schema_name,
-                max_connections=10,
-                health_check_interval=30.0
-            )
-            pool.start_health_checks()
-
-            self._connection_pools[schema_name] = pool
-
-        return self._connection_pools[schema_name]
+    def _get_connection_pool(self) -> ConnectionPool:
+        """Get or create connection pool."""
+        if self._pool is None:
+            # Health checks start automatically in __init__
+            self._pool = ConnectionPool(self.url, self._pool_config)
+        return self._pool
 
     def search(
         self,
         query: Dict[str, Any],
         tenant_id: str
     ) -> List[Dict[str, Any]]:
-        """Execute search using pooled connection"""
-
+        """Execute search using pooled connection."""
         # Resolve profile and strategy
         profile = self._resolve_profile_for_query(query, tenant_id)
         strategy = self._resolve_strategy_for_profile(profile, query)
-        schema_name = f"{profile}__{tenant_id}"
 
-        # Get connection from pool
-        pool = self._get_connection_pool(schema_name)
+        # Get connection from pool (context manager pattern)
+        pool = self._get_connection_pool()
 
-        try:
-            conn = pool.get_connection()
-
-            # Execute query
-            results = conn.execute_query({
-                "yql": self._build_yql(query, strategy),
-                "ranking": strategy,
-                "hits": query.get("top_k", 10)
-            })
-
+        with pool.get_connection() as conn:
+            # Execute query via Vespa client
+            results = conn.query(
+                yql=self._build_yql(query, strategy),
+                ranking=strategy,
+                hits=query.get("top_k", 10)
+            )
             return results
 
-        except Exception as e:
-            # Mark connection unhealthy
-            pool.mark_unhealthy(conn)
-
-            # Try alternate connection
-            conn = pool.get_connection()
-            return conn.execute_query(query)
+        # Note: Connection health is managed automatically by the pool's
+        # background health check thread started in __init__
 ```
 
 ### Health Metrics
@@ -1120,9 +1222,9 @@ backend_config = {
 
 ## Multi-Tenant Schema Management
 
-### TenantSchemaManager
+### VespaSchemaManager
 
-**Location**: `libs/vespa/cogniverse_vespa/tenant_schema_manager.py`
+**Location**: `libs/vespa/cogniverse_vespa/vespa_schema_manager.py`
 **Purpose**: Manage tenant-specific Vespa schemas with physical isolation
 
 See [Multi-Tenant Architecture](../architecture/multi-tenant.md) for comprehensive details.
@@ -1130,61 +1232,97 @@ See [Multi-Tenant Architecture](../architecture/multi-tenant.md) for comprehensi
 #### Architecture
 
 ```mermaid
-graph TB
-    API[API Request<br/>tenant_id: acme] --> Middleware[Tenant Middleware]
-    Middleware --> SchemaManager[TenantSchemaManager]
+flowchart TB
+    API["<span style='color:#000'>API Request<br/>tenant_id: acme</span>"] --> Middleware["<span style='color:#000'>Tenant Middleware</span>"]
+    Middleware --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
 
-    SchemaManager --> CheckCache{Schema in cache?}
-    CheckCache -->|Yes| UseSchema[Use schema: video_frames_acme]
-    CheckCache -->|No| LoadTemplate[Load base template]
+    SchemaManager --> CheckCache{"<span style='color:#000'>Schema in cache?</span>"}
+    CheckCache -->|Yes| UseSchema["<span style='color:#000'>Use schema: video_frames_acme</span>"]
+    CheckCache -->|No| LoadTemplate["<span style='color:#000'>Load base template</span>"]
 
-    LoadTemplate --> Transform[Transform for tenant:<br/>video_frames → video_frames_acme]
-    Transform --> Deploy[Deploy to Vespa]
-    Deploy --> Cache[Cache deployment]
+    LoadTemplate --> Transform["<span style='color:#000'>Transform for tenant:<br/>video_frames → video_frames_acme</span>"]
+    Transform --> Deploy["<span style='color:#000'>Deploy to Vespa</span>"]
+    Deploy --> Cache["<span style='color:#000'>Cache deployment</span>"]
     Cache --> UseSchema
 
-    UseSchema --> VespaClient[VespaSearchClient<br/>schema=video_frames_acme]
-    VespaClient --> Search[Search tenant data]
+    UseSchema --> VespaClient["<span style='color:#000'>VespaVideoSearchClient<br/>schema=video_frames_acme</span>"]
+    VespaClient --> Search["<span style='color:#000'>Search tenant data</span>"]
 
-    style API fill:#e1f5ff
-    style SchemaManager fill:#fff4e1
-    style VespaClient fill:#e1ffe1
+    style API fill:#90caf9,stroke:#1565c0,color:#000
+    style Middleware fill:#90caf9,stroke:#1565c0,color:#000
+    style SchemaManager fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CheckCache fill:#ffcc80,stroke:#ef6c00,color:#000
+    style UseSchema fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style LoadTemplate fill:#b0bec5,stroke:#546e7a,color:#000
+    style Transform fill:#b0bec5,stroke:#546e7a,color:#000
+    style Deploy fill:#b0bec5,stroke:#546e7a,color:#000
+    style Cache fill:#b0bec5,stroke:#546e7a,color:#000
+    style VespaClient fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Search fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+#### Constructor
+
+```python
+from pathlib import Path
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_core.registries.backend_registry import get_backend_registry
+
+# Basic initialization (for read_sd_file, parse_sd_schema, get_tenant_schema_name only)
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",  # REQUIRED
+    backend_port=8080                      # REQUIRED
+)
+
+# Full initialization (for tenant schema operations like delete_tenant_schemas, tenant_schema_exists)
+# Use BackendRegistry — the returned backend already has a fully-configured schema_manager
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+registry = get_backend_registry()
+backend = registry.get_ingestion_backend(
+    "vespa",
+    tenant_id="default",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
+schema_manager = backend.schema_manager  # Already has schema_registry, schema_loader injected
 ```
 
 #### Key Methods
 
 ```python
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+# Read and parse a Vespa schema definition file (.sd files)
+# Note: .sd files are Vespa's native schema format, typically exported from
+# a running Vespa instance or written manually. Schema configurations in
+# configs/schemas/ are JSON format used by the ingestion pipeline.
+sd_content = schema_manager.read_sd_file("path/to/exported_schema.sd")
 
-# Initialize manager (singleton per Vespa endpoint)
-schema_manager = TenantSchemaManager(
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
+# Parse .sd content to pyvespa Schema object
+schema = schema_manager.parse_sd_schema(sd_content)
+# Returns: pyvespa Schema object for use with ApplicationPackage
 
-# Get tenant-specific schema name
+# Get tenant-specific schema name (colon in tenant_id converted to underscore)
 schema_name = schema_manager.get_tenant_schema_name(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame"
 )
 # Returns: "video_colpali_smol500_mv_frame_acme"
+# Example: "acme:production" -> "video_colpali_smol500_mv_frame_acme_production"
 
-# Ensure schema exists (idempotent)
-schema_manager.ensure_tenant_schema_exists(
+# Check if tenant schema exists
+# REQUIRES: schema_registry in constructor, raises ValueError if not provided
+exists = schema_manager.tenant_schema_exists(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame"
 )
-# Creates schema if not exists
+# Returns: True/False
 
-# List tenant schemas
-schemas = schema_manager.list_tenant_schemas("acme")
-# Returns: ['video_colpali_smol500_mv_frame_acme', 'agent_memories_acme']
-
-# Deploy new schema for tenant
-schema_manager.deploy_tenant_schema(
-    tenant_id="startup",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
+# Delete tenant schemas (cleanup)
+# REQUIRES: schema_registry in constructor, raises ValueError if not provided
+deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
+# Returns: List of deleted schema names
 ```
 
 #### Schema Naming Convention
@@ -1210,36 +1348,27 @@ schema_manager.deploy_tenant_schema(
 
 ## Search Client
 
-### VespaSearchClient
+### VespaVideoSearchClient
 
-**Location**: `libs/vespa/cogniverse_vespa/backends/vespa_search_client.py`
+**Location**: `libs/vespa/cogniverse_vespa/vespa_search_client.py`
 **Purpose**: Search operations with tenant-specific schema routing
 
 #### Tenant-Aware Initialization
 
 ```python
-from cogniverse_vespa.vespa_search_client import VespaSearchClient
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# 1. Ensure tenant schema exists
-schema_manager = TenantSchemaManager()
-schema_manager.ensure_tenant_schema_exists(
+# 1. Create config manager (required for dependency injection)
+config_manager = create_default_config_manager()
+
+# 2. Initialize client with tenant_id and config_manager
+# The client uses tenant_id to route to the correct tenant schema automatically
+client = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
     tenant_id="acme",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
-
-# 2. Get tenant schema name
-tenant_schema = schema_manager.get_tenant_schema_name(
-    tenant_id="acme",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
-# Returns: "video_colpali_smol500_mv_frame_acme"
-
-# 3. Initialize client with tenant schema
-client = VespaSearchClient(
-    host="localhost",
-    port=8080,
-    schema=tenant_schema  # Tenant-specific!
+    config_manager=config_manager  # REQUIRED
 )
 ```
 
@@ -1247,11 +1376,11 @@ client = VespaSearchClient(
 
 ```python
 # Text search (tenant-scoped)
-results = client.search(
-    query="cooking videos",
-    top_k=10,
-    ranking="hybrid_binary_bm25"
-)
+results = client.search({
+    "query": "cooking videos",
+    "top_k": 10,
+    "ranking": "hybrid_binary_bm25"
+})
 # Searches ONLY video_colpali_smol500_mv_frame_acme
 # Physical isolation - no access to other tenants' data
 
@@ -1268,31 +1397,30 @@ for result in results:
 ```python
 # Two tenants searching independently
 
-# Tenant A: acme
-schema_mgr = TenantSchemaManager()
-schema_mgr.ensure_tenant_schema_exists("acme", "video_frames")
+# Create config manager (required for all clients)
+config_manager = create_default_config_manager()
 
-client_acme = VespaSearchClient(
-    host="localhost",
-    port=8080,
-    schema=schema_mgr.get_tenant_schema_name("acme", "video_frames")
+# Tenant A: acme
+client_acme = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="acme",
+    config_manager=config_manager  # REQUIRED
 )
 results_acme = client_acme.search("cooking videos")
-# Only searches video_frames_acme
-
+# Only searches tenant-specific schema
 
 # Tenant B: startup
-schema_mgr.ensure_tenant_schema_exists("startup", "video_frames")
-
-client_startup = VespaSearchClient(
-    host="localhost",
-    port=8080,
-    schema=schema_mgr.get_tenant_schema_name("startup", "video_frames")
+client_startup = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="startup",
+    config_manager=config_manager  # REQUIRED
 )
 results_startup = client_startup.search("cooking videos")
-# Only searches video_frames_startup
+# Only searches tenant-specific schema
 
-# Complete physical isolation
+# Complete physical isolation via tenant-specific schemas
 ```
 
 #### Ranking Strategies
@@ -1309,16 +1437,16 @@ The client supports multiple ranking strategies:
 
 ```python
 # Pure text search (fast)
-results = client.search(
-    query="machine learning tutorial",
-    ranking="bm25_only"
-)
+results = client.search({
+    "query": "machine learning tutorial",
+    "ranking": "bm25_only"
+})
 
 # Visual + text hybrid (best accuracy)
-results = client.search(
-    query="robot arm demonstration",
-    ranking="hybrid_float_bm25"
-)
+results = client.search({
+    "query": "robot arm demonstration",
+    "ranking": "hybrid_float_bm25"
+})
 ```
 
 ---
@@ -1333,51 +1461,72 @@ results = client.search(
 #### Architecture
 
 ```mermaid
-graph TB
-    Documents[Documents<br/>cogniverse_core.Document] --> Client[VespaPyClient]
-    Client --> Process[process(doc)<br/>Convert to Vespa format]
+flowchart TB
+    Documents["<span style='color:#000'>Documents<br/>cogniverse_sdk.Document</span>"] --> Client["<span style='color:#000'>VespaPyClient</span>"]
+    Client --> Process["<span style='color:#000'>process(doc)<br/>Convert to Vespa format</span>"]
 
-    Process --> Embeddings[VespaEmbeddingProcessor<br/>Float + Binary + Hex]
-    Process --> Fields[Map to schema fields]
+    Process --> Embeddings["<span style='color:#000'>VespaEmbeddingProcessor<br/>Float + Binary + Hex</span>"]
+    Process --> Fields["<span style='color:#000'>Map to schema fields</span>"]
 
-    Embeddings --> VespaDoc[Vespa Document]
+    Embeddings --> VespaDoc["<span style='color:#000'>Vespa Document</span>"]
     Fields --> VespaDoc
 
-    VespaDoc --> Feed[app.feed_iterable()<br/>PyVespa batch feed]
-    Feed --> Retry[Automatic Retry<br/>pyvespa handles retries]
-    Retry --> Success[Track Success/Failure]
+    VespaDoc --> Feed["<span style='color:#000'>app.feed_iterable()<br/>PyVespa batch feed</span>"]
+    Feed --> Retry["<span style='color:#000'>Automatic Retry<br/>pyvespa handles retries</span>"]
+    Retry --> Success["<span style='color:#000'>Track Success/Failure</span>"]
 
-    style Documents fill:#e1f5ff
-    style Client fill:#fff4e1
-    style Success fill:#e1ffe1
+    style Documents fill:#90caf9,stroke:#1565c0,color:#000
+    style Client fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Process fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Embeddings fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Fields fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaDoc fill:#b0bec5,stroke:#546e7a,color:#000
+    style Feed fill:#b0bec5,stroke:#546e7a,color:#000
+    style Retry fill:#b0bec5,stroke:#546e7a,color:#000
+    style Success fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 #### Tenant-Aware Ingestion
 
 ```python
 from cogniverse_vespa.ingestion_client import VespaPyClient
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-from cogniverse_core.common.document import Document
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_sdk.document import Document
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+import numpy as np
 
-# 1. Ensure tenant schema exists
-schema_manager = TenantSchemaManager()
-schema_manager.ensure_tenant_schema_exists(
-    tenant_id="acme",
-    base_schema_name="video_colpali_smol500_mv_frame"
+# 1. Get tenant-specific schema name using naming convention
+tenant_id = "acme"
+base_schema_name = "video_colpali_smol500_mv_frame"
+tenant_schema = f"{base_schema_name}_{tenant_id}"
+
+# 2. Create schema loader (required for VespaPyClient)
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# 3. VespaSchemaManager for schema parsing (deployment uses pyvespa)
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080
 )
 
-# 2. Get tenant schema name
-tenant_schema = schema_manager.get_tenant_schema_name(
-    tenant_id="acme",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
+# 4. Create sample documents
+documents = [
+    Document(
+        id="video123_segment_0",
+        content="Cooking demonstration",
+        metadata={"start_time": 0.0, "end_time": 1.0},
+        embeddings={"embedding": np.random.randn(1024, 128)}
+    )
+]
 
-# 3. Initialize client with configuration
+# 5. Initialize client with configuration
 config = {
     "schema_name": tenant_schema,  # video_colpali_smol500_mv_frame_acme
     "base_schema_name": "video_colpali_smol500_mv_frame",
-    "vespa_url": "http://localhost",
-    "vespa_port": 8080,
+    "url": "http://localhost",
+    "port": 8080,
+    "schema_loader": schema_loader,  # Required: SchemaLoader instance
     "feed_max_queue_size": 500,
     "feed_max_workers": 4,
     "feed_max_connections": 8
@@ -1385,10 +1534,10 @@ config = {
 
 client = VespaPyClient(config=config)
 
-# 4. Connect to Vespa
+# 6. Connect to Vespa
 client.connect()
 
-# 5. Process documents and feed
+# 7. Process documents and feed
 processed_docs = [client.process(doc) for doc in documents]
 success_count, failed_ids = client._feed_prepared_batch(processed_docs, batch_size=100)
 print(f"Ingested {success_count}/{len(documents)} documents to {tenant_schema}")
@@ -1397,7 +1546,7 @@ print(f"Ingested {success_count}/{len(documents)} documents to {tenant_schema}")
 #### Document Processing
 
 ```python
-from cogniverse_core.common.document import Document
+from cogniverse_sdk.document import Document
 import numpy as np
 
 # Create Document (universal format)
@@ -1448,8 +1597,9 @@ vespa_doc = client.process(doc)
 config = {
     "schema_name": tenant_schema,
     "base_schema_name": "video_colpali_smol500_mv_frame",
-    "vespa_url": "http://localhost",
-    "vespa_port": 8080,
+    "url": "http://localhost",
+    "port": 8080,
+    "schema_loader": schema_loader,  # Required: SchemaLoader instance
 
     # Feed configuration (can be overridden by environment variables)
     "feed_max_queue_size": 500,      # VESPA_FEED_MAX_QUEUE_SIZE
@@ -1528,11 +1678,14 @@ schema = parser.load_schema_from_json_file(
 
 # Deploy schema
 schema_manager = VespaSchemaManager(
-    vespa_endpoint="http://localhost",
-    vespa_port=19071  # Config server port
+    backend_endpoint="http://localhost",
+    backend_port=19071  # Config server port
 )
 
-schema_manager.deploy_schema(schema, app_name="videosearch")
+schema_manager.upload_schema_from_json_file(
+    json_file_path="configs/schemas/video_colpali_smol500_mv_frame_schema.json",
+    app_name="videosearch"
+)
 ```
 
 ---
@@ -1544,11 +1697,14 @@ Cogniverse uses **JSON-based metadata schemas** for multi-tenant management data
 ### Overview
 
 Metadata schemas store operational data (not video content):
+
 - **Organization/tenant hierarchy** for multi-tenancy
+
 - **Configuration key-value pairs** for VespaConfigStore
+
 - **Adapter registry** for model management
 
-```
+```text
 configs/schemas/
 ├── organization_metadata_schema.json   # Organization-level data
 ├── tenant_metadata_schema.json         # Tenant-level data
@@ -1638,6 +1794,7 @@ Metadata schemas follow the same JSON format as video schemas:
 ```
 
 **Field Attributes:**
+
 - `indexing: ["attribute", "summary"]` - Stored and searchable
 - `attribute: ["fast-search"]` - Optimized for exact matching
 - `indexing: ["summary"]` - Stored but not indexed (for large values)
@@ -1691,12 +1848,12 @@ app_package = ApplicationPackage(name="cogniverse")
 # Add all metadata schemas
 add_metadata_schemas_to_package(app_package)
 
-# Deploy to Vespa
+# Deploy to Vespa using internal _deploy_package method
 schema_manager = VespaSchemaManager(
-    vespa_endpoint="http://localhost",
-    vespa_port=19071
+    backend_endpoint="http://localhost",
+    backend_port=19071
 )
-schema_manager.deploy_application(app_package)
+schema_manager._deploy_package(app_package)
 ```
 
 ### Best Practices
@@ -1714,10 +1871,13 @@ schema_manager.deploy_application(app_package)
 ### Example 1: Tenant Onboarding
 
 ```python
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 # New tenant "acme" starts using the system
-schema_manager = TenantSchemaManager()
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080
+)
 
 # Deploy all required schemas for tenant
 schemas_to_deploy = [
@@ -1727,15 +1887,14 @@ schemas_to_deploy = [
 ]
 
 for base_schema in schemas_to_deploy:
-    schema_manager.ensure_tenant_schema_exists(
+    tenant_schema = schema_manager.get_tenant_schema_name(
         tenant_id="acme",
         base_schema_name=base_schema
     )
-    print(f"✅ Deployed {base_schema} for acme")
+    print(f"Tenant schema name: {tenant_schema}")
+    # Deploy schema via Vespa CLI: vespa deploy
 
-# List all schemas for tenant
-deployed_schemas = schema_manager.list_tenant_schemas("acme")
-print(f"Tenant 'acme' schemas: {deployed_schemas}")
+# Expected tenant schemas follow naming convention:
 # ['video_colpali_smol500_mv_frame_acme',
 #  'video_videoprism_base_mv_chunk_30s_acme',
 #  'agent_memories_acme']
@@ -1744,52 +1903,41 @@ print(f"Tenant 'acme' schemas: {deployed_schemas}")
 ### Example 2: Tenant-Scoped Search
 
 ```python
-from cogniverse_vespa.vespa_search_client import VespaSearchClient
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
-def search_for_tenant(tenant_id: str, query: str) -> list:
+def search_for_tenant(tenant_id: str, query: str, config_manager) -> list:
     """
     Search videos for specific tenant.
 
     Args:
         tenant_id: Tenant identifier
         query: Search query
+        config_manager: ConfigManager instance (required)
 
     Returns:
         Search results from tenant-specific schema
     """
-    # Get tenant schema
-    schema_manager = TenantSchemaManager()
-    schema_manager.ensure_tenant_schema_exists(
+    # Initialize client with tenant_id
+    client = VespaVideoSearchClient(
+        vespa_url="http://localhost",
+        vespa_port=8080,
         tenant_id=tenant_id,
-        base_schema_name="video_colpali_smol500_mv_frame"
-    )
-
-    tenant_schema = schema_manager.get_tenant_schema_name(
-        tenant_id=tenant_id,
-        base_schema_name="video_colpali_smol500_mv_frame"
-    )
-
-    # Initialize client
-    client = VespaSearchClient(
-        host="localhost",
-        port=8080,
-        schema=tenant_schema
+        config_manager=config_manager  # REQUIRED
     )
 
     # Search
-    results = client.search(
-        query=query,
-        top_k=10,
-        ranking="hybrid_float_bm25"
-    )
+    results = client.search({
+        "query": query,
+        "top_k": 10,
+        "ranking": "hybrid_float_bm25"
+    })
 
     return results
-
-
 # Use for different tenants
-acme_results = search_for_tenant("acme", "cooking videos")
-startup_results = search_for_tenant("startup", "cooking videos")
+config_manager = create_default_config_manager()
+acme_results = search_for_tenant("acme", "cooking videos", config_manager)
+startup_results = search_for_tenant("startup", "cooking videos", config_manager)
 
 # Completely isolated - different data sets
 ```
@@ -1798,7 +1946,7 @@ startup_results = search_for_tenant("startup", "cooking videos")
 
 ```python
 from cogniverse_vespa.ingestion_client import VespaPyClient
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 import numpy as np
 
 def ingest_videos_for_tenant(
@@ -1815,11 +1963,10 @@ def ingest_videos_for_tenant(
     Returns:
         (success_count, failed_ids)
     """
-    # Get tenant schema
-    schema_manager = TenantSchemaManager()
-    schema_manager.ensure_tenant_schema_exists(
-        tenant_id=tenant_id,
-        base_schema_name="video_colpali_smol500_mv_frame"
+    # Get tenant schema name
+    schema_manager = VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=8080
     )
 
     tenant_schema = schema_manager.get_tenant_schema_name(
@@ -1830,8 +1977,10 @@ def ingest_videos_for_tenant(
     # Initialize VespaPyClient
     config = {
         "schema_name": tenant_schema,
-        "vespa_url": "http://localhost",
-        "vespa_port": 8080
+        "base_schema_name": "video_colpali_smol500_mv_frame",
+        "url": "http://localhost",
+        "port": 8080,
+        "schema_loader": schema_loader,  # Required
     }
     client = VespaPyClient(config=config)
     client.connect()
@@ -1844,8 +1993,6 @@ def ingest_videos_for_tenant(
     print(f"Schema: {tenant_schema}")
 
     return success_count, failed_ids
-
-
 # Ingest for tenant "acme"
 frames_acme = [
     {
@@ -1867,23 +2014,25 @@ success, failed = ingest_videos_for_tenant("acme", frames_acme)
 ### Example 4: Agent Integration
 
 ```python
-from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
 
 # Agent automatically handles tenant schema management
 agent = VideoSearchAgent(
-    tenant_id="acme",  # REQUIRED
-    vespa_host="localhost",
-    vespa_port=8080,
-    profile="video_colpali_smol500_mv_frame"
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="acme",
+    config_manager=config_manager  # REQUIRED
 )
 
 # Agent internally:
-# 1. Uses TenantSchemaManager to ensure schema exists
+# 1. Uses ConfigManager to get backend settings
 # 2. Gets tenant-specific schema name
-# 3. Initializes VespaSearchClient with tenant schema
+# 3. Initializes search with tenant schema
 # 4. All searches automatically scoped to tenant
 
-results = await agent.search_by_text("cooking videos")
+results = agent.search("cooking videos", top_k=10)  # synchronous
 # Searches video_colpali_smol500_mv_frame_acme
 ```
 
@@ -1896,15 +2045,18 @@ results = await agent.search_by_text("cooking videos")
 **Location**: `tests/backends/unit/`
 
 ```python
-# tests/backends/unit/test_tenant_schema_manager.py
+# tests/backends/unit/test_schema_registry.py
 
 import pytest
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-class TestTenantSchemaManager:
+class TestSchemaRegistry:
     def test_schema_name_generation(self):
         """Test tenant schema naming"""
-        manager = TenantSchemaManager()
+        manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=8080
+        )
 
         # Simple format
         schema = manager.get_tenant_schema_name("acme", "video_frames")
@@ -1914,21 +2066,27 @@ class TestTenantSchemaManager:
         schema = manager.get_tenant_schema_name("acme:production", "video_frames")
         assert schema == "video_frames_acme_production"
 
-    def test_schema_exists_check(self):
-        """Test schema existence check"""
-        manager = TenantSchemaManager()
+    def test_tenant_schema_naming(self):
+        """Test tenant schema name generation"""
+        manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=8080
+        )
 
-        # First call deploys schema
-        result = manager.ensure_tenant_schema_exists("test_tenant", "video_frames")
-        assert result is True
+        # Get tenant schema name
+        schema = manager.get_tenant_schema_name("test_tenant", "video_frames")
+        assert schema == "video_frames_test_tenant"
 
-        # Second call returns cached result
-        result = manager.ensure_tenant_schema_exists("test_tenant", "video_frames")
-        assert result is True
+        # Verify consistent naming
+        schema_again = manager.get_tenant_schema_name("test_tenant", "video_frames")
+        assert schema == schema_again
 
     def test_tenant_isolation(self):
         """Verify tenants have separate schemas"""
-        manager = TenantSchemaManager()
+        manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=8080
+        )
 
         schema_a = manager.get_tenant_schema_name("tenant_a", "video_frames")
         schema_b = manager.get_tenant_schema_name("tenant_b", "video_frames")
@@ -1943,14 +2101,14 @@ class TestTenantSchemaManager:
 **Location**: `tests/backends/integration/`
 
 ```python
-# tests/backends/integration/test_vespa_search_integration.py
+# tests/backends/integration/test_tenant_schema_lifecycle.py
 
 import pytest
-from cogniverse_vespa.vespa_search_client import VespaSearchClient
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.registries.schema_registry import SchemaRegistry
 
 @pytest.mark.integration
-class TestVespaSearchIntegration:
+class TestTenantSchemaLifecycle:
     @pytest.fixture
     def tenant_id(self):
         return "test_tenant_integration"
@@ -1958,55 +2116,51 @@ class TestVespaSearchIntegration:
     @pytest.fixture
     def client(self, tenant_id):
         """Create client with real Vespa connection"""
-        # Ensure schema exists
-        schema_manager = TenantSchemaManager()
-        schema_manager.ensure_tenant_schema_exists(
-            tenant_id,
-            "video_colpali_smol500_mv_frame"
+        schema_manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=8080
         )
 
-        # Get tenant schema
+        # Get tenant schema name
         tenant_schema = schema_manager.get_tenant_schema_name(
             tenant_id,
             "video_colpali_smol500_mv_frame"
         )
 
-        # Create client
-        client = VespaSearchClient(
-            host="localhost",
-            port=8080,
-            schema=tenant_schema
+        # Create client with tenant_id
+        client = VespaVideoSearchClient(
+            vespa_url="http://localhost",
+            vespa_port=8080,
+            tenant_id=tenant_id,
+            config_manager=self.config_manager  # REQUIRED
         )
         return client
 
     def test_search_with_tenant_schema(self, client):
         """Test search uses tenant schema"""
-        results = client.search(
-            query="test query",
-            top_k=5
-        )
+        results = client.search({
+            "query": "test query",
+            "top_k": 5
+        })
 
         assert isinstance(results, list)
         # Results depend on ingested data
 
     def test_tenant_isolation(self):
         """Verify tenants cannot access each other's data"""
-        schema_manager = TenantSchemaManager()
-
-        # Setup tenant A
-        schema_manager.ensure_tenant_schema_exists("tenant_a", "video_frames")
-        client_a = VespaSearchClient(
-            host="localhost",
-            port=8080,
-            schema=schema_manager.get_tenant_schema_name("tenant_a", "video_frames")
+        # Create clients for different tenants
+        client_a = VespaVideoSearchClient(
+            vespa_url="http://localhost",
+            vespa_port=8080,
+            tenant_id="tenant_a",
+            config_manager=self.config_manager  # REQUIRED
         )
 
-        # Setup tenant B
-        schema_manager.ensure_tenant_schema_exists("tenant_b", "video_frames")
-        client_b = VespaSearchClient(
-            host="localhost",
-            port=8080,
-            schema=schema_manager.get_tenant_schema_name("tenant_b", "video_frames")
+        client_b = VespaVideoSearchClient(
+            vespa_url="http://localhost",
+            vespa_port=8080,
+            tenant_id="tenant_b",
+            config_manager=self.config_manager  # REQUIRED
         )
 
         # Search with both clients
@@ -2023,7 +2177,7 @@ class TestVespaSearchIntegration:
 # tests/conftest.py
 
 import pytest
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 @pytest.fixture
 def test_tenant_id():
@@ -2033,10 +2187,10 @@ def test_tenant_id():
 
 @pytest.fixture
 def schema_manager():
-    """TenantSchemaManager instance"""
-    return TenantSchemaManager(
-        vespa_url="localhost",
-        vespa_port=8080
+    """VespaSchemaManager instance"""
+    return VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=8080
     )
 
 @pytest.fixture
@@ -2052,29 +2206,38 @@ def cleanup_tenant_schemas(test_tenant_id, schema_manager):
 
 ## Best Practices
 
-### 1. Always Use TenantSchemaManager
+### 1. Always Use VespaSchemaManager
 
 ```python
-# ✅ Good: Use TenantSchemaManager
-schema_manager = TenantSchemaManager()
-schema_manager.ensure_tenant_schema_exists("acme", "video_frames")
-tenant_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-client = VespaSearchClient(schema=tenant_schema)
+# ✅ Good: Use tenant_id with config_manager
+config_manager = create_default_config_manager()
+client = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="acme",
+    config_manager=config_manager  # REQUIRED
+)
 
-# ❌ Bad: Hardcode schema names
-client = VespaSearchClient(schema="video_frames")  # No tenant isolation!
+# ❌ Bad: Missing config_manager (will raise ValueError)
+# client = VespaVideoSearchClient(tenant_id="acme")  # ValueError!
 ```
 
-### 2. Ensure Schemas Exist Before Use
+### 2. Always Pass config_manager
 
 ```python
-# Always ensure schema exists before creating client
-schema_manager.ensure_tenant_schema_exists(tenant_id, base_schema)
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Then create client
-client = VespaSearchClient(
-    schema=schema_manager.get_tenant_schema_name(tenant_id, base_schema)
+# Create config manager once
+config_manager = create_default_config_manager()
+
+# Create client with tenant_id and config_manager
+client = VespaVideoSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id=tenant_id,
+    config_manager=config_manager  # REQUIRED - raises ValueError if None
 )
 ```
 
@@ -2106,6 +2269,290 @@ for doc in documents:
 
 ---
 
+## VespaConfigStore API
+
+**Location:** `config/config_store.py`
+
+Vespa-based configuration storage with multi-tenant support, implementing the `ConfigStore` interface.
+
+### Document Structure
+
+```json
+{
+  "fields": {
+    "config_id": "tenant_id:scope:service:config_key",
+    "tenant_id": "default",
+    "scope": "system",
+    "service": "system",
+    "config_key": "system_config",
+    "config_value": {...},
+    "version": 1,
+    "created_at": "2024-01-01T00:00:00",
+    "updated_at": "2024-01-01T00:00:00"
+  }
+}
+```
+
+### Key Methods
+
+```python
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+store = VespaConfigStore(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    schema_name="config_metadata"
+)
+
+# Store configuration (versioned)
+entry = store.set_config(
+    tenant_id="acme",
+    scope=ConfigScope.TENANT,
+    service="routing",
+    config_key="model_settings",
+    config_value={"model": "gemini-pro", "temperature": 0.7}
+)
+# Creates new version on each update
+
+# Retrieve latest version
+entry = store.get_config(
+    tenant_id="acme",
+    scope=ConfigScope.TENANT,
+    service="routing",
+    config_key="model_settings"
+)
+
+# List all configs for tenant
+entries = store.list_configs(tenant_id="acme")
+
+# Delete config
+store.delete_config(
+    tenant_id="acme",
+    scope=ConfigScope.TENANT,
+    service="routing",
+    config_key="model_settings"
+)
+```
+
+---
+
+## VespaEmbeddingProcessor
+
+**Location:** `embedding_processor.py`
+
+Handles Vespa-specific embedding format conversions (numpy → hex/binary).
+
+### Format Conversions
+
+| Schema Type | Float Format | Binary Format |
+|-------------|--------------|---------------|
+| **Single-vector** (`_sv_`, `lvt`) | Raw float list | Hex-encoded int8 |
+| **Patch-based** | Dict of hex-encoded bfloat16 | Dict of hex-encoded int8 |
+
+### Key Methods
+
+```python
+from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
+import numpy as np
+import logging
+
+# Create processor (logger is optional first parameter)
+processor = VespaEmbeddingProcessor(
+    logger=logging.getLogger(__name__),
+    model_name="vidore/colsmol-500m",
+    schema_name="video_colpali_smol500_mv_frame"
+)
+
+# Process raw embeddings
+raw = np.random.randn(1024, 128)  # ColPali: 1024 patches × 128 dims
+result = processor.process_embeddings(raw)
+# Returns: {"embedding": {...}, "embedding_binary": {...}}
+
+# Single-vector processing (VideoPrism LVT)
+raw = np.random.randn(768)  # Global embedding
+result = processor.process_embeddings(raw)
+# Returns: {"embedding": [float, float, ...], "embedding_binary": "hex..."}
+```
+
+### Binarization
+
+```python
+# Binarization: positive values → 1, negative/zero → 0
+binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
+# Then hex-encoded for storage
+```
+
+---
+
+## VespaVectorStore (Mem0 Backend)
+
+**Location:** `memory_store.py`
+
+Implements Mem0's `VectorStoreBase` interface for agent memory persistence.
+
+### Capabilities
+
+- Multi-tenant isolation (user_id)
+- Per-agent namespacing (agent_id)
+- Semantic search via embeddings
+- Metadata filtering
+
+### Key Methods
+
+```python
+from cogniverse_vespa.memory_store import VespaVectorStore
+
+store = VespaVectorStore(
+    collection_name="agent_memories",
+    host="localhost",
+    port=8080
+)
+
+# Create collection (schema must be pre-deployed)
+store.create_col(
+    name="agent_memories",
+    vector_size=1536,
+    distance="cosine"
+)
+
+# Insert memories
+ids = store.insert(
+    vectors=[[0.1, 0.2, ...]],
+    payloads=[{
+        "data": "User prefers visual explanations",
+        "user_id": "user123",
+        "agent_id": "search_agent",
+        "metadata": {"topic": "preferences"}
+    }],
+    ids=["memory-001"]
+)
+
+# Search memories
+results = store.search(
+    query=[0.1, 0.2, ...],  # Query embedding
+    limit=5,
+    filters={"user_id": "user123", "agent_id": "search_agent"}
+)
+# Returns: List[VespaSearchResult] with id, score, payload
+
+# Get memory by ID
+record = store.get(id="memory-001")
+# Returns: VespaRecord with id, vector, payload
+
+# Delete memory
+store.delete(id="memory-001")
+```
+
+---
+
+## RankingStrategyExtractor
+
+**Location:** `ranking_strategy_extractor.py`
+
+Extracts ranking profile configurations from schema JSON files.
+
+### Strategy Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `PURE_VISUAL` | Embedding-only ranking | Image/video similarity |
+| `PURE_TEXT` | BM25 text ranking | Text search |
+| `HYBRID` | Embedding + BM25 | Multi-modal search |
+
+### RankingStrategyInfo
+
+```python
+from cogniverse_vespa.ranking_strategy_extractor import (
+    RankingStrategyExtractor,
+    RankingStrategyInfo,
+    SearchStrategyType
+)
+
+extractor = RankingStrategyExtractor()
+strategies = extractor.extract_from_schema(
+    Path("configs/schemas/video_colpali_smol500_mv_frame_schema.json")
+)
+
+# Strategy info fields
+strategy = strategies["hybrid_float_bm25"]
+print(strategy.name)                    # "hybrid_float_bm25"
+print(strategy.strategy_type)           # SearchStrategyType.HYBRID
+print(strategy.needs_float_embeddings)  # True
+print(strategy.needs_binary_embeddings) # False
+print(strategy.needs_text_query)        # True
+print(strategy.use_nearestneighbor)     # True (for global schemas)
+print(strategy.inputs)                  # {"qt": "tensor<float>(...)"}
+print(strategy.query_tensors_needed)    # ["qt"]
+```
+
+### Detection Logic
+
+- **needs_text_query**: Profile name contains "bm25" OR first-phase has "bm25(" OR "userInput"
+- **needs_float_embeddings**: Input types contain "float"
+- **needs_binary_embeddings**: Input types contain "int8"
+- **use_nearestneighbor**: Global schemas + visual strategies
+
+---
+
+## TenantAwareVespaSearchClient
+
+**Location:** `tenant_aware_search_client.py`
+
+Wrapper providing automatic tenant schema routing with lazy creation.
+
+### Key Features
+
+- Automatic schema name resolution: `base_schema + tenant_id → tenant_schema`
+- Lazy schema creation on first use
+- Transparent delegation to VespaVideoSearchClient
+- Thread-safe tenant isolation
+
+### Usage
+
+```python
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+
+client = TenantAwareVespaSearchClient(
+    tenant_id="acme",                              # REQUIRED
+    base_schema_name="video_colpali_smol500_mv_frame",
+    config_manager=config_manager,                 # REQUIRED (DI)
+    schema_loader=schema_loader,                   # REQUIRED (DI)
+    backend_url="http://localhost",
+    backend_port=8080,
+    auto_create_schema=True  # Deploy if not exists
+)
+
+# All methods automatically use tenant schema
+results = client.search(
+    query_text="robots playing soccer",
+    strategy="hybrid_float_bm25",
+    top_k=10
+)
+# Searches: video_colpali_smol500_mv_frame_acme
+
+# Hybrid search with embeddings
+results = client.hybrid_search(
+    query_text="cooking tutorial",
+    query_embedding=embedding_array,
+    strategy="hybrid_float_bm25",
+    top_k=10
+)
+```
+
+### Schema Resolution
+
+```python
+# Pattern: {base_schema}_{tenant_id}
+client.tenant_schema_name  # "video_colpali_smol500_mv_frame_acme"
+
+# For org:tenant format
+# Input: tenant_id="acme:production"
+# Result: "video_colpali_smol500_mv_frame_acme_production"
+```
+
+---
+
 ## Related Documentation
 
 - [SDK Architecture](../architecture/sdk-architecture.md) - Package structure
@@ -2115,4 +2562,4 @@ for doc in documents:
 
 ---
 
-**Summary**: The Vespa package provides tenant-aware backend integration with physical data isolation via schema-per-tenant. All clients are tenant-scoped, and TenantSchemaManager handles schema lifecycle management transparently.
+**Summary**: The Vespa package provides tenant-aware backend integration with physical data isolation via schema-per-tenant. All clients are tenant-scoped, and VespaSchemaManager handles schema lifecycle management transparently.

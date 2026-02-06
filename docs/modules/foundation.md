@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_foundation`
 **Location:** `libs/foundation/cogniverse_foundation/`
-**Purpose:** Configuration management and telemetry infrastructure with multi-tenant support
-**Last Updated:** 2026-01-25
 
 ---
 
@@ -29,7 +27,7 @@
 
 The Foundation module provides **infrastructure services** that all other modules depend on:
 
-- **Configuration Management**: Multi-tenant, versioned configuration with SQLite persistence
+- **Configuration Management**: Multi-tenant, versioned configuration with pluggable backend persistence (Vespa, SQLite)
 - **Telemetry Infrastructure**: OpenTelemetry-based tracing with tenant isolation
 - **Provider Abstraction**: Pluggable backends for telemetry (Phoenix, etc.)
 
@@ -39,27 +37,75 @@ All configuration and telemetry operations are **tenant-aware** - `tenant_id` is
 
 ## Package Structure
 
-```
-cogniverse_foundation/
-├── config/                      # Configuration system
-│   ├── manager.py               # ConfigManager - central config API
-│   ├── unified_config.py        # SystemConfig, BackendConfig, etc.
-│   ├── agent_config.py          # AgentConfig for DSPy/LLM settings
-│   ├── schema.py                # Configuration schemas
-│   ├── utils.py                 # Configuration utilities
-│   ├── api_mixin.py             # API configuration mixin
-│   └── sqlite/                  # SQLite-based config storage
-│       └── config_store.py      # ConfigStore implementation
-├── telemetry/                   # Telemetry system
-│   ├── manager.py               # TelemetryManager - central telemetry API
-│   ├── config.py                # TelemetryConfig
-│   ├── registry.py              # Telemetry provider registry
-│   ├── exporter.py              # Span exporters
-│   ├── context.py               # Trace context management
-│   └── providers/               # Telemetry provider implementations
-│       ├── base.py              # Base provider interface
-│       └── __init__.py
-└── __init__.py
+```mermaid
+flowchart TB
+    subgraph Foundation["<span style='color:#000'><b>cogniverse_foundation/</b></span>"]
+        ConfigDir["<span style='color:#000'><b>config/</b><br/>Configuration system</span>"]
+        TelemetryDir["<span style='color:#000'><b>telemetry/</b><br/>Telemetry system</span>"]
+        CacheDir["<span style='color:#000'><b>cache/</b><br/>Empty directory (no files)</span>"]
+        UtilsDir["<span style='color:#000'><b>utils/</b><br/>Empty directory (no files)</span>"]
+        InitPy["<span style='color:#000'>__init__.py</span>"]
+    end
+
+    subgraph ConfigFiles["<span style='color:#000'><b>config/ files</b></span>"]
+        Manager["<span style='color:#000'>manager.py<br/>ConfigManager - central API</span>"]
+        UnifiedConfigFile["<span style='color:#000'>unified_config.py<br/>SystemConfig, BackendConfig</span>"]
+        AgentConfigFile["<span style='color:#000'>agent_config.py<br/>AgentConfig, DSPy settings</span>"]
+        Schema["<span style='color:#000'>schema.py<br/>Configuration schemas</span>"]
+        Utils["<span style='color:#000'>utils.py<br/>create_default_config_manager</span>"]
+        ApiMixin["<span style='color:#000'>api_mixin.py<br/>API configuration mixin</span>"]
+        Bootstrap["<span style='color:#000'>bootstrap.py<br/>Environment bootstrap</span>"]
+        SqliteDir["<span style='color:#000'><b>sqlite/</b><br/>config_store.py</span>"]
+    end
+
+    subgraph TelemetryFiles["<span style='color:#000'><b>telemetry/ files</b></span>"]
+        TelManager["<span style='color:#000'>manager.py<br/>TelemetryManager - central API</span>"]
+        TelConfig["<span style='color:#000'>config.py<br/>TelemetryConfig</span>"]
+        Registry["<span style='color:#000'>registry.py<br/>Provider registry</span>"]
+        Exporter["<span style='color:#000'>exporter.py<br/>Span exporters</span>"]
+        Context["<span style='color:#000'>context.py<br/>Trace context</span>"]
+        ProvidersDir["<span style='color:#000'><b>providers/</b><br/>base.py, __init__.py</span>"]
+    end
+
+    subgraph SeparatePackages["<span style='color:#000'><b>Separate Packages</b></span>"]
+        SDKInterface["<span style='color:#000'><b>cogniverse_sdk/interfaces/</b><br/>config_store.py<br/>ConfigStore ABC, ConfigScope</span>"]
+        VespaImpl["<span style='color:#000'><b>cogniverse_vespa/config/</b><br/>config_store.py<br/>VespaConfigStore implementation</span>"]
+    end
+
+    Foundation --> ConfigDir
+    Foundation --> TelemetryDir
+    Foundation --> CacheDir
+    Foundation --> UtilsDir
+    Foundation --> InitPy
+
+    ConfigDir --> ConfigFiles
+    TelemetryDir --> TelemetryFiles
+
+    style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ConfigDir fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TelemetryDir fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CacheDir fill:#b0bec5,stroke:#546e7a,color:#000
+    style UtilsDir fill:#b0bec5,stroke:#546e7a,color:#000
+    style InitPy fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigFiles fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TelemetryFiles fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SeparatePackages fill:#90caf9,stroke:#1565c0,color:#000
+    style Manager fill:#ffb74d,stroke:#ef6c00,color:#000
+    style UnifiedConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
+    style AgentConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Schema fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Utils fill:#ffb74d,stroke:#ef6c00,color:#000
+    style ApiMixin fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Bootstrap fill:#ffb74d,stroke:#ef6c00,color:#000
+    style SqliteDir fill:#ffb74d,stroke:#ef6c00,color:#000
+    style TelManager fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style TelConfig fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Registry fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Exporter fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Context fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style ProvidersDir fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style SDKInterface fill:#64b5f6,stroke:#1565c0,color:#000
+    style VespaImpl fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
 ---
@@ -71,18 +117,17 @@ cogniverse_foundation/
 `ConfigManager` is the central configuration API. All configuration operations go through this class.
 
 **Key Features:**
+
 - Multi-tenant configuration with tenant isolation
 - Version history tracking for all configurations
 - LRU caching for performance
-- SQLite persistence via `ConfigStore`
+- Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore, SQLiteConfigStore)
 
 ```python
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize with SQLite store
-store = SQLiteConfigStore(db_path="config/cogniverse.db")
-config_manager = ConfigManager(store=store, cache_size=100)
+# Initialize config manager
+config_manager = create_default_config_manager(cache_size=100)
 
 # Get system configuration for tenant
 system_config = config_manager.get_system_config(tenant_id="acme")
@@ -99,22 +144,22 @@ config_manager.set_agent_config(
 
 | Method | Description |
 |--------|-------------|
-| `get_system_config(tenant_id)` | Get system configuration |
-| `set_system_config(config, tenant_id)` | Set system configuration |
+| `get_system_config(tenant_id="default")` | Get system configuration |
+| `set_system_config(system_config, tenant_id=None)` | Set system configuration |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
-| `set_agent_config(tenant_id, agent_name, config)` | Set agent configuration |
-| `get_agent_config_history(tenant_id, agent_name, limit)` | Get config version history |
-| `get_routing_config(tenant_id, service)` | Get routing configuration |
-| `set_routing_config(config, tenant_id, service)` | Set routing configuration |
-| `get_telemetry_config(tenant_id, service)` | Get telemetry configuration |
-| `set_telemetry_config(config, tenant_id, service)` | Set telemetry configuration |
-| `get_backend_config(tenant_id, service)` | Get backend configuration |
-| `set_backend_config(config, tenant_id, service)` | Set backend configuration |
-| `get_backend_profile(profile_name, tenant_id)` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id)` | Add/update backend profile |
-| `update_backend_profile(name, overrides, base_tenant, target_tenant)` | Partial profile update |
-| `list_backend_profiles(tenant_id)` | List all backend profiles |
-| `delete_backend_profile(name, tenant_id)` | Delete backend profile |
+| `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
+| `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
+| `get_routing_config(tenant_id="default", service="routing_agent")` | Get routing configuration |
+| `set_routing_config(routing_config, tenant_id=None, service="routing_agent")` | Set routing configuration |
+| `get_telemetry_config(tenant_id="default", service="telemetry")` | Get telemetry configuration |
+| `set_telemetry_config(telemetry_config, tenant_id=None, service="telemetry")` | Set telemetry configuration |
+| `get_backend_config(tenant_id="default", service="backend")` | Get backend configuration |
+| `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
+| `get_backend_profile(profile_name, tenant_id="default", service="backend")` | Get specific backend profile |
+| `add_backend_profile(profile, tenant_id="default", service="backend")` | Add/update backend profile |
+| `update_backend_profile(profile_name, overrides, base_tenant_id="default", target_tenant_id=None, service="backend")` | Partial profile update |
+| `list_backend_profiles(tenant_id="default", service="backend")` | List all backend profiles |
+| `delete_backend_profile(profile_name, tenant_id="default", service="backend")` | Delete backend profile |
 | `export_configs(tenant_id, output_path)` | Export all configs to JSON |
 | `get_stats()` | Get configuration statistics |
 
@@ -126,28 +171,39 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 system_config = SystemConfig(
     tenant_id="acme",
-    default_backend="vespa",
-    agent_urls={
-        "routing_agent": "http://localhost:8001",
-        "search_agent": "http://localhost:8002",
-    },
-    max_concurrent_requests=100,
-    timeout_seconds=30
+    search_backend="vespa",
+    routing_agent_url="http://localhost:8001",
+    video_agent_url="http://localhost:8002",
+    backend_url="http://localhost",
+    backend_port=8080
 )
 ```
 
 **AgentConfig** - Agent-specific settings:
 ```python
-from cogniverse_foundation.config.agent_config import AgentConfig
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig, ModuleConfig, OptimizerConfig,
+    DSPyModuleType, OptimizerType
+)
 
 agent_config = AgentConfig(
     agent_name="routing_agent",
-    dspy_module="ChainOfThought",
+    agent_version="1.0.0",
+    agent_description="Routes queries to appropriate agents",
+    agent_url="http://localhost:8001",
+    capabilities=["routing", "query_analysis"],
+    skills=[{"name": "route_query", "description": "Route to best agent"}],
+    module_config=ModuleConfig(
+        module_type=DSPyModuleType.CHAIN_OF_THOUGHT,
+        signature="query -> routing_decision"
+    ),
+    optimizer_config=OptimizerConfig(
+        optimizer_type=OptimizerType.MIPRO_V2,
+        num_trials=50
+    ),
     llm_model="gpt-4",
-    temperature=0.7,
-    max_tokens=2000,
-    optimizer="GEPA",
-    optimizer_config={"num_trials": 50}
+    llm_temperature=0.7,
+    llm_max_tokens=2000
 )
 ```
 
@@ -157,13 +213,17 @@ from cogniverse_foundation.config.unified_config import BackendConfig, BackendPr
 
 backend_config = BackendConfig(
     tenant_id="acme",
-    default_profile="video_colpali_mv_frame",
+    backend_type="vespa",
+    url="http://localhost",
+    port=8080,
     profiles={
         "video_colpali_mv_frame": BackendProfileConfig(
             profile_name="video_colpali_mv_frame",
+            type="video",
             embedding_model="colpali",
-            chunk_strategy="frame",
-            top_k=10
+            schema_name="video_colpali_smol500_mv_frame",
+            pipeline_config={"chunk_strategy": "frame"},
+            strategies={"default_top_k": 10}
         )
     }
 )
@@ -175,22 +235,23 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 routing_config = RoutingConfigUnified(
     tenant_id="acme",
-    tiers=["fast", "accurate", "comprehensive"],
-    default_tier="accurate",
-    optimization_enabled=True
+    routing_mode="tiered",  # "tiered", "ensemble", "hybrid"
+    enable_fast_path=True,
+    enable_slow_path=True,
+    fast_path_confidence_threshold=0.7,
+    slow_path_confidence_threshold=0.6
 )
 ```
 
-**TelemetryConfigUnified** - Telemetry settings:
+**TelemetryConfig** - Telemetry settings:
 ```python
-from cogniverse_foundation.config.unified_config import TelemetryConfigUnified
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 
-telemetry_config = TelemetryConfigUnified(
-    tenant_id="acme",
+telemetry_config = TelemetryConfig(
     enabled=True,
-    phoenix_endpoint="http://localhost:6006",
-    batch_export=True,
-    sample_rate=1.0
+    level=TelemetryLevel.DETAILED,
+    otlp_enabled=True,
+    otlp_endpoint="localhost:4317"
 )
 ```
 
@@ -200,11 +261,11 @@ Configurations are organized by scope for isolation:
 
 | Scope | Description | Example Keys |
 |-------|-------------|--------------|
-| `SYSTEM` | Infrastructure settings | agent_urls, backends, timeouts |
-| `AGENT` | Per-agent settings | DSPy config, LLM settings |
-| `ROUTING` | Routing agent settings | tiers, strategies, optimization |
-| `TELEMETRY` | Telemetry settings | Phoenix endpoint, sampling |
-| `BACKEND` | Backend profiles | embedding models, search params |
+| `SYSTEM` | Infrastructure settings | routing_agent_url, backend_url, backend_port |
+| `AGENT` | Per-agent settings | module_config, llm_model, llm_temperature |
+| `ROUTING` | Routing agent settings | routing_mode, enable_fast_path, gliner_threshold |
+| `TELEMETRY` | Telemetry settings | otlp_endpoint, otlp_enabled, level |
+| `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -224,36 +285,44 @@ The configuration system uses a layered inheritance model where tenant-specific 
 
 ```mermaid
 flowchart TB
-    subgraph Sources["Configuration Sources"]
-        EnvVars[Environment Variables<br/>COGNIVERSE_CONFIG, etc.]
-        ConfigFile[config.json<br/>Auto-discovered]
-        SQLite[SQLite Store<br/>Persisted configs]
+    subgraph Sources["<span style='color:#000'>Configuration Sources</span>"]
+        EnvVars["<span style='color:#000'>Environment Variables<br/>COGNIVERSE_CONFIG, etc.</span>"]
+        ConfigFile["<span style='color:#000'>config.json<br/>Auto-discovered</span>"]
+        VespaStore["<span style='color:#000'>Vespa Store<br/>Persisted configs</span>"]
     end
 
-    subgraph Layers["Configuration Layers"]
+    subgraph Layers["<span style='color:#000'>Configuration Layers</span>"]
         direction TB
-        SystemDefaults[System Defaults<br/>Hardcoded fallbacks]
-        GlobalConfig[Global Configuration<br/>config.json profiles]
-        TenantOverlay[Tenant Overlay<br/>Per-tenant overrides]
-        RuntimeOverride[Runtime Override<br/>API/query-time params]
+        SystemDefaults["<span style='color:#000'>System Defaults<br/>Hardcoded fallbacks</span>"]
+        GlobalConfig["<span style='color:#000'>Global Configuration<br/>config.json profiles</span>"]
+        TenantOverlay["<span style='color:#000'>Tenant Overlay<br/>Per-tenant overrides</span>"]
+        RuntimeOverride["<span style='color:#000'>Runtime Override<br/>API/query-time params</span>"]
     end
 
-    subgraph Resolution["Resolution Order (Bottom Wins)"]
-        Final[Final Configuration<br/>Merged result]
+    subgraph Resolution["<span style='color:#000'>Resolution Order (Bottom Wins)</span>"]
+        Final["<span style='color:#000'>Final Configuration<br/>Merged result</span>"]
     end
 
     EnvVars --> GlobalConfig
     ConfigFile --> GlobalConfig
-    SQLite --> TenantOverlay
+    VespaStore --> TenantOverlay
 
     SystemDefaults --> Final
     GlobalConfig --> Final
     TenantOverlay --> Final
     RuntimeOverride --> Final
 
-    style Sources fill:#e1f5ff
-    style Layers fill:#fff4e1
-    style Resolution fill:#e1ffe1
+    style Sources fill:#90caf9,stroke:#1565c0,color:#000
+    style Layers fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Resolution fill:#a5d6a7,stroke:#388e3c,color:#000
+    style EnvVars fill:#90caf9,stroke:#1565c0,color:#000
+    style ConfigFile fill:#90caf9,stroke:#1565c0,color:#000
+    style VespaStore fill:#90caf9,stroke:#1565c0,color:#000
+    style SystemDefaults fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GlobalConfig fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TenantOverlay fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RuntimeOverride fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Final fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Configuration Resolution Example:**
@@ -269,7 +338,7 @@ max_frames = 50
     }
 }
 
-# Tenant overlay (SQLite) - overrides global
+# Tenant overlay (Vespa) - overrides global
 config_manager.set_backend_config(
     tenant_id="premium_tenant",
     config=BackendConfig(profiles={
@@ -288,7 +357,7 @@ result = await search(query, max_frames=300)
 | Priority | Source | Scope | Example |
 |----------|--------|-------|---------|
 | 1 (highest) | Runtime Override | Per-request | Query params, API args |
-| 2 | Tenant Overlay | Per-tenant | `ConfigManager.set_*_config()` |
+| 2 | Tenant Overlay | Per-tenant | `ConfigManager.set_*_config()` (persisted to Vespa) |
 | 3 | Global Config | All tenants | `config.json` profiles |
 | 4 (lowest) | System Defaults | Fallback | Hardcoded in classes |
 
@@ -301,6 +370,7 @@ result = await search(query, max_frames=300)
 `TelemetryManager` is a **singleton** that manages OpenTelemetry tracing with multi-tenant isolation.
 
 **Key Features:**
+
 - Tenant-isolated tracer providers
 - LRU caching of tracers
 - Graceful degradation when telemetry unavailable
@@ -411,8 +481,7 @@ telemetry.register_project(
 ### Complete Configuration Setup
 
 ```python
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.config.unified_config import (
     SystemConfig,
     BackendConfig,
@@ -421,35 +490,46 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_foundation.config.agent_config import AgentConfig
 
 # Initialize config manager
-store = SQLiteConfigStore(db_path="config/cogniverse.db")
-config_manager = ConfigManager(store=store)
+config_manager = create_default_config_manager()
 
 # Set system config for tenant
 system_config = SystemConfig(
     tenant_id="acme",
-    default_backend="vespa",
-    agent_urls={
-        "routing_agent": "http://localhost:8001",
-        "search_agent": "http://localhost:8002",
-    }
+    search_backend="vespa",
+    routing_agent_url="http://localhost:8001",
+    video_agent_url="http://localhost:8002",
+    backend_url="http://localhost",
+    backend_port=8080
 )
 config_manager.set_system_config(system_config)
 
 # Add backend profile for tenant
 profile = BackendProfileConfig(
     profile_name="custom_colpali",
+    type="video",
     embedding_model="colpali-v2",
-    chunk_strategy="frame",
-    top_k=20
+    schema_name="video_colpali_custom",
+    pipeline_config={"chunk_strategy": "frame", "top_k": 20}
 )
 config_manager.add_backend_profile(profile, tenant_id="acme")
 
-# Set agent config
+# Set agent config (requires all fields)
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig, ModuleConfig, DSPyModuleType
+)
 agent_config = AgentConfig(
     agent_name="routing_agent",
-    dspy_module="ChainOfThought",
+    agent_version="1.0.0",
+    agent_description="Routes queries",
+    agent_url="http://localhost:8001",
+    capabilities=["routing"],
+    skills=[],
+    module_config=ModuleConfig(
+        module_type=DSPyModuleType.CHAIN_OF_THOUGHT,
+        signature="query -> decision"
+    ),
     llm_model="gpt-4",
-    temperature=0.7
+    llm_temperature=0.7
 )
 config_manager.set_agent_config(
     tenant_id="acme",
@@ -538,29 +618,37 @@ await provider.annotations.add_annotation(
 
 ## Architecture Position
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Core Layer                                │
-│  cogniverse-core (agents) │ cogniverse-evaluation               │
-└─────────────────────────────────────────────────────────────────┘
-                                ↑
-┌─────────────────────────────────────────────────────────────────┐
-│                    Foundation Layer                              │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │              cogniverse-foundation ◄─── YOU ARE HERE        ││
-│  │  ConfigManager, TelemetryManager, Provider Registry         ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                     cogniverse-sdk (interfaces)                  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
+        Core["<span style='color:#000'>cogniverse-core (agents)</span>"]
+        Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
+    end
+
+    subgraph FoundationLayer["<span style='color:#000'>Foundation Layer</span>"]
+        Foundation["<span style='color:#000'>cogniverse-foundation ◄─ YOU ARE HERE<br/>ConfigManager, TelemetryManager, Provider Registry</span>"]
+        SDK["<span style='color:#000'>cogniverse-sdk (interfaces)</span>"]
+    end
+
+    CoreLayer --> FoundationLayer
+
+    style CoreLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Dependencies:**
+
 - `cogniverse-sdk`: Pure interfaces (ConfigStore, Backend, etc.)
+- `cogniverse-vespa`: VespaConfigStore implementation for config persistence
 - `opentelemetry-api/sdk`: Telemetry infrastructure
 - `pydantic`: Configuration validation
-- `sqlite3`: Configuration persistence
 
 **Dependents:**
+
 - `cogniverse-core`: Uses ConfigManager, TelemetryManager
 - `cogniverse-agents`: Uses configuration and telemetry
 - `cogniverse-telemetry-phoenix`: Implements telemetry provider
@@ -570,22 +658,24 @@ await provider.annotations.add_annotation(
 ## Testing
 
 ```bash
-# Run foundation tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v
+# Run foundation tests (telemetry and common utilities)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/telemetry/ tests/common/unit/ tests/common/integration/ -v
 
 # Test configuration
-uv run pytest tests/foundation/test_config_manager.py -v
+uv run pytest tests/common/unit/ -v -k "config"
 
 # Test telemetry
-uv run pytest tests/foundation/test_telemetry_manager.py -v
+uv run pytest tests/telemetry/ -v
 
 # Test with coverage
-uv run pytest tests/foundation/ --cov=cogniverse_foundation --cov-report=html
+uv run pytest tests/telemetry/ tests/common/unit/ tests/common/integration/ --cov=cogniverse_foundation --cov-report=html
 ```
 
 **Test Categories:**
-- `tests/foundation/unit/` - Unit tests for config and telemetry
-- `tests/foundation/integration/` - Integration tests with SQLite
+
+- `tests/telemetry/` - Telemetry manager and provider tests
+- `tests/common/unit/` - Unit tests for configuration and utilities
+- `tests/common/integration/` - Integration tests with backend (e.g., Vespa)
 
 ---
 
@@ -598,4 +688,4 @@ uv run pytest tests/foundation/ --cov=cogniverse_foundation --cov-report=html
 
 ---
 
-**Summary:** The Foundation module provides the infrastructure layer for Cogniverse. `ConfigManager` handles multi-tenant, versioned configuration with SQLite persistence. `TelemetryManager` provides OpenTelemetry tracing with tenant isolation and Phoenix integration. All operations require `tenant_id` to ensure proper multi-tenant isolation.
+**Summary:** The Foundation module provides the infrastructure layer for Cogniverse. `ConfigManager` handles multi-tenant, versioned configuration with pluggable backend persistence (VespaConfigStore, SQLiteConfigStore). `TelemetryManager` provides OpenTelemetry tracing with tenant isolation and Phoenix integration. All operations require `tenant_id` to ensure proper multi-tenant isolation.

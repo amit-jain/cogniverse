@@ -288,17 +288,17 @@ Features:
 
 ## Configuration
 
-Configuration via `UnifiedConfig` from `cogniverse-foundation`:
+Configuration via `SystemConfig` from `cogniverse-foundation`:
 
 ```python
 from cogniverse_dashboard import create_dashboard
-from cogniverse_foundation.config import UnifiedConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
-config = UnifiedConfig(
+config = SystemConfig(
     tenant_id="acme_corp",
-    phoenix_endpoint="http://localhost:6006",
-    vespa_url="http://localhost:8080",
-    enable_telemetry=True
+    phoenix_url="http://localhost:6006",
+    backend_url="http://localhost",
+    backend_port=8080,
 )
 
 dashboard = create_dashboard(config=config)

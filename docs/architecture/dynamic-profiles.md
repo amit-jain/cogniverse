@@ -14,78 +14,51 @@ The dynamic profile system replaces static `config.json` files with a database-b
 
 ## Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Client Layer                            │
-├─────────────────────┬───────────────────────────────────────────┤
-│  Dashboard UI       │  REST API Clients                         │
-│  (Streamlit)        │  (Python, JavaScript, curl)               │
-└──────────┬──────────┴──────────────┬────────────────────────────┘
-           │                         │
-           │ HTTP                    │ HTTP
-           │                         │
-┌──────────▼─────────────────────────▼────────────────────────────┐
-│                    FastAPI Runtime Layer                        │
-├─────────────────────────────────────────────────────────────────┤
-│  Admin Router (/admin/profiles)                                 │
-│  ├─ create_profile()        ┌─────────────────────┐            │
-│  ├─ list_profiles()         │ ProfileValidator    │            │
-│  ├─ get_profile()           │ ├─ Validate schema  │            │
-│  ├─ update_profile()        │ ├─ Check fields     │            │
-│  ├─ delete_profile()        │ └─ Verify format    │            │
-│  └─ deploy_schema()         └─────────────────────┘            │
-└──────────┬──────────────────────────────────────────────────────┘
-           │
-           │ Function calls
-           │
-┌──────────▼──────────────────────────────────────────────────────┐
-│                   Configuration Layer                           │
-├─────────────────────────────────────────────────────────────────┤
-│  ConfigManager                                                  │
-│  ├─ get_backend_config()      ┌────────────────┐               │
-│  ├─ set_backend_config()      │ Threading Lock │               │
-│  ├─ add_backend_profile() ────┤ (Concurrency)  │               │
-│  ├─ update_backend_profile() ─┤                │               │
-│  ├─ delete_backend_profile() ─┘                │               │
-│  └─ list_backend_profiles()                    │               │
-│                                                 │               │
-│  BackendConfig                                  │               │
-│  ├─ profiles: Dict[str, BackendProfileConfig]  │               │
-│  ├─ add_profile()                               │               │
-│  ├─ merge_profile()                             │               │
-│  └─ to_dict() / from_dict()                     │               │
-└──────────┬──────────────────────────────────────────────────────┘
-           │
-           │ Store interface
-           │
-┌──────────▼──────────────────────────────────────────────────────┐
-│                    Persistence Layer                            │
-├─────────────────────────────────────────────────────────────────┤
-│  SQLiteConfigStore                                              │
-│  ├─ get_config()               ┌────────────────────┐          │
-│  ├─ set_config()               │ SQLite Features:   │          │
-│  ├─ delete_config()            │ ├─ WAL mode        │          │
-│  ├─ list_configs()             │ ├─ BEGIN IMMEDIATE │          │
-│  └─ get_config_history()       │ ├─ 30s timeout     │          │
-│                                 │ └─ Auto-rollback   │          │
-│  Database Schema:               └────────────────────┘          │
-│  ┌────────────────────────────────────────────────────┐        │
-│  │ configurations                                      │        │
-│  ├────────────────────────────────────────────────────┤        │
-│  │ id           INTEGER PRIMARY KEY                   │        │
-│  │ tenant_id    TEXT NOT NULL                         │        │
-│  │ scope        TEXT NOT NULL (backend, agent, etc.)  │        │
-│  │ service      TEXT NOT NULL                         │        │
-│  │ config_key   TEXT NOT NULL                         │        │
-│  │ config_value TEXT NOT NULL (JSON)                  │        │
-│  │ version      INTEGER NOT NULL                      │        │
-│  │ created_at   TEXT NOT NULL                         │        │
-│  │ updated_at   TEXT NOT NULL                         │        │
-│  │                                                     │        │
-│  │ UNIQUE(tenant_id, scope, service, config_key, ver) │        │
-│  │ INDEX(tenant_id, scope)                            │        │
-│  └────────────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Client["<span style='color:#000'><b>Client Layer</b></span>"]
+        Dashboard["<span style='color:#000'>Dashboard UI</span>"]
+        APIClients["<span style='color:#000'>REST API Clients</span>"]
+    end
+
+    subgraph Runtime["<span style='color:#000'><b>FastAPI Runtime Layer</b></span>"]
+        AdminRouter["<span style='color:#000'>Admin Router</span>"]
+        Validator["<span style='color:#000'>ProfileValidator</span>"]
+    end
+
+    subgraph Config["<span style='color:#000'><b>Configuration Layer</b></span>"]
+        ConfigMgr["<span style='color:#000'>ConfigManager</span>"]
+        BackendCfg["<span style='color:#000'>BackendConfig</span>"]
+    end
+
+    subgraph Persistence["<span style='color:#000'><b>Persistence Layer</b></span>"]
+        Store["<span style='color:#000'>ConfigStore Interface</span>"]
+        DB["<span style='color:#000'>Database</span>"]
+    end
+
+    Dashboard -->|HTTP| AdminRouter
+    APIClients -->|HTTP| AdminRouter
+    AdminRouter --> Validator
+    AdminRouter --> ConfigMgr
+    ConfigMgr --> BackendCfg
+    ConfigMgr -->|Store Interface| Store
+    Store --> DB
+
+    style Client fill:#90caf9,stroke:#1565c0,color:#000
+    style Runtime fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Config fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Persistence fill:#a5d6a7,stroke:#388e3c,color:#000
+
+    style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
+    style APIClients fill:#64b5f6,stroke:#1565c0,color:#000
+    style AdminRouter fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Validator fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style ConfigMgr fill:#ffb74d,stroke:#ef6c00,color:#000
+    style BackendCfg fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Store fill:#81c784,stroke:#388e3c,color:#000
+    style DB fill:#81c784,stroke:#388e3c,color:#000
+
+    linkStyle 2,4,6 stroke:#000,stroke-width:2px
 ```
 
 ## Component Details
@@ -95,6 +68,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 **Location:** `libs/runtime/cogniverse_runtime/routers/admin.py`
 
 **Responsibilities:**
+
 - HTTP endpoint handling
 - Request validation via Pydantic models
 - Profile validation via ProfileValidator
@@ -102,6 +76,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 - Error handling and HTTP responses
 
 **Key Endpoints:**
+
 - `POST /admin/profiles` - Create profile
 - `GET /admin/profiles` - List profiles for tenant
 - `GET /admin/profiles/{profile_name}` - Get profile details
@@ -110,6 +85,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 - `POST /admin/profiles/{profile_name}/deploy` - Deploy schema
 
 **Dependencies:**
+
 - ConfigManager (injected via FastAPI Depends)
 - ProfileValidator (injected via FastAPI Depends)
 - SchemaLoader (for deployment)
@@ -121,6 +97,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 **ConfigManager:**
 
 Centralized configuration manager with:
+
 - Multi-tenant support
 - Thread-safe operations
 - Profile CRUD operations
@@ -153,6 +130,7 @@ Without locks, concurrent operations have a race condition:
 ```
 
 The `_backend_lock` ensures:
+
 1. Thread 1 acquires lock
 2. Thread 1 reads, modifies, writes
 3. Thread 1 releases lock
@@ -173,77 +151,97 @@ class BackendConfig:
         """Add or replace profile"""
         self.profiles[profile.profile_name] = profile
 
-    def merge_profile(self, profile_name: str, overrides: Dict[str, Any]):
+    def merge_profile(self, profile_name: str, overrides: Dict[str, Any]) -> BackendProfileConfig:
         """Deep merge overrides into existing profile"""
-        base = self.profiles[profile_name]
-        return BackendProfileConfig(...merged fields...)
+        base_profile = self.profiles.get(profile_name)
+        if not base_profile:
+            raise ValueError(f"Base profile '{profile_name}' not found")
+        merged = base_profile.to_dict()
+        self._deep_merge(merged, overrides)
+        return BackendProfileConfig.from_dict(profile_name, merged)
 ```
 
 ### 3. Persistence Layer
 
-**Location:** `libs/foundation/cogniverse_foundation/config/sqlite/config_store.py`
+- **Interface:** `libs/sdk/cogniverse_sdk/interfaces/config_store.py`
+- **Example Implementation:** `libs/vespa/cogniverse_vespa/config/config_store.py`
 
-**SQLiteConfigStore:**
+**ConfigStore Interface:**
 
-Database-backed configuration storage with:
+Backend-agnostic configuration storage with:
+
 - Multi-tenant isolation
 - Version tracking
-- WAL mode for concurrency
+- Concurrent access support
 - Transaction management
 
-**Concurrency Features:**
+**Example: VespaConfigStore:**
 
 ```python
-class SQLiteConfigStore:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        self._enable_wal_mode()  # Enable Write-Ahead Logging
+class VespaConfigStore(ConfigStore):
+    """Vespa-based configuration store with multi-tenant support."""
 
-    def _enable_wal_mode(self):
-        """Enable WAL for better concurrent access"""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout=30000")
+    def __init__(
+        self,
+        vespa_app: Optional[Vespa] = None,
+        vespa_url: str = "http://localhost",
+        vespa_port: int = 8080,
+        schema_name: str = "config_metadata",
+    ):
+        if vespa_app is not None:
+            self.vespa_app = vespa_app
+        else:
+            self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
+        self.schema_name = schema_name
+
+    def _get_latest_version(self, tenant_id, scope, service, config_key) -> int:
+        """Get latest version number for a config"""
+        config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
+        yql = (
+            f"select version from {self.schema_name} "
+            f'where config_id contains "{config_id}" '
+            f"order by version desc limit 1"
+        )
+        response = self.vespa_app.query(yql=yql)
+        if response.hits and len(response.hits) > 0:
+            return response.hits[0]["fields"]["version"]
+        return 0
 
     def set_config(self, tenant_id, scope, service, config_key, config_value):
-        """Set config with transaction and locking"""
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        try:
-            conn.execute("BEGIN IMMEDIATE")  # Exclusive write lock
-            cursor = conn.cursor()
+        """Set config as Vespa document with versioning"""
+        # Get next version
+        current_version = self._get_latest_version(tenant_id, scope, service, config_key)
+        new_version = current_version + 1
 
-            # Get current version
-            cursor.execute("""
-                SELECT MAX(version) FROM configurations
-                WHERE tenant_id=? AND scope=? AND service=? AND config_key=?
-            """, (tenant_id, scope, service, config_key))
-            current_version = cursor.fetchone()[0] or 0
+        # Create document ID with version
+        config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
+        doc_id = f"{self.schema_name}::{config_id}::{new_version}"
 
-            # Insert new version
-            cursor.execute("""
-                INSERT INTO configurations
-                (tenant_id, scope, service, config_key, config_value, version, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-            """, (tenant_id, scope, service, config_key, json.dumps(config_value), current_version + 1))
-
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        # Feed document to Vespa
+        self.vespa_app.feed_data_point(
+            schema=self.schema_name,
+            data_id=doc_id,
+            fields={
+                "config_id": config_id,
+                "tenant_id": tenant_id,
+                "scope": scope.value,
+                "service": service,
+                "config_key": config_key,
+                "config_value": json.dumps(config_value),
+                "version": new_version,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            }
+        )
+        return ConfigEntry(...)  # Returns ConfigEntry with new version
 ```
 
-**WAL Mode Benefits:**
-- Readers don't block writers
-- Writers don't block readers
-- Multiple readers can run concurrently
-- Only writers block each other (via BEGIN IMMEDIATE)
+**Backend Benefits:**
 
-**Transaction Types:**
-- `BEGIN IMMEDIATE`: Acquires write lock immediately, prevents writer starvation
-- Regular `BEGIN`: Acquires lock on first write, can cause deadlocks
+- Unified storage with search backend
+- No separate database to manage
+- Same multi-tenant isolation as content
+- Distributed and scalable
 
 ### 4. Validation Layer
 
@@ -255,36 +253,52 @@ Validates profile configurations against business rules:
 
 ```python
 class ProfileValidator:
-    def __init__(self, schema_dir: Optional[Path] = None):
-        self.schema_dir = schema_dir
+    def __init__(
+        self,
+        config_manager: "ConfigManager",
+        schema_templates_dir: Optional[Path] = None,
+    ):
+        """
+        Initialize ProfileValidator.
 
-    def validate_profile(self, profile: BackendProfileConfig) -> List[str]:
+        Args:
+            config_manager: ConfigManager instance for checking existing profiles
+            schema_templates_dir: Directory containing schema template JSON files
+                                 (defaults to configs/schemas/)
+        """
+        self.config_manager = config_manager
+        self.schema_templates_dir = schema_templates_dir or Path("configs/schemas")
+
+    def validate_profile(
+        self, profile: BackendProfileConfig, tenant_id: str, is_update: bool = False
+    ) -> List[str]:
         """Validate complete profile"""
         errors = []
         errors.extend(self._validate_profile_name(profile.profile_name))
-        errors.extend(self._validate_schema_exists(profile.schema_name))
+        errors.extend(self._validate_schema_template(profile.schema_name))
         errors.extend(self._validate_embedding_model(profile.embedding_model))
         errors.extend(self._validate_embedding_type(profile.embedding_type))
         return errors
 
-    def validate_update_fields(self, overrides: Dict[str, Any]) -> List[str]:
+    def validate_update_fields(self, update_fields: dict) -> List[str]:
         """Validate that only mutable fields are being updated"""
-        immutable_fields = {
-            "profile_name", "type", "schema_name",
-            "embedding_model", "embedding_type", "tenant_id"
-        }
+        immutable_fields = {"schema_name", "embedding_model", "schema_config", "type"}
         errors = []
-        for field in overrides.keys():
-            if field in immutable_fields:
-                errors.append(f"Cannot update immutable field: {field}")
+        for field in immutable_fields:
+            if field in update_fields:
+                errors.append(
+                    f"Field '{field}' cannot be updated. "
+                    "Create a new profile instead for schema changes."
+                )
         return errors
 ```
 
 **Validation Rules:**
+
 - Profile name: alphanumeric + underscore, unique within tenant
 - Schema name: must exist in schema directory
 - Embedding model: format `org/model` or `model-name`
-- Embedding type: enum (`frame_based`, `chunk_based`, `global`)
+- Embedding type: enum (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`)
 - Strategies: valid JSON array
 - Pipeline config: valid JSON object
 
@@ -296,28 +310,29 @@ class ProfileValidator:
 
 ```python
 def render_backend_profile_tab():
-    """Render the backend profile management UI"""
-    st.title("Backend Profile Management")
+    """Main entry point for backend profile management UI"""
+    st.subheader("Backend Profile Management")
 
-    # Tenant selection
-    tenant_id = st.text_input("Tenant ID", value=st.session_state.get("tenant_id", "default"))
+    # Initialize ConfigManager
+    if "config_manager" not in st.session_state:
+        st.session_state.config_manager = create_default_config_manager()
+
+    manager = st.session_state.config_manager
+    tenant_id = st.session_state.get("current_tenant", "default")
 
     # Profile list
-    profiles = list_profiles_from_api(tenant_id)
+    profiles_dict = manager.list_backend_profiles(tenant_id, service="backend")
+    profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
 
-    # Actions
-    if st.button("Create New Profile"):
-        show_create_form()
+    # Create new profile section
+    with st.expander("➕ Create New Profile", expanded=len(profile_names) == 0):
+        render_create_profile_form(manager, tenant_id)
 
-    for profile in profiles:
-        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-        col1.write(profile["profile_name"])
-        if col2.button("Edit", key=f"edit_{profile['profile_name']}"):
-            show_edit_form(profile)
-        if col3.button("Deploy", key=f"deploy_{profile['profile_name']}"):
-            deploy_schema_via_api(profile["profile_name"], tenant_id)
-        if col4.button("Delete", key=f"delete_{profile['profile_name']}"):
-            delete_profile_via_api(profile["profile_name"], tenant_id)
+    # Existing profiles
+    if profile_names:
+        selected_profile = st.selectbox("Select Profile to Manage", options=profile_names)
+        if selected_profile:
+            render_profile_manager(manager, tenant_id, selected_profile)
 ```
 
 **API Integration:**
@@ -325,104 +340,122 @@ def render_backend_profile_tab():
 Dashboard uses httpx to call FastAPI endpoints:
 
 ```python
-def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False):
+def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False) -> Dict[str, Any]:
     """Deploy schema via admin API"""
     api_url = get_runtime_api_url()
     endpoint = f"{api_url}/admin/profiles/{profile_name}/deploy"
 
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(endpoint, json={"tenant_id": tenant_id, "force": force})
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"success": False, "error": response.text}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(endpoint, json={"tenant_id": tenant_id, "force": force})
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "tenant_schema_name": data.get("tenant_schema_name", ""),
+                    "deployment_status": data.get("deployment_status", ""),
+                    "error": None
+                }
+            else:
+                error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
+                return {
+                    "success": False,
+                    "tenant_schema_name": None,
+                    "error": f"HTTP {response.status_code}: {error_detail}"
+                }
+    except httpx.TimeoutException:
+        return {"success": False, "tenant_schema_name": None, "error": "Request timed out"}
+    except Exception as e:
+        return {"success": False, "tenant_schema_name": None, "error": str(e)}
 ```
 
 ## Data Flow
 
 ### Profile Creation Flow
 
-```
-1. User fills create form in Dashboard
-   ↓
-2. Dashboard calls POST /admin/profiles via httpx
-   ↓
-3. Admin router receives request
-   ├─ Validates request body (Pydantic)
-   ├─ Validates profile fields (ProfileValidator)
-   └─ Calls ConfigManager.add_backend_profile()
-   ↓
-4. ConfigManager acquires _backend_lock
-   ├─ Calls get_backend_config() → reads from SQLite
-   ├─ Adds profile to BackendConfig in memory
-   └─ Calls set_backend_config() → writes to SQLite
-   ↓
-5. SQLiteConfigStore.set_config()
-   ├─ Opens connection with 30s timeout
-   ├─ Executes BEGIN IMMEDIATE (write lock)
-   ├─ Reads current version
-   ├─ Inserts new version
-   ├─ Commits transaction
-   └─ Closes connection
-   ↓
-6. ConfigManager releases lock
-   ↓
-7. Admin router returns 201 Created response
-   ↓
-8. Dashboard displays success message
+```mermaid
+flowchart TB
+    User["<span style='color:#000'>1. User fills form - Dashboard</span>"]
+    API["<span style='color:#000'>2. POST /admin/profiles</span>"]
+    Router["<span style='color:#000'>3. Admin Router - Validate</span>"]
+    ConfigMgr["<span style='color:#000'>4. ConfigManager - Lock/Read/Write</span>"]
+    Store["<span style='color:#000'>5. ConfigStore - Version/Persist</span>"]
+    Release["<span style='color:#000'>6. Release Lock</span>"]
+    Response["<span style='color:#000'>7. 201 Created</span>"]
+    Success["<span style='color:#000'>8. Success Message</span>"]
+
+    User --> API
+    API --> Router
+    Router --> ConfigMgr
+    ConfigMgr --> Store
+    Store --> Release
+    Release --> Response
+    Response --> Success
+
+    style User fill:#90caf9,stroke:#1565c0,color:#000
+    style API fill:#90caf9,stroke:#1565c0,color:#000
+    style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ConfigMgr fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Store fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Release fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Response fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Success fill:#90caf9,stroke:#1565c0,color:#000
+
+    linkStyle 0,1,2,3,4,5,6 stroke:#000,stroke-width:2px
 ```
 
 ### Concurrent Updates Flow
 
-```
-Thread 1                          Thread 2
-   │                                 │
-   ├─ update_backend_profile()      │
-   ├─ Acquire _backend_lock         │
-   │  (LOCKED)                       │
-   ├─ get_backend_config()          │
-   │  └─ SQLite read (WAL: OK)      ├─ update_backend_profile()
-   ├─ Modify in memory              ├─ Try acquire _backend_lock
-   ├─ set_backend_config()          │  (BLOCKED - waiting for lock)
-   │  └─ BEGIN IMMEDIATE            │
-   │  └─ Write version 2            │
-   │  └─ COMMIT                      │
-   ├─ Release _backend_lock         │
-   │                                 ├─ Acquire _backend_lock
-   │                                 │  (LOCKED)
-   │                                 ├─ get_backend_config()
-   │                                 │  └─ SQLite read (sees version 2)
-   │                                 ├─ Modify in memory
-   │                                 ├─ set_backend_config()
-   │                                 │  └─ BEGIN IMMEDIATE
-   │                                 │  └─ Write version 3
-   │                                 │  └─ COMMIT
-   │                                 ├─ Release _backend_lock
-   │                                 ▼
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1
+    participant Lock as Backend Lock
+    participant Store as ConfigStore
+    participant T2 as Thread 2
+
+    T1->>Lock: Acquire lock
+    activate Lock
+    T1->>Store: Read config
+    Store-->>T1: Version 1
+    T2->>Lock: Try acquire (BLOCKED)
+    T1->>Store: Write version 2
+    T1->>Lock: Release lock
+    deactivate Lock
+
+    Lock->>T2: Lock acquired
+    activate Lock
+    T2->>Store: Read config
+    Store-->>T2: Version 2
+    T2->>Store: Write version 3
+    T2->>Lock: Release lock
+    deactivate Lock
 ```
 
 ### Schema Deployment Flow
 
-```
-1. User clicks "Deploy" in Dashboard
-   ↓
-2. Dashboard calls POST /admin/profiles/{name}/deploy
-   ↓
-3. Admin router receives request
-   ├─ Gets profile from ConfigManager
-   ├─ Generates tenant schema name: {tenant_id}_{profile_name}
-   ├─ Loads schema template from SchemaLoader
-   └─ Calls backend deployment API
-   ↓
-4. Vespa Backend
-   ├─ Validates schema structure
-   ├─ Creates document type
-   ├─ Sets up indexes
-   └─ Returns deployment status
-   ↓
-5. Admin router returns deployment result
-   ↓
-6. Dashboard updates UI with status
+```mermaid
+flowchart TB
+    Deploy["<span style='color:#000'>1. User clicks Deploy</span>"]
+    API["<span style='color:#000'>2. POST /admin/profiles/name/deploy</span>"]
+    Router["<span style='color:#000'>3. Admin Router - Get/Generate/Load</span>"]
+    Backend["<span style='color:#000'>4. Backend - Validate/Create/Index</span>"]
+    Result["<span style='color:#000'>5. Return Result</span>"]
+    UI["<span style='color:#000'>6. Update UI Status</span>"]
+
+    Deploy --> API
+    API --> Router
+    Router --> Backend
+    Backend --> Result
+    Result --> UI
+
+    style Deploy fill:#90caf9,stroke:#1565c0,color:#000
+    style API fill:#90caf9,stroke:#1565c0,color:#000
+    style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Backend fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Result fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style UI fill:#90caf9,stroke:#1565c0,color:#000
+
+    linkStyle 0,1,2,3,4 stroke:#000,stroke-width:2px
 ```
 
 ## Multi-Tenant Isolation
@@ -441,28 +474,31 @@ profiles_b = config_manager.list_backend_profiles(tenant_id="tenant_b")
 # No overlap - complete isolation
 ```
 
-### Database-Level Isolation
+### Backend-Level Isolation
 
-SQLite queries always include `tenant_id`:
+All backend queries include `tenant_id` for isolation:
 
-```sql
-SELECT config_value FROM configurations
-WHERE tenant_id = 'tenant_a'
-  AND scope = 'backend'
-  AND service = 'backend'
-  AND config_key = 'backend_config'
-ORDER BY version DESC
-LIMIT 1;
+```python
+# Example: Vespa query with tenant filter
+config = config_store.get_config(
+    tenant_id="tenant_a",
+    scope=ConfigScope.BACKEND,
+    service="backend",
+    config_key="backend_config"
+)
+# Only returns data for tenant_a
 ```
 
 ### Schema Name Isolation
 
-Deployed schemas include tenant prefix:
+Deployed schemas include tenant suffix:
 
+```text
+tenant_a → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_tenant_a
+tenant_b → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_tenant_b
 ```
-tenant_a → profile: video_colpali → schema: tenant_a_video_colpali
-tenant_b → profile: video_colpali → schema: tenant_b_video_colpali
-```
+
+Tenant schema naming follows pattern: `{base_schema_name}_{tenant_id}`
 
 No naming conflicts in Vespa.
 
@@ -472,7 +508,7 @@ No naming conflicts in Vespa.
 
 Each `set_config()` creates a new version:
 
-```
+```text
 Version 1: Initial profile creation
 Version 2: Update pipeline_config
 Version 3: Update strategies
@@ -481,10 +517,10 @@ Version 4: Update description
 
 ### Version History
 
-Query historical versions:
+Query historical versions via ConfigStore:
 
 ```python
-history = config_manager.get_config_history(
+history = config_store.get_config_history(
     tenant_id="acme",
     scope=ConfigScope.BACKEND,
     service="backend",
@@ -512,48 +548,74 @@ Clients can detect conflicts by comparing versions.
 
 Schema templates stored on disk:
 
-```
-data/schemas/
-├── video_test_schema.json
-├── video_colpali_base_schema.json
-└── video_videoprism_base_schema.json
+```text
+configs/schemas/
+├── video_colpali_smol500_mv_frame_schema.json
+├── video_colqwen_omni_mv_chunk_30s_schema.json
+├── video_videoprism_base_mv_chunk_30s_schema.json
+├── video_videoprism_large_mv_chunk_30s_schema.json
+├── video_videoprism_lvt_base_sv_chunk_6s_schema.json
+├── video_videoprism_lvt_large_sv_chunk_6s_schema.json
+├── ranking_strategies.json
+└── ... (other schemas)
 ```
 
 ### Template Loading
 
+**Location:** `libs/core/cogniverse_core/schemas/filesystem_loader.py`
+
 ```python
-class FilesystemSchemaLoader:
-    def load_schema(self, schema_name: str) -> dict:
+class FilesystemSchemaLoader(SchemaLoader):
+    """
+    Load Vespa schemas from filesystem directory.
+
+    Inherits from SchemaLoader abstract interface defined in
+    libs/sdk/cogniverse_sdk/interfaces/schema_loader.py
+    """
+
+    def __init__(self, base_path: Path):
+        """Initialize with directory containing schema JSON files"""
+        self.base_path = Path(base_path)
+
+    def load_schema(self, schema_name: str) -> Dict[str, Any]:
         """Load schema template from disk"""
-        schema_path = self.schema_dir / f"{schema_name}_schema.json"
-        with open(schema_path) as f:
+        schema_file = self.base_path / f"{schema_name}_schema.json"
+        with open(schema_file, "r", encoding="utf-8") as f:
             return json.load(f)
 ```
 
 ### Tenant Schema Generation
 
+Schema generation is handled by the backend's schema registry. The process:
+
+1. Load base schema template via `FilesystemSchemaLoader`
+2. Generate tenant-specific name: `{base_schema_name}_{tenant_id}`
+3. Apply any tenant-specific configurations
+4. Deploy to backend
+
+Example flow (handled by schema registry and backend):
+
 ```python
-def generate_tenant_schema(profile: BackendProfileConfig, tenant_id: str) -> dict:
-    """Generate tenant-specific schema from template"""
-    base_schema = schema_loader.load_schema(profile.schema_name)
-    tenant_schema = copy.deepcopy(base_schema)
+# Load base schema template
+base_schema = schema_loader.load_schema(profile.schema_name)
 
-    # Rename schema to tenant-specific name
-    tenant_schema["name"] = f"{tenant_id}_{profile.profile_name}"
+# Generate tenant-specific name (in VespaSchemaManager.get_tenant_schema_name())
+tenant_schema_name = f"{base_schema_name}_{tenant_id.replace(':', '_')}"
 
-    # Apply profile-specific configurations
-    # (e.g., embedding dimensions, field types)
-
-    return tenant_schema
+# Deploy with tenant-specific naming (backend.deploy_schemas takes a list)
+backend.deploy_schemas([{"name": tenant_schema_name, "definition": base_schema}])
 ```
 
 ## Testing Strategy
 
 ### Unit Tests
 
-**Location:** `tests/admin/test_profile_*.py`
+**Locations:**
+- `tests/admin/test_profile_api.py` - Admin API endpoint tests
+- `tests/common/unit/test_profile_validator.py` - ProfileValidator rules
 
 Test individual components:
+
 - ConfigManager methods
 - ProfileValidator rules
 - BackendConfig operations
@@ -561,17 +623,20 @@ Test individual components:
 ### Integration Tests
 
 **Multi-Tenant Tests** (`test_profile_multi_tenant.py`):
+
 - Tenant isolation
 - Cross-tenant access prevention
 - Same profile name across tenants
 
 **Concurrent Tests** (`test_profile_concurrent.py`):
+
 - Concurrent profile creation
 - Concurrent updates (version tracking)
 - Concurrent reads during writes
 - Concurrent deletes
 
-**UI Tests** (`test_profile_ui_integration.py`):
+**UI Tests** (`tests/dashboard/test_profile_ui_integration.py`):
+
 - Dashboard API helper functions
 - Deploy/delete/status workflows
 - Error handling
@@ -581,20 +646,40 @@ Test individual components:
 ```python
 @pytest.fixture
 def test_client(temp_schema_dir, tmp_path):
-    """Create test client with isolated database"""
-    temp_db = tmp_path / "test_config.db"
-    config_manager = create_default_config_manager(db_path=temp_db)
+    """Create test client with isolated backend"""
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_runtime.routers import admin
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+    # Reset registries
+    BackendRegistry._instance = None
+    SchemaRegistry._instance = None
+
+    # Create ConfigManager with default store
+    config_manager = create_default_config_manager()
+
+    # Set up system config
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    system_config = SystemConfig(tenant_id="test_tenant")
+    config_manager.set_system_config(system_config)
 
     # Set up test environment
     schema_loader = FilesystemSchemaLoader(temp_schema_dir)
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
+    admin.set_profile_validator_schema_dir(temp_schema_dir)
 
-    client = TestClient(app)
-    yield client
-
-    # Cleanup
-    admin.reset_dependencies()
+    try:
+        from cogniverse_runtime.main import app
+        client = TestClient(app)
+        yield client
+    finally:
+        # Cleanup
+        admin.reset_dependencies()
+        BackendRegistry._instance = None
+        SchemaRegistry._instance = None
 ```
 
 ## Performance Characteristics
@@ -602,27 +687,28 @@ def test_client(temp_schema_dir, tmp_path):
 ### Read Performance
 
 - **Cached reads**: O(1) lookup in ConfigManager cache
-- **Uncached reads**: O(1) SQLite index lookup
+- **Uncached reads**: Backend-dependent (e.g., Vespa index lookup)
 - **List operations**: O(n) where n = number of profiles per tenant
 
 ### Write Performance
 
-- **Single write**: ~1-5ms (SQLite local write)
+- **Single write**: Backend-dependent (e.g., ~5-10ms for Vespa)
 - **Concurrent writes**: Serialized via threading lock, no deadlocks
-- **Transaction overhead**: Minimal with WAL mode
+- **Transaction overhead**: Minimal with proper backend configuration
 
 ### Concurrency Limits
 
-- **SQLite WAL mode**: Unlimited concurrent readers
+- **Read throughput**: Unlimited concurrent readers (backend-dependent)
 - **Write throughput**: Limited by threading lock (one writer at a time)
 - **Typical load**: 10-100 writes/sec per tenant
 
 ### Scaling Considerations
 
 For high concurrency (>1000 writes/sec):
-- Consider PostgreSQL instead of SQLite
-- Use row-level locking instead of threading locks
-- Implement connection pooling
+
+- Use distributed backend (e.g., Vespa cluster)
+- Implement write batching
+- Consider caching layer
 
 ## Security Considerations
 
@@ -638,11 +724,11 @@ For high concurrency (>1000 writes/sec):
 - Profile names sanitized (alphanumeric + underscore)
 - JSON fields validated for syntax
 
-### SQL Injection Protection
+### Query Safety
 
-- Parameterized queries only
-- No dynamic SQL construction
-- SQLite connection with safe defaults
+- Parameterized queries via ConfigStore interface
+- No dynamic query construction
+- Backend-specific security defaults
 
 ### Future Enhancements
 

@@ -2,8 +2,6 @@
 
 **Package:** `cogniverse_core` (Core Layer)
 **Module Location:** `libs/core/cogniverse_core/common/cache/`
-**Last Updated:** 2026-01-25
-**Purpose:** Multi-tiered caching system for embeddings, pipeline artifacts, and video processing outputs with pluggable backend architecture
 
 ---
 
@@ -24,28 +22,29 @@
 
 ### Purpose and Responsibilities
 
-The Cache Module provides a **comprehensive, multi-tiered caching infrastructure** for the Cogniverse system with:
+The Cache Module provides a **comprehensive caching infrastructure** for the Cogniverse system with:
 
-- **Tiered Caching**: Multi-level cache hierarchy with automatic tier population
+- **Tiered Caching Architecture**: Multi-level cache hierarchy support with automatic tier population
 - **Backend Abstraction**: Pluggable backend architecture via registry pattern
+- **Current Implementation**: Structured filesystem backend with TTL support
 - **Specialized Caches**: Domain-specific caches for embeddings and pipeline artifacts
-- **Efficient Storage**: Binary format support, compression, smart serialization
+- **Efficient Storage**: Binary format support, smart serialization
 - **Cache Invalidation**: Pattern-based clearing, TTL expiration, manual invalidation
 - **Performance Tracking**: Hit/miss statistics, size monitoring, eviction tracking
 
 ### Key Features
 
 1. **Multi-Tiered Architecture**
-   - Primary tier (fast, small): Memory/LRU
+   - Primary tier (fast, small): In-memory LRU (when implemented)
    - Secondary tier (medium, larger): Filesystem
-   - Tertiary tier (slow, unlimited): Remote storage
+   - Tertiary tier (slow, unlimited): Remote storage (when implemented)
    - Automatic tier population on cache hits
 
 2. **Pluggable Backend System**
    - Registry-based backend registration
    - Easy addition of new backends
    - Priority-based tier ordering
-   - Backend-specific configuration
+   - Currently implemented: structured_filesystem backend
 
 3. **Specialized Cache Types**
    - **EmbeddingCache**: Optimized for numpy arrays with binary serialization
@@ -60,15 +59,16 @@ The Cache Module provides a **comprehensive, multi-tiered caching infrastructure
 
 5. **Production-Ready Features**
    - TTL-based expiration
-   - LRU eviction policies
+   - Automatic cleanup of expired entries
    - Cache statistics
    - Graceful degradation
    - Pattern-based invalidation
 
 ## Package Structure
 
-```
+```text
 libs/core/cogniverse_core/common/cache/
+├── __init__.py                      # Package exports
 ├── base.py                          # Abstract base classes (CacheBackend, CacheManager)
 ├── registry.py                      # Backend plugin registry
 ├── embedding_cache.py               # Specialized embedding cache
@@ -81,12 +81,17 @@ libs/core/cogniverse_core/common/cache/
 ### Dependencies
 
 **Internal:**
+
 - None (self-contained infrastructure module)
 
 **External:**
+
 - `numpy`: Embedding array handling
+
 - `cv2`: Image encoding/decoding
+
 - `aiofiles`: Async file I/O
+
 - `msgpack`: Binary serialization (optional)
 
 ---
@@ -96,23 +101,23 @@ libs/core/cogniverse_core/common/cache/
 ### 1. Multi-Tiered Cache Architecture
 
 ```mermaid
-graph TB
-    subgraph APP[APPLICATION LAYER]
-        VSA[VideoSearch Agent]
-        SA[Summarizer Agent]
-        DRA[DetailedReport Agent]
+flowchart TB
+    subgraph APP["<span style='color:#000'>APPLICATION LAYER</span>"]
+        VSA["<span style='color:#000'>VideoSearch Agent</span>"]
+        SA["<span style='color:#000'>Summarizer Agent</span>"]
+        DRA["<span style='color:#000'>DetailedReport Agent</span>"]
     end
 
-    subgraph CM[CACHE MANAGER Coordinator]
-        STRAT[Tiered Lookup Strategy:<br/>1. Check Tier 1 Memory - fastest<br/>2. Check Tier 2 Filesystem - medium<br/>3. Check Tier 3 Remote - slowest<br/>4. On hit: populate higher tiers]
-        P0[Priority: 0]
-        P1[Priority: 1]
-        P2[Priority: 2]
+    subgraph CM["<span style='color:#000'>CACHE MANAGER Coordinator</span>"]
+        STRAT["<span style='color:#000'>Tiered Lookup Strategy:<br/>1. Check Tier 1 (Primary backend) - fastest configured<br/>2. Check Tier 2 (Secondary if configured)<br/>3. Check Tier 3 (Tertiary if configured)<br/>4. On hit: populate higher tiers</span>"]
+        P0["<span style='color:#000'>Priority: 0</span>"]
+        P1["<span style='color:#000'>Priority: 1</span>"]
+        P2["<span style='color:#000'>Priority: 2</span>"]
     end
 
-    T1[TIER 1: MEMORY<br/>• LRU Cache<br/>• Max 1000 items<br/>• <1ms latency<br/>Eviction: LRU<br/>TTL: None]
-    T2[TIER 2: FILESYSTEM<br/>• Structured FS<br/>• Human-readable<br/>• ~5-10ms latency<br/>Eviction: TTL<br/>TTL: 7 days]
-    T3[TIER 3: REMOTE<br/>• S3/Redis<br/>• Unlimited<br/>• ~50-100ms<br/>Eviction: None<br/>TTL: 30 days]
+    T1["<span style='color:#000'>TIER 1: IN-MEMORY<br/>• LRU Cache (modality_cache.py)<br/>• Max 1000 items<br/>• <1ms latency<br/>Eviction: LRU<br/>TTL: None</span>"]
+    T2["<span style='color:#000'>TIER 2: FILESYSTEM<br/>• Structured FS<br/>• Human-readable<br/>• ~5-10ms latency<br/>Eviction: TTL<br/>TTL: 7 days</span>"]
+    T3["<span style='color:#000'>TIER 3: REMOTE (PLANNED)<br/>• S3/Redis<br/>• Unlimited<br/>• ~50-100ms<br/>Eviction: None<br/>TTL: 30 days</span>"]
 
     VSA --> CM
     SA --> CM
@@ -121,33 +126,46 @@ graph TB
     CM --> T2
     CM --> T3
 
-    style APP fill:#e1f5ff
-    style CM fill:#fff4e1
-    style T1 fill:#e1ffe1
-    style T2 fill:#ffe1f5
-    style T3 fill:#fff4e1
+    style APP fill:#90caf9,stroke:#1565c0,color:#000
+    style CM fill:#ffcc80,stroke:#ef6c00,color:#000
+    style T1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style T2 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style T3 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style VSA fill:#90caf9,stroke:#1565c0,color:#000
+    style SA fill:#90caf9,stroke:#1565c0,color:#000
+    style DRA fill:#90caf9,stroke:#1565c0,color:#000
+    style STRAT fill:#ffcc80,stroke:#ef6c00,color:#000
+    style P0 fill:#b0bec5,stroke:#546e7a,color:#000
+    style P1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style P2 fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 **Key Points:**
-- CacheManager coordinates multiple backends
+
+- CacheManager supports multiple backends (architecture ready)
+
+- Two backends implemented: in-memory LRU (`LRUCache` in `modality_cache.py`) and `structured_filesystem`
+
 - Backends checked in priority order (lower = higher priority)
-- Cache hits populate higher-priority tiers for future requests
-- Each tier has different performance/capacity tradeoffs
+
+- Cache hits can populate higher-priority tiers when multiple backends configured
+
+- Each tier can have different performance/capacity tradeoffs
 
 ---
 
 ### 2. Cache Population Flow
 
 ```mermaid
-graph TB
-    START[CACHE GET OPERATION<br/>cache.get video:abc123:keyframes]
-    T1[TIER 1: Memory Cache Priority 0<br/>• Check if key exists in memory<br/>• Latency: <1ms]
-    T1_MISS[NOT FOUND]
-    T2[TIER 2: Filesystem Cache Priority 1<br/>• Check ~/.cache/cogniverse/pipeline/<br/>• Deserialize from pickle/json/msgpack<br/>• Check TTL expiration<br/>• Latency: ~5-10ms]
-    T2_HIT[FOUND ✓]
-    POP[POPULATE HIGHER TIERS<br/>Tier 1 Memory: Store value for future fast access<br/>• No serialization needed<br/>• LRU eviction when full]
-    RETURN[RETURN VALUE TO APPLICATION<br/>• Total latency: ~5-10ms Tier 2 lookup<br/>• Next access: <1ms Tier 1 hit<br/>• Statistics updated: hits++]
-    MISS[CACHE MISS SCENARIO<br/>1. All tiers checked: MISS<br/>2. Application computes value expensive<br/>3. cache.set key value ttl=3600<br/>4. Value stored in ALL configured tiers<br/>5. Statistics updated: misses++ sets++]
+flowchart TB
+    START["<span style='color:#000'>CACHE GET OPERATION<br/>cache.get video:abc123:keyframes</span>"]
+    T1["<span style='color:#000'>TIER 1: In-Memory Cache Priority 0<br/>• LRUCache (modality_cache.py)<br/>• Latency: <1ms</span>"]
+    T1_MISS["<span style='color:#000'>NOT FOUND</span>"]
+    T2["<span style='color:#000'>TIER 2: Filesystem Cache Priority 1<br/>• Check ~/.cache/cogniverse/pipeline/<br/>• Deserialize from pickle/json/msgpack<br/>• Check TTL expiration<br/>• Latency: ~5-10ms</span>"]
+    T2_HIT["<span style='color:#000'>FOUND ✓</span>"]
+    POP["<span style='color:#000'>POPULATE HIGHER TIERS<br/>Higher-priority tier (if configured): Store value for future fast access<br/>• Tier-specific serialization<br/>• Tier-specific eviction policy</span>"]
+    RETURN["<span style='color:#000'>RETURN VALUE TO APPLICATION<br/>• Total latency: ~5-10ms Tier 2 lookup<br/>• Next access: <1ms Tier 1 hit<br/>• Statistics updated: hits++</span>"]
+    MISS["<span style='color:#000'>CACHE MISS SCENARIO<br/>1. All tiers checked: MISS<br/>2. Application computes value expensive<br/>3. cache.set key value ttl=3600<br/>4. Value stored in ALL configured tiers<br/>5. Statistics updated: misses++ sets++</span>"]
 
     START --> T1
     T1 --> T1_MISS
@@ -156,19 +174,22 @@ graph TB
     T2_HIT --> POP
     POP --> RETURN
 
-    style START fill:#e1f5ff
-    style T1 fill:#fff4e1
-    style T1_MISS fill:#ffe1f5
-    style T2 fill:#fff4e1
-    style T2_HIT fill:#e1ffe1
-    style POP fill:#fff4e1
-    style RETURN fill:#e1ffe1
-    style MISS fill:#ffe1f5
+    style START fill:#90caf9,stroke:#1565c0,color:#000
+    style T1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style T1_MISS fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style T2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style T2_HIT fill:#a5d6a7,stroke:#388e3c,color:#000
+    style POP fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RETURN fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MISS fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 **Population Benefits:**
+
 - First access: pays full cost of slowest tier
+
 - Subsequent accesses: served from fastest tier
+
 - Automatic optimization without manual management
 
 ---
@@ -176,30 +197,30 @@ graph TB
 ### 3. Structured Filesystem Layout
 
 ```mermaid
-graph TB
-    ROOT[~/.cache/cogniverse/pipeline/]
-    PROF[profile_name/<br/>Profile-based namespace]
-    KF[keyframes/<br/>Keyframe extraction results]
-    VID1[video_id_1/]
-    META1[metadata.pkl<br/>Keyframe metadata timestamps counts]
-    META1M[metadata.pkl.meta<br/>Cache metadata TTL created_at]
-    F0[frame_0.jpg<br/>Individual keyframe images]
-    F0M[frame_0.jpg.meta]
-    F42[frame_42.jpg]
-    F42M[frame_42.jpg.meta]
+flowchart TB
+    ROOT["<span style='color:#000'>~/.cache/cogniverse/pipeline/</span>"]
+    PROF["<span style='color:#000'>profile_name/<br/>Profile-based namespace</span>"]
+    KF["<span style='color:#000'>keyframes/<br/>Keyframe extraction results</span>"]
+    VID1["<span style='color:#000'>video_id_1/</span>"]
+    META1["<span style='color:#000'>metadata.pkl<br/>Keyframe metadata timestamps counts</span>"]
+    META1M["<span style='color:#000'>metadata.pkl.meta<br/>Cache metadata TTL created_at</span>"]
+    F0["<span style='color:#000'>frame_0.jpg<br/>Individual keyframe images</span>"]
+    F0M["<span style='color:#000'>frame_0.jpg.meta</span>"]
+    F42["<span style='color:#000'>frame_42.jpg</span>"]
+    F42M["<span style='color:#000'>frame_42.jpg.meta</span>"]
 
-    TR[transcripts/<br/>Audio transcription results]
-    TRV1[video_id_1.pkl<br/>Transcript data segments text]
-    TRV1M[video_id_1.pkl.meta<br/>Cache metadata]
+    TR["<span style='color:#000'>transcripts/<br/>Audio transcription results</span>"]
+    TRV1["<span style='color:#000'>video_id_1.pkl<br/>Transcript data segments text</span>"]
+    TRV1M["<span style='color:#000'>video_id_1.pkl.meta<br/>Cache metadata</span>"]
 
-    DESC[descriptions/<br/>VLM frame descriptions]
-    DESCV1[video_id_1.pkl<br/>Frame-level descriptions]
+    DESC["<span style='color:#000'>descriptions/<br/>VLM frame descriptions</span>"]
+    DESCV1["<span style='color:#000'>video_id_1.pkl<br/>Frame-level descriptions</span>"]
 
-    SEG[segments/<br/>Temporal segment frames]
-    SEGV1[video_id_1/]
-    SEG0[segment_0_start_0.0_end_6.0/]
-    SEGMETA[metadata.pkl<br/>Segment info timestamps fps]
-    SEGF0[frame_0.jpg<br/>Sampled frames from segment]
+    SEG["<span style='color:#000'>segments/<br/>Temporal segment frames</span>"]
+    SEGV1["<span style='color:#000'>video_id_1/</span>"]
+    SEG0["<span style='color:#000'>segment_0_start_0.0_end_6.0/</span>"]
+    SEGMETA["<span style='color:#000'>metadata.pkl<br/>Segment info timestamps fps</span>"]
+    SEGF0["<span style='color:#000'>frame_0.jpg<br/>Sampled frames from segment</span>"]
 
     ROOT --> PROF
     PROF --> KF
@@ -225,24 +246,46 @@ graph TB
     SEG0 --> SEGMETA
     SEG0 --> SEGF0
 
-    style ROOT fill:#e1f5ff
-    style PROF fill:#fff4e1
-    style KF fill:#ffe1f5
-    style TR fill:#ffe1f5
-    style DESC fill:#ffe1f5
-    style SEG fill:#ffe1f5
+    style ROOT fill:#90caf9,stroke:#1565c0,color:#000
+    style PROF fill:#ffcc80,stroke:#ef6c00,color:#000
+    style KF fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TR fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DESC fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SEG fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VID1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style META1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style META1M fill:#b0bec5,stroke:#546e7a,color:#000
+    style F0 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style F0M fill:#b0bec5,stroke:#546e7a,color:#000
+    style F42 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style F42M fill:#b0bec5,stroke:#546e7a,color:#000
+    style TRV1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TRV1M fill:#b0bec5,stroke:#546e7a,color:#000
+    style DESCV1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SEGV1 fill:#b0bec5,stroke:#546e7a,color:#000
+    style SEG0 fill:#b0bec5,stroke:#546e7a,color:#000
+    style SEGMETA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SEGF0 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Cache Key Examples:**
+
 - `"profile:video:abc123:keyframes"` → `profile/keyframes/abc123/metadata.pkl`
+
 - `"profile:video:abc123:keyframes:frame_42"` → `profile/keyframes/abc123/frame_42.jpg`
+
 - `"profile:video:abc123:transcript:model=base:lang=auto"` → `profile/transcripts/abc123.pkl`
+
 - `"profile:video:abc123:segment_frames:segment_id=0:start_time=0.0:end_time=6.0:frame_1"` → `profile/segments/abc123/segment_0_start_0.0_end_6.0/frame_1.jpg`
 
 **Design Benefits:**
+
 - Human-readable paths for debugging
+
 - Easy manual inspection and cleanup
+
 - Profile-based isolation
+
 - Efficient disk usage (deduplicated by video_id)
 
 ---
@@ -250,34 +293,39 @@ graph TB
 ### 4. Embedding Cache Format
 
 ```mermaid
-graph TB
-    ORIG[Original Array<br/>numpy.ndarray<br/>shape: 128<br/>dtype: float32<br/>size: 512 bytes]
+flowchart TB
+    ORIG["<span style='color:#000'>Original Array<br/>numpy.ndarray<br/>shape: 128<br/>dtype: float32<br/>size: 512 bytes</span>"]
 
-    STORAGE[CACHE STORAGE FORMAT<br/>dtype: float32<br/>shape: 128<br/>data: binary bytes<br/>text_preview: query text<br/>model: colpali<br/>timestamp: 2025-10-07T<br/>Total size: ~550 bytes 512 data + 38 metadata<br/>Compared to: ~1200 bytes JSON list of floats<br/>Space savings: ~54%]
+    STORAGE["<span style='color:#000'>CACHE STORAGE FORMAT<br/>dtype: float32<br/>shape: 128<br/>data: binary bytes<br/>text_preview: query text<br/>model: colpali<br/>timestamp: 2025-10-07T<br/>Total size: ~550 bytes 512 data + 38 metadata<br/>Compared to: ~1200 bytes JSON list of floats<br/>Space savings: ~54%</span>"]
 
-    RETR[Retrieval]
+    RETR["<span style='color:#000'>Retrieval</span>"]
 
-    DESER[DESERIALIZATION PROCESS<br/>1. Read cached_data from backend<br/>2. Extract dtype shape data<br/>3. np.frombuffer data dtype=dtype Zero-copy<br/>4. .reshape shape Restore dimensions<br/>5. Return numpy array<br/>Performance: ~1ms binary vs ~10ms JSON deserialize]
+    DESER["<span style='color:#000'>DESERIALIZATION PROCESS<br/>1. Read cached_data from backend<br/>2. Extract dtype shape data<br/>3. np.frombuffer data dtype=dtype Zero-copy<br/>4. .reshape shape Restore dimensions<br/>5. Return numpy array<br/>Performance: ~1ms binary vs ~10ms JSON deserialize</span>"]
 
-    KEYGEN[Cache Key Generation<br/>text = Marie Curie radioactivity discovery<br/>model = colpali<br/>content = model:text<br/>hash = sha256 content hexdigest 16<br/>key = embedding:model:hash<br/>→ embedding:colpali:a3f2e9d8c7b6a5f4]
+    KEYGEN["<span style='color:#000'>Cache Key Generation<br/>text = Marie Curie radioactivity discovery<br/>model = colpali<br/>content = model:text<br/>hash = sha256 content hexdigest 16<br/>key = embedding:model:hash<br/>→ embedding:colpali:a3f2e9d8c7b6a5f4</span>"]
 
     ORIG --> STORAGE
     STORAGE --> RETR
     RETR --> DESER
     STORAGE -.-> KEYGEN
 
-    style ORIG fill:#e1f5ff
-    style STORAGE fill:#fff4e1
-    style RETR fill:#ffe1f5
-    style DESER fill:#e1ffe1
-    style KEYGEN fill:#fff4e1
+    style ORIG fill:#90caf9,stroke:#1565c0,color:#000
+    style STORAGE fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RETR fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DESER fill:#a5d6a7,stroke:#388e3c,color:#000
+    style KEYGEN fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 **Embedding Cache Optimizations:**
+
 - Binary serialization (50%+ space savings)
+
 - Deterministic key generation (same text = same key)
+
 - Zero-copy deserialization with frombuffer
+
 - Model-specific namespacing
+
 - Metadata for debugging
 
 ---
@@ -294,6 +342,7 @@ graph TB
 Retrieve value from cache.
 
 **Parameters:**
+
 - `key`: Cache key (unique identifier)
 
 **Returns:** Cached value or None if not found
@@ -313,8 +362,11 @@ else:
 Store value in cache with optional TTL.
 
 **Parameters:**
+
 - `key`: Cache key
+
 - `value`: Value to cache (any serializable type)
+
 - `ttl`: Time-to-live in seconds (None = no expiration)
 
 **Returns:** True if stored successfully
@@ -334,6 +386,7 @@ success = await backend.set(
 Delete key from cache.
 
 **Parameters:**
+
 - `key`: Cache key to delete
 
 **Returns:** True if key was deleted
@@ -349,6 +402,7 @@ await backend.delete("video:abc123:keyframes")
 Check if key exists in cache (without retrieving value).
 
 **Parameters:**
+
 - `key`: Cache key to check
 
 **Returns:** True if key exists and is not expired
@@ -365,7 +419,9 @@ if await backend.exists("video:abc123:keyframes"):
 Clear cache entries matching pattern.
 
 **Parameters:**
+
 - `pattern`: Optional glob pattern (e.g., "video:abc123:*")
+
 - `None`: Clear entire cache
 
 **Returns:** Number of entries cleared
@@ -409,6 +465,7 @@ print(f"Hit rate: {hit_rate:.2%}")
 Get metadata for a cache entry (optional method).
 
 **Parameters:**
+
 - `key`: Cache key
 
 **Returns:** Metadata dict or None
@@ -428,7 +485,9 @@ if metadata:
 List keys matching pattern (optional method).
 
 **Parameters:**
+
 - `pattern`: Optional glob pattern
+
 - `include_metadata`: Include metadata in results
 
 **Returns:** List of (key, metadata) tuples
@@ -473,11 +532,15 @@ _stats: Dict[str, int]              # Manager-level statistics
 Initialize cache manager with configuration.
 
 **Parameters:**
+
 - `config`: CacheConfig with backend configurations
 
 **Process:**
+
 1. Initialize backends from config
+
 2. Sort by priority (lower number = higher priority)
+
 3. Set up statistics tracking
 
 **Example:**
@@ -486,8 +549,7 @@ from cogniverse_core.common.cache.base import CacheConfig, BackendConfig
 
 config = CacheConfig(
     backends=[
-        {"backend_type": "memory", "priority": 0, "enabled": True},
-        {"backend_type": "structured_filesystem", "priority": 1, "enabled": True}
+        {"backend_type": "structured_filesystem", "priority": 0, "enabled": True}
     ],
     default_ttl=3600,
     enable_stats=True
@@ -502,24 +564,29 @@ cache_manager = CacheManager(config)
 Get from cache, checking tiers in priority order.
 
 **Parameters:**
+
 - `key`: Cache key
 
 **Returns:** Value if found in any tier, None otherwise
 
 **Process:**
+
 1. Iterate through backends in priority order
+
 2. Return on first hit
+
 3. Populate higher-priority tiers with found value
+
 4. Update statistics
 
 **Example:**
 ```python
-# Check all tiers
+# Check all configured backends
 value = await cache_manager.get("video:abc123:keyframes")
 
-# If found in Tier 2 (filesystem):
+# If found:
 # - Value returned immediately
-# - Tier 1 (memory) populated for next access
+# - Higher-priority backends populated if multiple tiers configured
 ```
 
 ---
@@ -528,29 +595,34 @@ value = await cache_manager.get("video:abc123:keyframes")
 Set in all configured cache tiers.
 
 **Parameters:**
+
 - `key`: Cache key
+
 - `value`: Value to cache
+
 - `ttl`: Time-to-live in seconds (uses default_ttl if None)
 
 **Returns:** True if at least one backend succeeded
 
 **Process:**
+
 1. Set in all backends concurrently
+
 2. Use default TTL if not specified
+
 3. Return success if any backend succeeded
 
 **Example:**
 ```python
-# Store in all tiers
+# Store in all configured backends
 success = await cache_manager.set(
     "video:abc123:keyframes",
     keyframes_data,
     ttl=86400
 )
 
-# Stored in:
-# - Tier 1 (memory): immediate access
-# - Tier 2 (filesystem): persistent storage
+# Stored in all configured backends
+# Currently: structured_filesystem backend (persistent storage)
 ```
 
 ---
@@ -559,6 +631,7 @@ success = await cache_manager.set(
 Delete from all cache tiers.
 
 **Parameters:**
+
 - `key`: Cache key
 
 **Returns:** True if deleted from at least one tier
@@ -575,6 +648,7 @@ await cache_manager.delete("video:abc123:keyframes")
 Clear matching entries from all tiers.
 
 **Parameters:**
+
 - `pattern`: Optional glob pattern
 
 **Returns:** Total number of entries cleared
@@ -606,15 +680,10 @@ Get aggregated statistics from all tiers.
         "total_files": 200
     },
     "backends": {
-        "MemoryCache": {
-            "hits": 1200,
-            "misses": 300,
-            "size_bytes": 512000
-        },
         "StructuredFilesystemBackend": {
-            "hits": 300,
-            "misses": 200,
-            "size_bytes": 1536000,
+            "hits": 1500,
+            "misses": 500,
+            "size_bytes": 2048000,
             "total_files": 200
         }
     }
@@ -636,25 +705,31 @@ for backend_name, backend_stats in stats['backends'].items():
 Populate higher-priority tiers with found value (internal method).
 
 **Parameters:**
+
 - `key`: Cache key
+
 - `value`: Value to populate
+
 - `backend_index`: Index of tier where value was found
 
 **Process:**
+
 1. Iterate through tiers with index < backend_index
+
 2. Set value in each higher-priority tier
+
 3. Use default TTL for populated entries
 
 **Example (internal behavior):**
 ```python
-# Value found in Tier 2 (filesystem), backend_index=1
-# Populate Tier 1 (memory), index=0
+# Value found in lower-priority backend, backend_index=1
+# Populate higher-priority backend at index=0
 await self.backends[0].set(key, value, self.config.default_ttl)
 ```
 
 ---
 
-### 3. CacheBackendRegistry (registry.py:10-45)
+### 3. CacheBackendRegistry (registry.py:10-44)
 
 **Purpose:** Plugin registry for cache backend types.
 
@@ -664,7 +739,9 @@ await self.backends[0].set(key, value, self.config.default_ttl)
 Register a new cache backend type.
 
 **Parameters:**
+
 - `name`: Backend type name (e.g., "filesystem", "redis")
+
 - `backend_class`: Backend class implementing CacheBackend
 
 **Example:**
@@ -686,14 +763,19 @@ CacheBackendRegistry.register("custom", MyCustomBackend)
 Create backend instance from configuration.
 
 **Parameters:**
+
 - `config`: Backend configuration dict with "backend_type" key
 
 **Returns:** Initialized backend instance
 
 **Process:**
+
 1. Extract backend_type from config
+
 2. Look up backend class in registry
+
 3. Convert config to appropriate config dataclass
+
 4. Instantiate backend with config
 
 **Example:**
@@ -710,7 +792,7 @@ backend = CacheBackendRegistry.create(config)
 
 ---
 
-#### `@classmethod list_backends() -> List[str]`
+#### `@classmethod list_backends() -> list[str]`
 List all registered backend types.
 
 **Returns:** List of backend type names
@@ -725,7 +807,7 @@ backends = CacheBackendRegistry.list_backends()
 
 ## Cache Backends
 
-### StructuredFilesystemBackend (backends/structured_filesystem.py:35-535)
+### StructuredFilesystemBackend (backends/structured_filesystem.py:35-534)
 
 **Purpose:** Filesystem cache with human-readable directory structure.
 
@@ -744,10 +826,15 @@ class StructuredFilesystemConfig:
 ```
 
 **Key Features:**
+
 - Human-readable paths (no hash-based obfuscation)
+
 - Profile-based namespacing
+
 - Artifact type separation (keyframes, transcripts, descriptions, segments)
+
 - TTL enforcement via metadata files
+
 - Automatic cleanup of expired entries
 
 **Path Mapping Examples:**
@@ -804,9 +891,13 @@ data = msgpack.packb(value)
 Convert cache key to filesystem path.
 
 **Process:**
+
 1. Split key by ":"
+
 2. Extract profile, video_id, artifact_type
+
 3. Build path based on artifact type
+
 4. Sanitize path components (remove special chars)
 
 **Example:**
@@ -828,10 +919,15 @@ path = backend._key_to_path("profile:video:abc123:keyframes:frame_42")
 Retrieve value with TTL checking.
 
 **Process:**
+
 1. Convert key to path
+
 2. Check if file exists
+
 3. Check metadata for expiration (if TTL enabled)
+
 4. Read file (binary for images, deserialize for data)
+
 5. Update statistics
 
 **Example:**
@@ -848,10 +944,15 @@ if metadata:
 Store value with metadata.
 
 **Process:**
+
 1. Convert key to path
+
 2. Create parent directories
+
 3. Serialize and write data
+
 4. Write metadata file with TTL, size, timestamps
+
 5. Update statistics
 
 **Example:**
@@ -870,9 +971,13 @@ success = await backend.set(
 Clean up expired entries on startup.
 
 **Process:**
+
 1. Find all .meta files
+
 2. Check expiration timestamp
+
 3. Delete expired cache file + metadata
+
 4. Update eviction statistics
 
 **Example (automatic on startup):**
@@ -886,15 +991,20 @@ backend = StructuredFilesystemBackend(config)
 
 ## Specialized Caches
 
-### 1. EmbeddingCache (embedding_cache.py:53-201)
+### 1. EmbeddingCache (embedding_cache.py:53-200)
 
 **Purpose:** Optimized cache for embedding vectors with binary serialization.
 
 **Key Features:**
+
 - Binary storage (50%+ space savings vs JSON)
+
 - Deterministic key generation (same text → same key)
+
 - Zero-copy deserialization
+
 - Model-specific namespacing
+
 - Batch operations
 
 **Initialization:**
@@ -913,9 +1023,13 @@ embedding_cache = EmbeddingCache(
 Generate deterministic cache key.
 
 **Process:**
+
 1. Create content string: `{model}:{text}`
+
 2. Hash with SHA256
+
 3. Take first 16 hex digits
+
 4. Format: `{prefix}:{model}:{hash}`
 
 **Example:**
@@ -933,15 +1047,21 @@ key = embedding_cache._generate_key(
 Get cached embedding.
 
 **Parameters:**
+
 - `text`: Text that was embedded
+
 - `model`: Model name (e.g., "colpali", "videoprism")
 
 **Returns:** Numpy array if cached, None otherwise
 
 **Process:**
+
 1. Generate cache key from text + model
+
 2. Retrieve from cache
+
 3. Deserialize binary data to numpy array
+
 4. Update statistics
 
 **Example:**
@@ -963,8 +1083,11 @@ else:
 Store embedding in cache.
 
 **Parameters:**
+
 - `text`: Text that was embedded
+
 - `model`: Model name
+
 - `embedding`: Numpy array to cache
 
 **Returns:** True if stored successfully
@@ -996,11 +1119,13 @@ success = await embedding_cache.set_embedding(
 
 ---
 
-#### `async get_batch_embeddings(texts: List[str], model: str) -> Dict[str, Optional[np.ndarray]]`
+#### `async get_batch_embeddings(texts: list[str], model: str) -> Dict[str, Optional[np.ndarray]]`
 Get multiple embeddings from cache.
 
 **Parameters:**
+
 - `texts`: List of texts
+
 - `model`: Model name
 
 **Returns:** Dict mapping text → embedding (or None if not cached)
@@ -1028,7 +1153,9 @@ for text, embedding in results.items():
 Store multiple embeddings.
 
 **Parameters:**
+
 - `embeddings`: Dict mapping text → embedding
+
 - `model`: Model name
 
 **Returns:** Dict mapping text → success status
@@ -1069,14 +1196,18 @@ print(f"Embedding cache hit rate: {stats['hit_rate']:.2%}")
 
 ---
 
-### 2. PipelineArtifactCache (pipeline_cache.py:47-412)
+### 2. PipelineArtifactCache (pipeline_cache.py:47-478)
 
 **Purpose:** Comprehensive caching for video processing pipeline artifacts.
 
 **Supported Artifacts:**
+
 - Keyframes (metadata + images)
+
 - Audio transcripts
+
 - Frame descriptions (VLM outputs)
+
 - Temporal segment frames
 
 **Initialization:**
@@ -1096,8 +1227,11 @@ pipeline_cache = PipelineArtifactCache(
 Generate base cache key for a video.
 
 **Process:**
+
 1. Extract video filename (stem)
+
 2. Optionally add profile prefix
+
 3. Format: `{profile}:video:{video_name}` or `video:{video_name}`
 
 **Example:**
@@ -1112,9 +1246,13 @@ key = pipeline_cache._generate_video_key("/path/to/robot_soccer.mp4")
 Generate cache key for specific artifact.
 
 **Process:**
+
 1. Start with video key
+
 2. Add artifact type
+
 3. Add parameters (sorted for determinism)
+
 4. Format: `{video_key}:{artifact_type}:{params}`
 
 **Example:**
@@ -1135,15 +1273,23 @@ artifact_key = pipeline_cache._generate_artifact_key(
 Get cached keyframes metadata and optionally images.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `strategy`: Extraction strategy ("similarity" or "fps")
+
 - `threshold`: Similarity threshold (for similarity strategy)
+
 - `fps`: Frames per second (for fps strategy)
+
 - `max_frames`: Maximum frames to extract
+
 - `load_images`: Whether to load actual keyframe images
 
 **Returns:**
+
 - `Dict[str, Any]` with keyframe metadata
+
 - `Tuple[Dict, Dict[str, np.ndarray]]` if load_images=True
 
 **Example:**
@@ -1180,16 +1326,23 @@ for frame_info in metadata['keyframes']:
 Cache keyframes with metadata and images.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `keyframes_metadata`: Metadata dict with keyframe info
+
 - `keyframe_images`: Optional dict mapping frame_id → image (numpy array)
+
 - Other parameters: Same as get_keyframes
 
 **Returns:** True if stored successfully
 
 **Process:**
+
 1. Generate artifact key with parameters
+
 2. Store each keyframe image separately (JPEG encoded)
+
 3. Store metadata with references to images
 
 **Example:**
@@ -1227,8 +1380,11 @@ success = await pipeline_cache.set_keyframes(
 Get cached audio transcript.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `model_size`: Whisper model size ("base", "small", "medium", "large")
+
 - `language`: Language code or "auto"
 
 **Returns:** Transcript data or None
@@ -1253,9 +1409,13 @@ if transcript:
 Cache audio transcript.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `transcript_data`: Transcript dict with text and segments
+
 - `model_size`: Whisper model size
+
 - `language`: Language code
 
 **Returns:** True if stored successfully
@@ -1285,8 +1445,11 @@ success = await pipeline_cache.set_transcript(
 Get cached frame descriptions (VLM outputs).
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `model_name`: VLM model name (e.g., "Qwen/Qwen2-VL-2B-Instruct")
+
 - `batch_size`: Batch size used for generation
 
 **Returns:** Descriptions data or None
@@ -1310,9 +1473,13 @@ if descriptions:
 Cache frame descriptions.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `descriptions_data`: Descriptions dict
+
 - `model_name`: VLM model name
+
 - `batch_size`: Batch size used
 
 **Returns:** True if stored successfully
@@ -1343,16 +1510,25 @@ success = await pipeline_cache.set_descriptions(
 Get cached segment frames.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `segment_id`: Segment identifier
+
 - `start_time`: Segment start time (seconds)
+
 - `end_time`: Segment end time (seconds)
+
 - `sampling_fps`: Frames per second for sampling
+
 - `max_frames`: Maximum frames per segment
+
 - `load_images`: Whether to load actual images
 
 **Returns:**
+
 - Metadata dict if load_images=False
+
 - Tuple (metadata, frames) if load_images=True
 
 **Example:**
@@ -1380,13 +1556,21 @@ if frames:
 Cache segment frames.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `segment_id`: Segment identifier
+
 - `start_time`: Segment start time
+
 - `end_time`: Segment end time
+
 - `frames`: List of frame images (numpy arrays)
+
 - `timestamps`: List of frame timestamps
+
 - `sampling_fps`: Sampling rate used
+
 - `max_frames`: Max frames per segment
 
 **Returns:** True if stored successfully
@@ -1415,7 +1599,9 @@ success = await pipeline_cache.set_segment_frames(
 Get all cached artifacts for a video based on pipeline config.
 
 **Parameters:**
+
 - `video_path`: Path to video file
+
 - `pipeline_config`: Pipeline configuration dict
 
 **Returns:** VideoArtifacts container
@@ -1452,6 +1638,7 @@ if artifacts.frame_descriptions:
 Invalidate all cached artifacts for a video.
 
 **Parameters:**
+
 - `video_path`: Path to video file
 
 **Returns:** Number of entries cleared
@@ -1470,15 +1657,15 @@ print(f"Cleared {cleared} cache entries")
 ### Complete Cache Lookup Flow
 
 ```mermaid
-graph TB
-    REQ[APPLICATION REQUEST<br/>video_search_agent.search query profile=video_colpali_mv]
-    EMB[EMBEDDING CACHE LOOKUP<br/>embedding = await embedding_cache.get_embedding query model]
-    EMB_HIT[CACHE HIT ✓]
-    CMGET[Key: embedding:colpali:a3f2e9d8<br/>CacheManager.get<br/>├─ Check Tier 1 Memory: MISS<br/>├─ Check Tier 2 Filesystem: HIT ✓<br/>│  • Path: ~/.cache/cogniverse/embeddings/colpali/a3f2e9d8.pkl<br/>│  • Read binary data<br/>│  • Deserialize: np.frombuffer<br/>└─ Populate Tier 1 for next access<br/>Return: np.ndarray shape 128 dtype float32]
-    PIPE[PIPELINE ARTIFACT LOOKUP<br/>keyframes = await pipeline_cache.get_keyframes video_path]
-    PIPE_HIT[CACHE HIT ✓]
-    CMGET2[Key: profile:video:robot_soccer:keyframes:strategy=...<br/>CacheManager.get<br/>├─ Check Tier 1 Memory: MISS<br/>├─ Check Tier 2 Filesystem: HIT ✓<br/>│  • Path: ~/.cache/.../profile/keyframes/robot_soccer/<br/>│  • Read metadata.pkl<br/>│  • Check TTL: OK not expired<br/>│  • If load_images: load frame_*.jpg files<br/>└─ Populate Tier 1<br/>Return: video_id robot_soccer num_keyframes 50 keyframes]
-    CONT[APPLICATION CONTINUES<br/>• Use cached embeddings for search<br/>• Use cached keyframes to avoid re-extraction<br/>• Total time saved: ~5-10 seconds vs recompute]
+flowchart TB
+    REQ["<span style='color:#000'>APPLICATION REQUEST<br/>video_search_agent.search query profile=video_colpali_mv</span>"]
+    EMB["<span style='color:#000'>EMBEDDING CACHE LOOKUP<br/>embedding = await embedding_cache.get_embedding query model</span>"]
+    EMB_HIT["<span style='color:#000'>CACHE HIT ✓</span>"]
+    CMGET["<span style='color:#000'>Key: embedding:colpali:a3f2e9d8<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/cogniverse/embeddings/colpali/a3f2e9d8.pkl<br/>   • Read binary data<br/>   • Deserialize: np.frombuffer<br/>Return: np.ndarray shape 128 dtype float32</span>"]
+    PIPE["<span style='color:#000'>PIPELINE ARTIFACT LOOKUP<br/>keyframes = await pipeline_cache.get_keyframes video_path</span>"]
+    PIPE_HIT["<span style='color:#000'>CACHE HIT ✓</span>"]
+    CMGET2["<span style='color:#000'>Key: profile:video:robot_soccer:keyframes:strategy=...<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/.../profile/keyframes/robot_soccer/<br/>   • Read metadata.pkl<br/>   • Check TTL: OK not expired<br/>   • If load_images: load frame_*.jpg files<br/>Return: video_id robot_soccer num_keyframes 50 keyframes</span>"]
+    CONT["<span style='color:#000'>APPLICATION CONTINUES<br/>• Use cached embeddings for search<br/>• Use cached keyframes to avoid re-extraction<br/>• Total time saved: ~5-10 seconds vs recompute</span>"]
 
     REQ --> EMB
     EMB --> EMB_HIT
@@ -1488,59 +1675,42 @@ graph TB
     PIPE_HIT --> CMGET2
     CMGET2 --> CONT
 
-    style REQ fill:#e1f5ff
-    style EMB fill:#fff4e1
-    style EMB_HIT fill:#e1ffe1
-    style CMGET fill:#ffe1f5
-    style PIPE fill:#fff4e1
-    style PIPE_HIT fill:#e1ffe1
-    style CMGET2 fill:#ffe1f5
-    style CONT fill:#e1ffe1
+    style REQ fill:#90caf9,stroke:#1565c0,color:#000
+    style EMB fill:#ffcc80,stroke:#ef6c00,color:#000
+    style EMB_HIT fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CMGET fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PIPE fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PIPE_HIT fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CMGET2 fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CONT fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
 
 ### Cache Population Flow (Cache Miss)
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    CACHE MISS DETECTED                         │
-│  embedding = await embedding_cache.get_embedding(query, model)│
-│  → Returns None (not in any tier)                             │
-└────────────────┬───────────────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              COMPUTE EMBEDDING (EXPENSIVE)                      │
-│  embedding = encoder.encode(query)                             │
-│  • Load model from disk/memory                                 │
-│  • Forward pass through neural network                         │
-│  • Cost: ~50-200ms depending on model                          │
-└────────────────┬────────────────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              STORE IN CACHE                                     │
-│  await embedding_cache.set_embedding(query, model, embedding)  │
-└────────────────┬────────────────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  CacheManager.set()                                             │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ Tier 1 (Memory):                                         │  │
-│  │ • Store embedding directly (no serialization)            │  │
-│  │ • LRU eviction if cache full                             │  │
-│  │ • Success ✓                                               │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ Tier 2 (Filesystem):                                     │  │
-│  │ • Serialize to binary: embedding.tobytes()               │  │
-│  │ • Write to ~/.cache/.../embeddings/colpali/a3f2e9d8.pkl  │  │
-│  │ • Write metadata with TTL                                │  │
-│  │ • Success ✓                                               │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    Miss["<span style='color:#000'>CACHE MISS DETECTED<br/>embedding = await embedding_cache.get_embedding(query, model)<br/>→ Returns None (not in any tier)</span>"]
+
+    Compute["<span style='color:#000'>COMPUTE EMBEDDING (EXPENSIVE)<br/>embedding = encoder.encode(query)<br/>• Load model from disk/memory<br/>• Forward pass through neural network<br/>• Cost: ~50-200ms</span>"]
+
+    Store["<span style='color:#000'>STORE IN CACHE<br/>await embedding_cache.set_embedding(query, model, embedding)</span>"]
+
+    subgraph CacheManager["<span style='color:#000'>CacheManager.set()</span>"]
+        Tier1["<span style='color:#000'>Tier 1 (Filesystem)<br/>• Serialize: embedding.tobytes()<br/>• Write to ~/.cache/.../colpali/xxx.pkl<br/>• Create .meta file with TTL<br/>• Success ✓</span>"]
+    end
+
+    Miss --> Compute
+    Compute --> Store
+    Store --> CacheManager
+
+    style Miss fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Compute fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Store fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CacheManager fill:#90caf9,stroke:#1565c0,color:#000
+    style Tier1 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Tier2 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -1551,7 +1721,7 @@ graph TB
 
 ```python
 """
-Initialize multi-tiered cache with memory and filesystem backends.
+Initialize cache with filesystem backend.
 """
 from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 
@@ -1559,14 +1729,8 @@ from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 config = CacheConfig(
     backends=[
         {
-            "backend_type": "memory",
-            "priority": 0,          # Highest priority (checked first)
-            "enabled": True,
-            "max_size": 1000        # 1000 items max
-        },
-        {
             "backend_type": "structured_filesystem",
-            "priority": 1,          # Lower priority (checked second)
+            "priority": 0,          # Primary backend
             "enabled": True,
             "base_path": "~/.cache/cogniverse/pipeline",
             "serialization_format": "pickle",
@@ -1601,11 +1765,11 @@ async def get_data(key: str):
 
     return data
 
-# First call: cache miss, stores in both tiers
+# First call: cache miss, stores in filesystem
 result1 = await get_data("test_key")  # ~100ms (compute + store)
 
-# Second call: cache hit from Tier 1 (memory)
-result2 = await get_data("test_key")  # <1ms (memory hit)
+# Second call: cache hit from filesystem
+result2 = await get_data("test_key")  # ~5-10ms (filesystem hit)
 
 # Get statistics
 stats = await cache_manager.get_stats()
@@ -2059,23 +2223,24 @@ for backend_name, backend_stats in stats['backends'].items():
 ### 1. Performance Optimization
 
 **Latency Targets:**
-- Tier 1 (Memory): <1ms p95
-- Tier 2 (Filesystem): <10ms p95
+
+- Filesystem cache: <10ms p95
+
 - Cache miss penalty: Varies by operation (50ms-10s)
 
 **Throughput:**
-- Memory cache: 100,000+ ops/sec
+
 - Filesystem cache: 1,000+ ops/sec
+
 - Embedding serialization: 10,000+ ops/sec
 
 **Optimization Strategies:**
 
 ```python
-# 1. Enable multiple tiers for frequently accessed data
+# 1. Use filesystem backend for persistent caching
 config = CacheConfig(
     backends=[
-        {"backend_type": "memory", "priority": 0, "max_size": 1000},
-        {"backend_type": "structured_filesystem", "priority": 1}
+        {"backend_type": "structured_filesystem", "priority": 0}
     ]
 )
 
@@ -2106,38 +2271,31 @@ embeddings = await embedding_cache.get_batch_embeddings(texts, model)
 
 ### 2. Memory Management
 
-**Memory Tier Sizing:**
+**Cache Sizing:**
 ```python
-# Calculate appropriate cache size
-# Rule of thumb: 10-20% of available RAM
+# Filesystem cache size is limited by available disk space
+# Monitor and set cleanup thresholds
 
-import psutil
+import shutil
 
-available_ram_gb = psutil.virtual_memory().available / (1024**3)
-cache_size_mb = int(available_ram_gb * 0.1 * 1024)  # 10% of available RAM
+# Check available disk space
+disk_stats = shutil.disk_usage("~/.cache/cogniverse")
+available_gb = disk_stats.free / (1024**3)
 
-# Estimate items per MB
+# Estimate items per MB for sizing guidance
 # Embedding: ~0.5 KB → 2000 items/MB
 # Keyframe metadata: ~5 KB → 200 items/MB
 # Transcript: ~10 KB → 100 items/MB
 
-embedding_cache_size = cache_size_mb * 2000  # ~2000 embeddings per MB
-metadata_cache_size = cache_size_mb * 200    # ~200 metadata entries per MB
-
-config = CacheConfig(
-    backends=[
-        {
-            "backend_type": "memory",
-            "priority": 0,
-            "max_size": embedding_cache_size
-        }
-    ]
-)
+print(f"Available disk space: {available_gb:.1f} GB")
+print(f"Can store approximately:")
+print(f"  - {int(available_gb * 1024 * 2000)} embeddings")
+print(f"  - {int(available_gb * 1024 * 200)} metadata entries")
 ```
 
-**LRU Eviction Monitoring:**
+**Cache Eviction Monitoring:**
 ```python
-# Monitor eviction rate
+# Monitor eviction rate (from TTL expiration)
 stats = await cache_manager.get_stats()
 
 for backend_name, backend_stats in stats['backends'].items():
@@ -2147,7 +2305,7 @@ for backend_name, backend_stats in stats['backends'].items():
 
     if eviction_rate > 0.1:  # >10% eviction rate
         print(f"WARNING: High eviction rate in {backend_name}: {eviction_rate:.2%}")
-        print("Consider increasing cache size")
+        print("Consider increasing TTL or reducing data volume")
 ```
 
 ---
@@ -2176,9 +2334,11 @@ max_cache_size_gb = 50  # Adjust based on requirements
 if cache_size_gb > max_cache_size_gb:
     print(f"WARNING: Cache size ({cache_size_gb:.1f} GB) exceeds limit ({max_cache_size_gb} GB)")
 
-    # Cleanup old entries
-    cleaned = await cache_manager.backends[1].cleanup_expired()
-    print(f"Cleaned up {cleaned} expired entries")
+    # Cleanup old entries from all backends
+    for backend in cache_manager.backends:
+        if hasattr(backend, 'cleanup_expired'):
+            cleaned = await backend.cleanup_expired()
+            print(f"Cleaned up {cleaned} expired entries from {backend.__class__.__name__}")
 ```
 
 **Automatic Cleanup Strategy:**
@@ -2384,11 +2544,15 @@ value = await get_with_retry(cache_manager, key)
 ### Key Test Files
 
 **Unit Tests:**
+
 - `tests/routing/unit/test_modality_cache.py` - LRU cache and per-modality caching
 
 **Integration Tests:**
+
 - `tests/routing/integration/test_e2e_cache_lazy_metrics.py` - End-to-end caching with lazy metrics
+
 - `tests/routing/integration/test_routing_agent_cache_metrics_integration.py` - Cache metrics integration
+
 - `tests/agents/unit/test_routing_agent_cache_metrics.py` - Routing agent cache metrics
 
 ### Test Scenarios
@@ -2471,26 +2635,25 @@ async def test_ttl_expiration():
 
 ```python
 @pytest.mark.asyncio
-async def test_tier_population():
-    """Test higher tiers populated on cache hit from lower tier."""
+async def test_filesystem_cache():
+    """Test filesystem cache operations."""
     config = CacheConfig(
         backends=[
-            {"backend_type": "memory", "priority": 0, "max_size": 100},
-            {"backend_type": "structured_filesystem", "priority": 1}
+            {"backend_type": "structured_filesystem", "priority": 0}
         ]
     )
     cache = CacheManager(config)
 
-    # Set in filesystem (Tier 2) only
-    await cache.backends[1].set("test_key", "test_value", ttl=3600)
+    # Set in filesystem
+    await cache.set("test_key", "test_value", ttl=3600)
 
-    # Get from cache manager (should find in Tier 2)
+    # Get from cache manager (should find in filesystem)
     value = await cache.get("test_key")
     assert value == "test_value"
 
-    # Tier 1 should now have the value
-    tier1_value = await cache.backends[0].get("test_key")
-    assert tier1_value == "test_value"
+    # Verify value is in filesystem backend
+    backend_value = await cache.backends[0].get("test_key")
+    assert backend_value == "test_value"
 ```
 
 #### 4. Embedding Cache Binary Serialization
@@ -2610,40 +2773,66 @@ async def test_cache_statistics():
 
 ## Summary
 
-The Cache Module provides **production-ready, multi-tiered caching** for the Cogniverse system with:
+The Cache Module provides **production-ready caching infrastructure** for the Cogniverse system with:
 
 **Core Features:**
-- Multi-tiered cache hierarchy with automatic tier population
+
+- Multi-tiered cache architecture (supports multiple backends)
+
 - Pluggable backend architecture via registry pattern
+
+- Currently implemented: structured filesystem backend
+
 - Specialized caches for embeddings and pipeline artifacts
+
 - Efficient binary serialization for vectors and images
+
 - TTL-based expiration with automatic cleanup
+
 - Comprehensive statistics and monitoring
 
 **Production Strengths:**
-- <1ms memory tier latency
-- <10ms filesystem tier latency
+
+- <10ms filesystem cache latency
+
 - 50%+ space savings with binary embeddings
+
 - Human-readable filesystem structure for debugging
+
 - Graceful degradation on cache failures
+
 - Profile-based namespace isolation
 
+- Extensible for future backends (in-memory, Redis, S3)
+
 **Integration Points:**
+
 - VideoSearchAgent uses embedding cache for query vectors
+
 - Pipeline processors use artifact cache for keyframes, transcripts, descriptions
+
 - Multi-agent orchestrator leverages caching for efficiency
+
 - All caches support async operations for high concurrency
 
 ---
 
 **For detailed examples and related modules, see:**
-- Routing Module: `docs/study_guides/02_ROUTING_MODULE.md` (uses modality caching)
-- Telemetry Module: `docs/study_guides/05_TELEMETRY_MODULE.md` (cache metrics)
-- Common Module: `docs/study_guides/03_COMMON_MODULE.md` (configuration)
+
+- Routing Module: `docs/modules/routing.md` (uses modality caching)
+
+- Telemetry Module: `docs/modules/telemetry.md` (cache metrics)
+
+- Common Module: `docs/modules/common.md` (configuration)
 
 **Source Files:**
-- Base Classes: `libs/core/cogniverse_core/common/cache/base.py:13-251`
-- Registry: `libs/core/cogniverse_core/common/cache/registry.py:10-45`
-- Embedding Cache: `libs/core/cogniverse_core/common/cache/embedding_cache.py:53-201`
-- Pipeline Cache: `libs/core/cogniverse_core/common/cache/pipeline_cache.py:47-479`
-- Filesystem Backend: `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py:35-535`
+
+- Base Classes: `libs/core/cogniverse_core/common/cache/base.py`
+
+- Registry: `libs/core/cogniverse_core/common/cache/registry.py`
+
+- Embedding Cache: `libs/core/cogniverse_core/common/cache/embedding_cache.py`
+
+- Pipeline Cache: `libs/core/cogniverse_core/common/cache/pipeline_cache.py`
+
+- Filesystem Backend: `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py`

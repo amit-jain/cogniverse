@@ -1,9 +1,5 @@
 # Pytest Best Practices
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11-package layered architecture and multi-tenant support
-**Purpose:** Guide for writing and running tests in the Cogniverse project
-
 ---
 
 ## Async Testing Configuration
@@ -25,15 +21,19 @@ The test suite is configured for single-threaded execution to avoid threading co
 **File: `tests/conftest.py`**
 ```python
 import os
-import torch
 
 # Configure torch and tokenizers to avoid threading issues
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
-# Set torch to single-threaded mode
-torch.set_num_threads(1)
+# Import torch and configure threading before any tests run
+try:
+    import torch
+
+    torch.set_num_threads(1)
+except ImportError:
+    pass
 ```
 
 **File: `pytest.ini`**
@@ -48,29 +48,34 @@ asyncio_default_fixture_loop_scope = function
 The conftest also includes automatic cleanup for background threads:
 
 ```python
+from tests.utils.async_polling import simulate_processing_delay
+
 def cleanup_background_threads():
     """
-    Clean up background threads from tqdm and posthog.
+    Clean up background threads from tqdm (transformers) and posthog (mem0ai).
 
-    Gives threads time to finish gracefully before pytest cleanup.
+    These libraries create daemon threads that can cause segfaults during pytest
+    cleanup in async tests. We need to give them time to finish and exit cleanly.
     """
     max_wait = 2.0  # seconds
     start_time = time.time()
 
     while time.time() - start_time < max_wait:
         background_threads = [
-            t for t in threading.enumerate()
+            t
+            for t in threading.enumerate()
             if t != threading.current_thread()
             and t.daemon
-            and any(name in t.name.lower()
-                    for name in ['tqdm', 'posthog', 'monitor'])
+            and any(name in t.name.lower() for name in ["tqdm", "posthog", "monitor"])
         ]
 
         if not background_threads:
             break
 
-        time.sleep(0.1)
+        # Give threads time to finish their work
+        simulate_processing_delay(delay=0.1, description="test processing")
 
+    # Force garbage collection to clean up any remaining references
     gc.collect()
 ```
 
@@ -121,33 +126,57 @@ Defined in `pytest.ini`:
 ```ini
 [pytest]
 markers =
-    unit: Unit tests (no external dependencies)
-    integration: Integration tests (require external services)
+    unit: Unit tests for individual components
+    integration: Integration tests with multiple components
+    slow: Slow tests that take significant time
+    requires_ollama: Tests that require Ollama to be running
+    requires_gliner: Tests that require GLiNER models
+    phoenix: Tests requiring Phoenix
+    inspect: Tests requiring Inspect AI
+    ragas: Tests requiring RAGAS
+    asyncio: Async tests
+    local_only: Tests that should only run locally (not in CI/CD)
+    requires_models: Tests that require actual ML models to be available
+    benchmark: Performance benchmarking tests
+    ingestion: Tests for ingestion pipeline
+    requires_vespa: Tests that require Vespa backend to be running
+    requires_docker: Tests that require Docker
+    requires_gpu: Tests that require GPU availability
+    requires_colpali: Tests that require ColPali models
+    requires_videoprism: Tests that require VideoPrism models
+    requires_colqwen: Tests that require ColQwen models
+    requires_whisper: Tests that require Whisper models
+    requires_cv2: Tests that require OpenCV
+    requires_ffmpeg: Tests that require FFmpeg
+    ci_safe: Tests that are safe to run in CI environment
     ci_fast: Fast, essential tests for CI (subset of most important functionality)
-    slow: Slow tests (skip in quick runs)
-    requires_ollama: Tests requiring Ollama LLM
-    requires_colpali: Tests requiring ColPali model
-    requires_vespa: Tests requiring Vespa backend
-    local_only: Tests that only run locally (not in CI)
+    timeout: Tests with custom timeout values
+    e2e: End-to-end integration tests with real services
+    system: System-level end-to-end tests with full infrastructure
+    telemetry: Tests for telemetry and observability system
 ```
 
 ### The `ci_fast` Marker
 
-The `ci_fast` marker identifies tests suitable for the `fast-integration-tests` CI job:
+The `ci_fast` marker identifies tests run in the CI Fast subset steps across workflows:
 
 ```python
 @pytest.mark.integration
 @pytest.mark.ci_fast
 async def test_tenant_schema_creation(vespa_docker):
     """Essential test for CI - verifies tenant schema lifecycle."""
-    # This runs on every push in fast-integration-tests job
+    # This runs in the CI Fast subset steps across workflows
     ...
 ```
 
 **Guidelines for `ci_fast` tests:**
+
 - Essential functionality that must work
+
 - Complete in under 2 minutes
+
 - No external API calls (Ollama, OpenAI, etc.)
+
 - Can use Docker containers (Vespa, Phoenix)
 
 ### Async Test Timeout
@@ -162,7 +191,9 @@ async def test_real_query_analysis_with_local_llm(self):
 ```
 
 Default timeouts from `CLAUDE.md`:
+
 - Individual test files: 30 minutes (`timeout 1800`)
+
 - Full test suite: 120 minutes (`timeout 7200`)
 
 ---
@@ -172,7 +203,7 @@ Default timeouts from `CLAUDE.md`:
 ### Segmentation Faults in Async Tests
 
 **Symptoms:**
-```
+```text
 Fatal Python error: Segmentation fault
 Thread 0x000000033614f000 (most recent call first):
   File "/path/to/threading.py", line 359 in wait
@@ -189,7 +220,7 @@ Thread 0x000000033614f000 (most recent call first):
 ### Model Loading Errors
 
 **Symptoms:**
-```
+```text
 Fetching 5 files: 100%
 [Segfault or hang]
 ```
@@ -197,13 +228,15 @@ Fetching 5 files: 100%
 **Cause:** Large models (e.g., `vidore/colpali-v1.2`) can cause threading issues.
 
 **Solution:** Use smaller models in tests:
+
 - ✅ Use: `vidore/colsmol-500m` (stable, 500M parameters)
+
 - ❌ Avoid: `vidore/colpali-v1.2` (1.2B parameters, less stable in tests)
 
 ### Import Timing Issues
 
 **Symptoms:**
-```
+```text
 ModuleNotFoundError: No module named 'cogniverse_core'
 ```
 
@@ -223,11 +256,10 @@ uv run pytest tests/agents/
 **Package Import Patterns:**
 ```python
 # ✅ Good: Absolute imports from workspace packages
-from cogniverse_sdk.interfaces import AgentInterface
-from cogniverse_foundation.telemetry import TelemetryManager
-from cogniverse_core.config import SystemConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_retrieval.vespa_backend import VespaBackend
+from cogniverse_vespa.backend import VespaBackend
 
 # ❌ Bad: Old src-style imports (deprecated)
 from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
@@ -239,104 +271,107 @@ from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
 
 ### Testing Package Imports
 
-**Verify Package Structure:**
+**Example Test Patterns - Verify Package Structure:**
 ```python
-# tests/test_imports.py
+# Example: tests/test_imports.py (create this file to verify imports)
 import pytest
 
 def test_sdk_package_imports():
     """Verify cogniverse_sdk package imports work"""
-    from cogniverse_sdk.interfaces import AgentInterface, SearchBackend
-    from cogniverse_sdk.types import QueryResult, SearchResponse
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from pathlib import Path
+    from cogniverse_sdk import SearchResult, Document
 
-    assert AgentInterface is not None
-    assert SearchBackend is not None
+    assert FilesystemSchemaLoader is not None
+    assert SearchResult is not None
+    assert Document is not None
 
 def test_foundation_package_imports():
     """Verify cogniverse_foundation package imports work"""
-    from cogniverse_foundation.telemetry import TelemetryManager
-    from cogniverse_foundation.logging import get_logger
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     assert TelemetryManager is not None
-    assert get_logger is not None
 
 def test_core_package_imports():
     """Verify cogniverse_core package imports work"""
-    from cogniverse_core.config import SystemConfig
-    from cogniverse_core.orchestration import Orchestrator
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_core.registries.backend_registry import BackendRegistry
 
     assert SystemConfig is not None
-    assert Orchestrator is not None
+    assert BackendRegistry is not None
 
 def test_agents_package_imports():
     """Verify cogniverse_agents package imports work"""
     from cogniverse_agents.routing_agent import RoutingAgent
-    from cogniverse_agents.video_search_agent import VideoSearchAgent
+    from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 
     assert RoutingAgent is not None
     assert VideoSearchAgent is not None
 
 def test_retrieval_package_imports():
-    """Verify cogniverse_retrieval package imports work"""
-    from cogniverse_retrieval.vespa_backend import VespaBackend
-    from cogniverse_retrieval.vespa_schema_manager import VespaSchemaManager
+    """Verify cogniverse_vespa package imports work"""
+    from cogniverse_vespa.backend import VespaBackend
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
     assert VespaBackend is not None
     assert VespaSchemaManager is not None
 
 def test_processing_package_imports():
-    """Verify cogniverse_processing package imports work"""
-    from cogniverse_processing.video_pipeline import VideoIngestionPipeline
-    from cogniverse_processing.frame_extractor import FrameExtractor
+    """Verify cogniverse_runtime.ingestion package imports work"""
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.ingestion.pipeline_builder import VideoIngestionPipelineBuilder
 
     assert VideoIngestionPipeline is not None
-    assert FrameExtractor is not None
+    assert VideoIngestionPipelineBuilder is not None
 
 def test_evaluation_package_imports():
     """Verify cogniverse_evaluation package imports work"""
-    from cogniverse_evaluation.experiment_tracker import ExperimentTracker
-    from cogniverse_evaluation.metrics import calculate_metrics
+    from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
+    from cogniverse_evaluation.metrics import calculate_mrr, calculate_ndcg
 
     assert ExperimentTracker is not None
-    assert calculate_metrics is not None
+    assert calculate_mrr is not None
+    assert calculate_ndcg is not None
 ```
 
 ### Package Dependency Testing
 
-**Test Cross-Package Dependencies:**
+**Example Test Patterns - Cross-Package Dependencies:**
 ```python
-# tests/test_package_dependencies.py
+# Example: tests/test_package_dependencies.py (create this file to verify dependencies)
 import pytest
-from cogniverse_sdk.interfaces import AgentInterface
-from cogniverse_foundation.telemetry import TelemetryManager
-from cogniverse_core.config import SystemConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.routing_agent import RoutingAgent
 
 def test_agents_depends_on_foundation_and_core():
     """Verify agents package can use foundation and core packages"""
-    config = SystemConfig(tenant_id="test")
-    telemetry = TelemetryManager(config)
+    from cogniverse_agents.routing_agent import RoutingDeps
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-    # RoutingAgent from agents package should accept SystemConfig from core
-    agent = RoutingAgent(config, telemetry_manager=telemetry)
+    # Create dependencies with tenant-specific configuration
+    telemetry_config = TelemetryConfig()
+    deps = RoutingDeps(
+        tenant_id="test",
+        telemetry_config=telemetry_config
+    )
 
-    assert agent.config is config
+    # RoutingAgent from agents package should accept RoutingDeps
+    agent = RoutingAgent(deps=deps)
+
     assert agent.tenant_id == "test"
+    assert agent.deps == deps
 
-def test_services_depends_on_all():
-    """Verify services package can use all dependencies"""
-    from cogniverse_services.api import create_app
-    from cogniverse_core.config import SystemConfig
+def test_runtime_depends_on_all():
+    """Verify runtime package can use all dependencies"""
+    from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_agents.routing_agent import RoutingAgent
-    from cogniverse_retrieval.vespa_backend import VespaBackend
+    from cogniverse_vespa.backend import VespaBackend
 
-    # Services should be able to import and use all packages
-    config = SystemConfig(tenant_id="test")
-    agent = RoutingAgent(config)
-    backend = VespaBackend(config)
-
-    assert agent is not None
-    assert backend is not None
+    # Runtime should be able to import all packages
+    assert RoutingAgent is not None
+    assert VespaBackend is not None
+    assert SystemConfig is not None
 
 def test_layered_architecture_dependencies():
     """Verify proper layering - lower layers don't import higher layers"""
@@ -359,8 +394,8 @@ def test_layered_architecture_dependencies():
 ```python
 # tests/test_tenant_isolation.py
 import pytest
-from cogniverse_core.config import SystemConfig
-from cogniverse_agents.agents.video_search_agent import VideoSearchAgent
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 
 def test_tenant_config_isolation():
     """Verify each tenant gets isolated configuration"""
@@ -373,36 +408,34 @@ def test_tenant_config_isolation():
 
 def test_tenant_schema_naming():
     """Verify tenant schemas use correct naming convention"""
-    config = SystemConfig(tenant_id="acme_corp")
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = create_default_config_manager()
     agent = VideoSearchAgent(
-        config,
-        profile="video_colpali_smol500_mv_frame"
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="acme_corp",
+        config_manager=config_manager
     )
 
-    # Agent should target tenant-specific schema
-    expected_schema = "video_colpali_smol500_mv_frame_acme_corp"
-    assert agent.schema_name == expected_schema
+    # Agent's search service should target tenant-specific schema
+    # Schema name is stored in the profile configuration
+    assert agent.tenant_id == "acme_corp"
+    assert agent.profile == "video_colpali_smol500_mv_frame"
 
 def test_tenant_phoenix_project_isolation():
-    """Verify Phoenix projects are tenant-specific"""
-    from cogniverse_core.telemetry import TelemetryManager
+    """Verify Phoenix projects can be registered per-tenant"""
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
-    config_a = SystemConfig(
-        tenant_id="acme_corp",
-        phoenix_enabled=True
-    )
-    config_b = SystemConfig(
-        tenant_id="globex_inc",
-        phoenix_enabled=True
-    )
+    # TelemetryManager is a singleton, configure per-tenant projects
+    telemetry = TelemetryManager()
 
-    telemetry_a = TelemetryManager(config_a)
-    telemetry_b = TelemetryManager(config_b)
+    # Register tenant-specific projects
+    telemetry.register_project(tenant_id="acme_corp", project_name="acme-project")
+    telemetry.register_project(tenant_id="globex_inc", project_name="globex-project")
 
-    # Each tenant should have isolated Phoenix project
-    assert telemetry_a.project_name == "acme_corp_project"
-    assert telemetry_b.project_name == "globex_inc_project"
-    assert telemetry_a.project_name != telemetry_b.project_name
+    # Verify registration succeeded (projects are stored internally)
+    # Actual project isolation is enforced when creating spans
+    assert telemetry is not None
 ```
 
 ### Multi-Tenant Data Isolation
@@ -411,68 +444,97 @@ def test_tenant_phoenix_project_isolation():
 ```python
 # tests/integration/test_multi_tenant_isolation.py
 import pytest
-from cogniverse_core.config import SystemConfig
-from cogniverse_processing.video_pipeline import VideoIngestionPipeline
-from cogniverse_retrieval.vespa_backend import VespaBackend
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_vespa.backend import VespaBackend
 
 @pytest.mark.integration
-async def test_tenant_data_isolation(sample_video):
+async def test_tenant_data_isolation(sample_video, config_manager, schema_loader):
     """Verify tenants cannot access each other's data"""
+    from cogniverse_runtime.ingestion.pipeline import PipelineConfig
+
+    # Create pipeline config for tenant A
+    pipeline_config_a = PipelineConfig(
+        extract_keyframes=True,
+        generate_embeddings=True,
+        search_backend="vespa"
+    )
+
     # Ingest video for tenant A
-    config_a = SystemConfig(tenant_id="acme_corp")
     pipeline_a = VideoIngestionPipeline(
-        profile="video_colpali_smol500_mv_frame",
         tenant_id="acme_corp",
-        backend="vespa"
+        config=pipeline_config_a,
+        config_manager=config_manager,
+        schema_loader=schema_loader
     )
     result_a = await pipeline_a.process_video(sample_video)
     assert result_a["status"] == "success"
 
     # Search as tenant B (should get no results from tenant A)
-    config_b = SystemConfig(tenant_id="globex_inc")
-    backend_b = VespaBackend(config_b)
+    backend_b = BackendRegistry.get_search_backend(
+        name="vespa",
+        tenant_id="globex_inc",
+        config_manager=config_manager,
+        schema_loader=schema_loader
+    )
 
     results = backend_b.search(
-        query="test",
-        schema_name="video_colpali_smol500_mv_frame_globex_inc"
+        query_dict={
+            "query": "test",
+            "type": "video",
+            "profile": "video_colpali_smol500_mv_frame_globex_inc"
+        }
     )
 
     # Tenant B should not see tenant A's documents
     assert len(results) == 0
 
 @pytest.mark.integration
-def test_tenant_memory_isolation():
+def test_tenant_memory_isolation(config_manager, schema_loader):
     """Verify tenant memories are isolated"""
-    from cogniverse_foundation.memory.mem0_memory_manager import Mem0MemoryManager
+    from cogniverse_core.memory.manager import Mem0MemoryManager
 
-    config_a = SystemConfig(tenant_id="acme_corp")
-    config_b = SystemConfig(tenant_id="globex_inc")
+    memory_a = Mem0MemoryManager(tenant_id="acme_corp")
+    memory_a.initialize(
+        backend_host="localhost",
+        backend_port=8080,
+        config_manager=config_manager,
+        schema_loader=schema_loader
+    )
 
-    memory_a = Mem0MemoryManager(config_a)
-    memory_b = Mem0MemoryManager(config_b)
+    memory_b = Mem0MemoryManager(tenant_id="globex_inc")
+    memory_b.initialize(
+        backend_host="localhost",
+        backend_port=8080,
+        config_manager=config_manager,
+        schema_loader=schema_loader
+    )
 
     # Add memory for tenant A
-    memory_a.add(
-        messages=[{"role": "user", "content": "Secret message"}],
-        user_id="acme_corp_user1"
+    memory_a.add_memory(
+        content="Secret message",
+        tenant_id="acme_corp",
+        agent_name="test_agent"
     )
 
     # Search as tenant B (should not find tenant A's memory)
-    results_b = memory_b.search(
+    results_b = memory_b.search_memory(
         query="Secret message",
-        user_id="globex_inc_user1"
+        tenant_id="globex_inc",
+        agent_name="test_agent",
+        top_k=5
     )
 
-    assert len(results_b["results"]) == 0
+    assert len(results_b) == 0
 ```
 
 ### Tenant-Aware Fixtures
 
-**Create Reusable Tenant Fixtures:**
+**Example Patterns** (not in conftest.py; create as needed for multi-tenant tests):
 ```python
-# tests/conftest.py
 import pytest
-from cogniverse_core.config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.routing_agent import RoutingAgent
 
 @pytest.fixture
@@ -480,9 +542,8 @@ def tenant_a_config():
     """Configuration for tenant A (acme_corp)"""
     return SystemConfig(
         tenant_id="acme_corp",
-        vespa_url="http://localhost:8080",
-        vespa_config_port=19071,
-        phoenix_enabled=False  # Disable for unit tests
+        backend_url="http://localhost",
+        backend_port=8080,
     )
 
 @pytest.fixture
@@ -490,9 +551,8 @@ def tenant_b_config():
     """Configuration for tenant B (globex_inc)"""
     return SystemConfig(
         tenant_id="globex_inc",
-        vespa_url="http://localhost:8080",
-        vespa_config_port=19071,
-        phoenix_enabled=False
+        backend_url="http://localhost",
+        backend_port=8080,
     )
 
 @pytest.fixture
@@ -507,12 +567,18 @@ def multi_tenant_configs():
 @pytest.fixture
 def tenant_agent(tenant_a_config):
     """Create routing agent for tenant A"""
-    return RoutingAgent(tenant_a_config)
+    from cogniverse_agents.routing_agent import RoutingDeps
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+    deps = RoutingDeps(
+        tenant_id=tenant_a_config.tenant_id,
+        telemetry_config=TelemetryConfig()
+    )
+    return RoutingAgent(deps=deps)
 
 # Use in tests:
 def test_with_tenant_fixtures(tenant_a_config, tenant_agent):
     assert tenant_agent.tenant_id == "acme_corp"
-    assert tenant_agent.config == tenant_a_config
 ```
 
 ---
@@ -526,12 +592,31 @@ Tests use auto-fixtures to clean up state:
 ```python
 @pytest.fixture(autouse=True, scope="function")
 def cleanup_dspy_state():
-    """Clean up DSPy state between tests"""
+    """Clean up DSPy state between tests to prevent isolation issues"""
     yield
+
+    # Clean up any DSPy state after each test
     try:
         import dspy
-        if hasattr(dspy.settings, '_instance'):
-            dspy.settings._instance = None
+
+        # Reset ALL DSPy settings attributes to prevent any state pollution
+        if hasattr(dspy, "settings"):
+            if hasattr(dspy.settings, "lm"):
+                dspy.settings.lm = None
+            if hasattr(dspy.settings, "adapter"):
+                dspy.settings.adapter = None
+            if hasattr(dspy.settings, "rm"):
+                dspy.settings.rm = None
+            if hasattr(dspy.settings, "experimental"):
+                dspy.settings.experimental = False
+
+        # Clear any context stack from async tests
+        if hasattr(dspy, "_context_stack"):
+            if hasattr(dspy._context_stack, "clear"):
+                dspy._context_stack.clear()
+            elif isinstance(dspy._context_stack, list):
+                dspy._context_stack.clear()
+
     except (ImportError, AttributeError, RuntimeError):
         pass
 
@@ -659,90 +744,131 @@ def vespa_docker():
     """
     Module-scoped Vespa container.
 
-    Starts Vespa, waits for readiness, yields manager, then cleans up.
+    Starts Vespa, waits for readiness, yields container info, then cleans up.
     Uses unique ports per module to avoid conflicts.
     """
-    manager = VespaDockerManager(
-        container_name=f"vespa_test_{int(time.time())}",
-        vespa_port=8080,      # Query/feed port
-        config_port=19071     # Config server port
+    manager = VespaDockerManager()
+
+    # Start container with module-specific ports
+    container_info = manager.start_container(
+        module_name="test_module",  # Used for port generation
+        use_module_ports=True       # Generate unique ports based on module name
     )
-    manager.start()
-    manager.wait_for_ready(timeout=120)
-    yield manager
-    manager.stop()
+
+    # Wait for config server to be ready
+    manager.wait_for_config_ready(container_info, timeout=120)
+
+    # Deploy schemas (if needed)
+    # manager.deploy_schemas(container_info, tenant_id="test_tenant")
+
+    # Wait for application to be ready (after schema deployment)
+    # manager.wait_for_application_ready(container_info, timeout=60)
+
+    yield container_info
+
+    # Cleanup
+    manager.stop_container(container_info)
 
 # Usage in tests
 @pytest.mark.integration
 async def test_vespa_operations(vespa_docker):
     """Test with real Vespa container."""
-    client = vespa_docker.get_client()
-    # ... test operations
+    http_port = vespa_docker["http_port"]
+    base_url = vespa_docker["base_url"]
+    # ... test operations using container_info
 ```
 
 **Key Features:**
-- Generates unique container names to avoid conflicts
+
+- Generates unique ports per module to avoid conflicts
+
+- Container names based on port: `vespa-test-{http_port}`
+
 - Waits for both config server and application readiness
+
+- Automatic schema deployment with tenant support
+
 - Proper cleanup on test completion or failure
+
 - Module-scoped to share container across tests in a file
 
 ### Phoenix Docker Fixtures
 
 For telemetry and evaluation tests:
 
-```python
-import subprocess
-import time
+The actual `phoenix_container` fixture is defined in `tests/conftest.py`:
 
+```python
 @pytest.fixture(scope="module")
 def phoenix_container():
-    """Start Phoenix container for telemetry tests."""
-    container_name = f"phoenix_test_{int(time.time())}"
+    """
+    Start Phoenix Docker container with gRPC support for integration tests.
 
-    # Start container
+    Uses non-default ports to avoid conflicts:
+    - HTTP: 16006 (instead of 6006)
+    - gRPC: 14317 (instead of 4317)
+
+    Sets OTLP_ENDPOINT env var for tests and resets TelemetryManager.
+    """
+    import subprocess
+    import requests
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
+    TelemetryManager.reset()
+
+    container_name = f"phoenix_test_{int(time.time() * 1000)}"
+
+    # Start container with offset ports
     subprocess.run([
         "docker", "run", "-d", "--name", container_name,
-        "-p", "6006:6006",   # UI port
-        "-p", "4317:4317",   # OTLP gRPC port
+        "-p", "16006:6006",   # HTTP port (offset)
+        "-p", "14317:4317",   # gRPC port (offset)
+        "-e", "PHOENIX_WORKING_DIR=/phoenix",
         "arizephoenix/phoenix:latest"
-    ], check=True)
+    ], check=True, capture_output=True, timeout=30)
 
     # Wait for Phoenix to be ready
-    for _ in range(30):
+    max_wait_time = 60
+    start_time = time.time()
+    while time.time() - start_time < max_wait_time:
         try:
-            response = requests.get("http://localhost:6006")
-            if response.ok:
+            response = requests.get("http://localhost:16006", timeout=2)
+            if response.status_code == 200:
                 break
-        except requests.ConnectionError:
-            time.sleep(2)
+        except Exception:
+            pass
+        time.sleep(2)
 
-    yield {
-        "container_name": container_name,
-        "ui_url": "http://localhost:6006",
-        "otlp_endpoint": "http://localhost:4317"
-    }
+    yield container_name
 
     # Cleanup
-    subprocess.run(["docker", "rm", "-f", container_name])
-
-# Usage
-@pytest.mark.integration
-def test_telemetry_collection(phoenix_container):
-    """Test with real Phoenix container."""
-    provider = PhoenixProvider(endpoint=phoenix_container["otlp_endpoint"])
-    # ... test operations
+    subprocess.run(["docker", "stop", container_name], check=False, capture_output=True, timeout=30)
+    subprocess.run(["docker", "rm", container_name], check=False, capture_output=True, timeout=10)
 ```
 
 ### Port Management
 
 To avoid port conflicts when running tests in parallel:
 
+Located in `tests/utils/docker_utils.py`:
+
 ```python
-def get_unique_ports(base_port: int = 8080) -> tuple[int, int]:
-    """Generate unique ports based on process ID and time."""
-    import os
-    offset = (os.getpid() % 100) * 10 + int(time.time()) % 10
-    return base_port + offset, 19071 + offset
+def generate_unique_ports(
+    module_name: str, base_http_port: int = 8100
+) -> Tuple[int, int]:
+    """
+    Generate unique HTTP and config ports based on module name.
+
+    Uses MD5 hash of module name to deterministically assign ports,
+    ensuring different test modules never conflict.
+    """
+    port_hash = int(hashlib.md5(module_name.encode()).hexdigest()[:4], 16)
+    http_port = base_http_port + (port_hash % 100)  # Range: base to base+99
+    config_port = http_port + 10991  # Standard Vespa config port offset
+    return http_port, config_port
 ```
 
 ### CI Disk Space Requirements
@@ -780,39 +906,182 @@ This guide covers comprehensive testing for Cogniverse multi-agent system:
 6. **CI/CD**: Configuration for automated testing
 
 **Key Testing Principles:**
+
 - Always use `uv run pytest` to activate workspace
+
 - Test tenant isolation at schema, project, and memory levels
+
 - Use fixtures for reusable tenant configurations
+
 - Verify SDK package imports work correctly
+
 - Maintain test independence (no shared state)
+
 - Clean up background threads to avoid segfaults
 
 **Test Organization by Package:**
-```
-tests/
-├── sdk/                 # cogniverse_sdk tests
-├── foundation/          # cogniverse_foundation tests
-│   ├── telemetry/
-│   └── memory/
-├── core/                # cogniverse_core tests
-│   └── config/
-├── agents/              # cogniverse_agents tests
-│   ├── unit/
-│   └── integration/
-├── retrieval/           # cogniverse_retrieval tests
-│   └── vespa/
-├── processing/          # cogniverse_processing tests
-│   └── video/
-├── synthetic/           # cogniverse_synthetic tests
-├── vlm/                 # cogniverse_vlm tests
-├── services/            # cogniverse_services tests
-└── evaluation/          # cogniverse_evaluation tests
+
+```mermaid
+graph TD
+    root["<span style='color:#000'><b>tests/</b></span>"]
+
+    admin["<span style='color:#000'><b>admin/</b><br/>profile & tenant management tests</span>"]
+    admin_unit["<span style='color:#000'>unit/</span>"]
+
+    agents["<span style='color:#000'><b>agents/</b><br/>cogniverse_agents tests</span>"]
+    agents_unit["<span style='color:#000'>unit/</span>"]
+    agents_int["<span style='color:#000'>integration/</span>"]
+    agents_e2e["<span style='color:#000'>e2e/</span>"]
+
+    backends["<span style='color:#000'><b>backends/</b><br/>cogniverse_vespa tests</span>"]
+    backends_unit["<span style='color:#000'>unit/</span>"]
+    backends_int["<span style='color:#000'>integration/</span>"]
+
+    common["<span style='color:#000'><b>common/</b><br/>cogniverse_core.common tests</span>"]
+    common_unit["<span style='color:#000'>unit/</span>"]
+    common_int["<span style='color:#000'>integration/</span>"]
+
+    dashboard["<span style='color:#000'><b>dashboard/</b><br/>UI integration tests</span>"]
+
+    evaluation["<span style='color:#000'><b>evaluation/</b><br/>cogniverse_evaluation tests</span>"]
+    evaluation_unit["<span style='color:#000'>unit/</span>"]
+    evaluation_int["<span style='color:#000'>integration/</span>"]
+
+    events["<span style='color:#000'><b>events/</b><br/>event system tests</span>"]
+    events_unit["<span style='color:#000'>unit/</span>"]
+    events_int["<span style='color:#000'>integration/</span>"]
+
+    finetuning["<span style='color:#000'><b>finetuning/</b><br/>fine-tuning pipeline tests</span>"]
+    finetuning_int["<span style='color:#000'>integration/</span>"]
+
+    ingestion["<span style='color:#000'><b>ingestion/</b><br/>cogniverse_runtime.ingestion tests</span>"]
+    ingestion_unit["<span style='color:#000'>unit/</span>"]
+    ingestion_int["<span style='color:#000'>integration/</span>"]
+
+    memory["<span style='color:#000'><b>memory/</b><br/>memory system tests</span>"]
+    memory_unit["<span style='color:#000'>unit/</span>"]
+    memory_int["<span style='color:#000'>integration/</span>"]
+
+    routing["<span style='color:#000'><b>routing/</b><br/>routing-specific tests</span>"]
+    routing_unit["<span style='color:#000'>unit/</span>"]
+    routing_int["<span style='color:#000'>integration/</span>"]
+
+    synthetic["<span style='color:#000'><b>synthetic/</b><br/>synthetic data tests</span>"]
+    synthetic_int["<span style='color:#000'>integration/</span>"]
+
+    system["<span style='color:#000'><b>system/</b><br/>end-to-end system tests</span>"]
+
+    telemetry["<span style='color:#000'><b>telemetry/</b><br/>cogniverse_foundation.telemetry tests</span>"]
+    telemetry_unit["<span style='color:#000'>unit/</span>"]
+    telemetry_int["<span style='color:#000'>integration/</span>"]
+
+    ui["<span style='color:#000'><b>ui/</b><br/>UI tests</span>"]
+    ui_int["<span style='color:#000'>integration/</span>"]
+
+    utils["<span style='color:#000'><b>utils/</b><br/>shared test utilities</span>"]
+
+    root --> admin
+    root --> agents
+    root --> backends
+    root --> common
+    root --> dashboard
+    root --> evaluation
+    root --> events
+    root --> finetuning
+    root --> ingestion
+    root --> memory
+    root --> routing
+    root --> synthetic
+    root --> system
+    root --> telemetry
+    root --> ui
+    root --> utils
+
+    admin --> admin_unit
+
+    agents --> agents_unit
+    agents --> agents_int
+    agents --> agents_e2e
+
+    backends --> backends_unit
+    backends --> backends_int
+
+    common --> common_unit
+    common --> common_int
+
+    evaluation --> evaluation_unit
+    evaluation --> evaluation_int
+
+    events --> events_unit
+    events --> events_int
+
+    finetuning --> finetuning_int
+
+    ingestion --> ingestion_unit
+    ingestion --> ingestion_int
+
+    memory --> memory_unit
+    memory --> memory_int
+
+    routing --> routing_unit
+    routing --> routing_int
+
+    synthetic --> synthetic_int
+
+    telemetry --> telemetry_unit
+    telemetry --> telemetry_int
+
+    ui --> ui_int
+
+    style root fill:#b0bec5,stroke:#546e7a,color:#000
+    style admin fill:#ef9a9a,stroke:#c62828,color:#000
+    style agents fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style backends fill:#90caf9,stroke:#1565c0,color:#000
+    style common fill:#a5d6a7,stroke:#388e3c,color:#000
+    style dashboard fill:#ef9a9a,stroke:#c62828,color:#000
+    style evaluation fill:#ffcc80,stroke:#ef6c00,color:#000
+    style events fill:#fff59d,stroke:#f9a825,color:#000
+    style finetuning fill:#fff59d,stroke:#f9a825,color:#000
+    style ingestion fill:#ffcc80,stroke:#ef6c00,color:#000
+    style memory fill:#90caf9,stroke:#1565c0,color:#000
+    style routing fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style synthetic fill:#fff59d,stroke:#f9a825,color:#000
+    style system fill:#b0bec5,stroke:#546e7a,color:#000
+    style telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ui fill:#ef9a9a,stroke:#c62828,color:#000
+    style utils fill:#b0bec5,stroke:#546e7a,color:#000
+    style admin_unit fill:#e57373,stroke:#c62828,color:#000
+    style agents_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style agents_int fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style agents_e2e fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style backends_unit fill:#64b5f6,stroke:#1565c0,color:#000
+    style backends_int fill:#64b5f6,stroke:#1565c0,color:#000
+    style common_unit fill:#81c784,stroke:#388e3c,color:#000
+    style common_int fill:#81c784,stroke:#388e3c,color:#000
+    style evaluation_unit fill:#ffb74d,stroke:#ef6c00,color:#000
+    style evaluation_int fill:#ffb74d,stroke:#ef6c00,color:#000
+    style events_unit fill:#fff176,stroke:#f9a825,color:#000
+    style events_int fill:#fff176,stroke:#f9a825,color:#000
+    style finetuning_int fill:#fff176,stroke:#f9a825,color:#000
+    style ingestion_unit fill:#ffb74d,stroke:#ef6c00,color:#000
+    style ingestion_int fill:#ffb74d,stroke:#ef6c00,color:#000
+    style memory_unit fill:#64b5f6,stroke:#1565c0,color:#000
+    style memory_int fill:#64b5f6,stroke:#1565c0,color:#000
+    style routing_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style routing_int fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style synthetic_int fill:#fff176,stroke:#f9a825,color:#000
+    style telemetry_unit fill:#81c784,stroke:#388e3c,color:#000
+    style telemetry_int fill:#81c784,stroke:#388e3c,color:#000
+    style ui_int fill:#e57373,stroke:#c62828,color:#000
 ```
 
 **Related Documentation:**
-- [11-Package Architecture](../architecture/overview.md)
+
+- [Layered Architecture](../architecture/overview.md)
+
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
-- [Package Development Guide](../development/package-development.md)
+
+- [Package Development Guide](../development/package-dev.md)
 
 ---
 

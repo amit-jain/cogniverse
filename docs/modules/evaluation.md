@@ -2,30 +2,63 @@
 
 **Package:** `cogniverse_evaluation` (Core Layer)
 **Module Location:** `libs/evaluation/cogniverse_evaluation/`
-**Last Updated:** 2026-01-25
-**Purpose:** Experiment tracking, routing evaluation, and Phoenix analytics for performance measurement and optimization feedback
 
 ---
 
 ## Package Structure
 
-```
+```text
 libs/evaluation/cogniverse_evaluation/
 ├── __init__.py                          # Package initialization
-├── core/
+├── cli.py                               # CLI for evaluation tasks
+├── span_evaluator.py                    # SpanEvaluator for retrospective evaluation
+├── core/                                # Core evaluation framework
+│   ├── __init__.py
 │   ├── experiment_tracker.py            # ExperimentTracker main class
-│   └── dataset_manager.py               # Dataset management
-├── evaluators/
-│   ├── routing_evaluator.py             # RoutingEvaluator
-│   ├── quality_evaluators.py            # Quality metrics
-│   └── llm_evaluators.py                # LLM-based evaluators
-├── phoenix/
-│   ├── analytics.py                     # PhoenixAnalytics
-│   └── client.py                        # Phoenix client utilities
-├── span_evaluator.py                    # SpanEvaluator
-└── data/
-    ├── golden_datasets.py               # Golden dataset management
-    └── loaders.py                       # Data loaders
+│   ├── scorers.py                       # Inspect AI scorers
+│   ├── solvers.py                       # Inspect AI solvers
+│   ├── task.py                          # Evaluation task definitions
+│   ├── ground_truth.py                  # Ground truth extraction
+│   ├── schema_analyzer.py               # Schema analysis framework
+│   ├── inspect_scorers.py               # Inspect AI scorer helpers
+│   ├── reranking.py                     # Reranking logic
+│   ├── simple_scorers.py                # Simple metric scorers
+│   ├── solver_output.py                 # Solver output formatting
+│   └── tools.py                         # Evaluation tools
+├── evaluators/                          # Evaluator implementations
+│   ├── routing_evaluator.py             # Routing decision evaluator
+│   ├── reference_free.py                # Reference-free evaluators
+│   ├── golden_dataset.py                # Golden dataset evaluator
+│   ├── llm_judge.py                     # LLM-based evaluators
+│   ├── visual_judge.py                  # Visual relevance evaluator
+│   ├── sync_golden_dataset.py           # Synchronous golden dataset evaluator
+│   ├── sync_reference_free.py           # Synchronous reference-free evaluators
+│   ├── configurable_visual_judge.py     # Configurable visual judge
+│   ├── qwen_visual_judge.py             # Qwen2-VL visual judge
+│   ├── base.py                          # Base evaluator classes
+│   ├── base_evaluator.py                # Base evaluator interface
+│   ├── base_no_trace.py                 # Evaluator without tracing
+│   └── metadata_fetcher.py              # Metadata fetching utilities
+├── metrics/                             # Metric definitions
+│   ├── reference_free.py                # Reference-free metrics
+│   └── custom.py                        # Custom metrics
+├── data/                                # Data loaders and datasets
+│   ├── datasets.py                      # Dataset management
+│   ├── storage.py                       # Storage utilities
+│   └── traces.py                        # Trace data handling
+├── providers/                           # Evaluation provider system
+│   ├── base.py                          # Provider interfaces
+│   └── registry.py                      # Provider registry
+├── plugins/                             # Plugin system
+│   ├── video_analyzer.py                # Video schema analyzer
+│   ├── document_analyzer.py             # Document schema analyzer
+│   └── visual_evaluator.py              # Visual evaluator plugin
+├── inspect_tasks/                       # Pre-built Inspect AI tasks
+│   ├── video_retrieval.py               # Video retrieval tasks
+│   ├── scorers.py                       # Task-specific scorers
+│   └── solvers.py                       # Task-specific solvers
+└── analysis/                            # Analysis utilities
+    └── root_cause_analysis.py           # Root cause analysis
 ```
 
 ---
@@ -94,17 +127,25 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 ### Dependencies
 
-**Internal:**
-- `cogniverse_core.telemetry`: Phoenix client for querying spans
-- `cogniverse_core.common.registry`: Strategy and profile registry
-- `cogniverse_core.evaluation.data`: Dataset management
+**Internal (from pyproject.toml):**
+
+- `cogniverse-foundation`: Core configuration and telemetry interfaces
+
+- `cogniverse-sdk`: SDK utilities
 
 **External:**
-- `phoenix`: Phoenix observability platform
-- `inspect_ai`: Evaluation framework
-- `pandas`: Data analysis
-- `plotly`: Interactive visualizations
-- `tabulate`: Table formatting
+
+- `inspect_ai>=0.3.0`: Evaluation framework
+
+- `pandas>=2.0.0`: Data analysis
+
+- `numpy>=1.24.0`: Numerical computations
+
+- `scikit-learn>=1.3.0`: Statistical methods
+
+- `pillow>=10.0.0`: Image processing
+
+**Note:** Phoenix, Plotly, and Tabulate are optional dependencies provided by other packages in the workspace.
 
 ---
 
@@ -113,88 +154,128 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 ### 1. Experiment Tracking Architecture
 
 ```mermaid
-graph TB
-    Start[Start Experiment] --> Config[Configuration Phase]
+flowchart TB
+    Start["<span style='color:#000'>Start Experiment</span>"] --> Config["<span style='color:#000'>Configuration Phase</span>"]
 
-    Config --> GetConfigs[Get Experiment Configurations]
-    GetConfigs --> Profiles[Profiles: frame_based, chunk_based]
-    GetConfigs --> Strategies[Strategies: binary, float, hybrid]
-    GetConfigs --> Registry[Strategy Registry Integration]
+    Config --> GetConfigs["<span style='color:#000'>Get Experiment Configurations</span>"]
+    GetConfigs --> Profiles["<span style='color:#000'>Profiles: frame_based, chunk_based</span>"]
+    GetConfigs --> Strategies["<span style='color:#000'>Strategies: binary, float, hybrid</span>"]
+    GetConfigs --> Registry["<span style='color:#000'>Strategy Registry Integration</span>"]
 
-    Profiles --> CreateDataset[Create/Get Dataset]
+    Profiles --> CreateDataset["<span style='color:#000'>Create/Get Dataset</span>"]
     Strategies --> CreateDataset
     Registry --> CreateDataset
 
-    CreateDataset --> DataSource{Dataset Source}
-    DataSource -->|CSV| LoadCSV[Load from CSV]
-    DataSource -->|Existing| LoadExisting[Load from Phoenix]
-    DataSource -->|Golden| LoadGolden[Load Golden Dataset]
+    CreateDataset --> DataSource{"<span style='color:#000'>Dataset Source</span>"}
+    DataSource -->|CSV| LoadCSV["<span style='color:#000'>Load from CSV</span>"]
+    DataSource -->|Existing| LoadExisting["<span style='color:#000'>Load from Phoenix</span>"]
+    DataSource -->|Golden| LoadGolden["<span style='color:#000'>Load Golden Dataset</span>"]
 
-    LoadCSV --> Execution[Execution Phase]
+    LoadCSV --> Execution["<span style='color:#000'>Execution Phase</span>"]
     LoadExisting --> Execution
     LoadGolden --> Execution
 
-    Execution --> RunExperiments[Run Experiments]
-    RunExperiments --> CreateTask[Create Inspect AI Task]
-    CreateTask --> TaskConfig[Configure Task]
-    TaskConfig --> Samples[Dataset Samples]
-    TaskConfig --> Solver[Solver Configuration]
-    TaskConfig --> Evaluators[Evaluator Plugins]
+    Execution --> RunExperiments["<span style='color:#000'>Run Experiments</span>"]
+    RunExperiments --> CreateTask["<span style='color:#000'>Create Inspect AI Task</span>"]
+    CreateTask --> TaskConfig["<span style='color:#000'>Configure Task</span>"]
+    TaskConfig --> Samples["<span style='color:#000'>Dataset Samples</span>"]
+    TaskConfig --> Solver["<span style='color:#000'>Solver Configuration</span>"]
+    TaskConfig --> Evaluators["<span style='color:#000'>Evaluator Plugins</span>"]
 
-    Samples --> Execute[Execute with Inspect AI]
+    Samples --> Execute["<span style='color:#000'>Execute with Inspect AI</span>"]
     Solver --> Execute
     Evaluators --> Execute
 
-    Execute --> RunSolver[Run Solver on Each Sample]
-    RunSolver --> Collect[Collect Results]
-    Collect --> RunEvals[Run Evaluators]
+    Execute --> RunSolver["<span style='color:#000'>Run Solver on Each Sample</span>"]
+    RunSolver --> Collect["<span style='color:#000'>Collect Results</span>"]
+    Collect --> RunEvals["<span style='color:#000'>Run Evaluators</span>"]
 
-    RunEvals --> ExtractMetrics[Extract Metrics]
-    ExtractMetrics --> MRR[MRR, Recall@10]
-    ExtractMetrics --> Relevance[Relevance, Diversity]
-    ExtractMetrics --> LLMScores[LLM Judge Scores]
+    RunEvals --> ExtractMetrics["<span style='color:#000'>Extract Metrics</span>"]
+    ExtractMetrics --> MRR["<span style='color:#000'>MRR, Recall@10</span>"]
+    ExtractMetrics --> Relevance["<span style='color:#000'>Relevance, Diversity</span>"]
+    ExtractMetrics --> LLMScores["<span style='color:#000'>LLM Judge Scores</span>"]
 
-    MRR --> LogPhoenix[Log to Phoenix]
+    MRR --> LogPhoenix["<span style='color:#000'>Log to Phoenix</span>"]
     Relevance --> LogPhoenix
     LLMScores --> LogPhoenix
 
-    LogPhoenix --> Visualization[Visualization Phase]
+    LogPhoenix --> Visualization["<span style='color:#000'>Visualization Phase</span>"]
 
-    Visualization --> CreateViz[Create Visualization Tables]
-    CreateViz --> ProfileSummary[Profile Summary]
-    CreateViz --> StrategyComp[Strategy Comparison]
-    CreateViz --> DetailedResults[Detailed Results with Metrics]
+    Visualization --> CreateViz["<span style='color:#000'>Create Visualization Tables</span>"]
+    CreateViz --> ProfileSummary["<span style='color:#000'>Profile Summary</span>"]
+    CreateViz --> StrategyComp["<span style='color:#000'>Strategy Comparison</span>"]
+    CreateViz --> DetailedResults["<span style='color:#000'>Detailed Results with Metrics</span>"]
 
-    ProfileSummary --> Print[Print Visualization]
+    ProfileSummary --> Print["<span style='color:#000'>Print Visualization</span>"]
     StrategyComp --> Print
     DetailedResults --> Print
 
-    Print --> SaveResults[Save Results]
-    SaveResults --> CSV[CSV Summary]
-    SaveResults --> JSON[JSON Detailed Results]
-    SaveResults --> HTML[HTML Report Optional]
+    Print --> SaveResults["<span style='color:#000'>Save Results</span>"]
+    SaveResults --> CSV["<span style='color:#000'>CSV Summary</span>"]
+    SaveResults --> JSON["<span style='color:#000'>JSON Detailed Results</span>"]
+    SaveResults --> HTML["<span style='color:#000'>HTML Report Optional</span>"]
 
-    CSV --> Phoenix[Phoenix Backend]
+    CSV --> Phoenix["<span style='color:#000'>Phoenix Backend</span>"]
     JSON --> Phoenix
     HTML --> Phoenix
 
-    Phoenix --> UI[Phoenix UI]
-    UI --> ExpUI[Experiments UI]
-    UI --> TraceViewer[Trace Viewer]
-    UI --> MetricsCharts[Metrics Charts]
+    Phoenix --> UI["<span style='color:#000'>Phoenix UI</span>"]
+    UI --> ExpUI["<span style='color:#000'>Experiments UI</span>"]
+    UI --> TraceViewer["<span style='color:#000'>Trace Viewer</span>"]
+    UI --> MetricsCharts["<span style='color:#000'>Metrics Charts</span>"]
 
-    style Start fill:#e1f5ff
-    style Config fill:#fff4e1
-    style Execution fill:#fff4e1
-    style Visualization fill:#fff4e1
-    style Phoenix fill:#ffe1f5
-    style UI fill:#e1ffe1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Config fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GetConfigs fill:#b0bec5,stroke:#546e7a,color:#000
+    style Profiles fill:#b0bec5,stroke:#546e7a,color:#000
+    style Strategies fill:#b0bec5,stroke:#546e7a,color:#000
+    style Registry fill:#b0bec5,stroke:#546e7a,color:#000
+    style CreateDataset fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DataSource fill:#b0bec5,stroke:#546e7a,color:#000
+    style LoadCSV fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LoadExisting fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LoadGolden fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Execution fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RunExperiments fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CreateTask fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TaskConfig fill:#b0bec5,stroke:#546e7a,color:#000
+    style Samples fill:#b0bec5,stroke:#546e7a,color:#000
+    style Solver fill:#b0bec5,stroke:#546e7a,color:#000
+    style Evaluators fill:#b0bec5,stroke:#546e7a,color:#000
+    style Execute fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RunSolver fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Collect fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RunEvals fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ExtractMetrics fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MRR fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Relevance fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LLMScores fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LogPhoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Visualization fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CreateViz fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProfileSummary fill:#b0bec5,stroke:#546e7a,color:#000
+    style StrategyComp fill:#b0bec5,stroke:#546e7a,color:#000
+    style DetailedResults fill:#b0bec5,stroke:#546e7a,color:#000
+    style Print fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SaveResults fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CSV fill:#a5d6a7,stroke:#388e3c,color:#000
+    style JSON fill:#a5d6a7,stroke:#388e3c,color:#000
+    style HTML fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style UI fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ExpUI fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TraceViewer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MetricsCharts fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Key Points:**
+
 - Inspect AI framework for evaluation execution
+
 - Plugin system for extensible evaluators
+
 - Phoenix integration for visualization
+
 - Compatible with legacy experiment system
 
 ---
@@ -218,21 +299,18 @@ sequenceDiagram
         Evaluator->>Evaluator: Extract span attributes
         Note over Evaluator: chosen_agent (routing.chosen_agent)<br/>confidence (routing.confidence)<br/>latency_ms (routing.processing_time)
 
-        Evaluator->>Classifier: classify_routing_outcome(span_data)
-        activate Classifier
-        Classifier->>Classifier: Check parent span exists?
-        Classifier->>Classifier: Check status code == OK?
-        Classifier->>Classifier: Check downstream agent executed?
-        Classifier->>Classifier: Check error events present?
+        Evaluator->>Evaluator: _classify_routing_outcome(span_data)
+        activate Evaluator
+        Note over Evaluator: Check parent span exists?<br/>Check status code == OK?<br/>Check downstream agent executed?<br/>Check error events present?
 
         alt All checks pass
-            Classifier-->>Evaluator: SUCCESS
+            Note over Evaluator: SUCCESS
         else Errors or timeouts
-            Classifier-->>Evaluator: FAILURE
+            Note over Evaluator: FAILURE
         else Unclear outcome
-            Classifier-->>Evaluator: AMBIGUOUS
+            Note over Evaluator: AMBIGUOUS
         end
-        deactivate Classifier
+        deactivate Evaluator
     end
 
     Note over Evaluator: Step 3: Calculate Aggregate Metrics
@@ -251,8 +329,11 @@ sequenceDiagram
 ```
 
 **Routing vs Search Quality:**
+
 - Routing evaluation focuses on **decision quality** (right agent chosen?)
+
 - Search evaluation focuses on **result quality** (relevant results returned?)
+
 - Separate metrics enable independent optimization
 
 ---
@@ -260,25 +341,25 @@ sequenceDiagram
 ### 3. Phoenix Analytics Flow
 
 ```mermaid
-graph TB
-    Start[Analytics Request] --> FetchTraces[Step 1: Fetch Traces]
+flowchart TB
+    Start["<span style='color:#000'>Analytics Request</span>"] --> FetchTraces["<span style='color:#000'>Step 1: Fetch Traces</span>"]
 
-    FetchTraces --> PhoenixQuery[Phoenix Client Query]
-    PhoenixQuery --> GetSpans[get_spans_dataframe]
-    GetSpans --> TimeFilter[Filter by time range]
-    TimeFilter --> OpFilter[Filter by operation regex]
-    OpFilter --> ExtractRoot[Extract root spans traces]
+    FetchTraces --> PhoenixQuery["<span style='color:#000'>Phoenix Client Query</span>"]
+    PhoenixQuery --> GetSpans["<span style='color:#000'>get_spans_dataframe</span>"]
+    GetSpans --> TimeFilter["<span style='color:#000'>Filter by time range</span>"]
+    TimeFilter --> OpFilter["<span style='color:#000'>Filter by operation regex</span>"]
+    OpFilter --> ExtractRoot["<span style='color:#000'>Extract root spans traces</span>"]
 
-    ExtractRoot --> ExtractMetrics[Extract TraceMetrics]
-    ExtractMetrics --> TraceID[trace_id]
-    ExtractMetrics --> Timestamp[timestamp]
-    ExtractMetrics --> Duration[duration_ms]
-    ExtractMetrics --> Operation[operation]
-    ExtractMetrics --> Status[status success/error]
-    ExtractMetrics --> Profile[profile, strategy]
-    ExtractMetrics --> Metadata[metadata]
+    ExtractRoot --> ExtractMetrics["<span style='color:#000'>Extract TraceMetrics</span>"]
+    ExtractMetrics --> TraceID["<span style='color:#000'>trace_id</span>"]
+    ExtractMetrics --> Timestamp["<span style='color:#000'>timestamp</span>"]
+    ExtractMetrics --> Duration["<span style='color:#000'>duration_ms</span>"]
+    ExtractMetrics --> Operation["<span style='color:#000'>operation</span>"]
+    ExtractMetrics --> Status["<span style='color:#000'>status success/error</span>"]
+    ExtractMetrics --> Profile["<span style='color:#000'>profile, strategy</span>"]
+    ExtractMetrics --> Metadata["<span style='color:#000'>metadata</span>"]
 
-    TraceID --> CalcStats[Step 2: Calculate Statistics]
+    TraceID --> CalcStats["<span style='color:#000'>Step 2: Calculate Statistics</span>"]
     Timestamp --> CalcStats
     Duration --> CalcStats
     Operation --> CalcStats
@@ -286,20 +367,20 @@ graph TB
     Profile --> CalcStats
     Metadata --> CalcStats
 
-    CalcStats --> OverallStats[Overall Stats]
-    OverallStats --> TotalReq[Total requests]
-    OverallStats --> TimeRange[Time range]
-    OverallStats --> ResponseTime[Response time<br/>mean, median, P50/P75/P90/P95/P99]
-    OverallStats --> SuccessRate[Success/error rates]
-    OverallStats --> OutlierDetect[Outlier detection IQR method]
+    CalcStats --> OverallStats["<span style='color:#000'>Overall Stats</span>"]
+    OverallStats --> TotalReq["<span style='color:#000'>Total requests</span>"]
+    OverallStats --> TimeRange["<span style='color:#000'>Time range</span>"]
+    OverallStats --> ResponseTime["<span style='color:#000'>Response time<br/>mean, median, P50/P75/P90/P95/P99</span>"]
+    OverallStats --> SuccessRate["<span style='color:#000'>Success/error rates</span>"]
+    OverallStats --> OutlierDetect["<span style='color:#000'>Outlier detection IQR method</span>"]
 
-    CalcStats --> GroupedStats{Group By?}
-    GroupedStats -->|Yes| PerProfile[Per profile/strategy/operation]
-    GroupedStats -->|No| Temporal[Temporal Patterns]
+    CalcStats --> GroupedStats{"<span style='color:#000'>Group By?</span>"}
+    GroupedStats -->|Yes| PerProfile["<span style='color:#000'>Per profile/strategy/operation</span>"]
+    GroupedStats -->|No| Temporal["<span style='color:#000'>Temporal Patterns</span>"]
 
-    PerProfile --> Count[Count]
-    PerProfile --> MeanMedian[Mean/median/P95 duration]
-    PerProfile --> ErrorRate[Error rate]
+    PerProfile --> Count["<span style='color:#000'>Count</span>"]
+    PerProfile --> MeanMedian["<span style='color:#000'>Mean/median/P95 duration</span>"]
+    PerProfile --> ErrorRate["<span style='color:#000'>Error rate</span>"]
 
     TotalReq --> Temporal
     TimeRange --> Temporal
@@ -310,40 +391,40 @@ graph TB
     MeanMedian --> Temporal
     ErrorRate --> Temporal
 
-    Temporal --> ReqByHour[Requests by hour]
-    Temporal --> DurationByHour[Avg duration by hour]
+    Temporal --> ReqByHour["<span style='color:#000'>Requests by hour</span>"]
+    Temporal --> DurationByHour["<span style='color:#000'>Avg duration by hour</span>"]
 
-    ReqByHour --> CreateViz[Step 3: Create Visualizations]
+    ReqByHour --> CreateViz["<span style='color:#000'>Step 3: Create Visualizations</span>"]
     DurationByHour --> CreateViz
 
-    CreateViz --> TimeSeries[1. Time Series Plot]
-    TimeSeries --> TSMean[Mean/median/max over time]
-    TimeSeries --> TSBands[P50/P95 bands]
-    TimeSeries --> TSCount[Request count]
+    CreateViz --> TimeSeries["<span style='color:#000'>1. Time Series Plot</span>"]
+    TimeSeries --> TSMean["<span style='color:#000'>Mean/median/max over time</span>"]
+    TimeSeries --> TSBands["<span style='color:#000'>P50/P95 bands</span>"]
+    TimeSeries --> TSCount["<span style='color:#000'>Request count</span>"]
 
-    CreateViz --> Distribution[2. Distribution Plot 4 subplots]
-    Distribution --> Histogram[Histogram]
-    Distribution --> BoxPlot[Box plot quartiles, outliers]
-    Distribution --> ViolinPlot[Violin plot distribution shape]
-    Distribution --> ECDF[ECDF with percentile lines]
+    CreateViz --> Distribution["<span style='color:#000'>2. Distribution Plot 4 subplots</span>"]
+    Distribution --> Histogram["<span style='color:#000'>Histogram</span>"]
+    Distribution --> BoxPlot["<span style='color:#000'>Box plot quartiles, outliers</span>"]
+    Distribution --> ViolinPlot["<span style='color:#000'>Violin plot distribution shape</span>"]
+    Distribution --> ECDF["<span style='color:#000'>ECDF with percentile lines</span>"]
 
-    CreateViz --> Heatmap[3. Heatmap]
-    Heatmap --> HourDay[Hour x Day of week]
-    Heatmap --> ProfileStrategy[Profile x Strategy]
-    Heatmap --> Aggregation[Aggregation: count, mean, max]
+    CreateViz --> Heatmap["<span style='color:#000'>3. Heatmap</span>"]
+    Heatmap --> HourDay["<span style='color:#000'>Hour x Day of week</span>"]
+    Heatmap --> ProfileStrategy["<span style='color:#000'>Profile x Strategy</span>"]
+    Heatmap --> Aggregation["<span style='color:#000'>Aggregation: count, mean, max</span>"]
 
-    CreateViz --> OutlierPlot[4. Outlier Plot]
-    OutlierPlot --> ScatterPlot[Scatter: normal vs outlier points]
-    OutlierPlot --> IQRLine[IQR threshold line]
-    OutlierPlot --> RefLines[P50/P95/P99 reference lines]
+    CreateViz --> OutlierPlot["<span style='color:#000'>4. Outlier Plot</span>"]
+    OutlierPlot --> ScatterPlot["<span style='color:#000'>Scatter: normal vs outlier points</span>"]
+    OutlierPlot --> IQRLine["<span style='color:#000'>IQR threshold line</span>"]
+    OutlierPlot --> RefLines["<span style='color:#000'>P50/P95/P99 reference lines</span>"]
 
-    CreateViz --> ComparisonPlot[5. Comparison Plot 4 subplots]
-    ComparisonPlot --> MeanByGroup[Mean by group]
-    ComparisonPlot --> MedianByGroup[Median by group]
-    ComparisonPlot --> P95ByGroup[P95 by group]
-    ComparisonPlot --> CountByGroup[Request count by group]
+    CreateViz --> ComparisonPlot["<span style='color:#000'>5. Comparison Plot 4 subplots</span>"]
+    ComparisonPlot --> MeanByGroup["<span style='color:#000'>Mean by group</span>"]
+    ComparisonPlot --> MedianByGroup["<span style='color:#000'>Median by group</span>"]
+    ComparisonPlot --> P95ByGroup["<span style='color:#000'>P95 by group</span>"]
+    ComparisonPlot --> CountByGroup["<span style='color:#000'>Request count by group</span>"]
 
-    TSMean --> GenerateReport[Step 4: Generate Report]
+    TSMean --> GenerateReport["<span style='color:#000'>Step 4: Generate Report</span>"]
     TSBands --> GenerateReport
     TSCount --> GenerateReport
     Histogram --> GenerateReport
@@ -361,32 +442,92 @@ graph TB
     P95ByGroup --> GenerateReport
     CountByGroup --> GenerateReport
 
-    GenerateReport --> ReportJSON[Comprehensive Report JSON]
-    ReportJSON --> Summary[summary]
-    ReportJSON --> Statistics[statistics]
-    ReportJSON --> StatsByProfile[statistics_by_profile]
-    ReportJSON --> StatsByOp[statistics_by_operation]
-    ReportJSON --> Visualizations[visualizations plotly_json]
+    GenerateReport --> ReportJSON["<span style='color:#000'>Comprehensive Report JSON</span>"]
+    ReportJSON --> Summary["<span style='color:#000'>summary</span>"]
+    ReportJSON --> Statistics["<span style='color:#000'>statistics</span>"]
+    ReportJSON --> StatsByProfile["<span style='color:#000'>statistics_by_profile</span>"]
+    ReportJSON --> StatsByOp["<span style='color:#000'>statistics_by_operation</span>"]
+    ReportJSON --> Visualizations["<span style='color:#000'>visualizations plotly_json</span>"]
 
-    Summary --> SaveFile[Save to JSON file optional]
+    Summary --> SaveFile["<span style='color:#000'>Save to JSON file optional</span>"]
     Statistics --> SaveFile
     StatsByProfile --> SaveFile
     StatsByOp --> SaveFile
     Visualizations --> SaveFile
 
-    style Start fill:#e1f5ff
-    style FetchTraces fill:#fff4e1
-    style CalcStats fill:#fff4e1
-    style CreateViz fill:#fff4e1
-    style GenerateReport fill:#fff4e1
-    style SaveFile fill:#e1ffe1
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style FetchTraces fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PhoenixQuery fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style GetSpans fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TimeFilter fill:#b0bec5,stroke:#546e7a,color:#000
+    style OpFilter fill:#b0bec5,stroke:#546e7a,color:#000
+    style ExtractRoot fill:#b0bec5,stroke:#546e7a,color:#000
+    style ExtractMetrics fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TraceID fill:#b0bec5,stroke:#546e7a,color:#000
+    style Timestamp fill:#b0bec5,stroke:#546e7a,color:#000
+    style Duration fill:#b0bec5,stroke:#546e7a,color:#000
+    style Operation fill:#b0bec5,stroke:#546e7a,color:#000
+    style Status fill:#b0bec5,stroke:#546e7a,color:#000
+    style Profile fill:#b0bec5,stroke:#546e7a,color:#000
+    style Metadata fill:#b0bec5,stroke:#546e7a,color:#000
+    style CalcStats fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OverallStats fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TotalReq fill:#b0bec5,stroke:#546e7a,color:#000
+    style TimeRange fill:#b0bec5,stroke:#546e7a,color:#000
+    style ResponseTime fill:#b0bec5,stroke:#546e7a,color:#000
+    style SuccessRate fill:#b0bec5,stroke:#546e7a,color:#000
+    style OutlierDetect fill:#b0bec5,stroke:#546e7a,color:#000
+    style GroupedStats fill:#b0bec5,stroke:#546e7a,color:#000
+    style PerProfile fill:#b0bec5,stroke:#546e7a,color:#000
+    style Temporal fill:#b0bec5,stroke:#546e7a,color:#000
+    style Count fill:#b0bec5,stroke:#546e7a,color:#000
+    style MeanMedian fill:#b0bec5,stroke:#546e7a,color:#000
+    style ErrorRate fill:#b0bec5,stroke:#546e7a,color:#000
+    style ReqByHour fill:#b0bec5,stroke:#546e7a,color:#000
+    style DurationByHour fill:#b0bec5,stroke:#546e7a,color:#000
+    style CreateViz fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TimeSeries fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TSMean fill:#b0bec5,stroke:#546e7a,color:#000
+    style TSBands fill:#b0bec5,stroke:#546e7a,color:#000
+    style TSCount fill:#b0bec5,stroke:#546e7a,color:#000
+    style Distribution fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Histogram fill:#b0bec5,stroke:#546e7a,color:#000
+    style BoxPlot fill:#b0bec5,stroke:#546e7a,color:#000
+    style ViolinPlot fill:#b0bec5,stroke:#546e7a,color:#000
+    style ECDF fill:#b0bec5,stroke:#546e7a,color:#000
+    style Heatmap fill:#a5d6a7,stroke:#388e3c,color:#000
+    style HourDay fill:#b0bec5,stroke:#546e7a,color:#000
+    style ProfileStrategy fill:#b0bec5,stroke:#546e7a,color:#000
+    style Aggregation fill:#b0bec5,stroke:#546e7a,color:#000
+    style OutlierPlot fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ScatterPlot fill:#b0bec5,stroke:#546e7a,color:#000
+    style IQRLine fill:#b0bec5,stroke:#546e7a,color:#000
+    style RefLines fill:#b0bec5,stroke:#546e7a,color:#000
+    style ComparisonPlot fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MeanByGroup fill:#b0bec5,stroke:#546e7a,color:#000
+    style MedianByGroup fill:#b0bec5,stroke:#546e7a,color:#000
+    style P95ByGroup fill:#b0bec5,stroke:#546e7a,color:#000
+    style CountByGroup fill:#b0bec5,stroke:#546e7a,color:#000
+    style GenerateReport fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ReportJSON fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Summary fill:#b0bec5,stroke:#546e7a,color:#000
+    style Statistics fill:#b0bec5,stroke:#546e7a,color:#000
+    style StatsByProfile fill:#b0bec5,stroke:#546e7a,color:#000
+    style StatsByOp fill:#b0bec5,stroke:#546e7a,color:#000
+    style Visualizations fill:#b0bec5,stroke:#546e7a,color:#000
+    style SaveFile fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Analytics Capabilities:**
+
 - Statistical analysis with percentiles
+
 - Outlier detection (IQR, z-score)
+
 - Interactive Plotly visualizations
+
 - Group-by analysis (profile, strategy, operation)
+
 - Export to JSON for further analysis
 
 ---
@@ -457,14 +598,14 @@ sequenceDiagram
         deactivate Golden
     end
 
-    Note over SpanEval: Step 3: Upload Evaluations to Phoenix
-    SpanEval->>Upload: upload_evaluations_to_phoenix(eval_results)
+    Note over SpanEval: Step 3: Upload Evaluations
+    SpanEval->>Upload: upload_evaluations(eval_results)
     activate Upload
 
     loop For each evaluator
         Upload->>Upload: Format evaluation results
-        Upload->>Upload: Create SpanEvaluation objects
-        Upload->>Phoenix: POST /evaluations
+        Upload->>Upload: Create annotation objects
+        Upload->>Phoenix: Upload annotations
         Phoenix-->>Upload: Upload confirmation
     end
 
@@ -482,10 +623,15 @@ sequenceDiagram
 ```
 
 **Span Evaluator Features:**
+
 - Retrospective evaluation of existing spans
+
 - Multiple evaluator support (reference-free, golden dataset)
+
 - Automatic upload to Phoenix for visualization
+
 - Batch processing of historical traces
+
 - Summary statistics and distribution analysis
 
 ---
@@ -494,22 +640,24 @@ sequenceDiagram
 
 ### 1. ExperimentTracker
 
-**File:** `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py`
+**File:** `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py`
 
 **Purpose:** Track and visualize experiments using Inspect AI evaluation framework with Phoenix integration.
 
 **Key Attributes:**
 ```python
-experiment_project_name: str          # Phoenix project name
+experiment_project_name: str          # Project name for experiments
 output_dir: Path                       # Results directory
 enable_quality_evaluators: bool        # Enable quality metrics
 enable_llm_evaluators: bool           # Enable LLM-based evaluators
 evaluator_name: str                    # Evaluator to use
 llm_model: str                         # LLM model for evaluators
-dataset_manager: DatasetManager        # Dataset management
-phoenix_monitor: RetrievalMonitor      # Phoenix monitoring
+llm_base_url: str | None              # Base URL for LLM API
+provider: EvaluationProvider           # Evaluation provider
+tenant_id: str                         # Tenant identifier
 experiments: list[dict]                # Experiment results
 configurations: list[dict]             # Experiment configurations
+dataset_url: str | None                # Dataset URL
 ```
 
 **Main Methods:**
@@ -518,8 +666,11 @@ configurations: list[dict]             # Experiment configurations
 Get experiment configurations from strategy registry.
 
 **Parameters:**
+
 - `profiles`: List of profiles to test (None = all)
+
 - `strategies`: List of strategies to test (None = common strategies)
+
 - `all_strategies`: Test all available strategies
 
 **Returns:** List of configuration dicts with `{profile, strategies: [(name, description)]}`
@@ -552,19 +703,29 @@ configs = tracker.get_experiment_configurations(
 Run a single experiment using Inspect AI framework.
 
 **Parameters:**
+
 - `profile`: Vespa profile name
+
 - `strategy`: Ranking strategy
+
 - `dataset_name`: Dataset to evaluate against
+
 - `description`: Human-readable experiment description
 
 **Returns:** Experiment result dict with status, metrics, timestamp
 
 **Workflow:**
+
 1. Log experiment start to Phoenix
+
 2. Create Inspect AI evaluation task
+
 3. Execute evaluation with inspect_eval()
+
 4. Extract metrics from result
+
 5. Log completion to Phoenix
+
 6. Return result dictionary
 
 **Example:**
@@ -599,8 +760,11 @@ result = await tracker.run_experiment_async(
 Create or retrieve a dataset for experiments.
 
 **Parameters:**
+
 - `dataset_name`: Name of existing dataset
+
 - `csv_path`: Path to CSV file for new dataset
+
 - `force_new`: Force creation of new dataset
 
 **Returns:** Dataset name
@@ -627,6 +791,7 @@ dataset_name = tracker.create_or_get_dataset(
 Run all configured experiments.
 
 **Parameters:**
+
 - `dataset_name`: Dataset to evaluate against
 
 **Returns:** List of experiment result dicts
@@ -687,14 +852,14 @@ print(tables["profile_summary"])
 
 ### 2. RoutingEvaluator
 
-**File:** `libs/core/cogniverse_core/evaluation/evaluators/routing_evaluator.py`
+**File:** `libs/evaluation/cogniverse_evaluation/evaluators/routing_evaluator.py`
 
 **Purpose:** Evaluate routing decisions separately from search quality.
 
 **Key Attributes:**
 ```python
-client: px.Client                  # Phoenix client
-project_name: str                  # Phoenix project name
+provider: TelemetryProvider        # Telemetry provider for querying spans
+project_name: str                  # Project name for routing optimization
 ```
 
 **RoutingOutcome Enum:**
@@ -722,6 +887,7 @@ ambiguous_count: int                       # Unclear outcomes
 Extract and evaluate a single routing decision.
 
 **Parameters:**
+
 - `span_data`: Span dict from Phoenix with routing attributes
 
 **Returns:** `(outcome, metrics)` tuple
@@ -739,7 +905,13 @@ Extract and evaluate a single routing decision.
 
 **Example:**
 ```python
-evaluator = RoutingEvaluator()
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+
+# Get telemetry provider
+registry = TelemetryRegistry()
+provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+
+evaluator = RoutingEvaluator(provider=provider)
 
 span_data = {
     "name": "cogniverse.routing",
@@ -767,62 +939,86 @@ outcome, metrics = evaluator.evaluate_routing_decision(span_data)
 Calculate comprehensive routing metrics from spans.
 
 **Parameters:**
+
 - `routing_spans`: List of routing span dicts
 
 **Returns:** RoutingMetrics with all calculated metrics
 
 **Example:**
 ```python
-evaluator = RoutingEvaluator()
+import asyncio
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
-# Get routing spans from Phoenix
-spans = evaluator.query_routing_spans(hours=24, limit=100)
+async def calculate_routing_metrics():
+    # Get telemetry provider
+    registry = TelemetryRegistry()
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
 
-# Calculate metrics
-metrics = evaluator.calculate_metrics(spans)
+    evaluator = RoutingEvaluator(provider=provider)
 
-print(f"Routing Accuracy: {metrics.routing_accuracy:.2%}")
-print(f"Confidence Calibration: {metrics.confidence_calibration:.3f}")
-print(f"Avg Latency: {metrics.avg_routing_latency:.0f}ms")
-print(f"Video Agent Precision: {metrics.per_agent_precision['video_search_agent']:.2%}")
+    # Get routing spans from Phoenix
+    spans = await evaluator.query_routing_spans(limit=100)
+
+    # Calculate metrics
+    metrics = evaluator.calculate_metrics(spans)
+
+    print(f"Routing Accuracy: {metrics.routing_accuracy:.2%}")
+    print(f"Confidence Calibration: {metrics.confidence_calibration:.3f}")
+    print(f"Avg Latency: {metrics.avg_routing_latency:.0f}ms")
+    print(f"Video Agent Precision: {metrics.per_agent_precision['video_search_agent']:.2%}")
+
+asyncio.run(calculate_routing_metrics())
 ```
 
 ---
 
-#### `query_routing_spans(start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, limit: int = 100) -> List[Dict[str, Any]]`
+#### `async query_routing_spans(start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, limit: int = 100) -> List[Dict[str, Any]]`
 Query Phoenix for routing spans.
 
 **Parameters:**
+
 - `start_time`: Start of time range
+
 - `end_time`: End of time range
+
 - `limit`: Max spans to return
 
 **Returns:** List of routing span dicts
 
 **Example:**
 ```python
+import asyncio
 from datetime import datetime, timedelta
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
-evaluator = RoutingEvaluator()
+async def get_routing_spans():
+    # Get telemetry provider
+    registry = TelemetryRegistry()
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
 
-# Get last 6 hours of routing decisions
-end_time = datetime.now()
-start_time = end_time - timedelta(hours=6)
+    evaluator = RoutingEvaluator(provider=provider)
 
-spans = evaluator.query_routing_spans(
-    start_time=start_time,
-    end_time=end_time,
-    limit=500
-)
+    # Get last 6 hours of routing decisions
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=6)
 
-print(f"Retrieved {len(spans)} routing decisions")
+    spans = await evaluator.query_routing_spans(
+        start_time=start_time,
+        end_time=end_time,
+        limit=500
+    )
+
+    print(f"Retrieved {len(spans)} routing decisions")
+    return spans
+
+asyncio.run(get_routing_spans())
 ```
 
 ---
 
 ### 3. PhoenixAnalytics
 
-**File:** `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
+**File:** `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py`
 
 **Purpose:** Analytics and visualization for Phoenix traces.
 
@@ -852,9 +1048,13 @@ metadata: dict[str, Any]
 Fetch traces from Phoenix with filters.
 
 **Parameters:**
+
 - `start_time`: Start of time range
+
 - `end_time`: End of time range
+
 - `operation_filter`: Regex filter for operation name
+
 - `limit`: Max traces to fetch
 
 **Returns:** List of TraceMetrics objects
@@ -878,16 +1078,25 @@ print(f"Fetched {len(traces)} search traces")
 Calculate comprehensive statistics from traces.
 
 **Parameters:**
+
 - `traces`: List of trace metrics
+
 - `group_by`: Optional field to group by ("operation", "profile", "strategy")
 
 **Returns:** Statistics dictionary with:
+
 - `total_requests`: Total count
+
 - `time_range`: Start/end timestamps
+
 - `response_time`: mean, median, min, max, std, P50/P75/P90/P95/P99
+
 - `status`: counts, success_rate, error_rate
+
 - `by_{group_by}`: Grouped statistics (if group_by specified)
+
 - `temporal`: requests/duration by hour
+
 - `outliers`: count, percentage, values
 
 **Example:**
@@ -975,26 +1184,30 @@ print(f"Outliers: {report['summary']['outlier_percentage']:.1f}%")
 
 ### 4. SpanEvaluator
 
-**File:** `libs/core/cogniverse_core/evaluation/span_evaluator.py`
+**File:** `libs/evaluation/cogniverse_evaluation/span_evaluator.py`
 
 **Purpose:** Evaluate existing spans in Phoenix using various evaluators.
 
 **Key Attributes:**
 ```python
-client: px.Client                              # Phoenix client
-http_client: HTTPClient                        # HTTP client
+provider: EvaluationProvider                   # Evaluation provider
+tenant_id: str                                 # Tenant identifier
+project_name: str                              # Project name for telemetry
 reference_free_evaluators: dict                # Reference-free evaluators
 golden_evaluator: GoldenDatasetEvaluator       # Golden dataset evaluator
 ```
 
 **Main Methods:**
 
-#### `get_recent_spans(hours: int = 6, operation_name: str | None = "search_service.search", limit: int = 1000) -> pd.DataFrame`
+#### `async get_recent_spans(hours: int = 6, operation_name: str | None = "search_service.search", limit: int = 1000) -> pd.DataFrame`
 Retrieve recent spans from Phoenix.
 
 **Parameters:**
+
 - `hours`: Hours to look back
+
 - `operation_name`: Filter by operation name
+
 - `limit`: Max spans
 
 **Returns:** DataFrame with span information
@@ -1004,7 +1217,7 @@ Retrieve recent spans from Phoenix.
 evaluator = SpanEvaluator()
 
 # Get last 6 hours of search spans
-spans_df = evaluator.get_recent_spans(
+spans_df = await evaluator.get_recent_spans(
     hours=6,
     operation_name="search_service.search"
 )
@@ -1018,14 +1231,19 @@ print(f"Retrieved {len(spans_df)} search spans")
 Evaluate spans using specified evaluators.
 
 **Parameters:**
+
 - `spans_df`: DataFrame of spans to evaluate
+
 - `evaluator_names`: List of evaluator names (None = all)
 
 **Returns:** Dict mapping evaluator name to results DataFrame
 
 **Available Evaluators:**
+
 - `relevance`: Relevance quality metric
+
 - `diversity`: Result diversity metric
+
 - `golden_dataset`: Golden dataset comparison
 
 **Example:**
@@ -1033,7 +1251,7 @@ Evaluate spans using specified evaluators.
 evaluator = SpanEvaluator()
 
 # Get spans
-spans_df = evaluator.get_recent_spans(hours=24)
+spans_df = await evaluator.get_recent_spans(hours=24)
 
 # Evaluate
 eval_results = await evaluator.evaluate_spans(
@@ -1049,25 +1267,25 @@ for eval_name, results_df in eval_results.items():
 
 ---
 
-#### `upload_evaluations_to_phoenix(evaluations: dict[str, pd.DataFrame])`
-Upload evaluation results to Phoenix as SpanEvaluations.
+#### `async upload_evaluations(evaluations: dict[str, pd.DataFrame])`
+Upload evaluation results as annotations.
 
 **Example:**
 ```python
 evaluator = SpanEvaluator()
 
 # Evaluate spans
-spans_df = evaluator.get_recent_spans()
+spans_df = await evaluator.get_recent_spans()
 eval_results = await evaluator.evaluate_spans(spans_df)
 
 # Upload to Phoenix
-evaluator.upload_evaluations_to_phoenix(eval_results)
+await evaluator.upload_evaluations(eval_results)
 # Results now visible in Phoenix UI
 ```
 
 ---
 
-#### `async run_evaluation_pipeline(hours: int = 6, operation_name: str | None = "search_service.search", evaluator_names: list[str] | None = None, upload_to_phoenix: bool = True) -> dict[str, Any]`
+#### `async run_evaluation_pipeline(hours: int = 6, operation_name: str | None = "search_service.search", evaluator_names: list[str] | None = None, upload_evaluations: bool = True) -> dict[str, Any]`
 Run complete evaluation pipeline on recent spans.
 
 **Returns:** Summary with num_spans_evaluated, evaluators_run, results
@@ -1080,7 +1298,7 @@ evaluator = SpanEvaluator()
 summary = await evaluator.run_evaluation_pipeline(
     hours=24,
     evaluator_names=["relevance", "diversity", "golden_dataset"],
-    upload_to_phoenix=True
+    upload_evaluations=True
 )
 
 print(f"Evaluated {summary['num_spans_evaluated']} spans")
@@ -1097,103 +1315,130 @@ for eval_name, stats in summary["results"].items():
 
 #### Session-Level Evaluation Components
 
-**PhoenixEvaluationProvider** (in `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation_provider.py`)
+**PhoenixEvaluationProvider** (in `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/evaluation_provider.py`)
 
 Provides session-level evaluation logging:
 
 ```python
-async def log_session_evaluation(
+def log_session_evaluation(
     self,
     session_id: str,
-    conversation: List[Dict[str, str]],
-    outcome: str,
-    score: float,
+    evaluation_name: str,
+    session_score: float,
+    session_outcome: str,
+    turn_scores: Optional[List[float]] = None,
+    explanation: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None
 ) -> None
 ```
 
 **Parameters:**
+
 - `session_id`: Unique session identifier
-- `conversation`: List of `{"query": "...", "response": "..."}` turns
-- `outcome`: Session outcome ("success", "partial", "failure")
-- `score`: Session quality score (0.0-1.0)
+
+- `evaluation_name`: Name of evaluation (e.g., "conversation_quality")
+
+- `session_score`: Overall session score (0.0-1.0)
+
+- `session_outcome`: Session outcome ("success", "partial", "failure")
+
+- `turn_scores`: Optional per-turn scores
+
+- `explanation`: Optional explanation
+
 - `metadata`: Optional additional metadata
 
 **Example:**
 ```python
-from cogniverse_evaluation.providers.registry import EvaluationRegistry
+from cogniverse_evaluation.providers import get_evaluation_provider
 
-provider = EvaluationRegistry.get_evaluation_provider("phoenix", tenant_id="default")
+provider = get_evaluation_provider(tenant_id="default")
 
-await provider.log_session_evaluation(
+provider.log_session_evaluation(
     session_id="sess_abc123",
-    conversation=[
-        {"query": "Show me cooking videos", "response": "Found 5 cooking tutorials..."},
-        {"query": "Filter to Italian cuisine", "response": "Here are 3 Italian cooking videos..."},
-        {"query": "Which one has the most views?", "response": "The pasta video has 1.2M views..."}
-    ],
-    outcome="success",
-    score=0.9,
+    evaluation_name="conversation_quality",
+    session_score=0.9,
+    session_outcome="success",
+    turn_scores=[0.85, 0.90, 0.95],
+    explanation="User successfully found relevant videos",
     metadata={"turns": 3, "topic": "cooking"}
 )
 ```
 
 ---
 
-#### LLM Judges with Conversation History
+#### LLM-as-Judge Evaluators
 
-All three LLM evaluators support multi-turn conversation context:
+The evaluation module provides LLM-based evaluators for video retrieval quality:
 
-**1. AnswerRelevanceEvaluator**
+**1. SyncLLMReferenceFreeEvaluator**
+
+Evaluates query-result relevance without requiring ground truth.
+
 ```python
-from cogniverse_evaluation.evaluators.llm_evaluators import AnswerRelevanceEvaluator
+from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceFreeEvaluator
 
-evaluator = AnswerRelevanceEvaluator()
-
-# Single-turn evaluation
-score = evaluator.evaluate(query="What is RAG?", response="RAG stands for...")
-
-# Multi-turn evaluation with history
-conversation_history = [
-    {"query": "What is RAG?", "response": "RAG stands for Retrieval-Augmented Generation..."},
-    {"query": "How does it work?", "response": "RAG works by first retrieving relevant documents..."}
-]
-
-score = evaluator.evaluate(
-    query="Can you give an example?",
-    response="For example, when you ask about weather...",
-    conversation_history=conversation_history
+evaluator = SyncLLMReferenceFreeEvaluator(
+    model_name="llava:7b",
+    base_url="http://localhost:11434"
 )
+
+# Evaluate video search results
+result = evaluator.evaluate(
+    input={"query": "cooking tutorial pasta"},
+    output={
+        "results": [{
+            "video_id": "vid_001",
+            "title": "Italian Pasta Making",
+            "description": "Learn to make fresh pasta from scratch",
+            "score": 0.95
+        }]
+    }
+)
+print(f"Relevance score: {result.score}")
 ```
 
-**2. ContextRelevanceEvaluator**
+**2. SyncLLMReferenceBasedEvaluator**
+
+Compares results against ground truth from database.
+
 ```python
-from cogniverse_evaluation.evaluators.llm_evaluators import ContextRelevanceEvaluator
+from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceBasedEvaluator
 
-evaluator = ContextRelevanceEvaluator()
+evaluator = SyncLLMReferenceBasedEvaluator(
+    model_name="llava:7b",
+    base_url="http://localhost:11434"
+)
 
-# Multi-turn with retrieved context
-score = evaluator.evaluate(
-    query="Show me the step 3 instructions",
-    context="Step 3: Mix ingredients thoroughly...",
-    conversation_history=[
-        {"query": "Show me pasta recipes", "response": "Here's an Italian pasta recipe..."},
-        {"query": "What ingredients do I need?", "response": "You'll need: flour, eggs, salt..."}
+# Evaluate with expected results
+result = evaluator.evaluate(
+    input={"query": "cooking tutorial", "expected_videos": ["vid_001", "vid_003"]},
+    output={
+        "results": [
+            {"video_id": "vid_001", "score": 0.95},
+            {"video_id": "vid_002", "score": 0.85}
+        ]
+    }
+)
+print(f"Score: {result.score}")
+```
+
+**3. QueryResultRelevanceEvaluator**
+
+Evaluates relevance without LLM (embedding-based).
+
+```python
+from cogniverse_evaluation.evaluators.reference_free import QueryResultRelevanceEvaluator
+
+evaluator = QueryResultRelevanceEvaluator()
+
+# Fast embedding-based relevance scoring
+result = evaluator.evaluate(
+    query="machine learning tutorial",
+    retrieved_results=[
+        {"video_id": "vid_001", "title": "ML Basics", "score": 0.95},
+        {"video_id": "vid_002", "title": "Deep Learning", "score": 0.85}
     ]
-)
-```
-
-**3. GroundednessEvaluator**
-```python
-from cogniverse_evaluation.evaluators.llm_evaluators import GroundednessEvaluator
-
-evaluator = GroundednessEvaluator()
-
-# Evaluate if response is grounded in retrieved documents
-score = evaluator.evaluate(
-    response="The cooking time is 30 minutes at 350°F",
-    context="Recipe notes: Bake for 30 minutes at 350 degrees Fahrenheit...",
-    conversation_history=conversation_history
 )
 ```
 
@@ -1204,9 +1449,11 @@ score = evaluator.evaluate(
 Session evaluation works with the telemetry module's session tracking:
 
 ```python
-from cogniverse_telemetry import get_telemetry_manager
+from cogniverse_foundation.telemetry import get_telemetry_manager
+from cogniverse_evaluation.providers import get_evaluation_provider
 
 tm = get_telemetry_manager()
+provider = get_evaluation_provider(tenant_id="tenant1")
 
 # Start a session
 session_id = "user_session_12345"
@@ -1221,11 +1468,13 @@ with tm.session_span("turn_2", tenant_id="tenant1", session_id=session_id):
     pass
 
 # Evaluate the entire session
-await evaluation_provider.log_session_evaluation(
+provider.log_session_evaluation(
     session_id=session_id,
-    conversation=conversation_history,
-    outcome="success",
-    score=0.85
+    evaluation_name="conversation_quality",
+    session_score=0.85,
+    session_outcome="success",
+    turn_scores=[0.80, 0.90],
+    explanation="User successfully completed task"
 )
 ```
 
@@ -1236,16 +1485,25 @@ await evaluation_provider.log_session_evaluation(
 The Interactive Search tab in the dashboard provides unified session evaluation:
 
 **Features:**
+
 - Conversation history tracking across turns
+
 - Session ID display and "New Session" button
+
 - Per-result relevance annotation (thumbs up/down)
+
 - Session-level outcome selection (Success/Partial/Failure)
+
 - Session quality scoring (0.0-1.0 slider)
 
 **Workflow:**
+
 1. User performs searches (single or multiple turns)
+
 2. Each search adds to `st.session_state.conversation_history`
+
 3. Individual results can be annotated for relevance
+
 4. After any search, session-level evaluation is available:
    - Select outcome: Success, Partial, or Failure
    - Set quality score: 0.0 to 1.0
@@ -1263,7 +1521,7 @@ The Interactive Search tab in the dashboard provides unified session evaluation:
 """
 Complete experiment workflow with Phoenix visualization.
 """
-from cogniverse_core.evaluation.core.experiment_tracker import ExperimentTracker
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 # Initialize tracker
 tracker = ExperimentTracker(
@@ -1305,7 +1563,7 @@ print(f"  JSON: {json_path}")
 ```
 
 **Output:**
-```
+```text
 ================================================================
 PHOENIX EXPERIMENTS WITH VISUALIZATION
 ================================================================
@@ -1339,54 +1597,66 @@ Profile: frame_based_colpali
 """
 Analyze routing decision quality from Phoenix spans.
 """
-from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+import asyncio
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 from datetime import datetime, timedelta
 
-# Initialize evaluator for routing project
-evaluator = RoutingEvaluator(
-    project_name="cogniverse-default-routing-optimization"
-)
+async def evaluate_routing_decisions():
+    """Evaluate routing decision quality."""
+    # Get telemetry provider
+    registry = TelemetryRegistry()
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
 
-# Get routing spans from last 24 hours
-end_time = datetime.now()
-start_time = end_time - timedelta(hours=24)
+    # Initialize evaluator for routing project
+    evaluator = RoutingEvaluator(
+        provider=provider,
+        project_name="cogniverse-default-routing-optimization"
+    )
 
-routing_spans = evaluator.query_routing_spans(
-    start_time=start_time,
-    end_time=end_time,
-    limit=500
-)
+    # Get routing spans from last 24 hours
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=24)
 
-print(f"Retrieved {len(routing_spans)} routing decisions from Phoenix")
+    routing_spans = await evaluator.query_routing_spans(
+        start_time=start_time,
+        end_time=end_time,
+        limit=500
+    )
 
-# Calculate metrics
-metrics = evaluator.calculate_metrics(routing_spans)
+    print(f"Retrieved {len(routing_spans)} routing decisions from Phoenix")
 
-# Print overall metrics
-print(f"\n{'='*60}")
-print("ROUTING EVALUATION RESULTS")
-print(f"{'='*60}")
-print(f"\nOverall Metrics:")
-print(f"  Total Decisions: {metrics.total_decisions}")
-print(f"  Routing Accuracy: {metrics.routing_accuracy:.2%}")
-print(f"  Confidence Calibration: {metrics.confidence_calibration:.3f}")
-print(f"  Avg Routing Latency: {metrics.avg_routing_latency:.0f}ms")
-print(f"  Ambiguous Decisions: {metrics.ambiguous_count} ({metrics.ambiguous_count/metrics.total_decisions:.1%})")
+    # Calculate metrics
+    metrics = evaluator.calculate_metrics(routing_spans)
 
-# Print per-agent metrics
-print(f"\nPer-Agent Metrics:")
-for agent in metrics.per_agent_precision.keys():
-    precision = metrics.per_agent_precision[agent]
-    recall = metrics.per_agent_recall[agent]
-    f1 = metrics.per_agent_f1[agent]
-    print(f"\n  {agent}:")
-    print(f"    Precision: {precision:.2%}")
-    print(f"    Recall: {recall:.2%}")
-    print(f"    F1 Score: {f1:.3f}")
+    # Print overall metrics
+    print(f"\n{'='*60}")
+    print("ROUTING EVALUATION RESULTS")
+    print(f"{'='*60}")
+    print(f"\nOverall Metrics:")
+    print(f"  Total Decisions: {metrics.total_decisions}")
+    print(f"  Routing Accuracy: {metrics.routing_accuracy:.2%}")
+    print(f"  Confidence Calibration: {metrics.confidence_calibration:.3f}")
+    print(f"  Avg Routing Latency: {metrics.avg_routing_latency:.0f}ms")
+    print(f"  Ambiguous Decisions: {metrics.ambiguous_count} ({metrics.ambiguous_count/metrics.total_decisions:.1%})")
+
+    # Print per-agent metrics
+    print(f"\nPer-Agent Metrics:")
+    for agent in metrics.per_agent_precision.keys():
+        precision = metrics.per_agent_precision[agent]
+        recall = metrics.per_agent_recall[agent]
+        f1 = metrics.per_agent_f1[agent]
+        print(f"\n  {agent}:")
+        print(f"    Precision: {precision:.2%}")
+        print(f"    Recall: {recall:.2%}")
+        print(f"    F1 Score: {f1:.3f}")
+
+# Run async evaluation
+asyncio.run(evaluate_routing_decisions())
 ```
 
 **Output:**
-```
+```text
 Retrieved 478 routing decisions from Phoenix
 
 ============================================================
@@ -1421,7 +1691,7 @@ Per-Agent Metrics:
 """
 Generate analytics reports with visualizations.
 """
-from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 from datetime import datetime, timedelta
 
 analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
@@ -1524,14 +1794,14 @@ print(f"\n✅ Full report saved to outputs/analytics_report.json")
 Evaluate existing Phoenix spans and upload results.
 """
 import asyncio
-from cogniverse_core.evaluation.span_evaluator import SpanEvaluator
+from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
 async def evaluate_historical_spans():
     """Evaluate spans from the past week."""
     evaluator = SpanEvaluator()
 
     # Get spans from last week
-    spans_df = evaluator.get_recent_spans(
+    spans_df = await evaluator.get_recent_spans(
         hours=24 * 7,  # 7 days
         operation_name="search_service.search",
         limit=5000
@@ -1560,8 +1830,8 @@ async def evaluate_historical_spans():
             print(f"      {label}: {count} ({count/len(results_df):.1%})")
 
     # Upload to Phoenix
-    print("\nUploading evaluations to Phoenix...")
-    evaluator.upload_evaluations_to_phoenix(eval_results)
+    print("\nUploading evaluations...")
+    await evaluator.upload_evaluations(eval_results)
 
     print("✅ Evaluations uploaded to Phoenix UI")
     print("   View at: http://localhost:6006/projects/default")
@@ -1571,7 +1841,7 @@ asyncio.run(evaluate_historical_spans())
 ```
 
 **Output:**
-```
+```text
 Retrieved 3,245 search spans from last week
 
 Running evaluations...
@@ -1601,7 +1871,7 @@ Evaluation Results:
       partial_match: 32 (25.2%)
       no_match: 6 (4.7%)
 
-Uploading evaluations to Phoenix...
+Uploading evaluations...
 ✅ Evaluations uploaded to Phoenix UI
    View at: http://localhost:6006/projects/default
 ```
@@ -1616,9 +1886,9 @@ Production monitoring with routing + analytics + span evaluation.
 """
 import asyncio
 from datetime import datetime, timedelta
-from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
-from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
-from cogniverse_core.evaluation.span_evaluator import SpanEvaluator
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
 async def production_monitoring_pipeline():
     """Complete monitoring pipeline for production system."""
@@ -1634,8 +1904,14 @@ async def production_monitoring_pipeline():
 
     # 1. Routing evaluation
     print("\n[1/3] Evaluating Routing Decisions...")
-    routing_eval = RoutingEvaluator()
-    routing_spans = routing_eval.query_routing_spans(
+
+    # Get telemetry provider
+    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+    registry = TelemetryRegistry()
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+
+    routing_eval = RoutingEvaluator(provider=provider)
+    routing_spans = await routing_eval.query_routing_spans(
         start_time=start_time,
         end_time=end_time,
         limit=1000
@@ -1676,7 +1952,7 @@ async def production_monitoring_pipeline():
     # 3. Span quality evaluation
     print("\n[3/3] Evaluating Search Quality...")
     span_eval = SpanEvaluator()
-    spans_df = span_eval.get_recent_spans(hours=6, limit=500)
+    spans_df = await span_eval.get_recent_spans(hours=6, limit=500)
     eval_results = await span_eval.evaluate_spans(
         spans_df,
         evaluator_names=["relevance", "diversity"]
@@ -1690,8 +1966,8 @@ async def production_monitoring_pipeline():
         if mean_score < 0.70:
             print(f"   ⚠️  WARNING: {eval_name} score below 0.70!")
 
-    # Upload evaluations to Phoenix
-    span_eval.upload_evaluations_to_phoenix(eval_results)
+    # Upload evaluations
+    await span_eval.upload_evaluations(eval_results)
 
     print("\n" + "="*70)
     print("MONITORING COMPLETE")
@@ -1703,7 +1979,7 @@ asyncio.run(production_monitoring_pipeline())
 ```
 
 **Output:**
-```
+```text
 ======================================================================
 PRODUCTION MONITORING PIPELINE
 ======================================================================
@@ -1754,15 +2030,23 @@ metadata = {
 ```
 
 **Experiment Reproducibility:**
+
 - Save experiment configurations to JSON
+
 - Version control evaluation code
+
 - Record model versions, strategy parameters
+
 - Store Phoenix project URLs for trace lookup
 
 **Cost Management:**
+
 - Limit LLM evaluator usage (expensive)
+
 - Use quality evaluators first (cheap, fast)
+
 - Sample large datasets for quick validation
+
 - Cache evaluation results
 
 ---
@@ -1914,23 +2198,250 @@ def get_or_evaluate_span(span_id, evaluator):
 
 ---
 
+## Inspect AI Integration
+
+The evaluation module integrates with [Inspect AI](https://github.com/UKGovernmentBEIS/inspect_ai) for structured evaluation tasks.
+
+### Scorers (core/scorers.py)
+
+Schema-driven scorers that work with any data type.
+
+**Available Scorers:**
+
+| Scorer | Description |
+|--------|-------------|
+| `relevance_scorer()` | Keyword-based relevance (schema-agnostic) |
+| `diversity_scorer()` | Result diversity using video_id deduplication |
+| `precision_scorer()` | Precision from ground truth (requires expected_items) |
+| `recall_scorer()` | Recall from ground truth |
+| `schema_aware_temporal_scorer()` | Temporal constraint satisfaction |
+
+**Configuration:**
+
+```python
+from cogniverse_evaluation.core.scorers import get_configured_scorers
+
+scorers = get_configured_scorers({
+    "use_relevance": True,
+    "use_diversity": True,
+    "use_temporal": False,
+    "use_precision_recall": False,
+    "enable_llm_evaluators": False,  # Adds visual scorers
+})
+```
+
+### Solvers (core/solvers.py)
+
+Solvers execute searches and collect results for scorer evaluation.
+
+**Available Solvers:**
+
+```python
+from cogniverse_evaluation.core.solvers import (
+    create_retrieval_solver,
+    create_batch_solver,
+    create_live_solver
+)
+
+# New search solver - runs actual searches
+retrieval_solver = create_retrieval_solver(
+    profiles=["video_colpali_smol500_mv_frame"],
+    strategies=["hybrid_float_bm25", "binary_binary"],
+    config={"top_k": 10}
+)
+
+# Batch solver - loads existing Phoenix traces with ground truth extraction
+batch_solver = create_batch_solver(
+    trace_ids=None,  # None for recent traces
+    config={
+        "project_name": "cogniverse-default",
+        "hours_back": 24,
+        "limit": 100,
+        "ground_truth_strategy": "keyword"
+    }
+)
+
+# Live solver - monitors and evaluates live traces
+live_solver = create_live_solver(
+    config={
+        "project_name": "cogniverse-default",
+        "poll_interval": 10,
+        "max_iterations": 10
+    }
+)
+```
+
+### Inspect Tasks (inspect_tasks/)
+
+Pre-built Inspect AI tasks for video evaluation:
+
+```python
+from cogniverse_evaluation.inspect_tasks.video_retrieval import (
+    video_retrieval_accuracy,
+    temporal_understanding,
+    multimodal_alignment
+)
+
+# Video retrieval evaluation
+task = video_retrieval_accuracy(
+    profiles=["video_colpali_smol500_mv_frame"],
+    strategies=["hybrid_float_bm25"],
+    dataset_path="data/golden_queries.csv"
+)
+
+# Temporal understanding evaluation
+temporal_task = temporal_understanding(
+    profiles=["video_videoprism_lvt_base_sv_global"],
+    dataset_path="data/temporal_queries.csv"
+)
+
+# Cross-modal alignment
+alignment_task = multimodal_alignment(
+    profiles=["video_colpali_smol500_mv_frame"]
+)
+```
+
+---
+
+## Plugin System
+
+Schema analyzers provide domain-specific evaluation capabilities.
+
+### VideoSchemaAnalyzer (plugins/video_analyzer.py)
+
+Analyzes video-specific schemas and queries.
+
+**Detection Logic:**
+
+```python
+def can_handle(self, schema_name: str, schema_fields: dict) -> bool:
+    # Checks for "video", "frame", "clip" in schema name
+    # Or video-specific fields: video_id, frame_id, audio_transcript, etc.
+```
+
+**Query Analysis:**
+
+```python
+analyzer = VideoSchemaAnalyzer()
+constraints = analyzer.analyze_query(
+    query="first 30 seconds with cars driving",
+    schema_fields={"temporal_fields": ["start_time", "end_time"]}
+)
+# Returns:
+# {
+#     "query_type": "video_temporal",
+#     "temporal_constraints": {"first_n_seconds": ("30",)},
+#     "visual_descriptors": {"motions": ["driving"]},
+#     "audio_constraints": {},
+#     "frame_constraints": {}
+# }
+```
+
+**Supported Patterns:**
+
+| Pattern | Constraint Type |
+|---------|-----------------|
+| `first N seconds` | first_n_seconds |
+| `at MM:SS` | at_timestamp |
+| `between MM:SS and MM:SS` | time_range |
+| `frame N` | frame_number |
+| Colors (red, blue, etc.) | visual_descriptors.colors |
+| Motion words (running, driving) | visual_descriptors.motions |
+| Scene types (indoor, outdoor) | visual_descriptors.scenes |
+| `"quoted speech"` | audio_constraints.exact_speech |
+
+### DocumentSchemaAnalyzer (plugins/document_analyzer.py)
+
+Analyzes document/text search schemas.
+
+**Detection Logic:**
+
+```python
+def can_handle(self, schema_name: str, schema_fields: dict) -> bool:
+    # Checks for "document", "text", "article", "page" in schema name
+    # Or document-specific fields: document_id, title, author, content, etc.
+```
+
+**Query Analysis:**
+
+```python
+analyzer = DocumentSchemaAnalyzer()
+constraints = analyzer.analyze_query(
+    query='author:"smith" title:"machine learning" after:2024-01-01',
+    schema_fields={}
+)
+# Returns:
+# {
+#     "query_type": "document_author",
+#     "author_constraints": {"author": "smith"},
+#     "field_constraints": {"title": "machine learning"},
+#     "date_constraints": {"after_date": "2024-01-01"}
+# }
+```
+
+### ImageSchemaAnalyzer (plugins/document_analyzer.py)
+
+Analyzes image search schemas with color, size, and composition detection.
+
+**Supported Patterns:**
+
+| Pattern | Constraint Type |
+|---------|-----------------|
+| Colors (red, blue) | color_constraints |
+| `portrait`, `landscape`, `square` | composition.orientation |
+| `close-up`, `wide`, `aerial` | composition.shot_type |
+| `indoor`, `outdoor` | scene.type |
+
+### VisualEvaluator Plugin (plugins/visual_evaluator.py)
+
+Provides visual evaluation scorers for Inspect AI.
+
+```python
+from cogniverse_evaluation.plugins.visual_evaluator import get_visual_scorers
+
+scorers = get_visual_scorers({
+    "model_name": "vidore/colsmol-500m",
+    "evaluate_top_k": 5
+})
+# Returns: [visual_relevance_scorer(), visual_diversity_scorer()]
+```
+
+**VisualRelevanceEvaluator:**
+
+Uses ColPali embeddings to compare query-frame similarity:
+
+```python
+from cogniverse_evaluation.evaluators.visual_judge import VisualRelevanceEvaluator
+
+evaluator = VisualRelevanceEvaluator(model_name="vidore/colsmol-500m")
+result = evaluator.evaluate(
+    input={"query": "robots playing soccer"},
+    output={"results": [{"frame_path": "frame1.jpg"}, ...]}
+)
+# Returns: score (0-1), label (highly_relevant/relevant/not_relevant), explanation
+```
+
+---
+
 ## Testing
 
 ### Key Test Files
 
 **Unit Tests:**
+
 - `tests/evaluation/unit/test_experiment_tracker.py`
   - Experiment configuration
   - Dataset management
   - Result formatting
 
 **Integration Tests:**
+
 - `tests/evaluation/integration/test_routing_evaluator_integration.py`
   - Phoenix span querying
   - Routing metric calculation
   - Confidence calibration
 
-- `tests/routing/integration/test_phoenix_span_evaluator_integration.py`
+- `tests/routing/integration/test_routing_span_evaluator_integration.py`
   - Span evaluation pipeline
   - Evaluator integration
   - Phoenix upload
@@ -1953,7 +2464,13 @@ def test_experiment_configurations():
 ```python
 def test_routing_metrics_calculation():
     """Verify routing metrics calculation."""
-    evaluator = RoutingEvaluator()
+    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+
+    # Get telemetry provider
+    registry = TelemetryRegistry()
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+
+    evaluator = RoutingEvaluator(provider=provider)
 
     # Mock spans with known outcomes
     spans = create_mock_routing_spans(
@@ -1984,11 +2501,17 @@ def test_outlier_detection():
 ---
 
 **Test Coverage:**
+
 - Experiment configuration: ✅
+
 - Dataset management: ✅
+
 - Routing evaluation: ✅
+
 - Analytics calculations: ✅
+
 - Visualization generation: ✅
+
 - Phoenix integration: ✅
 
 ---
@@ -1998,34 +2521,55 @@ def test_outlier_detection():
 The Evaluation Module provides **comprehensive experiment tracking and performance analysis** with:
 
 **Core Features:**
+
 - ✅ Inspect AI-based experiment framework
+
 - ✅ Routing-specific evaluation (separate from search)
+
 - ✅ Phoenix analytics with visualizations
+
 - ✅ Retrospective span evaluation
+
 - ✅ Multi-evaluator support (quality, LLM, golden)
 
 **Production Strengths:**
+
 - Experiment reproducibility with versioned datasets
+
 - Routing confidence calibration monitoring
+
 - Automated performance alerting
+
 - Statistical analysis with outlier detection
+
 - Interactive Plotly visualizations
 
 **Integration Points:**
+
 - Phoenix for trace storage and visualization
+
 - Inspect AI for evaluation execution
+
 - Quality evaluators for automated assessment
+
 - Dataset management for golden datasets
 
 ---
 
 **For detailed examples and production configurations, see:**
-- Architecture Overview: `docs/study_guides/00_ARCHITECTURE_OVERVIEW.md`
+
+- Architecture Overview: `docs/architecture/overview.md`
+
 - Routing Module: `docs/modules/routing.md`
+
 - Telemetry Module: `docs/modules/telemetry.md`
 
 **Source Files:**
-- ExperimentTracker: `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py`
-- RoutingEvaluator: `libs/core/cogniverse_core/evaluation/evaluators/routing_evaluator.py`
-- PhoenixAnalytics: `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
-- SpanEvaluator: `libs/core/cogniverse_core/evaluation/span_evaluator.py`
+
+- ExperimentTracker: `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py`
+
+- RoutingEvaluator: `libs/evaluation/cogniverse_evaluation/evaluators/routing_evaluator.py`
+
+- PhoenixAnalytics: `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py`
+
+- SpanEvaluator: `libs/evaluation/cogniverse_evaluation/span_evaluator.py`

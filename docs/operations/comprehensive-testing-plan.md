@@ -1,7 +1,5 @@
 # Comprehensive System Testing Plan
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages in layered architecture
 **Purpose**: Bottom-up manual testing and learning guide for Cogniverse
 **Approach**: Start with foundational subsystems, validate each layer, build upward
 **Goal**: Thorough understanding and validation of the complete system
@@ -11,16 +9,25 @@
 ## Testing Philosophy
 
 **Bottom-Up Approach:**
+
 1. Validate foundation before building on it
+
 2. Each layer depends on layers below it
+
 3. Fix issues at lowest level first
+
 4. Document learnings and discoveries
 
 **For Each Subsystem:**
+
 - ✅ **Purpose**: Understand what it does and why
+
 - ✅ **Basic Tests**: Core functionality works
+
 - ✅ **Advanced Tests**: Edge cases and features
+
 - ✅ **Integration Tests**: Works with dependent layers
+
 - ✅ **Learnings**: Document key insights
 
 ---
@@ -47,8 +54,11 @@ curl http://localhost:8080/ApplicationStatus
 ```
 
 **Learning Points:**
+
 - Vespa is the foundation - everything else needs it
+
 - Default port: 8080
+
 - State API provides health checks
 
 ### 1.2 Schema Validation
@@ -69,8 +79,11 @@ curl "http://localhost:8080/search/?yql=select+*+from+video_colpali_smol500_mv_f
 ```
 
 **Learning Points:**
+
 - Schemas are tenant-isolated: `{profile}_{tenant_id}`
+
 - Multiple profiles can exist per tenant
+
 - Default tenant: "default"
 
 ### 1.3 Document Ingestion Test
@@ -104,8 +117,11 @@ curl "http://localhost:8080/search/?yql=select+*+from+video_colpali_smol500_mv_f
 ```
 
 **Learning Points:**
+
 - Ingestion creates embeddings and metadata
+
 - Documents have video_id, frame_number, embeddings, metadata
+
 - Each profile has different embedding dimensions
 
 ### 1.4 Basic Search Test
@@ -120,8 +136,11 @@ curl "http://localhost:8080/search/?yql=select+video_id,video_title,frame_number
 ```
 
 **Learning Points:**
+
 - Vespa provides vector search via embeddings
+
 - Results ranked by relevance
+
 - Can filter by fields (video_id, timestamp, etc.)
 
 **✅ Layer 1 Complete**: Vespa storage working, schemas deployed, documents ingested and searchable
@@ -151,8 +170,11 @@ open http://localhost:6006
 ```
 
 **Learning Points:**
+
 - Phoenix: observability platform for LLM apps
+
 - Port 6006
+
 - UI provides span visualization
 
 ### 2.2 Project Structure
@@ -171,12 +193,17 @@ for project in projects:
 ```
 
 **Expected projects:**
+
 - `cogniverse-default-search` (search telemetry)
+
 - `cogniverse-default-routing` (routing decisions)
+
 - `cogniverse-default-orchestration` (multi-agent workflows)
 
 **Learning Points:**
+
 - Projects isolate telemetry by tenant and function
+
 - Naming: `cogniverse-{tenant_id}-{function}`
 
 ### 2.3 Span Collection Test
@@ -215,8 +242,11 @@ if len(spans_df) > 0:
 ```
 
 **Learning Points:**
+
 - Spans capture operation traces
+
 - Attributes store metadata (query, results, latency, etc.)
+
 - Can query by time range and project
 
 ### 2.4 Span Attributes Validation
@@ -243,8 +273,11 @@ for attr in search_attributes:
 ```
 
 **Learning Points:**
+
 - Search spans include query, results, profile, strategy
+
 - Can filter spans by attributes
+
 - Used for optimization and analytics
 
 **✅ Layer 2 Complete**: Phoenix collecting telemetry, spans queryable, attributes validated
@@ -259,19 +292,22 @@ for attr in search_attributes:
 
 **Check Mem0 initialization:**
 ```python
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
-# Initialize manager
-manager = Mem0MemoryManager()
+# Initialize manager (requires tenant_id)
+manager = Mem0MemoryManager(tenant_id="default")
 manager.initialize()
 
-print(f"Memory manager initialized: {manager.client is not None}")
+print(f"Memory manager initialized: {manager.memory is not None}")
 ```
 
 **Learning Points:**
+
 - Mem0 stores agent memories and user preferences
+
 - Initialized on first use
-- Isolated by tenant_id + agent_id
+
+- Isolated by tenant_id + agent_name
 
 ### 3.2 Memory Storage Test
 
@@ -279,10 +315,10 @@ print(f"Memory manager initialized: {manager.client is not None}")
 ```python
 # Add memory for routing agent
 manager.add_memory(
-    messages="User prefers video results for cooking queries",
-    user_id="test_user",
-    agent_id="routing_agent",
-    metadata={"context": "preference_learning", "tenant_id": "default"}
+    content="User prefers video results for cooking queries",
+    tenant_id="default",
+    agent_name="routing_agent",
+    metadata={"context": "preference_learning"}
 )
 
 print("Memory added successfully")
@@ -293,9 +329,9 @@ print("Memory added successfully")
 # Search for memory
 results = manager.search_memory(
     query="cooking preferences",
-    user_id="test_user",
-    agent_id="routing_agent",
-    limit=5
+    tenant_id="default",
+    agent_name="routing_agent",
+    top_k=5
 )
 
 for i, result in enumerate(results, 1):
@@ -306,18 +342,21 @@ for i, result in enumerate(results, 1):
 ```
 
 **Learning Points:**
+
 - Memories are searchable (semantic search)
+
 - Score indicates relevance
+
 - Metadata provides context
 
 ### 3.3 Memory Lifecycle
 
 **Get all memories:**
 ```python
-# Get all memories for user
+# Get all memories for agent
 all_memories = manager.get_all_memories(
-    user_id="test_user",
-    agent_id="routing_agent"
+    tenant_id="default",
+    agent_name="routing_agent"
 )
 
 print(f"Total memories: {len(all_memories)}")
@@ -329,13 +368,20 @@ print(f"Total memories: {len(all_memories)}")
 memory_id = all_memories[0]['id'] if all_memories else None
 
 if memory_id:
-    manager.delete_memory(memory_id=memory_id)
+    manager.delete_memory(
+        memory_id=memory_id,
+        tenant_id="default",
+        agent_name="routing_agent"
+    )
     print(f"Deleted memory: {memory_id}")
 ```
 
 **Learning Points:**
+
 - Memories persist across sessions
+
 - Can be deleted individually or bulk cleared
+
 - Memory manager handles CRUD operations
 
 **✅ Layer 3 Complete**: Mem0 storing and retrieving memories, lifecycle operations working
@@ -348,24 +394,22 @@ if memory_id:
 
 ### 4.1 Configuration Management
 
-**Test ConfigStore:**
+**Test SystemConfig:**
 ```python
-from cogniverse_foundation.config.unified_config import BaseConfig
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Get system config for tenant
-# SystemConfig inherits from BaseConfig (foundation layer)
 system_config = SystemConfig(
     tenant_id="default",
     llm_model="gpt-4",
-    vespa_url="http://localhost",
-    vespa_port=8080
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
 print(f"LLM Model: {system_config.llm_model}")
-print(f"Search Backend: vespa")
-print(f"Vespa URL: {system_config.vespa_url}")
-print(f"Vespa Port: {system_config.vespa_port}")
+print(f"Search Backend: {system_config.search_backend}")
+print(f"Backend URL: {system_config.backend_url}")
+print(f"Backend Port: {system_config.backend_port}")
 ```
 
 **Test config override:**
@@ -374,8 +418,8 @@ print(f"Vespa Port: {system_config.vespa_port}")
 tenant_config = SystemConfig(
     tenant_id="test_tenant",
     llm_model="gpt-3.5-turbo",
-    vespa_url="http://localhost",
-    vespa_port=8080
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
 # Config would be saved via ConfigManager
@@ -383,40 +427,47 @@ print(f"Tenant config LLM: {tenant_config.llm_model}")
 ```
 
 **Learning Points:**
-- SystemConfig (core layer) builds on BaseConfig (foundation layer)
+
+- SystemConfig defined in foundation layer
+
 - Tenant-specific configurations supported
-- Default configs in libs/core/ and libs/foundation/
+
+- Default configs in libs/foundation/
 
 ### 4.2 Telemetry Manager
 
-**Test TelemetryManager:**
+**Test TelemetryProvider:**
 ```python
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 # Initialize Phoenix provider (from telemetry-phoenix package)
+config = TelemetryConfig()
 telemetry = PhoenixProvider(
-    tenant_id="default",
-    project_name="default_project"
+    config=config,
+    tenant_id="default"
 )
 
 # Check Phoenix connection
-print(f"Phoenix project: {telemetry.project_name}")
-print(f"Telemetry enabled: {telemetry.enabled}")
+print(f"Phoenix endpoint: {config.provider_config.get('http_endpoint', 'default')}")
+print(f"Telemetry enabled: {config.enabled}")
 ```
 
 **Learning Points:**
+
 - PhoenixProvider (telemetry-phoenix package) implements TelemetryProvider interface (foundation)
+
 - Auto-creates projects per tenant
+
 - Provides span export utilities via foundation layer interfaces
 
 ### 4.3 Tenant-Aware Components
 
-**Test TenantAwareMixin:**
+**Test TenantAwareAgentMixin:**
 ```python
-from cogniverse_core.common.tenant_aware_mixin import TenantAwareMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 
-class TestComponent(TenantAwareMixin):
+class TestComponent(TenantAwareAgentMixin):
     def __init__(self, tenant_id: str):
         super().__init__(tenant_id=tenant_id)
 
@@ -429,8 +480,11 @@ print(component.get_info())
 ```
 
 **Learning Points:**
-- TenantAwareMixin provides tenant isolation
+
+- TenantAwareAgentMixin provides tenant isolation
+
 - qualified_tenant_id includes org prefix
+
 - All agents/components inherit this
 
 **✅ Layer 4 Complete**: Core abstractions working, config/telemetry/memory managers functional
@@ -445,86 +499,108 @@ print(component.get_info())
 
 **Test backend usage:**
 ```python
-from cogniverse_sdk.interfaces.backend import Backend
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# VespaSearchClient implements Backend interface from sdk layer
-backend = VespaSearchClient(
+# VespaVideoSearchClient requires config_manager (REQUIRED parameter)
+config_manager = create_default_config_manager()
+backend = VespaVideoSearchClient(
     vespa_url="http://localhost",
     vespa_port=8080,
-    tenant_id="default"
+    tenant_id="default",
+    config_manager=config_manager  # REQUIRED - no default value
 )
 
 print(f"Backend type: {type(backend).__name__}")
-print(f"Vespa URL: {backend.vespa_url}")
-print(f"Vespa Port: {backend.vespa_port}")
 ```
 
 **Learning Points:**
+
 - Backend implementations (vespa package) use interfaces from sdk layer
+
 - Provides tenant-aware search operations
+
 - Handles schema management and routing
 
 ### 5.2 Profile Management
 
 **Test profile loading:**
 ```python
-# List available profiles
-profiles = backend.get_available_profiles()
+# Profiles are managed via config_manager, not directly through backend
+from cogniverse_foundation.config.utils import get_config
+
+config = get_config(tenant_id="default", config_manager=config_manager)
+
+# List available profiles from config
+profiles = config.backend_profile_configs
 print(f"Available profiles: {list(profiles.keys())}")
 
 # Get profile config
-profile_config = backend.get_profile_config("video_colpali_smol500_mv_frame")
-print(f"\nProfile config:")
-print(f"  Model: {profile_config.get('model')}")
-print(f"  Embedding dim: {profile_config.get('embedding_dimension')}")
-print(f"  Chunk strategy: {profile_config.get('chunk_strategy')}")
+if "video_colpali_smol500_mv_frame" in profiles:
+    profile_config = profiles["video_colpali_smol500_mv_frame"]
+    print(f"\nProfile config:")
+    print(f"  Encoder type: {profile_config.get('encoder_type')}")
+    print(f"  Embedding dim: {profile_config.get('embedding_dimension')}")
 ```
 
 **Learning Points:**
+
 - Profiles define processing pipelines
-- Each profile: model + embedding dim + chunk strategy
-- Stored in backend.video_processing_profiles
+
+- Each profile: encoder type + embedding dim + processing strategy
+
+- Managed via foundation config layer, not directly through backend
 
 ### 5.3 Tenant Schema Management
 
 **Test schema deployment:**
 ```python
-from cogniverse_vespa.schema.json_schema_parser import JSONSchemaParser
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize schema parser
-parser = JSONSchemaParser()
-schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol500_mv_frame.json")
+parser = JsonSchemaParser()
+schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol500_mv_frame_schema.json")
 
 # Initialize Vespa client for tenant
-client = VespaSearchClient(
+config_manager = create_default_config_manager()
+client = VespaVideoSearchClient(
     vespa_url="http://localhost",
     vespa_port=8080,
-    tenant_id="test_tenant"
+    tenant_id="test_tenant",
+    config_manager=config_manager
 )
 
-# Deploy schema
-# Schema will be tenant-isolated
-print(f"Schema deployed for tenant: test_tenant")
-print(f"Schema name includes tenant suffix")
+# Schema deployment is handled automatically during ingestion
+# Tenant-specific schemas follow pattern: {profile}_{tenant_id}
+print(f"Schema will be deployed for tenant: test_tenant")
+print(f"Schema naming: video_colpali_smol500_mv_frame_test_tenant")
 ```
 
 **Learning Points:**
+
 - Schema management in vespa package
+
 - Tenant-specific schema isolation
+
 - Auto-creates schemas on first use
 
 ### 5.4 Search Execution
 
 **Test search via backend:**
 ```python
-# Simple search
+# Simple search using VespaVideoSearchClient
+query_params = {
+    "query": "test video",
+    "ranking": "bm25_only",  # or "hybrid_float_bm25", "binary_binary", etc.
+    "top_k": 5
+}
+
 results = backend.search(
-    query="test video",
-    tenant_id="default",
-    profile="video_colpali_smol500_mv_frame",
-    limit=5
+    query_params=query_params,
+    embeddings=None,  # Optional: provide embeddings for visual strategies
+    schema="video_colpali_smol500_mv_frame_default"  # Tenant-specific schema
 )
 
 print(f"Search results: {len(results)} found")
@@ -535,8 +611,11 @@ for i, result in enumerate(results[:3], 1):
 ```
 
 **Learning Points:**
+
 - Backend abstracts Vespa queries
+
 - Returns normalized result format
+
 - Handles tenant-specific schema routing
 
 **✅ Layer 5 Complete**: Backend abstraction working, profile management functional, schema deployment automated
@@ -552,12 +631,20 @@ for i, result in enumerate(results[:3], 1):
 **Test SyntheticDataService:**
 ```python
 from cogniverse_synthetic.service import SyntheticDataService
+from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-# Initialize service
+# Initialize service with backend and config
+backend_config = BackendConfig(
+    tenant_id="default",
+    url="http://localhost",
+    port=8080
+)
+generator_config = SyntheticGeneratorConfig(tenant_id="default")
+
 service = SyntheticDataService(
-    vespa_url="http://localhost",
-    vespa_port=8080,
-    tenant_id="default"
+    backend=backend,  # Backend instance
+    backend_config=backend_config,
+    generator_config=generator_config
 )
 
 print(f"Service initialized")
@@ -565,8 +652,11 @@ print(f"Synthetic data generators available")
 ```
 
 **Learning Points:**
+
 - Part of implementation layer
+
 - Service coordinates data generation for optimization
+
 - Integrates with vespa package for data sampling
 
 ### 6.2 Profile Selection
@@ -594,8 +684,11 @@ print(f"Reasoning: {response.profile_selection_reasoning}")
 ```
 
 **Learning Points:**
+
 - Profile selector chooses best profiles for optimizer
+
 - Rule-based (heuristic) or LLM-based
+
 - Returns reasoning for transparency
 
 ### 6.3 Data Generation
@@ -626,15 +719,19 @@ print(f"Schema: {response_cm.schema_name}")
 ```
 
 **Learning Points:**
+
 - Each optimizer has dedicated generator
+
 - Schema defines example structure
+
 - Data sampled from real Vespa content
 
 ### 6.4 Optimizer Registry
 
 **Test optimizer registry:**
 ```python
-from cogniverse_synthetic import OPTIMIZER_REGISTRY, get_optimizer_config
+from cogniverse_synthetic import OPTIMIZER_REGISTRY
+from cogniverse_synthetic.registry import get_optimizer_config
 
 # List all optimizers
 for name in OPTIMIZER_REGISTRY.keys():
@@ -646,8 +743,11 @@ for name in OPTIMIZER_REGISTRY.keys():
 ```
 
 **Learning Points:**
+
 - Registry maps optimizer → generator + schema
+
 - Supports: modality, cross_modal, routing, workflow, unified
+
 - Extensible for new optimizers
 
 **✅ Layer 6 Complete**: Synthetic data generation working, profile selection functional, optimizer-specific generators validated
@@ -662,16 +762,21 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 **Test VideoSearchAgent:**
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+# config_manager is REQUIRED for VideoSearchAgent
+config_manager = create_default_config_manager()
 
 # Initialize agent (inherits from core layer base classes)
 agent = VideoSearchAgent(
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
-    profile="video_colpali_smol500_mv_frame"
+    config_manager=config_manager  # REQUIRED - raises ValueError if None
 )
 
-# Run search
-result = await agent.search(
+# Run search (synchronous)
+result = agent.search(
     query="machine learning tutorials",
     top_k=10
 )
@@ -683,39 +788,57 @@ print(f"  Profile used: video_colpali_smol500_mv_frame")
 
 **Test routing agents:**
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# Routing Agent
-router = RoutingAgent(tenant_id="default")
-decision = await router.route(query="Find videos about Python")
+# RoutingAgent requires RoutingDeps (typed dependencies)
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+router = RoutingAgent(deps=deps)  # deps is REQUIRED parameter
+
+# route_query is async method
+decision = await router.route_query(query="Find videos about Python")
 
 print(f"Routing decision: {decision}")
 ```
 
 **Learning Points:**
+
 - Agents in implementation layer use core layer base classes
+
 - Integrate with vespa package for backend operations
+
 - Tenant-aware by default
 
 ### 7.2 Routing Agent
 
 **Test RoutingAgent:**
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# Initialize routing agent
-router = RoutingAgent(tenant_id="default")
+# Initialize routing agent with typed dependencies (RoutingDeps is REQUIRED)
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+router = RoutingAgent(deps=deps)  # deps parameter is REQUIRED
 
-# Test routing decision
+# Test routing decision (async method)
 routing_result = await router.route_query(
     query="Show me videos about Python programming"
 )
 
 print(f"Routing decision:")
-print(f"  Recommended workflow: {routing_result.get('recommended_workflow')}")
-print(f"  Primary agent: {routing_result.get('primary_agent')}")
-print(f"  Confidence: {routing_result.get('routing_confidence')}")
-print(f"  Reasoning: {routing_result.get('reasoning')}")
+print(f"  Recommended agent: {routing_result.recommended_agent}")
+print(f"  Confidence: {routing_result.confidence}")
+print(f"  Reasoning: {routing_result.reasoning}")
 ```
 
 **Test routing with different query types:**
@@ -729,14 +852,17 @@ report_routing = await router.route_query("Create a detailed analysis of climate
 # Comparison queries
 compare_routing = await router.route_query("Compare Python and Java for web development")
 
-print(f"Video query → {video_routing['primary_agent']}")
-print(f"Report query → {report_routing['primary_agent']}")
-print(f"Compare query → {compare_routing['primary_agent']}")
+print(f"Video query → {video_routing.recommended_agent}")
+print(f"Report query → {report_routing.recommended_agent}")
+print(f"Compare query → {compare_routing.recommended_agent}")
 ```
 
 **Learning Points:**
+
 - RoutingAgent decides which agent to use
+
 - Uses tiered routing: keyword → GLiNER → LLM
+
 - Returns workflow + confidence + reasoning
 
 ### 7.3 Modality Optimizer
@@ -765,8 +891,11 @@ print(f"  Examples: {result.get('examples_count')}")
 ```
 
 **Learning Points:**
+
 - ModalityOptimizer trains per-modality routing
+
 - Uses XGBoost meta-models for training decisions
+
 - Auto-generates synthetic data if needed
 
 ### 7.4 Cross-Modal Optimizer
@@ -774,21 +903,30 @@ print(f"  Examples: {result.get('examples_count')}")
 **Test CrossModalOptimizer:**
 ```python
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize optimizer
 cm_optimizer = CrossModalOptimizer(tenant_id="default")
 
-# Run optimization
-result = await cm_optimizer.optimize()
+# Predict if fusion would help for a query
+benefit = cm_optimizer.predict_fusion_benefit(
+    primary_modality=QueryModality.VIDEO,
+    primary_confidence=0.7,
+    secondary_modality=QueryModality.DOCUMENT,
+    secondary_confidence=0.6,
+    query_text="machine learning tutorial"
+)
 
-print(f"Cross-modal optimization:")
-print(f"  Status: {result.get('status')}")
-print(f"  Fusion patterns learned: {result.get('patterns_learned')}")
+print(f"Cross-modal fusion benefit: {benefit:.3f}")
+print(f"Recommendation: {'Use fusion' if benefit > 0.5 else 'Single modality sufficient'}")
 ```
 
 **Learning Points:**
+
 - CrossModalOptimizer learns fusion decisions
+
 - When to combine multiple modalities
+
 - When single modality is sufficient
 
 ### 7.5 Advanced Routing Optimizer (GRPO)
@@ -823,8 +961,11 @@ print(f"Avg reward: {status['metrics']['avg_reward']:.3f}")
 ```
 
 **Learning Points:**
+
 - GRPO uses experience replay for learning
+
 - Computes reward from multiple signals
+
 - Auto-selects DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
 
 **✅ Layer 7 Complete**: Individual agents working, routing decisions functional, optimizers trainable
@@ -840,7 +981,7 @@ print(f"Avg reward: {status['metrics']['avg_reward']:.3f}")
 **Start runtime server:**
 ```bash
 # Start server (application layer)
-JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.server.main
+JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.main
 
 # Verify startup in logs
 # Expected: "Uvicorn running on http://0.0.0.0:8000"
@@ -854,96 +995,140 @@ curl http://localhost:8000/health
 ```
 
 **Learning Points:**
+
 - Runtime is in application layer
+
 - Integrates agents, vespa, synthetic, and evaluation packages
+
 - Port 8000 (default)
+
 - Health check validates all services
 
 ### 8.2 Search Endpoints
 
 **Test search API:**
 ```bash
-# Text search
-curl -X POST http://localhost:8000/search/text \
+# Unified search endpoint
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "machine learning tutorials",
     "tenant_id": "default",
     "profile": "video_colpali_smol500_mv_frame",
-    "limit": 5
+    "strategy": "hybrid",
+    "top_k": 5
   }'
 
 # Should return JSON with results
 ```
 
-**Test multi-profile search:**
+**Test streaming search:**
 ```bash
-curl -X POST http://localhost:8000/search/multi-profile \
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Python programming",
     "tenant_id": "default",
-    "profiles": [
-      "video_colpali_smol500_mv_frame",
-      "video_videoprism_base_mv_chunk_30s"
-    ],
-    "limit": 10
+    "profile": "video_colpali_smol500_mv_frame",
+    "top_k": 10,
+    "stream": true
   }'
+
+# Returns SSE stream for real-time results
 ```
 
 **Learning Points:**
-- /search/text for single profile
-- /search/multi-profile for multiple profiles
-- Results aggregated and ranked
+
+- Single unified /search/ endpoint for all search operations
+
+- Set stream: true for server-sent events (SSE) streaming
+
+- Results include profile info and result count
 
 ### 8.3 Routing Endpoints
 
-**Test routing API:**
-```bash
-curl -X POST http://localhost:8000/routing/route \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Show me cooking videos",
-    "tenant_id": "default"
-  }'
+**Test routing via agent:**
+```python
+# Routing is handled by RoutingAgent, typically not exposed as direct REST endpoint
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# Returns: recommended_workflow, primary_agent, confidence, reasoning
+# Initialize routing agent with typed dependencies
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+router = RoutingAgent(deps=deps)  # deps is REQUIRED
+
+# Route query (async method)
+decision = await router.route_query("Show me cooking videos")
+
+print(f"Routing decision:")
+print(f"  Recommended agent: {decision.recommended_agent}")
+print(f"  Confidence: {decision.confidence}")
+print(f"  Reasoning: {decision.reasoning}")
 ```
 
 **Learning Points:**
-- /routing/route for query routing
-- Returns workflow recommendation
-- Includes confidence and reasoning
+
+- Routing is typically done programmatically via RoutingAgent
+
+- Returns recommended agent with confidence and reasoning
+
+- Includes enhanced query and extracted entities/relationships
 
 ### 8.4 Synthetic Data Endpoints
 
 **Test synthetic data generation:**
-```bash
-curl -X POST http://localhost:8000/synthetic/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "optimizer": "modality",
-    "count": 10,
-    "vespa_sample_size": 50,
-    "strategies": ["diverse"],
-    "max_profiles": 2,
-    "tenant_id": "default"
-  }'
+```python
+# Synthetic data service is typically used programmatically, not via REST API
+from cogniverse_synthetic.service import SyntheticDataService
+from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-# Returns: generated examples with metadata
+# Initialize service
+backend_config = BackendConfig(tenant_id="default", url="http://localhost", port=8080)
+generator_config = SyntheticGeneratorConfig(tenant_id="default")
+
+service = SyntheticDataService(
+    backend=None,  # Or pass actual backend instance
+    backend_config=backend_config,
+    generator_config=generator_config
+)
+
+# Create request
+request = SyntheticDataRequest(
+    optimizer="modality",
+    count=10,
+    vespa_sample_size=50,
+    strategies=["diverse"],
+    max_profiles=2,
+    tenant_id="default"
+)
+
+# Generate data
+response = await service.generate(request)
+print(f"Generated {response.count} examples")
+print(f"Selected profiles: {response.selected_profiles}")
 ```
 
 **List available optimizers:**
-```bash
-curl http://localhost:8000/synthetic/optimizers
+```python
+from cogniverse_synthetic import OPTIMIZER_REGISTRY
 
-# Returns: {"modality": "Per-modality routing...", ...}
+for name in OPTIMIZER_REGISTRY.keys():
+    print(f"- {name}")
 ```
 
 **Learning Points:**
-- /synthetic/generate creates training data
-- /synthetic/optimizers lists available types
-- Integrated with backend auto-discovery
+
+- Synthetic data service used programmatically (implementation layer)
+
+- OPTIMIZER_REGISTRY lists available optimizer types
+
+- Integrates with backend for content sampling
 
 ### 8.5 Admin Endpoints
 
@@ -970,8 +1155,11 @@ curl -X POST http://localhost:8000/admin/tenants \
 ```
 
 **Learning Points:**
+
 - Admin endpoints for tenant management
+
 - Organization → Tenant hierarchy
+
 - Tenant format: {org}:{name}
 
 **✅ Layer 8 Complete**: Runtime API functional, all endpoints responding, multi-tenant support working
@@ -984,124 +1172,194 @@ curl -X POST http://localhost:8000/admin/tenants \
 
 ### 9.1 Dashboard Startup
 
-**Start Phoenix dashboard:**
+**Start dashboard:**
 ```bash
 # Dashboard from application layer package
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+
+# Or use the standalone script
+uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 
 # Open browser
 open http://localhost:8501
 ```
 
 **Learning Points:**
-- Dashboard in application layer (10th package)
+
+- Dashboard in application layer (one of 11 packages)
+
 - Integrates with evaluation, telemetry-phoenix, and core packages
+
 - Tabs for analytics, evaluation, config, memory, and optimization
 
 ### 9.2 Analytics Tab
 
 **Test Analytics:**
+
 1. Navigate to "📊 Analytics" tab
+
 2. Select time range (1h, 24h, 7d)
+
 3. Select tenant: "default"
+
 4. Click "🔄 Refresh Metrics"
 
 **Verify metrics displayed:**
+
 - Total queries
+
 - Avg latency
+
 - Success rate
+
 - Query distribution chart
+
 - Latency trends
 
 **Learning Points:**
+
 - Analytics pulls from Phoenix spans
+
 - Real-time metrics
+
 - Filterable by tenant and time range
 
 ### 9.3 Evaluation Tab
 
 **Test Evaluation:**
+
 1. Navigate to "📈 Evaluation" tab
+
 2. Select experiments to compare
+
 3. View metrics comparison
 
 **Verify evaluation data:**
+
 - NDCG@10 scores
+
 - Precision/Recall
+
 - Profile comparison
+
 - Query-level breakdown
 
 **Learning Points:**
+
 - Evaluation uses Phoenix experiments
+
 - Compares different profiles/strategies
+
 - Visualizes performance differences
 
 ### 9.4 Config Management Tab
 
 **Test Config Management:**
+
 1. Navigate to "⚙️ Config Management" tab
+
 2. Select tenant: "default"
+
 3. View System Config
+
 4. Make a change (e.g., routing threshold)
+
 5. Click "💾 Save"
+
 6. Verify change persisted
 
 **Test import/export:**
+
 1. Navigate to "💾 Import/Export" sub-tab
+
 2. Click "📥 Download JSON"
+
 3. Modify JSON
+
 4. Upload modified JSON
+
 5. Verify imported
 
 **Learning Points:**
+
 - Full CRUD for all config types
+
 - Import/Export for backup
+
 - Version history tracked
 
 ### 9.5 Memory Management Tab
 
 **Test Memory Management:**
+
 1. Navigate to "🧠 Memory Management" tab
+
 2. Enter tenant: "default", agent: "routing_agent"
+
 3. Click "📈 Refresh Stats"
 
 **Add a memory:**
+
 1. Navigate to "📝 Add Memory" sub-tab
+
 2. Enter memory content
+
 3. Add metadata
+
 4. Click "💾 Add Memory"
 
 **Search memories:**
+
 1. Navigate to "🔍 Search Memories" sub-tab
+
 2. Enter search query
+
 3. View results with scores
 
 **Learning Points:**
+
 - UI for Mem0 operations
+
 - Semantic search interface
+
 - Metadata management
 
 ### 9.6 Optimization Tab
 
 **Test Synthetic Data Generation:**
+
 1. Navigate to "🔧 Optimization Framework" tab
+
 2. Go to "🔬 Synthetic Data" sub-tab
+
 3. Select optimizer: "modality"
+
 4. Set count: 10
+
 5. Click "🚀 Generate Synthetic Data"
+
 6. View generated examples
 
 **Test Module Optimization:**
+
 1. Go to "🎯 Module Optimization" sub-tab
+
 2. Select module: "modality"
+
 3. Set max iterations: 100
+
 4. Check "Use Synthetic Data"
+
 5. Click "🚀 Submit Routing Optimization Workflow"
+
 6. Verify Argo workflow submitted
 
 **Learning Points:**
+
 - UI integrates with Argo Workflows
+
 - Synthetic data preview
+
 - Workflow submission from UI
 
 **✅ Layer 9 Complete**: Dashboard functional (application layer), all tabs working, UI integrations validated
@@ -1148,54 +1406,61 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 ```
 
 **Learning Points:**
+
 - Complete flow: Ingest → Search → Telemetry
+
 - All layers working together
+
 - End-to-end latency tracking
 
 ### 10.2 Routing + Search Workflow
 
 **Test routing to search:**
-```bash
-# Use routing API to get agent recommendation
-curl -X POST http://localhost:8000/routing/route \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Find videos about machine learning",
-    "tenant_id": "default"
-  }' > /tmp/routing_result.json
+```python
+# Complete routing + search workflow
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Extract recommended agent
-cat /tmp/routing_result.json | jq '.primary_agent'
+# 1. Route the query (async method)
+deps = RoutingDeps(
+    tenant_id="default",
+    telemetry_config=TelemetryConfig(),
+    model_name="smollm3:3b",
+    base_url="http://localhost:11434/v1"
+)
+router = RoutingAgent(deps=deps)  # deps is REQUIRED
+decision = await router.route_query("Find videos about machine learning")
 
-# If video_search_agent, run search
-curl -X POST http://localhost:8000/search/text \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "machine learning",
-    "tenant_id": "default",
-    "profile": "video_colpali_smol500_mv_frame",
-    "limit": 5
-  }'
+print(f"Routing: {decision.recommended_agent}")
+
+# 2. If video_search_agent, execute search
+if decision.recommended_agent == "video_search_agent":
+    config_manager = create_default_config_manager()
+    agent = VideoSearchAgent(
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="default",
+        config_manager=config_manager  # REQUIRED parameter
+    )
+    results = agent.search(query="machine learning", top_k=5)
+    print(f"Found {len(results)} results")
 ```
 
 **Learning Points:**
+
 - Routing determines agent
+
 - Agent executes search
+
 - Results returned to user
 
 ### 10.3 Optimization Workflow
 
 **Test complete optimization cycle:**
 ```bash
-# 1. Generate synthetic data
-curl -X POST http://localhost:8000/synthetic/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "optimizer": "modality",
-    "count": 50,
-    "vespa_sample_size": 100,
-    "tenant_id": "default"
-  }' > /tmp/synthetic_data.json
+# 1. Generate synthetic data (if needed)
+# This is typically done programmatically, see Layer 6 examples above
 
 # 2. Run module optimization
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
@@ -1207,11 +1472,17 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
 
 # 3. Check results
 cat /tmp/optimization_results.json | jq '.results'
+
+# 4. Verify model was saved
+ls -la outputs/models/modality/
 ```
 
 **Learning Points:**
+
 - Synthetic data → Training → Optimized model
+
 - Complete optimization pipeline
+
 - Results include improvement metrics
 
 ### 10.4 Multi-Tenant Workflow
@@ -1235,8 +1506,8 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
     --profile video_colpali_smol500_mv_frame \
     --tenant-id test_org:dev
 
-# 4. Search with tenant
-curl -X POST http://localhost:8000/search/text \
+# 4. Search with tenant (unified /search/ endpoint)
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "test",
@@ -1249,8 +1520,11 @@ curl -X POST http://localhost:8000/search/text \
 ```
 
 **Learning Points:**
+
 - Complete tenant isolation
+
 - Separate schemas per tenant
+
 - Config/telemetry/memory isolated
 
 ### 10.5 Argo Workflow Integration
@@ -1276,8 +1550,11 @@ argo get <workflow-name> -n cogniverse -o json | \
 ```
 
 **Learning Points:**
+
 - Argo Workflows for batch jobs
+
 - Scheduled optimization automation
+
 - Kubernetes integration
 
 **✅ Layer 10 Complete**: End-to-end workflows validated, multi-tenant isolation verified, all integrations working
@@ -1342,33 +1619,51 @@ argo get <workflow-name> -n cogniverse -o json | \
 ### Common Issues
 
 **Vespa Connection Failed:**
+
 - Check: `curl http://localhost:8080/state/v1/health`
+
 - Fix: Start Vespa service
+
 - Verify: Port 8080 accessible
 
 **Phoenix Not Collecting Spans:**
+
 - Check: Phoenix server running on port 6006
+
 - Fix: Set PHOENIX_ENDPOINT env var
+
 - Verify: Spans appear in Phoenix UI
 
 **Memory Manager Initialization Failed:**
+
 - Check: Mem0 dependencies installed
+
 - Fix: `uv pip install mem0`
-- Verify: Can create Mem0MemoryManager()
+
+- Verify: Can create Mem0MemoryManager(tenant_id="default")
 
 **Backend Config Not Found:**
+
 - Check: config.json exists in standard locations
+
 - Fix: Create config.json with backend section
+
 - Verify: get_backend() succeeds
 
 **Optimization Training Failed:**
+
 - Check: Sufficient training data (>50 examples)
+
 - Fix: Use --force-training or generate synthetic data
+
 - Verify: /tmp/optimization_results.json created
 
 **Argo Workflow Submission Failed:**
+
 - Check: kubectl or argo CLI configured
+
 - Fix: Install argo CLI, configure kubectl
+
 - Verify: `argo version` succeeds
 
 ---
@@ -1404,10 +1699,15 @@ After completing all layers:
 ---
 
 **Testing Tips:**
+
 - Document issues as you find them
+
 - Take notes on architecture insights
+
 - Save successful commands for future reference
+
 - Test edge cases (empty queries, large documents, etc.)
+
 - Validate error handling (network failures, invalid inputs)
 
 Good luck with your comprehensive testing! 🚀

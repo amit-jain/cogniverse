@@ -1,9 +1,5 @@
 # Docker Deployment Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages in layered architecture - Multi-Tenant Support
-**Purpose:** Complete guide for deploying Cogniverse using Docker Compose
-
 ---
 
 ## Table of Contents
@@ -16,7 +12,7 @@
 - [Service Configuration](#service-configuration)
 - [Multi-Tenant Setup](#multi-tenant-setup)
 - [Operations](#operations)
-- [Monitoring & Health Checks](#monitoring--health-checks)
+- [Monitoring & Health Checks](#monitoring-health-checks)
 - [Troubleshooting](#troubleshooting)
 - [Best Practices](#best-practices)
 
@@ -26,7 +22,7 @@
 
 Cogniverse provides Docker Compose configurations for both development and production deployments:
 
-- **`docker-compose.yml`** - Development environment with hot-reload and debug settings
+- **`docker-compose.yml`** - Development environment with debug settings and local volume mounts
 - **`docker-compose.prod.yml`** - Production environment with resource limits, security hardening, and scaling
 
 ### Service Stack
@@ -34,12 +30,12 @@ Cogniverse provides Docker Compose configurations for both development and produ
 | Service | Purpose | Ports | Storage |
 |---------|---------|-------|---------|
 | **Vespa** | Vector database and search engine | 8080, 19071, 19092 | vespa-data |
-| **Runtime** | FastAPI backend service | 8000 | runtime-data, runtime-logs |
+| **Runtime** | FastAPI backend service | 8000 | runtime-data, runtime-logs (production only) |
 | **Dashboard** | Streamlit UI | 8501 | Read-only access to runtime data |
 | **Phoenix** | Telemetry and experiments | 6006 | phoenix-data |
 | **Ollama** | Local LLM inference | 11434 | ollama-data |
 | **OTEL Collector** | Telemetry collection | 4317, 4318, 8888 | None |
-| **Nginx** (optional) | Reverse proxy | 80, 443 | nginx-logs |
+| **Nginx** (optional) | Reverse proxy | 80, 443 | nginx-logs (production only) |
 
 ---
 
@@ -48,15 +44,23 @@ Cogniverse provides Docker Compose configurations for both development and produ
 ### System Requirements
 
 **Development:**
+
 - CPU: 4+ cores
+
 - RAM: 16GB minimum
+
 - Storage: 50GB free space
+
 - OS: Linux, macOS, Windows (with WSL2)
 
 **Production:**
+
 - CPU: 8+ cores
+
 - RAM: 32GB minimum
+
 - Storage: 100GB+ free space
+
 - GPU: NVIDIA GPU with CUDA support (recommended for Ollama)
 
 ### Required Software
@@ -80,6 +84,7 @@ pip install uv
 ### 1. Clone Repository
 
 ```bash
+# Clone repository (replace with actual repository URL)
 git clone https://github.com/your-org/cogniverse.git
 cd cogniverse
 ```
@@ -153,10 +158,10 @@ docker-compose logs -f
 
 ### Development Features
 
-- **Hot Reload:** Code changes automatically reload services
 - **Debug Logging:** LOG_LEVEL=DEBUG for detailed logs
-- **Local Volumes:** Mounted for easy code/data access
+- **Local Volumes:** Data and config files mounted for easy access
 - **GPU Passthrough:** Automatic GPU access for models
+- **Note:** Code is baked into Docker images - rebuild containers after code changes
 
 ### Configuration
 
@@ -173,12 +178,13 @@ CACHE_ENABLED=true
 ### Working with Local Code
 
 ```bash
-# Mount local code (already configured in docker-compose.yml)
+# Development docker-compose.yml mounts:
 volumes:
-  - ./libs:/app/libs:ro
   - ./config.yml:/app/config.yml:ro
+  - ./data:/data
+  - ./outputs/logs:/logs
 
-# Rebuild after dependency changes
+# Code is baked into the image - rebuild after code or dependency changes
 docker-compose up -d --build runtime
 ```
 
@@ -209,27 +215,32 @@ nano .env.prod
 #### 2. SSL/TLS Certificates
 
 ```bash
-# Create SSL directory
-mkdir -p config/nginx/ssl
+# Create SSL directory structure (not included in repository)
+# Note: These directories don't exist by default and must be created
+mkdir -p configs/nginx/ssl
+mkdir -p configs/nginx/conf.d
 
 # Generate self-signed certificate (for testing)
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout config/nginx/ssl/cogniverse.key \
-  -out config/nginx/ssl/cogniverse.crt
+  -keyout configs/nginx/ssl/cogniverse.key \
+  -out configs/nginx/ssl/cogniverse.crt
 
 # For production, use Let's Encrypt or your CA
+# You will also need to create configs/nginx/nginx.conf and appropriate conf.d files
 ```
 
 #### 3. Production Configuration Files
 
 ```bash
-# Create production config
+# Create production config (optional - config.yml can be used for production too)
 cp config.yml config.prod.yml
 nano config.prod.yml
 
 # Create OTEL collector config
-cp config/otel-collector-config.yaml config/otel-collector-config.prod.yaml
-nano config/otel-collector-config.prod.yaml
+# Note: Create configs/otel-collector-config.yaml based on your requirements
+# Create production version:
+cp configs/otel-collector-config.yaml configs/otel-collector-config.prod.yaml
+nano configs/otel-collector-config.prod.yaml
 ```
 
 ### Deployment
@@ -308,13 +319,12 @@ vespa:
 
 **Schema Deployment:**
 ```bash
-# Deploy schemas for tenant
+# Deploy individual schema
 uv run python scripts/deploy_json_schema.py \
-  configs/schemas/video_colpali_smol500_mv_frame.json \
-  --tenant-id acme_corp
+  configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Deploy all schemas
-./scripts/deploy_all_schemas.py --tenant-id default
+uv run python scripts/deploy_all_schemas.py
 ```
 
 **Data Management:**
@@ -349,7 +359,7 @@ phoenix:
 # Phoenix projects are auto-created per tenant
 # Access dashboard: http://localhost:6006
 
-# Export experiment data
+# Export experiment data (production example - use cogniverse-phoenix for development)
 docker exec cogniverse-phoenix-prod \
   tar czf /tmp/phoenix-export.tar.gz /phoenix-data
 
@@ -377,7 +387,7 @@ ollama:
 
 **Model Management:**
 ```bash
-# Pull models
+# Pull models (production example - use cogniverse-ollama for development)
 docker exec cogniverse-ollama-prod ollama pull mistral:7b-instruct
 docker exec cogniverse-ollama-prod ollama pull llama2:13b
 
@@ -397,7 +407,7 @@ curl http://localhost:11434/api/generate -d '{
 
 **GPU Configuration:**
 ```bash
-# Verify GPU access
+# Verify GPU access (production example - use cogniverse-ollama for development)
 docker exec cogniverse-ollama-prod nvidia-smi
 
 # Check Ollama GPU usage
@@ -422,12 +432,12 @@ runtime:
 curl http://localhost:8000/health
 
 # Search API
-curl -X POST http://localhost:8000/api/v1/search \
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme_corp" \
   -d '{
     "query": "machine learning tutorial",
-    "limit": 10
+    "top_k": 10,
+    "tenant_id": "acme_corp"
   }'
 
 # API documentation
@@ -463,12 +473,8 @@ open https://dashboard.your-domain.com
 # Deploy schemas for multiple tenants
 TENANTS="acme_corp globex_inc initech" ./scripts/docker/init_services.sh
 
-# Or manually
-for tenant in acme_corp globex_inc initech; do
-  uv run python scripts/deploy_json_schema.py \
-    configs/schemas/video_colpali_smol500_mv_frame.json \
-    --tenant-id $tenant
-done
+# Or deploy all schemas
+uv run python scripts/deploy_all_schemas.py
 ```
 
 ### Tenant-Specific Configuration
@@ -487,16 +493,19 @@ runtime:
 
 ```bash
 # Ingest videos for specific tenant
+# Note: Ensure profile name matches deployed schema
+#       Available schemas in configs/schemas/: video_colpali_smol500_mv_frame,
+#       video_colqwen_omni_mv_chunk_30s, video_videoprism_base_mv_chunk_30s, etc.
 uv run python scripts/run_ingestion.py \
   --video_dir /data/acme_corp/videos \
   --profile video_colpali_smol500_mv_frame \
-  --tenant acme_corp \
+  --tenant-id acme_corp \
   --backend vespa
 
 # Query as specific tenant
-curl -X POST http://localhost:8000/api/v1/search \
-  -H "X-Tenant-ID: acme_corp" \
-  -d '{"query": "quarterly results"}'
+curl -X POST http://localhost:8000/search/ \
+  -H "Content-Type: application/json" \
+  -d '{"query": "quarterly results", "tenant_id": "acme_corp"}'
 
 # View tenant-specific Phoenix dashboard
 open http://localhost:6006/projects/acme_corp_project
@@ -596,15 +605,16 @@ docker run --rm \
 # Container resource usage
 docker stats
 
-# Service-specific stats
-docker stats cogniverse-runtime-prod
+# Service-specific stats (use -prod suffix for production containers)
+docker stats cogniverse-runtime  # development
+docker stats cogniverse-runtime-prod  # production
 
 # Disk usage
 docker system df
 docker system df -v
 
 # Network inspection
-docker network inspect cogniverse-network-prod
+docker network inspect cogniverse
 ```
 
 ---
@@ -647,7 +657,7 @@ curl http://localhost:11434/api/tags
 # Dashboard
 curl http://localhost:8501/_stcore/health
 
-# OTEL Collector
+# OTEL Collector (health check port only available in production)
 curl http://localhost:13133/
 ```
 
@@ -657,15 +667,15 @@ curl http://localhost:13133/
 # View health status
 docker-compose ps
 
-# Detailed health info
+# Detailed health info (adjust container name: development uses no suffix, production uses -prod)
 docker inspect \
   --format='{{.State.Health.Status}}' \
-  cogniverse-runtime-prod
+  cogniverse-runtime-prod  # or cogniverse-runtime for development
 
 # Health check logs
 docker inspect \
   --format='{{range .State.Health.Log}}{{.Output}}{{end}}' \
-  cogniverse-runtime-prod
+  cogniverse-runtime-prod  # or cogniverse-runtime for development
 ```
 
 ### Prometheus Metrics
@@ -737,11 +747,12 @@ docker-compose up -d vespa
 #### Ollama GPU Issues
 
 ```bash
-# Verify GPU access
-docker exec cogniverse-ollama nvidia-smi
+# Verify GPU access (use cogniverse-ollama for dev, cogniverse-ollama-prod for production)
+docker exec cogniverse-ollama nvidia-smi  # development
+docker exec cogniverse-ollama-prod nvidia-smi  # production
 
 # Check CUDA availability
-docker exec cogniverse-ollama nvidia-smi --query-gpu=name,driver_version --format=csv
+docker exec cogniverse-ollama nvidia-smi --query-gpu=name,driver_version --format=csv  # adjust container name
 
 # Restart with GPU
 docker-compose restart ollama
@@ -791,21 +802,21 @@ docker-compose up -d phoenix
 echo "LOG_LEVEL=DEBUG" >> .env
 docker-compose up -d --build runtime
 
-# Access container shell
+# Access container shell (adjust for dev/prod: cogniverse-runtime or cogniverse-runtime-prod)
 docker exec -it cogniverse-runtime bash
 
 # Check Python packages
 docker exec cogniverse-runtime uv pip list
 
 # Test imports
-docker exec cogniverse-runtime python -c "from cogniverse_core.config import SystemConfig"
+docker exec cogniverse-runtime python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
 ```
 
 ### Network Issues
 
 ```bash
 # Check network
-docker network inspect cogniverse-network
+docker network inspect cogniverse
 
 # Test connectivity between services
 docker exec cogniverse-runtime curl http://vespa:8080/ApplicationStatus
@@ -813,7 +824,7 @@ docker exec cogniverse-runtime curl http://phoenix:6006/health
 
 # Recreate network
 docker-compose down
-docker network rm cogniverse-network
+docker network rm cogniverse
 docker-compose up -d
 ```
 
@@ -868,8 +879,8 @@ docker-compose up -d
 2. **Enable Caching**
    ```bash
    CACHE_ENABLED=true
-   CACHE_TTL=7200
-   CACHE_MAX_SIZE=10000
+   CACHE_TTL=3600  # seconds
+   CACHE_MAX_SIZE=1000  # entries
    ```
 
 3. **Optimize Ollama**
@@ -959,7 +970,3 @@ docker-compose up -d
 - **Issues:** GitHub Issues
 
 ---
-
-**Version:** 2.1.0
-**Last Updated:** 2026-01-25
-**Status:** Production Ready

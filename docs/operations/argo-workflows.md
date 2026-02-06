@@ -1,9 +1,5 @@
 # Argo Workflows Guide
 
-**Last Updated:** 2026-01-25
-**Architecture:** UV Workspace with 11 packages - Kubernetes-based batch processing with Argo Workflows
-**Purpose:** Complete guide for batch operations and scheduled tasks
-
 ---
 
 ## Overview
@@ -71,6 +67,7 @@ kubectl apply -f workflows/video-ingestion.yaml
 kubectl apply -f workflows/batch-optimization.yaml
 kubectl apply -f workflows/tenant-provisioning.yaml
 kubectl apply -f workflows/scheduled-maintenance.yaml
+kubectl apply -f workflows/scheduled-optimization.yaml
 
 # Verify templates
 argo template list -n cogniverse
@@ -144,17 +141,19 @@ Run DSPy optimization experiments at scale.
 ### Submit Workflow
 
 ```bash
-# Basic optimization
+# Basic DSPy optimization
 argo submit workflows/batch-optimization.yaml \
   -n cogniverse \
   --parameter tenant-id="acme_corp" \
+  --parameter optimizer-category="dspy" \
   --parameter optimizer-type="GEPA" \
   --parameter dataset-name="golden_eval_v1"
 
-# Advanced optimization
+# Advanced DSPy optimization
 argo submit workflows/batch-optimization.yaml \
   -n cogniverse \
   --parameter tenant-id="acme_corp" \
+  --parameter optimizer-category="dspy" \
   --parameter optimizer-type="GEPA" \
   --parameter dataset-name="golden_eval_v1" \
   --parameter profiles="video_colpali_smol500_mv_frame" \
@@ -238,20 +237,20 @@ argo submit --from cronwf/daily-backup -n cogniverse
 argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=daily-backup
 ```
 
-### Weekly Optimization (Sunday 3 AM UTC)
+### Weekly DSPy Optimization (Sunday 3 AM UTC)
 
-Runs optimization for all tenants weekly.
+Runs DSPy optimization for all tenants weekly.
 
 ```bash
 # View schedule
-kubectl get cronworkflow weekly-optimization -n cogniverse
+kubectl get cronworkflow weekly-dspy-optimization -n cogniverse
 
 # Modify schedule
-kubectl edit cronworkflow weekly-optimization -n cogniverse
+kubectl edit cronworkflow weekly-dspy-optimization -n cogniverse
 
 # Suspend/resume
-argo cron suspend weekly-optimization -n cogniverse
-argo cron resume weekly-optimization -n cogniverse
+argo cron suspend weekly-dspy-optimization -n cogniverse
+argo cron resume weekly-dspy-optimization -n cogniverse
 ```
 
 ### Daily Cleanup (4 AM UTC)
@@ -284,12 +283,14 @@ argo submit --from cronwf/monthly-reports -n cogniverse
 
 Cogniverse includes automated optimization workflows that run on a schedule to continuously improve system performance.
 
-### Weekly Optimization (Sunday 3 AM UTC)
+### Weekly Module Optimization (Sunday 3 AM UTC)
 
 Comprehensive optimization of all routing/workflow modules when sufficient annotations are collected.
 
 **What it does:**
+
 - Checks Phoenix for annotation count (threshold: 50)
+
 - Runs optimization for all modules if threshold met:
   - Modality optimizer (per-modality routing)
   - Cross-modal optimizer (fusion decisions)
@@ -314,8 +315,11 @@ kubectl edit cronworkflow weekly-optimization -n cogniverse
 ```
 
 **Configuration:**
+
 - `annotation-threshold`: Minimum annotations needed (default: 50)
+
 - `improvement-threshold`: Minimum improvement % to deploy (default: 5%)
+
 - `tenant-id`: Target tenant (default: "default")
 
 ### Daily Optimization Check (4 AM UTC)
@@ -323,9 +327,13 @@ kubectl edit cronworkflow weekly-optimization -n cogniverse
 Lightweight routing optimization triggered by new annotations.
 
 **What it does:**
+
 - Checks Phoenix for annotations in last 24 hours (threshold: 20)
+
 - Runs quick routing optimization if threshold met
+
 - Uses synthetic data generation for training
+
 - Faster than weekly optimization (single module)
 
 ```bash
@@ -341,7 +349,9 @@ argo cron resume daily-optimization-check -n cogniverse
 ```
 
 **Configuration:**
+
 - `annotation-threshold`: Minimum new annotations (default: 20)
+
 - `tenant-id`: Target tenant (default: "default")
 
 ### Module Optimization vs DSPy Optimization
@@ -349,15 +359,23 @@ argo cron resume daily-optimization-check -n cogniverse
 The workflows support two optimizer categories:
 
 **Module Optimization** (`optimizer-category: routing`):
+
 - **What gets optimized**: modality, cross_modal, routing, workflow, unified modules
+
 - **How they get optimized**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
+
 - **Data source**: Phoenix traces + synthetic data generation
+
 - **Use case**: Optimize routing decisions and workflow planning
 
 **DSPy Optimization** (`optimizer-category: dspy`):
+
 - **What gets optimized**: DSPy modules (prompt templates, reasoning chains)
+
 - **How they get optimized**: Explicit DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO)
+
 - **Data source**: Golden evaluation datasets
+
 - **Use case**: Teacher-student distillation for local models
 
 ### Manual Workflow Submission
@@ -608,7 +626,3 @@ kubectl get storageclass
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Tenant management
 
 ---
-
-**Version:** 2.1.0
-**Last Updated:** 2026-01-25
-**Status:** Production Ready
