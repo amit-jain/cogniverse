@@ -208,12 +208,18 @@ if len(self.experience_replay) > self.config.experience_replay_size:
     self.experience_replay.pop(0)  # FIFO queue
 
 # 4. Automatic optimization triggers when conditions met
-def _should_trigger_optimization(self):
-    return (
-        len(self.experiences) >= self.config.min_experiences_for_training
-        and len(self.experiences) % self.config.update_frequency == 0
-        and len(self.experience_replay) >= self.config.batch_size
-    )
+def _should_trigger_optimization(self) -> bool:
+    if len(self.experiences) < self.config.min_experiences_for_training:
+        return False
+    # Trigger every N experiences
+    if len(self.experiences) % self.config.update_frequency == 0:
+        return True
+    # Trigger if performance is declining
+    recent_rewards = [exp.reward for exp in self.experiences[-10:]]
+    if len(recent_rewards) >= 10:
+        if np.mean(recent_rewards) < self.metrics.avg_reward - 0.1:
+            return True
+    return False
 ```
 
 ### Multi-Stage DSPy Optimization

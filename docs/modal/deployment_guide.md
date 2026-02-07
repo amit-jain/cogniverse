@@ -24,7 +24,7 @@ The routing optimizer uses teacher/student patterns with DSPy optimizers:
 # Run the optimization orchestrator
 from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
 
-# Config loaded from COGNIVERSE_CONFIG_PATH env var or configs/config.json
+# Config loaded from COGNIVERSE_CONFIG env var or configs/config.json
 orchestrator = OptimizationOrchestrator()
 result = orchestrator.run_optimization()
 

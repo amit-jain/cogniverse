@@ -127,7 +127,16 @@ class TestRealVespaIntegration:
             backend_port=8080,
             profile="video_colpali_smol500_mv_frame"
         )
-        search_agent = SearchAgent(deps=search_deps)
+        # schema_loader is REQUIRED (raises ValueError if None)
+        # config_manager is optional (creates default if None)
+        from pathlib import Path
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        search_agent = SearchAgent(
+            deps=search_deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager
+        )
 
         # 2. Query Processing
         user_query = "Show me cooking videos"
@@ -437,8 +446,8 @@ result = await orchestrator.process_complex_query(
 
 # Verify orchestrator handles failures gracefully
 # Orchestrator has built-in error recovery and fallback
-assert result["status"] in ["completed", "partial"]
-# Even with failures, orchestrator provides best-effort results
+assert result["status"] in ["completed", "failed"]
+# On failure, orchestrator returns fallback result with status "failed"
 ```
 
 ---
@@ -511,9 +520,13 @@ assert result.recommended_agent is not None
 from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-# Verify plugin registration via entry points
-registry = TelemetryRegistry()
-provider = registry.get_telemetry_provider(name="phoenix", tenant_id="test")
+# Verify plugin registration via entry points (classmethod)
+# Requires config with http_endpoint and grpc_endpoint
+provider = TelemetryRegistry.get_telemetry_provider(
+    name="phoenix",
+    tenant_id="test",
+    config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"}
+)
 assert isinstance(provider, PhoenixProvider)
 ```
 
@@ -536,7 +549,15 @@ search_deps = SearchAgentDeps(
     backend_port=8080,
     profile="video_colpali_smol500_mv_frame"
 )
-agent = SearchAgent(deps=search_deps)
+# schema_loader is REQUIRED (raises ValueError if None)
+from pathlib import Path
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+agent = SearchAgent(
+    deps=search_deps,
+    schema_loader=schema_loader,
+    config_manager=config_manager
+)
 
 results = agent.search_by_text("test query", modality="video")
 assert len(results) >= 0

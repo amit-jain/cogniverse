@@ -111,7 +111,7 @@ app.include_router(router, tags=["synthetic"])
 | `/synthetic/generate` | POST | Generate training data |
 | `/synthetic/batch/generate` | POST | Batch generation |
 | `/synthetic/optimizers` | GET | List available optimizers |
-| `/synthetic/optimizers/{name}` | GET | Get optimizer config |
+| `/synthetic/optimizers/{optimizer_name}` | GET | Get optimizer config |
 | `/synthetic/health` | GET | Health check |
 
 **Example:**
@@ -131,7 +131,6 @@ curl -X POST http://localhost:8000/synthetic/generate \
 ```bash
 export OPENAI_API_KEY="sk-..."
 export LLM_MODEL="gpt-4"
-export VESPA_URL="http://localhost:8080"
 ```
 
 ### With Real Backend
@@ -189,12 +188,15 @@ cogniverse_synthetic/
 ├── backend_querier.py      # Backend-agnostic content sampling
 ├── dspy_signatures.py      # DSPy signatures for LLM generation
 ├── dspy_modules.py         # Validated DSPy modules
+├── registry.py             # Generator registry
+├── profile_selector.py     # Profile selection logic
 ├── generators/
 │   ├── base.py             # BaseGenerator abstract class
 │   ├── modality.py         # ModalityGenerator
 │   ├── cross_modal.py      # CrossModalGenerator
 │   ├── routing.py          # RoutingGenerator
 │   └── workflow.py         # WorkflowGenerator
+├── utils/                  # Utility modules
 └── approval/               # HITL approval utilities
 ```
 

@@ -170,7 +170,7 @@ schema_manager = VespaSchemaManager(
 )
 
 # Deploys organization_metadata, tenant_metadata, config_metadata, adapter_registry
-schema_manager.upload_metadata_schemas(app_name="cogniverse")
+schema_manager.upload_metadata_schemas(app_name="videosearch")
 ```
 
 **Backend Features:**

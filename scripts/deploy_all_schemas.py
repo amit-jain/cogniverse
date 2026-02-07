@@ -36,7 +36,10 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
 
     from vespa.package import ApplicationPackage, Validation
 
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     from cogniverse_vespa.json_schema_parser import JsonSchemaParser
     from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
@@ -46,7 +49,7 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
     # Initialize the schema manager with backend config
     schema_manager = VespaSchemaManager(
         backend_endpoint=config.get("backend_url"),
-        backend_port=config.get("backend_port")
+        backend_port=config.get("backend_port"),
     )
 
     # Get all schema files
@@ -75,10 +78,7 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
 
     # Add validation overrides to allow schema changes
     until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    validation = Validation(
-        validation_id="schema-removal",
-        until=until_date
-    )
+    validation = Validation(validation_id="schema-removal", until=until_date)
     if app_package.validations is None:
         app_package.validations = []
     app_package.validations.append(validation)
@@ -97,11 +97,14 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
 
         strategies = extract_all_ranking_strategies(schemas_dir)
         save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
-        logger.info(f"✅ Extracted {sum(len(s) for s in strategies.values())} ranking strategies from {len(strategies)} schemas")
+        logger.info(
+            f"✅ Extracted {sum(len(s) for s in strategies.values())} ranking strategies from {len(strategies)} schemas"
+        )
 
     except Exception as e:
         logger.error(f"❌ Failed to deploy schemas: {str(e)}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -110,33 +113,44 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
 
 
 def deploy_tenant_schemas(
-    tenant_id: str,
-    base_schemas: list[str] | None,
-    force: bool,
-    logger: logging.Logger
+    tenant_id: str, base_schemas: list[str] | None, force: bool, logger: logging.Logger
 ) -> int:
     """Deploy tenant-specific schemas using SchemaRegistry."""
     from cogniverse_core.registries.schema_registry import SchemaRegistry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     from cogniverse_vespa.backend import VespaBackend
 
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
 
-    # Initialize backend
-    backend = VespaBackend(
-        vespa_url=config.get("backend_url"),
-        vespa_port=config.get("backend_port")
-    )
-
     # Initialize schema loader
     schemas_dir = Path(__file__).parent.parent / "configs" / "schemas"
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
+    # Initialize backend with proper dependency injection
+    backend_config = BackendConfig(
+        tenant_id=tenant_id,
+        backend_type="vespa",
+        url=config.get("backend_url", "http://localhost"),
+        port=config.get("backend_port", 8080),
+    )
+    backend = VespaBackend(
+        backend_config=backend_config,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
+    )
+
     # Initialize schema registry
-    registry = SchemaRegistry()
-    registry.configure(backend=backend, schema_loader=schema_loader)
+    registry = SchemaRegistry(
+        config_manager=config_manager,
+        backend=backend,
+        schema_loader=schema_loader,
+    )
 
     # Determine which schemas to deploy
     if base_schemas:
@@ -145,7 +159,8 @@ def deploy_tenant_schemas(
         # Get all video schemas (exclude metadata schemas)
         all_schemas = schema_loader.list_schemas()
         schemas_to_deploy = [
-            s for s in all_schemas
+            s
+            for s in all_schemas
             if s.startswith("video_") and not s.endswith("_metadata")
         ]
 
@@ -153,7 +168,9 @@ def deploy_tenant_schemas(
         logger.warning("⚠️ No schemas found to deploy")
         return 1
 
-    logger.info(f"🚀 Deploying {len(schemas_to_deploy)} schemas for tenant: {tenant_id}")
+    logger.info(
+        f"🚀 Deploying {len(schemas_to_deploy)} schemas for tenant: {tenant_id}"
+    )
 
     deployed = []
     failed = []
@@ -162,9 +179,7 @@ def deploy_tenant_schemas(
         try:
             logger.info(f"📄 Deploying schema: {base_schema} for tenant: {tenant_id}")
             tenant_schema_name = registry.deploy_schema(
-                tenant_id=tenant_id,
-                base_schema_name=base_schema,
-                force=force
+                tenant_id=tenant_id, base_schema_name=base_schema, force=force
             )
             logger.info(f"✅ Deployed: {tenant_schema_name}")
             deployed.append(tenant_schema_name)
@@ -201,29 +216,29 @@ Examples:
 
     # Force redeploy tenant schemas
     python scripts/deploy_all_schemas.py --tenant-id acme:production --force
-        """
+        """,
     )
     parser.add_argument(
         "--tenant-id",
         type=str,
-        help="Tenant ID (e.g., 'acme:production'). If provided, deploys tenant-specific schemas."
+        help="Tenant ID (e.g., 'acme:production'). If provided, deploys tenant-specific schemas.",
     )
     parser.add_argument(
         "--base-schemas",
         type=str,
-        help="Comma-separated list of base schemas to deploy (default: all video schemas)"
+        help="Comma-separated list of base schemas to deploy (default: all video schemas)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force redeploy even if schemas already exist (only with --tenant-id)"
+        help="Force redeploy even if schemas already exist (only with --tenant-id)",
     )
     parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)"
+        help="Logging level (default: INFO)",
     )
 
     args = parser.parse_args()
@@ -231,7 +246,7 @@ Examples:
     # Setup logging
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
@@ -246,20 +261,23 @@ Examples:
                 tenant_id=args.tenant_id,
                 base_schemas=base_schemas,
                 force=args.force,
-                logger=logger
+                logger=logger,
             )
         else:
             # Base schema deployment (default)
             if args.force:
                 logger.warning("⚠️ --force flag is ignored without --tenant-id")
             if args.base_schemas:
-                logger.warning("⚠️ --base-schemas flag is ignored without --tenant-id (deploys all base schemas)")
+                logger.warning(
+                    "⚠️ --base-schemas flag is ignored without --tenant-id (deploys all base schemas)"
+                )
 
             return deploy_base_schemas(logger)
 
     except Exception as e:
         logger.error(f"❌ Script failed: {str(e)}")
         import traceback
+
         traceback.print_exc()
         return 1
 

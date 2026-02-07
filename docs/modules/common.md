@@ -1304,7 +1304,7 @@ print("✓ Memory isolation verified")
 
 - `tests/common/unit/test_vespa_config_store.py` - Configuration storage tests
 - `tests/memory/unit/test_mem0_memory_manager.py` - Memory manager tests
-- `tests/unit/test_tenant_utils.py` - Tenant utilities tests
+- `tests/common/unit/test_tenant_utils.py` - Tenant utilities tests
 - `tests/common/unit/test_dynamic_dspy_mixin.py` - DSPy mixin tests
 - `tests/common/unit/test_agent_config.py` - Agent configuration tests
 - `tests/common/unit/test_config_api_mixin.py` - Config API mixin tests

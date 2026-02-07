@@ -681,8 +681,7 @@ flowchart TB
     Vespa -.->|❌ INVALID cross| Agents
     Agents -.->|❌ INVALID cross| Evaluation
 
-    %% Invalid application to implementation
-    Runtime -.->|❌ INVALID| Vespa
+    %% Note: Runtime→Vespa is VALID (application depends on implementation via optional extras)
 
     style Foundation fill:#ffcccc,stroke:#c62828,color:#000
     style Core fill:#ffcccc,stroke:#c62828,color:#000

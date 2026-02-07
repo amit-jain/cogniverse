@@ -92,7 +92,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ## Memory System Performance
 
-> **Note**: Memory system uses custom abstractions. Mem0 is configurable as a backend but not the only option.
+> **Note**: Memory system uses Mem0 as the memory framework with Vespa as the vector store backend.
 
 ### Memory Operations
 | Operation | P50 Target | P95 Target | P99 Target |

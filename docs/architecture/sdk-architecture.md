@@ -71,7 +71,7 @@ The root `pyproject.toml` defines the workspace:
 members = ["libs/*"]
 
 [project]
-name = "congniverse"  # Typo in actual root pyproject.toml (should be "cogniverse")
+name = "cogniverse"
 version = "0.1.0"
 requires-python = ">=3.12"
 ```

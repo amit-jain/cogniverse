@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 def render_memory_management_tab():
@@ -23,21 +24,20 @@ def render_memory_management_tab():
     col1, col2 = st.columns(2)
     with col1:
         tenant_id = st.text_input(
-            "Tenant ID",
-            value="default",
-            help="Enter tenant ID to view/manage memories"
+            "Tenant ID", value="default", help="Enter tenant ID to view/manage memories"
         )
 
     with col2:
         agent_name = st.text_input(
             "Agent Name",
             value="routing_agent",
-            help="Enter agent name (e.g., routing_agent, video_agent)"
+            help="Enter agent name (e.g., routing_agent, video_agent)",
         )
 
     # Check if Vespa is available first
     try:
         import httpx
+
         vespa_response = httpx.get("http://localhost:8080/ApplicationStatus", timeout=2)
         vespa_available = vespa_response.status_code == 200
     except Exception:
@@ -45,8 +45,12 @@ def render_memory_management_tab():
 
     if not vespa_available:
         st.warning("⚠️ Vespa backend is not running")
-        st.info("💡 Memory management requires Vespa. Start Vespa with: `docker run --detach --name vespa --hostname vespa-container -p 8080:8080 vespaengine/vespa`")
-        st.info("Or if Vespa is running elsewhere, update the connection settings in the code.")
+        st.info(
+            "💡 Memory management requires Vespa. Start Vespa with: `docker run --detach --name vespa --hostname vespa-container -p 8080:8080 vespaengine/vespa`"
+        )
+        st.info(
+            "Or if Vespa is running elsewhere, update the connection settings in the code."
+        )
         return
 
     # Initialize memory manager with tenant_id
@@ -62,8 +66,7 @@ def render_memory_management_tab():
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
             manager.initialize(
-                config_manager=config_manager,
-                schema_loader=schema_loader
+                config_manager=config_manager, schema_loader=schema_loader
             )
             st.success("✅ Memory manager initialized")
     except Exception as e:
@@ -75,7 +78,7 @@ def render_memory_management_tab():
 
     if st.button("📈 Refresh Stats"):
         try:
-            stats = manager.get_memory_stats(user_id=tenant_id, agent_id=agent_name)
+            stats = manager.get_memory_stats(tenant_id=tenant_id, agent_name=agent_name)
 
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -85,13 +88,23 @@ def render_memory_management_tab():
             with col3:
                 st.metric("Agent", stats.get("agent_id", "N/A"))
             with col4:
-                health = "✅ Healthy" if stats.get("health_check", False) else "❌ Unhealthy"
+                health = (
+                    "✅ Healthy" if stats.get("health_check", False) else "❌ Unhealthy"
+                )
                 st.metric("Health", health)
         except Exception as e:
             st.error(f"Failed to get stats: {e}")
 
     # Tabs for different operations
-    tabs = st.tabs(["🔍 Search Memories", "📝 Add Memory", "📋 View All", "🗑️ Delete Memory", "⚠️ Clear All"])
+    tabs = st.tabs(
+        [
+            "🔍 Search Memories",
+            "📝 Add Memory",
+            "📋 View All",
+            "🗑️ Delete Memory",
+            "⚠️ Clear All",
+        ]
+    )
 
     # Tab 1: Search Memories
     with tabs[0]:
@@ -100,7 +113,7 @@ def render_memory_management_tab():
         search_query = st.text_area(
             "Search Query",
             placeholder="Enter your search query...",
-            help="Semantic search through agent memories"
+            help="Semantic search through agent memories",
         )
 
         col1, col2 = st.columns(2)
@@ -112,16 +125,18 @@ def render_memory_management_tab():
                 try:
                     results = manager.search_memory(
                         query=search_query,
-                        user_id=tenant_id,
-                        agent_id=agent_name,
-                        limit=limit
+                        tenant_id=tenant_id,
+                        agent_name=agent_name,
+                        top_k=limit,
                     )
 
                     if results:
                         st.success(f"Found {len(results)} memories")
 
                         for i, result in enumerate(results, 1):
-                            with st.expander(f"Memory {i} - Score: {result.get('score', 0):.3f}"):
+                            with st.expander(
+                                f"Memory {i} - Score: {result.get('score', 0):.3f}"
+                            ):
                                 st.write("**Memory:**", result.get("memory", ""))
                                 st.write("**ID:**", result.get("id", ""))
 
@@ -142,13 +157,13 @@ def render_memory_management_tab():
         memory_content = st.text_area(
             "Memory Content",
             placeholder="Enter the memory content...",
-            help="This will be processed by LLM and stored as facts"
+            help="This will be processed by LLM and stored as facts",
         )
 
         metadata_json = st.text_area(
             "Metadata (JSON - Optional)",
             placeholder='{"key": "value"}',
-            help="Optional metadata to attach to this memory"
+            help="Optional metadata to attach to this memory",
         )
 
         if st.button("💾 Add Memory", key="add_btn"):
@@ -160,9 +175,9 @@ def render_memory_management_tab():
 
                     result = manager.add_memory(
                         content=memory_content,
-                        user_id=tenant_id,
-                        agent_id=agent_name,
-                        metadata=metadata
+                        tenant_id=tenant_id,
+                        agent_name=agent_name,
+                        metadata=metadata,
                     )
 
                     if result:
@@ -185,8 +200,7 @@ def render_memory_management_tab():
         if st.button("🔄 Load All Memories", key="load_all_btn"):
             try:
                 memories = manager.get_all_memories(
-                    user_id=tenant_id,
-                    agent_id=agent_name
+                    tenant_id=tenant_id, agent_name=agent_name
                 )
 
                 if memories:
@@ -195,12 +209,16 @@ def render_memory_management_tab():
                     # Convert to DataFrame for better display
                     mem_data = []
                     for mem in memories:
-                        mem_data.append({
-                            "ID": mem.get("id", ""),
-                            "Memory": mem.get("memory", "")[:100] + "..." if len(mem.get("memory", "")) > 100 else mem.get("memory", ""),
-                            "Created": mem.get("created_at", ""),
-                            "Updated": mem.get("updated_at", "")
-                        })
+                        mem_data.append(
+                            {
+                                "ID": mem.get("id", ""),
+                                "Memory": mem.get("memory", "")[:100] + "..."
+                                if len(mem.get("memory", "")) > 100
+                                else mem.get("memory", ""),
+                                "Created": mem.get("created_at", ""),
+                                "Updated": mem.get("updated_at", ""),
+                            }
+                        )
 
                     df = pd.DataFrame(mem_data)
                     st.dataframe(df, use_container_width=True)
@@ -229,7 +247,7 @@ def render_memory_management_tab():
         memory_id = st.text_input(
             "Memory ID",
             placeholder="Enter memory ID to delete",
-            help="Get memory ID from the 'View All' tab"
+            help="Get memory ID from the 'View All' tab",
         )
 
         st.warning("⚠️ This action cannot be undone!")
@@ -238,9 +256,7 @@ def render_memory_management_tab():
             if memory_id:
                 try:
                     result = manager.delete_memory(
-                        memory_id=memory_id,
-                        user_id=tenant_id,
-                        agent_id=agent_name
+                        memory_id=memory_id, tenant_id=tenant_id, agent_name=agent_name
                     )
 
                     if result:
@@ -257,24 +273,27 @@ def render_memory_management_tab():
         st.subheader("⚠️ Clear All Memories")
 
         st.error("🚨 DANGER ZONE 🚨")
-        st.warning("This will delete ALL memories for the selected agent/tenant combination!")
+        st.warning(
+            "This will delete ALL memories for the selected agent/tenant combination!"
+        )
 
         confirm_text = st.text_input(
             "Type 'DELETE ALL' to confirm",
             placeholder="DELETE ALL",
-            key="confirm_clear"
+            key="confirm_clear",
         )
 
         if st.button("🗑️ CLEAR ALL MEMORIES", key="clear_all_btn", type="secondary"):
             if confirm_text == "DELETE ALL":
                 try:
                     result = manager.clear_agent_memory(
-                        user_id=tenant_id,
-                        agent_id=agent_name
+                        tenant_id=tenant_id, agent_name=agent_name
                     )
 
                     if result:
-                        st.success(f"✅ All memories cleared for {agent_name} ({tenant_id})")
+                        st.success(
+                            f"✅ All memories cleared for {agent_name} ({tenant_id})"
+                        )
                     else:
                         st.error("Failed to clear memories")
                 except Exception as e:

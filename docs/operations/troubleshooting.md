@@ -82,16 +82,17 @@ example = dspy.Example(
     query="test query",
 ).with_inputs("query")
 
-# ✅ Good: All output fields present
+# ✅ Good: All output fields present (with both input fields)
 example = dspy.Example(
     query="test query",
+    context="relevant context for the query",
     primary_intent="search",
     complexity_level="simple",
     needs_video_search="true",
     needs_text_search="false",
     multimodal_query="false",
     temporal_pattern="none",
-).with_inputs("query")
+).with_inputs("query", "context")
 ```
 
 **Required Fields by Module:**
@@ -217,7 +218,7 @@ uv sync
 
 - `gliner`: Relationship extraction
 
-- `phoenix-otel`: Telemetry
+- `arize-phoenix`: Telemetry
 
 **Prevention:**
 
@@ -320,9 +321,9 @@ batch_size = 8  # Instead of 32
 JAX_PLATFORM_NAME=cpu uv run python script.py
 ```
 
-3. **Enable gradient checkpointing** (for training):
+3. **Enable gradient checkpointing** (for PyTorch model training only):
 ```python
-model.gradient_checkpointing_enable()
+model.gradient_checkpointing_enable()  # PyTorch models only; not applicable to JAX models
 ```
 
 **Prevention:**
@@ -345,7 +346,7 @@ model.gradient_checkpointing_enable()
 
 **Solution:**
 
-1. **Run tests in parallel**:
+1. **Run tests in parallel** (requires `pytest-xdist`: `uv add --dev pytest-xdist`):
 ```bash
 uv run pytest -n auto
 ```
@@ -390,7 +391,7 @@ Vespa container not running.
 docker ps | grep vespa
 
 # Start Vespa
-docker run -d -p 8080:8080 vespaengine/vespa
+docker run -d -p 8080:8080 -p 19071:19071 vespaengine/vespa
 
 # Verify
 curl http://localhost:8080/state/v1/health
@@ -410,7 +411,7 @@ curl http://localhost:8080/state/v1/health
 
 **Symptoms:**
 ```text
-VespaError: Schema deployment failed
+RuntimeError: Schema deployment failed
 400 Bad Request: Unknown field 'embeddings'
 ```
 
@@ -423,7 +424,7 @@ Mismatch between code expectations and deployed schema.
 uv run python scripts/deploy_all_schemas.py
 
 # Verify deployment
-curl http://localhost:8080/application/v2/tenant/default/application/default
+curl http://localhost:19071/application/v2/tenant/default/application/default
 ```
 
 **Prevention:**

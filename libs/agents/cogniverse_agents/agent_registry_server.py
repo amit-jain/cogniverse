@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,17 @@ class AgentRegistryServer:
     FastAPI server wrapper for AgentRegistry with REST API endpoints.
     """
 
-    def __init__(self):
-        """Initialize registry server"""
+    def __init__(self, config_manager, tenant_id: str = "default"):
+        """Initialize registry server
+
+        Args:
+            config_manager: ConfigManager instance for configuration access
+            tenant_id: Tenant identifier for multi-tenancy support
+        """
         self.app = FastAPI(title="Agent Registry", version="1.0.0")
-        self.registry = AgentRegistry()
+        self.registry = AgentRegistry(
+            tenant_id=tenant_id, config_manager=config_manager
+        )
 
         # Setup endpoints
         self._setup_endpoints()
@@ -232,7 +240,8 @@ class AgentRegistryServer:
 
 
 # Create server instance
-app = AgentRegistryServer().app
+_config_manager = create_default_config_manager()
+app = AgentRegistryServer(config_manager=_config_manager).app
 
 
 if __name__ == "__main__":

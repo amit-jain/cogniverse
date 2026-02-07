@@ -283,8 +283,8 @@ def render_memory_management_tab():
     # Memory stats
     if st.button("📈 Refresh Stats"):
         stats = manager.get_memory_stats(
-            user_id=tenant_id,
-            agent_id=agent_name
+            tenant_id=tenant_id,
+            agent_name=agent_name
         )
         st.metric("Total Memories", stats.get("total_memories", 0))
 
@@ -302,9 +302,9 @@ def render_memory_management_tab():
         if st.button("🔍 Search"):
             results = manager.search_memory(
                 query=search_query,
-                user_id=tenant_id,
-                agent_id=agent_name,
-                limit=5
+                tenant_id=tenant_id,
+                agent_name=agent_name,
+                top_k=5
             )
             for i, result in enumerate(results, 1):
                 with st.expander(f"Memory {i} - Score: {result.get('score', 0):.3f}"):
@@ -350,7 +350,7 @@ def get_available_videos():
     backend = VespaSearchBackend(
         vespa_url=config.get("backend_url", "http://localhost"),
         vespa_port=config.get("backend_port", 8080)
-        # Note: schema_name is deprecated - schema is determined at query time
+        # Note: schema_name is optional - can be determined at query time if not provided
     )
 
     # Query for video metadata
@@ -358,7 +358,7 @@ def get_available_videos():
     select video_id, video_title, timestamp, frame_number
     from video_frame where true limit 1000
     """
-    response = backend.app.query(yql=yql)
+    response = backend.vespa.query(yql=yql)
 
     # Process response to extract unique videos
     videos = {}
@@ -388,7 +388,7 @@ def render_embedding_atlas_tab():
         try:
             project_root = Path(__file__).parent.parent
             subprocess.run([
-                "python", str(project_root / "scripts/export_vespa_embeddings.py"),
+                "python", str(project_root / "scripts/export_backend_embeddings.py"),
                 "--video_id", selected_video,
                 "--output", "embeddings.npz"
             ], check=True, cwd=str(project_root))
@@ -467,7 +467,7 @@ def render_routing_evaluation_tab():
         if st.button("▶️ Run Evaluation"):
             # Note: This example assumes a routing agent is available
             # In practice, you would initialize the routing agent like:
-            # from cogniverse_agents.routing.agent import RoutingAgent
+            # from cogniverse_agents.routing_agent import RoutingAgent
             # routing_agent = RoutingAgent(...)
 
             results = []
@@ -738,10 +738,10 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 **How They Get Optimized (Auto DSPy Optimizer Selection)**:
 
 - System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
-- < 100 examples → Bootstrap
-- 100-500 examples → SIMBA
-- 500-1000 examples → MIPRO
-- \> 1000 examples → GEPA
+- < 20 examples → Bootstrap
+- 20-50 examples → SIMBA
+- 50-100 examples → MIPRO
+- \> 200 examples → GEPA
 
 **Features**:
 
@@ -926,15 +926,15 @@ st.info("📌 Current tenant: acme:production")
 
 #### Fast Ingestion
 ```python
-# Video URL input
-video_url = "https://example.com/video.mp4"
+# Video directory input
+video_dir = "/path/to/videos"
 
 # Profile selection
 profile = "video_colpali_smol500_mv_frame"
 
 # Start ingestion
 POST /ingestion/start {
-    "video_url": video_url,
+    "video_dir": video_dir,
     "profile": profile,
     "tenant_id": current_tenant
 }
@@ -949,7 +949,7 @@ GET /ingestion/status/{job_id}
 
 **Available Profiles**:
 1. `video_colpali_smol500_mv_frame` (128-dim, frame-based)
-2. `video_colqwen_omni_mv_chunk_30s` (768-dim, 30s chunks)
+2. `video_colqwen_omni_mv_chunk_30s` (128-dim, 30s chunks)
 3. `video_videoprism_base_mv_chunk_30s` (768-dim, 30s chunks)
 4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
@@ -972,14 +972,6 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py \
 #   Local URL: http://localhost:8501
 #   Network URL: http://192.168.1.100:8501
 #
-# Dashboard ready! Available tabs:
-# - 📊 Analytics: Performance metrics and telemetry
-# - 📈 Evaluation: Experiment comparison
-# - ⚙️ Config Management: System configuration
-# - 🧠 Memory Management: Agent memories
-# - 🗺️ Embedding Atlas: Embedding visualization
-# - 🔀 Routing Evaluation: Routing analysis
-
 # Access in browser: http://localhost:8501
 ```
 
@@ -1224,8 +1216,9 @@ except Exception as e:
 # Validate user inputs
 tenant_id = st.text_input("Tenant ID")
 if tenant_id:
-    if not tenant_id.isalnum():
-        st.error("❌ Tenant ID must be alphanumeric")
+    import re
+    if not re.match(r'^[a-zA-Z0-9_:]+$', tenant_id):
+        st.error("❌ Tenant ID must contain only alphanumeric characters, underscores, or colons")
     elif len(tenant_id) > 64:
         st.error("❌ Tenant ID too long (max 64 chars)")
     else:
@@ -1269,7 +1262,8 @@ def mask_sensitive(config_dict):
     return masked
 
 # Display masked config
-st.json(mask_sensitive(system_config.dict()))
+from dataclasses import asdict
+st.json(mask_sensitive(asdict(system_config)))
 ```
 
 ### 4. Monitoring and Logging
@@ -1383,7 +1377,7 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 
 - **Core Layer**:
   - Business logic and configuration from `cogniverse-core`
-  - Evaluation metrics and Phoenix analytics from `cogniverse-evaluation`
+  - Evaluation metrics from `cogniverse-evaluation`
 - **Implementation Layer**:
   - Phoenix telemetry implementation from `cogniverse-telemetry-phoenix`
   - Agent operations from `cogniverse-agents`
@@ -1430,8 +1424,9 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
-# Core layer
 from cogniverse_foundation.config.unified_config import SystemConfig
+
+# Core layer
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
@@ -1452,6 +1447,6 @@ This module serves as the primary user interface for system monitoring, configur
 
 **Next Study Guides:**
 
-- **16_SYSTEM_INTEGRATION.md**: End-to-end system integration tests
+- **[integration.md](../architecture/integration.md)**: End-to-end system integration tests
 
-- **17_INSTRUMENTATION.md**: Phoenix telemetry and observability
+- **[instrumentation.md](instrumentation.md)**: Phoenix telemetry and observability

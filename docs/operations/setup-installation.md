@@ -33,7 +33,7 @@ cd cogniverse
 # Install uv if not already installed
 pip install uv
 
-# Sync all workspace packages (installs 10 core packages)
+# Sync all workspace packages (installs 11 packages)
 uv sync
 
 # This installs:
@@ -51,7 +51,7 @@ uv sync
 # - cogniverse_finetuning (libs/finetuning/)
 # Application Layer:
 # - cogniverse_runtime (libs/runtime/)
-# Note: cogniverse_dashboard (libs/dashboard/) is NOT installed by default
+# - cogniverse_dashboard (libs/dashboard/)
 ```
 
 **Note:** `uv sync` handles the entire UV workspace, installing all packages and their dependencies in editable mode.
@@ -580,6 +580,8 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_agents.composing_agent import EnhancedA2AClientTool  # Requires google-adk
+# Note: composing_agent runs create_default_config_manager() at module level,
+# so BACKEND_URL and BACKEND_PORT env vars must be set before importing.
 
 # Vespa - Backend and Schema Management
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager

@@ -175,13 +175,11 @@ flowchart TB
 
 ### 3. Experiment Workflow Architecture
 
-**Note:** Uses legacy `src.evaluation.experiments` module (archived code)
-
 ```mermaid
 flowchart TB
-    Start["<span style='color:#000'>run_experiments_with_visualization.py<br/>Phoenix Experiment Runner (Legacy)</span>"]
+    Start["<span style='color:#000'>run_experiments_with_visualization.py<br/>Phoenix Experiment Runner</span>"]
 
-    Runner["<span style='color:#000'>PhoenixExperimentRunner<br/>• From archived src.evaluation<br/>• Experiment project isolation<br/>• Quality evaluators optional<br/>• LLM evaluators optional</span>"]
+    Runner["<span style='color:#000'>ExperimentTracker<br/>• From cogniverse_evaluation SDK<br/>• Experiment project isolation<br/>• Quality evaluators optional<br/>• LLM evaluators optional</span>"]
 
     Dataset["<span style='color:#000'>Dataset Preparation<br/>• Load or create dataset<br/>• CSV parsing<br/>• Phoenix dataset registration</span>"]
 
@@ -416,51 +414,105 @@ python scripts/deploy_json_schema.py \
 
 ### 3. deploy_all_schemas.py
 
-**Purpose:** Deploy all schemas from configs/schemas directory in a single application package
+**Purpose:** Deploy schemas with two modes: base schema deployment and tenant-specific deployment
 
-**Location:** `scripts/deploy_all_schemas.py` (113 lines)
+**Location:** `scripts/deploy_all_schemas.py` (268 lines)
 
-**Deployment Workflow:**
+**Dual-Mode Operation:**
+
+This script supports two deployment modes:
+1. **Base schema deployment** (default): Deploys all schema templates from `configs/schemas/`
+2. **Tenant schema deployment** (`--tenant-id`): Deploys tenant-specific schemas via `SchemaRegistry`
+
+**Base Schema Deployment:**
 ```python
-def main():
-    # Imports from SDK packages
+def deploy_base_schemas(logger):
     from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
     from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from vespa.package import ApplicationPackage
+    from vespa.package import ApplicationPackage, Validation
 
-    # 1. Get all schema files
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
+
+    schema_manager = VespaSchemaManager(
+        backend_endpoint=config.get("backend_url"),
+        backend_port=config.get("backend_port")
+    )
+
     schemas_dir = Path("configs/schemas")
     schema_files = list(schemas_dir.glob("*.json"))
 
-    # 2. Initialize schema manager
-    schema_manager = VespaSchemaManager()
-
-    # 3. Create application package with all schemas
     app_package = ApplicationPackage(name="videosearch")
-
-    # 4. Parse each schema and add to package
     for schema_file in schema_files:
         parser = JsonSchemaParser()
         schema = parser.load_schema_from_json_file(str(schema_file))
         app_package.add_schema(schema)
 
-    # 5. Add validation overrides for schema changes
-    from vespa.package import Validation
-    validation = Validation(validation_id="schema-removal", until="2026-12-31")
+    # Add validation overrides for schema changes
+    validation = Validation(validation_id="schema-removal", until=until_date)
     app_package.validations = [validation]
 
-    # 6. Deploy all schemas at once
     schema_manager._deploy_package(app_package)
 
-    # Note: Ranking strategy extraction (extract_all_ranking_strategies)
-    # has been removed or moved in SDK refactoring
+    # Extract and save ranking strategies after deployment
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        extract_all_ranking_strategies, save_ranking_strategies
+    )
+    strategies = extract_all_ranking_strategies(schemas_dir)
+    save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
+```
+
+**Tenant Schema Deployment:**
+```python
+def deploy_tenant_schemas(tenant_id, base_schemas, force, logger):
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_vespa.backend import VespaBackend
+
+    schema_loader = FilesystemSchemaLoader(schemas_dir)
+
+    backend_config = BackendConfig(
+        tenant_id=tenant_id,
+        backend_type="vespa",
+        url=config.get("backend_url", "http://localhost"),
+        port=config.get("backend_port", 8080),
+    )
+    backend = VespaBackend(
+        backend_config=backend_config,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
+    )
+
+    registry = SchemaRegistry(
+        config_manager=config_manager,
+        backend=backend,
+        schema_loader=schema_loader,
+    )
+
+    for base_schema in schemas_to_deploy:
+        tenant_schema_name = registry.deploy_schema(
+            tenant_id=tenant_id,
+            base_schema_name=base_schema,
+            force=force
+        )
+```
+
+**Command Line Options:**
+```bash
+--tenant-id ID          # Tenant ID (triggers tenant mode)
+--base-schemas LIST     # Comma-separated base schemas (tenant mode only)
+--force                 # Force redeploy (tenant mode only)
+--log-level LEVEL       # DEBUG|INFO|WARNING|ERROR (default: INFO)
 ```
 
 **Benefits:**
 
-- Single deployment for all schemas
+- Single deployment for all base schemas
 
-- Consistent schema versions
+- Tenant-specific schema isolation via SchemaRegistry
+
+- Ranking strategy extraction after base deployment
 
 - Validation override handling
 
@@ -879,103 +931,50 @@ See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization
 
 **Location:** `scripts/run_experiments_with_visualization.py` (148 lines)
 
-**Note:** This script uses legacy `src.` imports from archived code. Future versions will migrate to SDK packages.
-
-**Experiment Configuration:**
-```python
-def get_experiment_configurations(args):
-    # Get profiles from registry (legacy src.common.core.registry)
-    from src.common.core.registry import get_registry
-
-    registry = get_registry()
-    profiles = args.profiles if args.profiles else registry.list_profiles()
-
-    # Strategy descriptions
-    strategy_descriptions = {
-        "binary_binary": "Binary",
-        "float_float": "Float",
-        "float_binary": "Float-Binary",
-        "phased": "Phased",
-        "hybrid_binary_bm25": "Hybrid + Desc",
-        "bm25_only": "Text Only"
-    }
-
-    # Build configurations
-    for profile in profiles:
-        all_strategies = registry.list_ranking_strategies(profile)
-        strategies_to_use = filter_strategies(all_strategies, args)
-
-        configurations.append({
-            "profile": profile,
-            "strategies": [(s, strategy_descriptions[s]) for s in strategies_to_use]
-        })
-
-    return configurations
-```
+**Architecture:** This script is a thin CLI wrapper that delegates to `ExperimentTracker` from the `cogniverse_evaluation` SDK package.
 
 **Experiment Execution:**
 ```python
-def main(args):
-    # Note: PhoenixExperimentRunner is from legacy src.evaluation.experiments
-    # Future SDK versions will use cogniverse_evaluation package
-    from src.evaluation.experiments import PhoenixExperimentRunner
+def main():
+    # Parse CLI arguments (dataset-name, profiles, strategies, evaluators, etc.)
+    args = parser.parse_args()
 
-    # Initialize experiment runner
-    with PhoenixExperimentRunner(
+    # Initialize ExperimentTracker from SDK
+    from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
+
+    tracker = ExperimentTracker(
         experiment_project_name="experiments",
         enable_quality_evaluators=args.quality_evaluators,
         enable_llm_evaluators=args.llm_evaluators,
         evaluator_name=args.evaluator,
-        llm_model=args.llm_model
-    ) as runner:
+        llm_model=args.llm_model,
+        llm_base_url=args.llm_base_url,
+    )
 
-        # Create/get dataset
-        dataset = runner.create_experiment_dataset(
-            dataset_name=args.dataset_name,
-            csv_path=args.csv_path,
-            force_new=args.force_new
-        )
+    # Get configurations (profiles x strategies matrix)
+    tracker.get_experiment_configurations(
+        profiles=args.profiles,
+        strategies=args.strategies,
+        all_strategies=args.all_strategies,
+    )
 
-        # Run experiments for each profile/strategy
-        for config in EXPERIMENT_CONFIGURATIONS:
-            for strategy, description in config["strategies"]:
-                result = runner.run_experiment(
-                    profile=config["profile"],
-                    strategy=strategy,
-                    dataset=dataset,
-                    description=f"{profile} - {description}"
-                )
-                all_experiments.append(result)
-```
+    # Create or get dataset
+    dataset_name = tracker.create_or_get_dataset(
+        dataset_name=args.dataset_name,
+        csv_path=args.csv_path,
+        force_new=args.force_new,
+    )
 
-**Visualization Generation:**
-```python
-def create_visualization_tables(experiments):
-    # 1. Profile summary
-    profile_summary = [{
-        "Profile": profile,
-        "Total": stats["total"],
-        "Success": stats["success"],
-        "Failed": stats["failed"],
-        "Success Rate": f"{stats['success']/stats['total']*100:.1f}%"
-    } for profile, stats in profiles.items()]
+    # Run all experiments
+    experiments = tracker.run_all_experiments(dataset_name)
 
-    # 2. Detailed results
-    detailed_results = [{
-        "Profile": exp["profile"],
-        "Strategy": exp["strategy"],
-        "Status": "✅" if exp["status"] == "success" else "❌",
-        "Experiment Name": exp["experiment_name"]
-    } for exp in experiments]
+    # Create and print visualization tables
+    tables = tracker.create_visualization_tables()
+    tracker.print_visualization(tables)
 
-    # 3. Strategy comparison
-    strategy_comparison = [...]  # Grouped by profile
-
-    return {
-        "profile_summary": pd.DataFrame(profile_summary),
-        "detailed_results": pd.DataFrame(detailed_results),
-        "strategy_comparison": pd.DataFrame(strategy_comparison)
-    }
+    # Save results (CSV + JSON) and generate HTML report
+    tracker.save_results(tables, experiments)
+    tracker.generate_html_report()
 ```
 
 **Output:**
@@ -1052,30 +1051,29 @@ python scripts/manage_datasets.py --info golden_eval_v1
 
 **Implementation:**
 ```python
-async def main():
+def main():
     from cogniverse_evaluation.data import DatasetManager
 
     dm = DatasetManager()
 
     if args.list:
-        datasets = dm.list_datasets()
-        if datasets:
+        dataset_names = dm.list_datasets()  # Returns List[str]
+        if dataset_names:
             print("\nRegistered datasets:")
-            for ds_name in datasets:
-                ds_info = dm.get_dataset(ds_name)
+            for ds_name in dataset_names:
+                info = dm.get_dataset(ds_name)
                 print(f"\nName: {ds_name}")
-                print(f"  Dataset ID: {ds_info['id']}")
-                print(f"  Created: {ds_info['created_at']}")
-                print(f"  Queries: {len(ds_info['queries'])}")
+                if info:
+                    for key, value in info.items():
+                        print(f"  {key}: {value}")
         else:
             print("\nNo datasets registered yet")
 
     elif args.create and args.csv:
-        # Create dataset from CSV
         dataset_id = dm.create_from_csv(
             csv_path=args.csv,
             dataset_name=args.create,
-            description=f"Created from {args.csv}"
+            description=f"Created from {args.csv}",
         )
 
     elif args.info:
@@ -1294,29 +1292,24 @@ User Command
 
 ### 3. Experiment Workflow Flow
 
-**Note:** This workflow uses legacy `src.evaluation.experiments` module (archived)
-
 ```text
 User Command
     │
     ├─> run_experiments_with_visualization.py
     │       │
-    │       ├─> Initialize PhoenixExperimentRunner (Legacy)
-    │       │   • From archived src.evaluation.experiments
+    │       ├─> Initialize ExperimentTracker
+    │       │   • From cogniverse_evaluation.core.experiment_tracker
     │       │   • Separate "experiments" project
     │       │   • Quality evaluators: relevance, diversity, distribution
     │       │   • LLM evaluators: reference-free, reference-based
     │       │
     │       ├─> Prepare Dataset
-    │       │   IF --list-datasets:
-    │       │       • List all registered datasets
-    │       │       • Exit
-    │       │   ELSE:
-    │       │       • Load or create dataset from CSV
-    │       │       • Register with Phoenix
+    │       │   • create_or_get_dataset()
+    │       │   • Load or create dataset from CSV
+    │       │   • Register with Phoenix
     │       │
     │       ├─> Get Experiment Configurations
-    │       │   • Query strategy registry (legacy src.common.core.registry)
+    │       │   • tracker.get_experiment_configurations()
     │       │   • Filter profiles (--profiles or all)
     │       │   • Filter strategies (--strategies or common)
     │       │   • Build profile × strategy matrix

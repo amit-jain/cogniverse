@@ -472,7 +472,7 @@ class TestComponent(TenantAwareAgentMixin):
         super().__init__(tenant_id=tenant_id)
 
     def get_info(self):
-        return f"Tenant: {self.tenant_id}, Qualified: {self.qualified_tenant_id}"
+        return f"Tenant: {self.tenant_id}"
 
 # Create instance
 component = TestComponent(tenant_id="acme:production")
@@ -482,8 +482,6 @@ print(component.get_info())
 **Learning Points:**
 
 - TenantAwareAgentMixin provides tenant isolation
-
-- qualified_tenant_id includes org prefix
 
 - All agents/components inherit this
 
@@ -1132,9 +1130,9 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 ### 8.5 Admin Endpoints
 
-**Create organization:**
+**Create organization** (standalone tenant manager on port 9000):
 ```bash
-curl -X POST http://localhost:8000/admin/organizations \
+curl -X POST http://localhost:9000/admin/organizations \
   -H "Content-Type: application/json" \
   -d '{
     "org_id": "acme",
@@ -1143,9 +1141,9 @@ curl -X POST http://localhost:8000/admin/organizations \
   }'
 ```
 
-**Create tenant:**
+**Create tenant** (standalone tenant manager on port 9000):
 ```bash
-curl -X POST http://localhost:8000/admin/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "acme:production",
@@ -1156,7 +1154,7 @@ curl -X POST http://localhost:8000/admin/tenants \
 
 **Learning Points:**
 
-- Admin endpoints for tenant management
+- Tenant management endpoints are on the standalone tenant_manager app (port 9000), not the main runtime (port 8000)
 
 - Organization → Tenant hierarchy
 

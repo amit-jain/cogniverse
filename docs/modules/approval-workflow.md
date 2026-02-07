@@ -177,7 +177,7 @@ feedback_handler = SyntheticDataFeedbackHandler()
 agent = HumanApprovalAgent(
     confidence_extractor=confidence_extractor,
     feedback_handler=feedback_handler,
-    confidence_threshold=0.8,  # Auto-approve items >= 0.8
+    confidence_threshold=0.85,  # Auto-approve items >= 0.85 (default)
     storage=storage
 )
 
@@ -251,7 +251,7 @@ confidence = extractor.extract(
         }
     }
 )
-# Returns: 0.92 (high confidence due to first attempt success, entities present)
+# Returns: 1.0 (high confidence: zero retries, entity present boost capped at 1.0)
 
 # Extract from data with retries
 confidence = extractor.extract(
@@ -263,7 +263,7 @@ confidence = extractor.extract(
         }
     }
 )
-# Returns: 0.75 (medium confidence, multi-step workflow)
+# Returns: 0.7 (medium confidence: 2 retries × 0.15 penalty, no entities)
 ```
 
 **Confidence Calculation** (SyntheticDataConfidenceExtractor):
@@ -354,7 +354,7 @@ storage = ApprovalStorageImpl(
 
 approval_agent = HumanApprovalAgent(
     confidence_extractor=SyntheticDataConfidenceExtractor(),
-    confidence_threshold=0.8,
+    confidence_threshold=0.85,
     storage=storage
 )
 batch_id = "batch_routing_001"

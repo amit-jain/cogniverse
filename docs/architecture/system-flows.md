@@ -93,7 +93,7 @@ sequenceDiagram
     participant Vespa as Vespa Backend<br/>cogniverse_vespa
     participant Phoenix as Phoenix Telemetry<br/>cogniverse_telemetry_phoenix
 
-    User->>Runtime: GET /search?query="cooking videos"<br/>tenant_id parameter
+    User->>Runtime: POST /search/<br/>{"query": "cooking videos", "tenant_id": "acme"}
 
     Note over Runtime: Tenant ID extracted from<br/>request parameters or config
 
@@ -328,7 +328,7 @@ sequenceDiagram
     participant Vespa as Vespa Config (port 19071)
     participant ConfigMgr as ConfigManager<br/>cogniverse_foundation
 
-    Admin->>Runtime: POST /admin/profiles<br/>{profile_name, tenant_id, schema_name, ...}
+    Admin->>Runtime: POST /admin/tenants<br/>{profile_name, tenant_id, schema_name, ...}
 
     Runtime->>SchemaReg: deploy_schema(tenant_id, base_schema_name)
 

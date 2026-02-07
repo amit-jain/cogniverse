@@ -646,7 +646,6 @@ curl http://localhost:19071/state/v1/health
 
 # Runtime
 curl http://localhost:8000/health
-curl http://localhost:8000/metrics  # Prometheus metrics
 
 # Phoenix
 curl http://localhost:6006/health
@@ -681,9 +680,6 @@ docker inspect \
 ### Prometheus Metrics
 
 ```bash
-# Runtime metrics
-curl http://localhost:8000/metrics
-
 # OTEL Collector metrics
 curl http://localhost:8888/metrics
 

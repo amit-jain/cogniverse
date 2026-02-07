@@ -541,11 +541,13 @@ Examples:
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager  # Implementation layer
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 from pathlib import Path
 
 # Initialize dependencies
 schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # For loading schema templates
-schema_registry = SchemaRegistry.get_instance()  # For schema deployment
+config_manager = create_default_config_manager()
+schema_registry = SchemaRegistry(config_manager=config_manager, backend=None, schema_loader=schema_loader)
 
 # Initialize schema manager (backend_endpoint and backend_port are REQUIRED)
 schema_manager = VespaSchemaManager(
@@ -628,7 +630,7 @@ def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
         Tuple of (org_id, tenant_name)
 
     Raises:
-        ValueError: If tenant_id is empty, has multiple colons, or empty parts
+        ValueError: If tenant_id is empty or has invalid format
     """
 ```
 

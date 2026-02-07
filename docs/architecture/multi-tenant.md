@@ -615,8 +615,8 @@ memory_mgr.initialize(
     backend_host="localhost",
     backend_port=8080,
     base_schema_name="agent_memories",  # Base schema (becomes agent_memories_acme)
-    config_manager=config_manager,  # ConfigManager instance (uses default if None)
-    schema_loader=schema_loader  # Optional: needed for auto schema deployment
+    config_manager=config_manager,  # ConfigManager instance (optional, creates default if None)
+    schema_loader=schema_loader  # Optional: required when auto_create_schema=True
 )
 
 # Add memory (stored in agent_memories_acme schema)
@@ -680,8 +680,8 @@ Phoenix telemetry uses per-tenant projects for trace isolation:
 ```python
 from cogniverse_foundation.telemetry import TelemetryConfig, TelemetryManager
 
-# Initialize telemetry manager (singleton)
-telemetry = TelemetryManager()
+# Initialize telemetry manager (requires TelemetryConfig)
+telemetry = TelemetryManager(config=TelemetryConfig())
 
 # Record spans with tenant context
 with telemetry.span("route_query", tenant_id="acme") as span:
@@ -765,13 +765,17 @@ from cogniverse_foundation.config.unified_config import BackendConfig, BackendPr
 # Backend profile configuration
 @dataclass
 class BackendProfileConfig:
-    profile_name: str                    # e.g., "video_colpali_smol500_mv_frame"
-    schema_name: str                     # Base schema name
-    embedding_model: str                 # Model identifier
-    pipeline_config: Dict[str, Any]      # Frame extraction, transcription settings
-    strategies: Dict[str, Any]           # Segmentation, embedding strategies
-    embedding_type: str                  # "binary" or "float"
-    # ... additional fields
+    profile_name: str                                # e.g., "video_colpali_smol500_mv_frame"
+    type: str = "video"                              # Profile type
+    description: str = ""                            # Human-readable description
+    schema_name: str = ""                            # Base schema name
+    embedding_model: str = ""                        # Model identifier
+    pipeline_config: Dict[str, Any] = field(...)     # Frame extraction, transcription settings
+    strategies: Dict[str, Any] = field(...)          # Segmentation, embedding strategies
+    embedding_type: str = ""                         # "binary" or "float"
+    schema_config: Dict[str, Any] = field(...)       # Schema-specific configuration
+    model_specific: Dict[str, Any] = field(...)      # Model-specific parameters
+    process_type: Optional[str] = None               # Processing type override
 
 # Backend configuration
 @dataclass
@@ -910,6 +914,7 @@ Tenants can override system-level backend configuration:
 **Tenant Override**: Via `ConfigManager`
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import BackendConfig
 
 manager = create_default_config_manager()
 
@@ -926,9 +931,16 @@ tenant_override = {
     }
 }
 
-manager.set_backend_config(
+backend_config = BackendConfig(
     tenant_id="acme",
-    config=tenant_override
+    backend_type="vespa",
+    url="http://localhost",
+    port=8080,
+    metadata={"overrides": tenant_override}
+)
+manager.set_backend_config(
+    backend_config=backend_config,
+    tenant_id="acme"
 )
 ```
 
@@ -968,29 +980,41 @@ flowchart LR
 
 **Initialization**:
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig, BackendConfig
 
-# SystemConfig automatically loads and merges backend config
+# SystemConfig has individual backend fields (not a nested backend_config attribute)
 config = SystemConfig(tenant_id="acme")
 
-# Access backend configuration
-backend_config = config.backend_config
+# Access backend fields directly
+assert config.tenant_id == "acme"
+assert config.backend_url == "http://localhost"
+assert config.backend_port == 8080
+
+# To get a BackendConfig object, use ConfigManager
+from cogniverse_foundation.config.utils import create_default_config_manager
+manager = create_default_config_manager()
+backend_config = manager.get_backend_config(tenant_id="acme")
 assert backend_config.tenant_id == "acme"
 
-# Access profile configuration
-profile = backend_config.profiles["video_colpali_smol500_mv_frame"]
-assert profile.pipeline_config["max_frames"] == 200  # Tenant override applied
+# Access profile configuration via ConfigManager
+profile = manager.get_backend_profile(
+    profile_name="video_colpali_smol500_mv_frame",
+    tenant_id="acme"
+)
 ```
 
 **Per-Tenant Backend Isolation**:
 ```python
-# Different tenants can use different backend configurations
-config_acme = SystemConfig(tenant_id="acme")
-config_startup = SystemConfig(tenant_id="startup")
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Each gets their own backend config with tenant-specific overrides
-assert config_acme.backend_config.tenant_id == "acme"
-assert config_startup.backend_config.tenant_id == "startup"
+manager = create_default_config_manager()
+
+# Different tenants get their own backend configs with tenant-specific overrides
+config_acme = manager.get_backend_config(tenant_id="acme")
+config_startup = manager.get_backend_config(tenant_id="startup")
+
+assert config_acme.tenant_id == "acme"
+assert config_startup.tenant_id == "startup"
 ```
 
 ### Benefits for Multi-Tenancy
@@ -1242,7 +1266,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 3. **Telemetry Health**:
    ```python
-   telemetry = TelemetryManager()  # Singleton
+   telemetry = TelemetryManager(config=TelemetryConfig())
    # Use spans with tenant_id for tenant-scoped tracing
    with telemetry.span("health_check", tenant_id="acme") as span:
        span.set_attribute("agent", "routing_agent")
@@ -1457,9 +1481,9 @@ async def test_end_to_end_tenant_flow():
     # 3. Execute query
     result = await agent.route_query("cooking videos")
 
-    # 4. Verify result uses tenant schema
-    assert result["tenant_id"] == tenant_id
-    assert result["schema"] == video_schema
+    # 4. Verify result (RoutingOutput Pydantic model)
+    assert result.recommended_agent is not None
+    assert result.confidence > 0.0
 ```
 
 ### Test Fixtures
@@ -1592,8 +1616,8 @@ def add_user_preference(
         backend_host="localhost",
         backend_port=8080,
         base_schema_name="agent_memories",
-        config_manager=config_manager,  # ConfigManager instance (uses default if None)
-        schema_loader=None,  # Optional: needed for auto schema deployment
+        config_manager=config_manager,  # ConfigManager instance (optional, creates default if None)
+        schema_loader=None,  # Optional: required when auto_create_schema=True
         llm_model="llama3.2",  # Optional: Ollama model name
         embedding_model="nomic-embed-text",  # Optional: Ollama embedding model
         auto_create_schema=True  # Optional: auto-deploy tenant schema if not exists
@@ -1620,8 +1644,8 @@ async def process_query_with_telemetry(
 ):
     """Process query with tenant-scoped telemetry"""
 
-    # Get telemetry manager (singleton)
-    telemetry = TelemetryManager()
+    # Get telemetry manager (requires TelemetryConfig)
+    telemetry = TelemetryManager(config=TelemetryConfig())
 
     # Trace execution with tenant context
     with telemetry.span("process_query", tenant_id=tenant_id) as span:
@@ -1722,7 +1746,7 @@ print(f"Memory B tenant: {memory_b.tenant_id}")  # Should be tenant_b
 **Diagnosis**:
 ```python
 # Check telemetry manager is working
-telemetry = TelemetryManager()
+telemetry = TelemetryManager(config=TelemetryConfig())
 with telemetry.span("test_span", tenant_id="tenant_a") as span:
     span.set_attribute("test", "value")
 ```
@@ -1795,8 +1819,10 @@ def test_tenant_isolation():
     agent_a = RoutingAgent(deps=deps_a)
     agent_b = RoutingAgent(deps=deps_b)
 
-    # Verify separate resources
-    assert agent_a.memory_manager is not agent_b.memory_manager
+    # Verify separate memory manager instances per tenant
+    memory_a = Mem0MemoryManager(tenant_id="tenant_a")
+    memory_b = Mem0MemoryManager(tenant_id="tenant_b")
+    assert memory_a is not memory_b
 ```
 
 ### 5. Monitor Tenant Schemas

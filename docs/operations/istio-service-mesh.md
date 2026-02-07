@@ -34,7 +34,7 @@ Istio provides production-grade service mesh capabilities for Cogniverse:
 
 - Distributed tracing via Phoenix (already deployed)
 - Service topology visualization via Kiali
-- Metrics collection (optional with default/production profiles)
+- Metrics collection (optional with default profile)
 
 ---
 
@@ -99,7 +99,7 @@ The minimal profile provides core service mesh features with lowest resource foo
 ### Step 1: Install istioctl
 
 ```bash
-# Download Istio 1.20+
+# Download Istio 1.24+
 curl -L https://istio.io/downloadIstio | sh -
 cd istio-1.*
 
@@ -134,9 +134,6 @@ spec:
     defaultConfig:
       tracing:
         sampling: 100.0  # 100% sampling for development (reduce for production)
-        openCensusAgent:
-          address: cogniverse-phoenix.default.svc.cluster.local:4317
-          context: [W3C_TRACE_CONTEXT]
 
     # Extension providers (Phoenix for tracing)
     extensionProviders:
@@ -358,6 +355,8 @@ spec:
         env:
         - name: PHOENIX_WORKING_DIR
           value: /data
+        - name: PHOENIX_GRPC_PORT
+          value: "4317"
         volumeMounts:
         - name: phoenix-data
           mountPath: /data
@@ -386,11 +385,11 @@ spec:
       storage: 10Gi
 EOF
 
-# Verify Phoenix is running
-kubectl get pods -l app.kubernetes.io/component=phoenix
+# Verify Phoenix is running (manual deployment uses app=phoenix label)
+kubectl get pods -l app=phoenix
 
 # Check Phoenix logs
-kubectl logs -l app.kubernetes.io/component=phoenix -f
+kubectl logs -l app=phoenix -f
 ```
 
 **Note**: Manual deployment uses `app: phoenix` label, while Helm uses `app.kubernetes.io/component: phoenix`. The examples in this guide assume Helm deployment with release name "cogniverse".
@@ -431,7 +430,7 @@ After verifying services work with sidecars, enable strict mTLS:
 ```bash
 # Apply strict mTLS policy for all services in default namespace
 kubectl apply -f - <<EOF
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: default-mtls-strict
@@ -445,7 +444,7 @@ EOF
 # Note: Use label selector matching your deployment method
 # Helm deployment: app.kubernetes.io/component=runtime
 # Manual deployment: app=runtime
-istioctl authn tls-check $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
+istioctl proxy-config secret $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
 ```
 
 ### Step 8: Configure Tracing (Phoenix Integration)
@@ -455,7 +454,7 @@ Enable tracing for all services in the mesh:
 ```bash
 # Apply Telemetry resource to enable tracing
 kubectl apply -f - <<EOF
-apiVersion: telemetry.istio.io/v1alpha1
+apiVersion: telemetry.istio.io/v1
 kind: Telemetry
 metadata:
   name: mesh-tracing
@@ -507,7 +506,7 @@ Kiali provides real-time service mesh topology and health visualization:
 
 ```bash
 # Install Kiali
-kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.20/samples/addons/kiali.yaml
+kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.24/samples/addons/kiali.yaml
 
 # Wait for Kiali to be ready
 kubectl rollout status deployment/kiali -n istio-system
@@ -650,7 +649,7 @@ Within each cluster, Istio routes requests to appropriate services:
 
 ```yaml
 # Apply this in each cluster
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: cogniverse-routing
@@ -697,7 +696,7 @@ spec:
         subset: v2-canary
       weight: 10
 ---
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
   name: cogniverse-gateway
@@ -738,7 +737,7 @@ curl -H "X-Tenant-ID: tenant_b" https://api.cogniverse.com/search?q=test
 Deploy new version alongside old, send small percentage of traffic:
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: cogniverse-runtime-canary
@@ -767,7 +766,7 @@ spec:
         subset: v2-canary
       weight: 5
 ---
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
   name: cogniverse-runtime
@@ -788,7 +787,7 @@ spec:
 Automatically stop sending traffic to unhealthy services:
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
   name: vespa-circuit-breaker
@@ -816,7 +815,7 @@ spec:
 Automatic retries with exponential backoff:
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: vespa-resilience
@@ -849,8 +848,8 @@ Upgrade to production profile when you need:
 ### Production Profile Installation
 
 ```bash
-# Install with production profile
-istioctl install --set profile=production -y
+# Install with Istio's default profile (recommended for production)
+istioctl install --set profile=default -y
 
 # Or use custom configuration
 cat <<EOF | istioctl install -f -
@@ -860,15 +859,12 @@ metadata:
   namespace: istio-system
   name: cogniverse-istio-production
 spec:
-  profile: production
+  profile: default  # Istio's "default" profile is recommended for production
 
   meshConfig:
     defaultConfig:
       tracing:
         sampling: 1.0  # 1% sampling for production
-        openCensusAgent:
-          address: cogniverse-phoenix.default.svc.cluster.local:4317
-          context: [W3C_TRACE_CONTEXT]
     extensionProviders:
     - name: phoenix-tracing
       opentelemetry:
@@ -918,10 +914,10 @@ EOF
 
 ```bash
 # Install Prometheus
-kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.20/samples/addons/prometheus.yaml
+kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.24/samples/addons/prometheus.yaml
 
 # Install Grafana with Istio dashboards
-kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.20/samples/addons/grafana.yaml
+kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.24/samples/addons/grafana.yaml
 
 # Access Grafana
 istioctl dashboard grafana
@@ -954,7 +950,7 @@ kubectl rollout restart deployment/cogniverse-runtime
 
 ```bash
 # Check mTLS status for a pod (use correct label)
-istioctl authn tls-check $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
+istioctl proxy-config secret $(kubectl get pod -l app.kubernetes.io/component=runtime -o jsonpath='{.items[0].metadata.name}')
 
 # Check peer authentication policy
 kubectl get peerauthentication -n default

@@ -493,8 +493,8 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 **Deployment Process:**
 
 1. Check if schema already exists (skip if exists and force=false)
-2. Call backend.schema_registry.deploy_schema() with tenant_id, base_schema_name, and optional force parameter
-3. Generate tenant-specific schema name: `{base_schema_name}_{tenant_id}`
+2. Call backend.schema_registry.deploy_schema() with tenant_id, base_schema_name, optional config, and optional force parameter
+3. Generate tenant-specific schema name: `{base_schema_name}_{tenant_id}` (colons in tenant_id replaced with underscores, e.g., `acme:prod` becomes `_acme_prod`)
 4. Return deployment status ("success", "failed", or "already_deployed")
 
 **Prerequisites:**

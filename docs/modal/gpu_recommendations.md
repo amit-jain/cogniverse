@@ -153,7 +153,7 @@ def encode_video_frames_budget(frames: list):
 ### 2. VideoPrism (Chunk-Based Video Embeddings)
 
 **Model:** `videoprism_public_v1_base_hf`
-**Content Types:** VIDEO (chunks), AUDIO (from video)
+**Content Types:** VIDEO (chunks)
 
 #### Memory Requirements
 
@@ -564,7 +564,7 @@ torch.backends.cudnn.benchmark = True  # Enable cuDNN autotuner
 ### 3. Gradient Checkpointing
 
 ```python
-# For PyTorch models (ColPali, ColQwen) during training/fine-tuning
+# For HuggingFace transformers models (ColPali, ColQwen) during training/fine-tuning
 model.gradient_checkpointing_enable()
 ```
 

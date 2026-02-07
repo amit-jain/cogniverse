@@ -89,7 +89,7 @@ libs/vespa/cogniverse_vespa/
 
 **Key Files**:
 
-- `vespa_schema_manager.py`: 1539 lines - Core tenant management
+- `vespa_schema_manager.py`: 1537 lines - Core tenant management
 - `vespa_search_client.py`: 1156 lines - Search operations
 - `json_schema_parser.py`: 235 lines - Schema parsing
 - `ingestion_client.py`: 521 lines - PyVespa wrapper for ingestion

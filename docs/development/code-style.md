@@ -596,7 +596,21 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I"]
-ignore = ["E501"]  # Line length handled by formatter
+ignore = [
+    "E501",  # line too long, handled by black
+    "E402",  # module level import not at top of file
+    "B007",  # unused loop variables
+    "B017",  # pytest.raises(Exception)
+    "B024",  # abstract classes without abstract methods
+    "B904",  # raise without 'from' chains
+    "UP006", # dict/Dict and list/List
+    "UP035", # typing.Dict vs dict
+    "UP038", # isinstance((int, float)) vs int | float
+    "UP045", # Optional[T] vs T | None
+    "C401",  # set comprehensions vs generator
+    "C408",  # dict() vs {}
+    "W291",  # trailing whitespace
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cogniverse_sdk", "cogniverse_foundation", "cogniverse_core", "cogniverse_evaluation", "cogniverse_telemetry_phoenix", "cogniverse_agents", "cogniverse_vespa", "cogniverse_synthetic", "cogniverse_runtime", "cogniverse_dashboard", "cogniverse_finetuning"]

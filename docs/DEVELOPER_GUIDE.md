@@ -754,8 +754,14 @@ def telemetry_manager_without_phoenix():
 
     Sets up telemetry with mock endpoints.
     """
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
     from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
     from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    # Reset TelemetryManager singleton AND clear provider cache
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
 
     config = TelemetryConfig(
         otlp_endpoint="http://localhost:24317",
@@ -766,10 +772,15 @@ def telemetry_manager_without_phoenix():
         batch_config=BatchExportConfig(use_sync_export=True),
     )
 
+    # Set as the global singleton
     manager = TelemetryManager(config=config)
+    telemetry_manager_module._telemetry_manager = manager
+
     yield manager
 
+    # Cleanup
     TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
 ```
 
 ---
