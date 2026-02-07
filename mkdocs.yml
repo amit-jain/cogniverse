@@ -259,6 +259,11 @@ nav:
     - SDK Architecture: diagrams/sdk-architecture-diagrams.md
     - Multi-Tenant: diagrams/multi-tenant-diagrams.md
 
+  - Setup Guides:
+    - Live Demo Guide: setup/live-demo-guide.md
+    - Intelligent Query Routing: setup/intelligent-query-routing.md
+    - Evaluation & Optimization Loop: setup/evaluation-optimization-loop.md
+
   - Reference:
     - Glossary: GLOSSARY.md
     - Profile API: user/profile-api-reference.md
