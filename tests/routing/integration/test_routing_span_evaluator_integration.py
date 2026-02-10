@@ -217,7 +217,7 @@ def phoenix_container():
 @pytest.fixture
 async def routing_agent_with_spans(phoenix_container):
     """Create routing agent and generate real routing spans"""
-    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
     from cogniverse_foundation.telemetry.config import (
         BatchExportConfig,
         TelemetryConfig,
@@ -231,7 +231,9 @@ async def routing_agent_with_spans(phoenix_container):
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
-    agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
+    agent = RoutingAgent(
+        deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
+    )
 
     # Generate real routing spans by processing test queries
     test_queries = [
@@ -334,7 +336,7 @@ class TestRoutingSpanEvaluatorIntegration:
         """Test feeding extracted experiences to AdvancedRoutingOptimizer"""
         import tempfile
 
-        from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -351,7 +353,9 @@ class TestRoutingSpanEvaluatorIntegration:
         )
 
         # Create fresh routing agent and generate unique spans
-        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        )
 
         # Use unique queries to avoid span ID collisions with other tests
         unique_queries = [
@@ -489,7 +493,7 @@ class TestRoutingSpanEvaluatorIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_evaluation_workflow(self, optimizer):
         """Test complete end-to-end workflow from span generation to experience creation"""
-        from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -506,7 +510,9 @@ class TestRoutingSpanEvaluatorIntegration:
         )
 
         # 2. Create fresh routing agent
-        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        )
 
         # 2. Process a single query
         query = "show me basketball dunks"

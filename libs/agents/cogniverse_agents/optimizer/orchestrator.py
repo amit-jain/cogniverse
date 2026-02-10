@@ -54,7 +54,7 @@ class ModelClient:
         # Initialize model providers for teacher and student
         for role in ["teacher", "student"]:
             if role in self.config:
-                provider_type = self.config[role]["provider"]
+                provider_type = self.config[role].get("provider")
 
                 if provider_type == "modal":
                     provider_config = self.config.get("providers", {}).get("modal", {})
@@ -70,8 +70,8 @@ class ModelClient:
                         "local", provider_config
                     )
 
-                elif provider_type in ["anthropic", "openai"]:
-                    # These will be handled directly by DSPy LM
+                elif provider_type is None:
+                    # No provider specified — handled via LiteLLM with api_key_env
                     self.model_providers[role] = None
                 else:
                     raise ValueError(
@@ -140,9 +140,11 @@ class ModelClient:
         """
         model_config = self.config[model_type]
         model_id = model_config["model"]
-        provider_type = model_config["provider"]
+        provider_type = model_config.get("provider")
 
-        print(f"🤖 Calling {model_type} model: {model_id} via {provider_type}")
+        print(
+            f"🤖 Calling {model_type} model: {model_id} via {provider_type or 'litellm'}"
+        )
 
         if provider_type in ["modal", "local"] and model_type in self.model_providers:
             # Use provider
@@ -152,7 +154,7 @@ class ModelClient:
                     model_id, prompt, system_prompt, temperature, max_tokens
                 )
 
-        # Fallback to direct API calls for anthropic/openai
+        # Use LiteLLM for API-based models (provider-agnostic)
         return self._call_api_model(
             model_id, provider_type, prompt, system_prompt, temperature, max_tokens
         )
@@ -166,54 +168,33 @@ class ModelClient:
         temperature: float,
         max_tokens: int,
     ) -> str:
-        """Call API-based models directly."""
-        print(f"\n🌐 Calling API model: {model_id} via {provider_type}")
+        """Call API-based models via LiteLLM (provider-agnostic)."""
+        from litellm import completion
+
+        print(f"\n🌐 Calling API model: {model_id}")
         print(f"   Prompt: {prompt[:100]}...")
 
-        if provider_type == "anthropic":
-            import anthropic
+        api_key_env = self.config["teacher"].get(
+            "api_key_env", "ROUTER_OPTIMIZER_TEACHER_KEY"
+        )
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise ValueError(f"{api_key_env} not found in environment variables")
 
-            api_key = os.getenv(self.config["providers"]["anthropic"]["api_key_env"])
-            if not api_key:
-                raise Exception("Anthropic API key not found")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-            client = anthropic.Anthropic(api_key=api_key)
-            messages = [{"role": "user", "content": prompt}]
+        response = completion(
+            model=model_id,
+            messages=messages,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
-            response = client.messages.create(
-                model=model_id,
-                system=system_prompt if system_prompt else None,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-            return response.content[0].text
-
-        elif provider_type == "openai":
-            import openai
-
-            api_key = os.getenv(self.config["providers"]["openai"]["api_key_env"])
-            if not api_key:
-                raise Exception("OpenAI API key not found")
-
-            client = openai.OpenAI(api_key=api_key)
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-            return response.choices[0].message.content
-
-        else:
-            raise ValueError(f"Unsupported provider: {provider_type}")
+        return response.choices[0].message.content
 
     def upload_artifacts(
         self,
@@ -312,10 +293,10 @@ class OptimizationOrchestrator:
 
         print(f"📋 Loaded configuration from {self.config_path}")
         print(
-            f"   Teacher: {opt_config['teacher']['model']} ({opt_config['teacher']['provider']})"
+            f"   Teacher: {opt_config['teacher']['model']} (api_key_env: {opt_config['teacher'].get('api_key_env', 'ROUTER_OPTIMIZER_TEACHER_KEY')})"
         )
         print(
-            f"   Student: {opt_config['student']['model']} ({opt_config['student']['provider']})"
+            f"   Student: {opt_config['student']['model']} ({opt_config['student'].get('provider', 'litellm')})"
         )
 
         return opt_config
@@ -383,30 +364,20 @@ class OptimizationOrchestrator:
         examples = []
         print("🤖 Creating teacher LM...")
 
-        # Import here to avoid circular imports
-        import dspy
-
         # Get teacher config
         teacher_config = self.client.config["teacher"]
         teacher_model = teacher_config["model"]
-        teacher_provider = teacher_config["provider"]
 
-        # Create DSPy LM using LiteLLM format
-        if teacher_provider == "anthropic":
-            import os
-
-            api_key = os.getenv(
-                self.client.config["providers"]["anthropic"]["api_key_env"]
-            )
-            # Use LiteLLM format for Anthropic
-            teacher_lm = dspy.LM(
-                model="claude-3-5-sonnet-20241022",  # LiteLLM handles this
-                api_key=api_key,
-                temperature=0.7,
-            )
-        else:
-            # For other providers, use standard format
-            teacher_lm = dspy.LM(model=teacher_model, temperature=0.7)
+        # Create DSPy LM — LiteLLM resolves provider from model name
+        api_key_env = teacher_config.get("api_key_env", "ROUTER_OPTIMIZER_TEACHER_KEY")
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise ValueError(f"{api_key_env} not found in environment variables")
+        teacher_lm = dspy.LM(
+            model=teacher_model,
+            api_key=api_key,
+            temperature=0.7,
+        )
 
         # Configure DSPy with teacher
         print("🔧 Configuring DSPy with teacher LM...")

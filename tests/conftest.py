@@ -402,6 +402,12 @@ def telemetry_manager_with_phoenix(telemetry_config_with_phoenix):
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
 
+    # Also clear evaluation registry cache to ensure evaluation providers
+    # pick up the test's endpoint configuration
+    from cogniverse_evaluation.providers.registry import get_evaluation_registry
+
+    get_evaluation_registry().clear_cache()
+
     manager = TelemetryManager(config=telemetry_config_with_phoenix)
     telemetry_manager_module._telemetry_manager = manager
 
@@ -409,6 +415,7 @@ def telemetry_manager_with_phoenix(telemetry_config_with_phoenix):
 
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
+    get_evaluation_registry().clear_cache()
 
 
 # ==================== Backend Configuration Fixtures ====================

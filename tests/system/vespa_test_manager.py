@@ -384,19 +384,32 @@ class VespaTestManager:
                     )
 
                 # Run the async processing
-                results = asyncio.run(process_videos())
+                job_result = asyncio.run(process_videos())
+
+                # process_videos_concurrent returns a dict with
+                # {"job_id", "status", "results": [per-video dicts], ...}
+                # Extract the per-video results list
+                results = (
+                    job_result.get("results", [])
+                    if isinstance(job_result, dict)
+                    else job_result
+                )
 
                 # Count successful ingestions
                 if results:
                     successful = sum(
-                        1 for result in results if result.get("status") == "completed"
+                        1
+                        for result in results
+                        if isinstance(result, dict)
+                        and result.get("status") == "completed"
                     )
                     total_docs_fed = sum(
                         result.get("results", {})
                         .get("embeddings", {})
                         .get("documents_fed", 0)
                         for result in results
-                        if result.get("status") == "completed"
+                        if isinstance(result, dict)
+                        and result.get("status") == "completed"
                     )
 
                     print(

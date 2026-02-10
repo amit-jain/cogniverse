@@ -367,7 +367,7 @@ class TestAnnotationSystemIntegration:
         logger.info("\n=== STEP 4: Generating LLM annotations ===")
 
         # Check if we have LLM API access
-        has_llm_access = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")
+        has_llm_access = os.getenv("ANNOTATION_API_KEY")
 
         if has_llm_access:
             llm_annotator = LLMAutoAnnotator()

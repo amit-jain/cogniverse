@@ -12,6 +12,8 @@ from phoenix.experiments.types import EvaluationResult
 
 from cogniverse_evaluation.providers.base import EvaluationProvider
 
+from cogniverse_telemetry_phoenix.evaluation.framework import PhoenixEvaluatorFramework
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +32,12 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         self.http_endpoint: str = "http://localhost:6006"
         self.phoenix_client: Optional[Any] = None
         self._telemetry_provider: Optional[Any] = None
+        self._framework = PhoenixEvaluatorFramework()
+
+    @property
+    def framework(self) -> PhoenixEvaluatorFramework:
+        """Return the Phoenix evaluator framework."""
+        return self._framework
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
@@ -38,22 +46,36 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         Args:
             config: Configuration dictionary with:
                 - tenant_id: Tenant identifier
-                - http_endpoint: Phoenix server endpoint (default: http://localhost:6006)
-                - grpc_endpoint: gRPC endpoint (default: http://localhost:4317)
+                - http_endpoint: Phoenix server endpoint (resolved from TelemetryManager if not provided)
+                - grpc_endpoint: gRPC endpoint (resolved from TelemetryManager if not provided)
                 - project_name: Project name for telemetry (default: "evaluation")
                 - Additional Phoenix-specific settings
         """
         self.tenant_id = config.get("tenant_id", "default")
-        self.http_endpoint = config.get("http_endpoint", "http://localhost:6006")
-        grpc_endpoint = config.get("grpc_endpoint", "http://localhost:4317")
         project_name = config.get("project_name", "evaluation")
+
+        # Resolve endpoints from TelemetryManager config (shared singleton)
+        # This ensures evaluation providers use the same endpoints as telemetry providers
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        telemetry_manager = get_telemetry_manager()
+        manager_config = telemetry_manager.config.provider_config
+
+        self.http_endpoint = config.get(
+            "http_endpoint",
+            manager_config.get("http_endpoint", "http://localhost:6006"),
+        )
+        grpc_endpoint = config.get(
+            "grpc_endpoint",
+            manager_config.get("grpc_endpoint", "http://localhost:4317"),
+        )
 
         # Get telemetry provider for this tenant
         try:
-            from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+            from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
-            # Get telemetry provider from registry
-            registry = TelemetryRegistry()
+            # Get telemetry provider from singleton registry (shared cache)
+            registry = get_telemetry_registry()
             self._telemetry_provider = registry.get_telemetry_provider(
                 name="phoenix",
                 tenant_id=self.tenant_id,

@@ -464,20 +464,13 @@ def optimize_router(
             f"Generating {num_teacher_examples} examples with teacher model: {teacher_model}"
         )
 
-        # Configure teacher LM based on model type
-        if "claude" in teacher_model.lower():
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-            teacher_lm = dspy.LM(model=teacher_model, api_key=api_key, temperature=0.7)
-        elif "gpt" in teacher_model.lower():
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not found in environment variables")
-            teacher_lm = dspy.LM(model=teacher_model, api_key=api_key, temperature=0.7)
-        else:
-            # Default configuration
-            teacher_lm = dspy.LM(model=teacher_model, temperature=0.7)
+        # Configure teacher LM — LiteLLM resolves provider from model name
+        api_key = os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY")
+        if not api_key:
+            raise ValueError(
+                "ROUTER_OPTIMIZER_TEACHER_KEY not found in environment variables"
+            )
+        teacher_lm = dspy.LM(model=teacher_model, api_key=api_key, temperature=0.7)
 
         teacher_examples = generate_teacher_examples(teacher_lm, num_teacher_examples)
         train_examples.extend(teacher_examples)

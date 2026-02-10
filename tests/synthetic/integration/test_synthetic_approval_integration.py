@@ -57,9 +57,9 @@ def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
         return False
 
 
-def is_openai_api_available() -> bool:
-    """Check if OpenAI API key is available."""
-    return bool(os.getenv("OPENAI_API_KEY"))
+def is_teacher_api_available() -> bool:
+    """Check if router optimizer teacher API key is available."""
+    return bool(os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY"))
 
 
 # Skip markers for integration tests requiring real LMs
@@ -68,8 +68,9 @@ skip_if_no_ollama = pytest.mark.skipif(
     reason="Ollama service not available at http://localhost:11434",
 )
 
-skip_if_no_openai = pytest.mark.skipif(
-    not is_openai_api_available(), reason="OPENAI_API_KEY environment variable not set"
+skip_if_no_teacher_api = pytest.mark.skipif(
+    not is_teacher_api_available(),
+    reason="ROUTER_OPTIMIZER_TEACHER_KEY environment variable not set",
 )
 
 

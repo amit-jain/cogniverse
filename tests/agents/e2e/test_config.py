@@ -10,9 +10,7 @@ E2E_CONFIG: Dict[str, Any] = {
     # LLM Configuration
     "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
     "ollama_model": os.getenv("OLLAMA_MODEL", "smollm3:8b"),
-    "openai_api_key": os.getenv(
-        "OPENAI_API_KEY", "fake-key"
-    ),  # Ollama doesn't need real key
+    "openai_api_key": "fake-key",  # Ollama doesn't need real key
     # Backend Services
     "vespa_url": os.getenv("VESPA_URL", "http://localhost:8080"),
     "phoenix_url": os.getenv("PHOENIX_URL", "http://localhost:6006"),

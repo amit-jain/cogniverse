@@ -13,6 +13,36 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 
+class EvaluatorFramework(ABC):
+    """
+    Abstract base class for evaluator frameworks.
+
+    Each telemetry provider implements this to expose its evaluator base class,
+    evaluation result type, and result factory method.
+    """
+
+    @abstractmethod
+    def get_evaluator_base_class(self) -> type:
+        """Return the provider's base evaluator class."""
+        pass
+
+    @abstractmethod
+    def get_evaluation_result_type(self) -> type:
+        """Return the provider's evaluation result type."""
+        pass
+
+    @abstractmethod
+    def create_evaluation_result(
+        self,
+        score: float,
+        label: str,
+        explanation: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Create a provider-specific evaluation result."""
+        pass
+
+
 class EvaluationProvider(ABC):
     """
     Abstract base class for evaluation providers.

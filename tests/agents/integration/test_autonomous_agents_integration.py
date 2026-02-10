@@ -203,10 +203,21 @@ class TestEntityExtractionAgentIntegration:
 
         # VALIDATE: Dominant types include expected categories
         if result.dominant_types:
-            # Should recognize ORG, PRODUCT, or PLACE types
+            # Should recognize ORG, PRODUCT, or PLACE types (LLMs may use synonyms)
             types_str = " ".join(result.dominant_types).lower()
             assert any(
-                t in types_str for t in ["org", "product", "place", "concept", "entity"]
+                t in types_str
+                for t in [
+                    "org",
+                    "product",
+                    "place",
+                    "concept",
+                    "entity",
+                    "device",
+                    "location",
+                    "company",
+                    "brand",
+                ]
             ), f"Expected org/product/place types, got: {result.dominant_types}"
 
     @pytest.mark.asyncio

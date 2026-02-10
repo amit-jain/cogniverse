@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
@@ -30,15 +30,22 @@ class TestRoutingAgentCacheMetricsIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(
+            deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
+        )
+        if not agent.cache_manager or not agent.metrics_tracker:
+            pytest.skip(
+                "Cache/metrics components require real telemetry infrastructure"
+            )
         yield agent
         # Cleanup cache between tests
         if agent.cache_manager:
             agent.cache_manager.invalidate_all()
             agent.cache_manager.reset_stats()
         # Cleanup telemetry
-        agent.telemetry_manager.force_flush(timeout_millis=5000)
-        await asyncio.sleep(0.5)
+        if agent.telemetry_manager:
+            agent.telemetry_manager.force_flush(timeout_millis=5000)
+            await asyncio.sleep(0.5)
 
     async def test_cache_integration_with_routing(self, routing_agent):
         """Test cache integration with real routing queries"""

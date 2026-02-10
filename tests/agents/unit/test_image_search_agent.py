@@ -56,7 +56,7 @@ class TestImageSearchAgent:
         assert call_args[0] == "vidore/colsmol-500m"  # model_name
         assert "colpali_model" in call_args[1]  # config
 
-    @patch("cogniverse_agents.query_encoders.get_or_load_model")
+    @patch("cogniverse_core.query.encoders.get_or_load_model")
     def test_query_encoder_initialization(self, mock_get_model):
         """Test query encoder is initialized correctly"""
         mock_model = MagicMock()

@@ -14,11 +14,8 @@ git clone <repo-url> && cd cogniverse
 uv sync
 
 # Environment variables
-cp .env.example .env
-# Edit .env with your API keys:
-#   OPENAI_API_KEY=...       (for LLM-based evaluators)
-#   MODAL_TOKEN_ID=...       (for Modal visual judge, optional)
-#   MODAL_TOKEN_SECRET=...
+export ROUTER_OPTIMIZER_TEACHER_KEY=...   # for DSPy teacher model (any LiteLLM-supported provider)
+export ANNOTATION_API_KEY=...             # for LLM auto-annotator (optional)
 
 # VideoPrism requires JAX on CPU (unless you have a TPU)
 export JAX_PLATFORM_NAME=cpu

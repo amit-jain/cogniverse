@@ -56,18 +56,25 @@ class LLMAutoAnnotator:
     Outputs structured annotation with reasoning
     """
 
-    def __init__(self, model: Optional[str] = None, api_base: Optional[str] = None):
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
         """
         Initialize LLM auto-annotator
 
         Args:
             model: Model name to use (defaults to env var or claude-3-5-sonnet-20241022)
             api_base: API base URL for local models (e.g., http://localhost:11434 for Ollama)
+            api_key: API key (defaults to ANNOTATION_API_KEY env var)
         """
         self.model = model or os.getenv(
             "ANNOTATION_MODEL", "claude-3-5-sonnet-20241022"
         )
         self.api_base = api_base or os.getenv("ANNOTATION_API_BASE")
+        self.api_key = api_key or os.getenv("ANNOTATION_API_KEY")
 
         logger.info(
             f"🤖 Initialized LLMAutoAnnotator with model: {self.model}"
@@ -97,6 +104,9 @@ class LLMAutoAnnotator:
                 "max_tokens": 1024,
                 "temperature": 0.3,  # Lower temperature for more consistent annotations
             }
+
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
 
             if self.api_base:
                 kwargs["api_base"] = self.api_base

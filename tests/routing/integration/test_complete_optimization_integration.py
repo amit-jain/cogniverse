@@ -284,7 +284,7 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 5: Checking annotation generation ===")
 
         annotations_generated = result.get("annotations_generated", 0)
-        has_llm = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")
+        has_llm = os.getenv("ANNOTATION_API_KEY")
 
         if has_llm and annotations_generated > 0:
             logger.info(f"✅ Generated {annotations_generated} LLM annotations")
@@ -441,6 +441,8 @@ class TestCompleteOptimizationIntegration:
         # STEP 3: Create test spans
         logger.info("\n=== Creating test routing spans ===")
 
+        start_time = datetime.now()
+
         for i in range(5):
             with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
@@ -455,7 +457,21 @@ class TestCompleteOptimizationIntegration:
                 simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager_with_phoenix.force_flush(timeout_millis=5000)
-        wait_for_vespa_indexing(delay=2)
+        wait_for_vespa_indexing(delay=3)
+
+        # STEP 3b: Verify spans are queryable in Phoenix before running orchestrator
+        logger.info("\n=== Verifying spans exist in Phoenix ===")
+        end_time = datetime.now()
+        spans_df = phoenix_client.get_spans_dataframe(
+            project_name=project_name,
+            start_time=start_time - timedelta(seconds=10),
+            end_time=end_time,
+        )
+        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+        assert (
+            len(routing_spans) >= 5
+        ), f"Expected 5 routing spans in Phoenix, got {len(routing_spans)}"
+        logger.info(f"✅ Found {len(routing_spans)} routing spans in Phoenix")
 
         # STEP 4: Run orchestration
         await orchestrator.run_once()
