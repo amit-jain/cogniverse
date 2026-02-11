@@ -678,9 +678,9 @@ config_manager.save_routing_config(routing_config)
 ### Environment Variables
 
 ```bash
-# LLM API Keys (for DSPy and synthetic data)
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+# LLM API Keys (for DSPy teacher model and auto-annotator)
+export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
+export ANNOTATION_API_KEY="your-api-key"            # For LLM auto-annotator (optional)
 
 # Phoenix
 export PHOENIX_ENDPOINT="http://localhost:6006"
@@ -768,8 +768,8 @@ ENTRYPOINT ["uv", "run", "python"]
 # Create Kubernetes secret with config store URL
 kubectl create secret generic cogniverse-config \
   --from-literal=store-url="redis://redis.cogniverse.svc.cluster.local:6379" \
-  --from-literal=openai-api-key="${OPENAI_API_KEY}" \
-  --from-literal=anthropic-api-key="${ANTHROPIC_API_KEY}" \
+  --from-literal=teacher-api-key="${ROUTER_OPTIMIZER_TEACHER_KEY}" \
+  --from-literal=annotation-api-key="${ANNOTATION_API_KEY}" \
   -n cogniverse
 
 # Verify secret
@@ -1106,11 +1106,10 @@ asyncio.run(check())
 **4. Check LLM API keys**:
 ```bash
 # Verify API keys in secret
-kubectl get secret cogniverse-config -n cogniverse -o jsonpath='{.data.openai-api-key}' | base64 -d
+kubectl get secret cogniverse-config -n cogniverse -o jsonpath='{.data.teacher-api-key}' | base64 -d
 
-# Test API key
-curl https://api.openai.com/v1/models \
-  -H "Authorization: Bearer ${OPENAI_API_KEY}"
+# Verify key is set
+echo "ROUTER_OPTIMIZER_TEACHER_KEY is ${ROUTER_OPTIMIZER_TEACHER_KEY:+set}"
 ```
 
 ### Optimization Too Frequent

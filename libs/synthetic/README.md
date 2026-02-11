@@ -346,9 +346,8 @@ config = SystemConfig(
 ### Environment Variables
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
-export LLM_MODEL="gpt-4"
+export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
+export LLM_MODEL="claude-3-5-sonnet-20241022"
 export TENANT_ID="acme_corp"
 ```
 
@@ -454,9 +453,7 @@ documents = await querier.sample_documents(
 
 **1. LLM API Key Not Found**
 ```bash
-export OPENAI_API_KEY="sk-..."
-# Or in code
-config = SystemConfig(llm_api_key="sk-...")
+export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"
 ```
 
 **2. Validation Fails After 3 Retries**

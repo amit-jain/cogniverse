@@ -206,7 +206,7 @@ Update your configuration file with your Modal endpoints. The config structure f
     "type": "dspy",
     "teacher": {
       "model": "claude-3-5-sonnet-20241022",
-      "provider": "anthropic"
+      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
     },
     "student": {
       "model": "HuggingFaceTB/SmolLM3-3B",
@@ -218,9 +218,6 @@ Update your configuration file with your Modal endpoints. The config structure f
         "memory_mb": 16000,
         "timeout_seconds": 3600
       },
-      "anthropic": {
-        "api_key_env": "ANTHROPIC_API_KEY"
-      }
     },
     "settings": {
       "num_examples": 50,
@@ -429,8 +426,8 @@ modal run scripts/modal_vlm_service.py::test_vlm --frame-path path/to/frame.jpg
 modal token new
 
 # Set secrets for API keys
-modal secret create anthropic-key ANTHROPIC_API_KEY=sk-...
-modal secret create openai-key OPENAI_API_KEY=sk-...
+modal secret create teacher-key ROUTER_OPTIMIZER_TEACHER_KEY=your-api-key
+modal secret create annotation-key ANNOTATION_API_KEY=your-api-key
 ```
 
 ### GPU Availability

@@ -129,8 +129,8 @@ curl -X POST http://localhost:8000/synthetic/generate \
 ### Environment Variables
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export LLM_MODEL="gpt-4"
+export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
+export LLM_MODEL="claude-3-5-sonnet-20241022"
 ```
 
 ### With Real Backend

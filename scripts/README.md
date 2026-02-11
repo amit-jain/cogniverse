@@ -874,9 +874,9 @@ kubectl logs -n cogniverse -l workflows.argoproj.io/workflow=auto-opt-default-ab
 ## Environment Variables
 
 ```bash
-# LLM API Keys (for DSPy optimization)
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+# LLM API Keys (for DSPy teacher model and auto-annotator)
+export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
+export ANNOTATION_API_KEY="your-api-key"            # For LLM auto-annotator (optional)
 
 # Service Endpoints
 export VESPA_URL="http://localhost:8080"
@@ -969,7 +969,7 @@ bash scripts/start_phoenix.sh
 
 **4. Optimization Failing**
 - Check Phoenix traces: Ensure sufficient data (>100 traces)
-- Verify LLM API keys: Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+- Verify LLM API keys: Set `ROUTER_OPTIMIZER_TEACHER_KEY`
 - Review synthetic data generation: Use `--use-synthetic-data` for cold start
 
 **5. Ingestion Slow**

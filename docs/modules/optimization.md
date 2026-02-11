@@ -2043,15 +2043,14 @@ results = orchestrator.run_optimization()
     "enabled": true,
     "type": "dspy",
     "teacher": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet-20241022"
+      "model": "claude-3-5-sonnet-20241022",
+      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
     },
     "student": {
       "provider": "modal",
       "model": "google/gemma-7b"
     },
     "providers": {
-      "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
       "modal": {"volume_name": "cogniverse-artifacts"}
     },
     "settings": {

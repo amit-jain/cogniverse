@@ -300,9 +300,9 @@ create_secrets() {
     fi
 
     # Create other secrets from environment
-    if [ -n "$OPENAI_API_KEY" ]; then
+    if [ -n "$ROUTER_OPTIMIZER_TEACHER_KEY" ]; then
         kubectl create secret generic cogniverse-secrets \
-            --from-literal=openai-api-key="$OPENAI_API_KEY" \
+            --from-literal=teacher-api-key="$ROUTER_OPTIMIZER_TEACHER_KEY" \
             --namespace "$NAMESPACE" \
             --dry-run=client -o yaml | kubectl apply -f -
 
@@ -594,7 +594,7 @@ Environment Variables:
   DOCKER_USERNAME             Docker registry username
   DOCKER_PASSWORD             Docker registry password
   DOCKER_REGISTRY             Docker registry URL
-  OPENAI_API_KEY              OpenAI API key for secrets
+  ROUTER_OPTIMIZER_TEACHER_KEY API key for DSPy teacher model
 
 Examples:
   # Basic deployment (assumes kubectl configured)
@@ -625,7 +625,7 @@ Examples:
   DOCKER_USERNAME=myuser \
   DOCKER_PASSWORD=mypass \
   DOCKER_REGISTRY=registry.example.com \
-  OPENAI_API_KEY=sk-... \
+  ROUTER_OPTIMIZER_TEACHER_KEY=your-api-key \
     ./scripts/deploy_kubernetes.sh
 EOF
         exit 0
