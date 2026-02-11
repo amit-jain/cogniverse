@@ -73,7 +73,7 @@ graph TB
 | **Vespa** | 19071 | Config Server API | (same as above) |
 | **Vespa** | 19092 | Metrics endpoint | — |
 | **Runtime** | 8000 | Unified FastAPI (search, ingest, agents, events) | `curl http://localhost:8000/health` |
-| **Tenant Manager** | 9000 | Organization & tenant management API | `curl http://localhost:9000/health` |
+| **Tenant Manager** | 9000 | Organization & tenant management API (standalone, not in docker-compose) | `curl http://localhost:9000/health` |
 | **Dashboard** | 8501 | Streamlit UI | `curl http://localhost:8501/_stcore/health` |
 | **Phoenix** | 6006 | Evaluation & observability UI | — |
 | **OTel Collector** | 4317 | OTLP gRPC receiver | — |
@@ -395,6 +395,8 @@ uv run python scripts/demo_routing_unified.py --verbose
 # Test a specific tier category
 uv run python scripts/demo_routing_unified.py --category tier1_simple
 uv run python scripts/demo_routing_unified.py --category tier2_complex
+uv run python scripts/demo_routing_unified.py --category tier3_structured
+uv run python scripts/demo_routing_unified.py --category tier4_fallback
 ```
 
 ### What to Observe

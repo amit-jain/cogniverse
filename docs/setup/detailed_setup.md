@@ -350,7 +350,6 @@ Replace default models by updating configuration:
 
 ```json
 {
-  "vllm_model": "your/custom-vision-model",
   "colpali_model": "your/custom-retrieval-model",
   "embedding_model": "your/custom-embedding-model"
 }
