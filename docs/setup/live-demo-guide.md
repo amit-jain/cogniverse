@@ -1,6 +1,6 @@
 # Live Demo Guide
 
-A hands-on companion to [Intelligent Query Routing](./intelligent-query-routing.md) and [Evaluation & Optimization Loop](./evaluation-optimization-loop.md). Walk through deploying, bootstrapping, ingesting, searching, and evaluating — demonstrating the techniques from those docs in a live setting.
+A hands-on companion to [Intelligent Query Routing](../architecture/intelligent-query-routing.md) and [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md). Walk through deploying, bootstrapping, ingesting, searching, and evaluating — demonstrating the techniques from those docs in a live setting.
 
 ---
 
@@ -372,7 +372,7 @@ flowchart TD
 
 ## 6. Intelligent Routing Demo
 
-> **Deep dive**: [Intelligent Query Routing](./intelligent-query-routing.md)
+> **Deep dive**: [Intelligent Query Routing](../architecture/intelligent-query-routing.md)
 
 The routing system uses a 4-tier escalation chain to classify and route queries:
 
@@ -422,7 +422,7 @@ After running the demo, open Phoenix at `http://localhost:6006`:
 
 ## 7. Evaluation & Experiments
 
-> **Deep dive**: [Evaluation & Optimization Loop](./evaluation-optimization-loop.md)
+> **Deep dive**: [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md)
 
 ### Run Experiments
 
@@ -606,5 +606,5 @@ uv run python scripts/run_experiments_with_visualization.py \
 ---
 
 **See also:**
-- [Intelligent Query Routing](./intelligent-query-routing.md) — 4-tier routing architecture, entity extraction, DSPy signatures, multi-agent orchestration
-- [Evaluation & Optimization Loop](./evaluation-optimization-loop.md) — synthetic data generation, HITL review, adaptive optimizer selection, annotation feedback
+- [Intelligent Query Routing](../architecture/intelligent-query-routing.md) — 4-tier routing architecture, entity extraction, DSPy signatures, multi-agent orchestration
+- [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) — synthetic data generation, HITL review, adaptive optimizer selection, annotation feedback

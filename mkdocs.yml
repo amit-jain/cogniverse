@@ -175,7 +175,6 @@ nav:
 
   - Getting Started:
     - Quickstart: QUICKSTART.md
-    - Detailed Setup: setup/detailed_setup.md
     - User Guide: USER_GUIDE.md
     - Profile Management: user/profile-management.md
     - Troubleshooting: TROUBLESHOOTING.md
@@ -192,6 +191,8 @@ nav:
     - Code Flow Examples: architecture/code_flow_examples.md
     - Dynamic Profiles: architecture/dynamic-profiles.md
     - Ensemble Composition: architecture/ensemble-composition.md
+    - Intelligent Query Routing: architecture/intelligent-query-routing.md
+    - Evaluation & Optimization Loop: architecture/evaluation-optimization-loop.md
     - Frame Boundary Algorithm: processing/frame_boundary_algorithm.md
 
   - System Components:
@@ -259,10 +260,8 @@ nav:
     - SDK Architecture: diagrams/sdk-architecture-diagrams.md
     - Multi-Tenant: diagrams/multi-tenant-diagrams.md
 
-  - Setup Guides:
+  - Tutorials:
     - Live Demo Guide: setup/live-demo-guide.md
-    - Intelligent Query Routing: setup/intelligent-query-routing.md
-    - Evaluation & Optimization Loop: setup/evaluation-optimization-loop.md
 
   - Reference:
     - Glossary: GLOSSARY.md

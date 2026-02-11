@@ -472,8 +472,6 @@ open http://localhost:6006
 
 - [Instrumentation](../development/instrumentation.md) - Observability patterns
 
-- [Setup & Installation](../setup/detailed_setup.md) - Installation
-
 - [Deployment Guide](../modal/deployment_guide.md) - Deployment
 
 ---
