@@ -452,8 +452,8 @@ uv run python scripts/run_experiments_with_visualization.py \
 | Evaluator | What It Does | Requires |
 |-----------|-------------|----------|
 | **Quality evaluators** (default) | IR metrics: MRR, NDCG, Recall, Precision | Ground truth labels |
-| **`visual_judge`** | LLM scores visual relevance of results | OpenAI API key |
-| **`llm_judge`** | LLM evaluates text answer quality | OpenAI API key |
+| **`visual_judge`** | LLM scores visual relevance of results | `ROUTER_OPTIMIZER_TEACHER_KEY` |
+| **`llm_judge`** | LLM evaluates text answer quality | `ROUTER_OPTIMIZER_TEACHER_KEY` |
 | **`modal_visual_judge`** | GPU-accelerated visual evaluation on Modal | Modal token |
 
 ### View Results in Phoenix

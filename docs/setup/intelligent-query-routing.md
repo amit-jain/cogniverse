@@ -80,7 +80,7 @@ Zero-shot Named Entity Recognition using [GLiNER](https://github.com/urchade/GLi
 
 ```mermaid
 flowchart TD
-    Q["<span style='color:#000'>Query Text</span>"] --> GLiNER["<span style='color:#000'>GLiNER<br/>urchade/gliner_mediumv2.1</span>"]
+    Q["<span style='color:#000'>Query Text</span>"] --> GLiNER["<span style='color:#000'>GLiNER<br/>urchade/gliner_medium-v2.1</span>"]
     GLiNER --> |"predict_entities(text, labels)"| E["<span style='color:#000'>Extracted Entities</span>"]
 
     subgraph "15 Entity Types"
