@@ -39,6 +39,51 @@ class QueryRewriter:
             "synonym_expansion": self._expand_with_synonyms,
         }
 
+    def get_query_variants(
+        self,
+        original_query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]],
+        variant_strategies: List[str],
+        include_original: bool = True,
+    ) -> List[Dict[str, str]]:
+        """
+        Generate distinct query variants by running only the specified strategies.
+
+        Args:
+            original_query: Original user query
+            entities: Extracted entities with metadata
+            relationships: Extracted relationship tuples
+            variant_strategies: Strategy names to run (subset of enhancement_strategies)
+            include_original: Whether to include the unmodified query as a variant
+
+        Returns:
+            List of {"name": strategy_name, "query": enhanced_query_text}
+        """
+        variants: List[Dict[str, str]] = []
+        if include_original:
+            variants.append({"name": "original", "query": original_query})
+
+        valid_strategies = set(self.enhancement_strategies.keys())
+        for strategy_name in variant_strategies:
+            strategy_func = self.enhancement_strategies.get(strategy_name)
+            if not strategy_func:
+                raise ValueError(
+                    f"Unknown variant strategy: '{strategy_name}'. "
+                    f"Valid strategies: {sorted(valid_strategies)}"
+                )
+            try:
+                result = strategy_func(
+                    original_query, entities, relationships, "general"
+                )
+                enhanced = result.get("enhanced_query", original_query)
+                if enhanced != original_query:
+                    variants.append({"name": strategy_name, "query": enhanced})
+            except Exception as e:
+                logger.warning(f"Variant strategy {strategy_name} failed: {e}")
+
+        return variants
+
     def enhance_query(
         self,
         original_query: str,
@@ -749,11 +794,15 @@ class QueryEnhancementPipeline:
     """
 
     def __init__(
-        self, enable_simba: bool = True, simba_config: Optional[SIMBAConfig] = None
+        self,
+        enable_simba: bool = True,
+        simba_config: Optional[SIMBAConfig] = None,
+        query_fusion_config: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the enhancement pipeline."""
         self.relationship_tool = RelationshipExtractorTool()
         self.dspy_enhancer = DSPyQueryEnhancerModule()
+        self.query_fusion_config = query_fusion_config or {"mode": "single"}
 
         # Phase 6.2: Initialize SIMBA enhancer
         self.enable_simba = enable_simba
@@ -870,7 +919,28 @@ class QueryEnhancementPipeline:
                     f"(quality: {enhancement_prediction.quality_score})"
                 )
 
-            # Step 4: Combine results
+            # Step 4: Generate query variants if parallel fusion mode is active
+            query_variants: List[Dict[str, str]] = []
+            if self.query_fusion_config.get("mode") == "parallel":
+                variant_strategies = self.query_fusion_config.get(
+                    "variant_strategies",
+                    ["relationship_expansion", "boolean_optimization"],
+                )
+                include_original = self.query_fusion_config.get(
+                    "include_original", True
+                )
+                query_variants = self.dspy_enhancer.rewriter.get_query_variants(
+                    original_query=query,
+                    entities=entities,
+                    relationships=relationships,
+                    variant_strategies=variant_strategies,
+                    include_original=include_original,
+                )
+                logger.info(
+                    f"Generated {len(query_variants)} query variants for parallel fusion"
+                )
+
+            # Step 5: Combine results
             complete_result = {
                 # Original extraction data
                 "original_query": query,
@@ -891,6 +961,8 @@ class QueryEnhancementPipeline:
                 ],
                 "search_operators": enhancement_prediction_data["search_operators"],
                 "quality_score": enhancement_prediction_data["quality_score"],
+                # Query fusion variants
+                "query_variants": query_variants,
                 # SIMBA metadata
                 "simba_applied": simba_result is not None
                 and simba_result.get("enhanced", False),
@@ -935,6 +1007,7 @@ class QueryEnhancementPipeline:
                 "enhancement_strategy": "pipeline_error",
                 "search_operators": [],
                 "quality_score": 0.0,
+                "query_variants": [],
                 "search_context": search_context,
                 "processing_metadata": {"error": str(e), "fallback_used": True},
             }
@@ -1028,9 +1101,13 @@ def create_dspy_query_enhancer() -> DSPyQueryEnhancerModule:
 
 
 def create_enhancement_pipeline(
-    enable_simba: bool = True, simba_config: Optional[SIMBAConfig] = None
+    enable_simba: bool = True,
+    simba_config: Optional[SIMBAConfig] = None,
+    query_fusion_config: Optional[Dict[str, Any]] = None,
 ) -> QueryEnhancementPipeline:
     """Create complete query enhancement pipeline with optional SIMBA integration."""
     return QueryEnhancementPipeline(
-        enable_simba=enable_simba, simba_config=simba_config
+        enable_simba=enable_simba,
+        simba_config=simba_config,
+        query_fusion_config=query_fusion_config,
     )

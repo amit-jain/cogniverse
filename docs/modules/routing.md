@@ -186,6 +186,14 @@ class RoutingConfig:
         "cache_ttl_seconds": 300,
         "max_cache_size": 1000,
     }
+
+    # Query fusion (multi-query vs single mega-query)
+    query_fusion_config: dict = {
+        "mode": "single",       # "single" (mega-query) or "parallel" (multi-variant + RRF)
+        "variant_strategies": ["relationship_expansion", "boolean_optimization"],
+        "include_original": True,  # Include unmodified query as a variant
+        "rrf_k": 60,             # RRF constant for fusing variant results
+    }
 ```
 
 **Key Methods**:
@@ -193,7 +201,9 @@ class RoutingConfig:
 def merge_with_env(self):
     """Override config from environment variables"""
     # Format: ROUTING_<SECTION>_<KEY>
-    # Example: ROUTING_LLM_MODEL=gemma2:2b
+    # Examples:
+    #   ROUTING_LLM_MODEL=gemma2:2b
+    #   ROUTING_QUERYFUSION_MODE=parallel
 
 @classmethod
 def from_file(cls, filepath: Path) -> "RoutingConfig":
@@ -523,6 +533,30 @@ enhanced = f"{query} {' '.join(boolean_groups)}"
 # Expand with synonyms and related terms
 enhanced = f"{query} OR {' OR '.join(synonyms)}"
 ```
+
+**Multi-Query Variant Generation** (`get_query_variants()`):
+
+When `query_fusion_config.mode == "parallel"`, the QueryRewriter generates distinct query variants
+by running only the configured `variant_strategies`. Each variant is searched in parallel and results
+are fused with RRF (see [Ensemble Composition](../architecture/ensemble-composition.md#multi-query-fusion)).
+
+```python
+variants = rewriter.get_query_variants(
+    original_query="robots playing soccer",
+    entities=entities,
+    relationships=relationships,
+    variant_strategies=["relationship_expansion", "boolean_optimization"],
+    include_original=True,
+)
+# Returns: [
+#   {"name": "original", "query": "robots playing soccer"},
+#   {"name": "relationship_expansion", "query": "robots playing soccer (robots playing soccer)"},
+#   {"name": "boolean_optimization", "query": "robots playing soccer (robots AND soccer)"},
+# ]
+```
+
+Invalid strategy names raise `ValueError` (not silently skipped). Strategies that produce a query
+identical to the original are filtered out automatically.
 
 ---
 

@@ -1657,6 +1657,208 @@ class TestQueryEnhancement:
 
 
 @pytest.mark.unit
+class TestQueryVariants:
+    """Test multi-query fusion variant generation."""
+
+    @pytest.mark.ci_fast
+    def test_get_query_variants_basic(self):
+        """Test get_query_variants returns correct structure with original + strategies"""
+        rewriter = QueryRewriter()
+
+        query = "Show me videos of robots playing soccer"
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
+        ]
+        relationships = [
+            {
+                "subject": "robots",
+                "relation": "playing",
+                "object": "soccer",
+                "confidence": 0.85,
+            }
+        ]
+
+        variants = rewriter.get_query_variants(
+            original_query=query,
+            entities=entities,
+            relationships=relationships,
+            variant_strategies=["relationship_expansion", "boolean_optimization"],
+            include_original=True,
+        )
+
+        # Must include original
+        assert any(v["name"] == "original" for v in variants)
+        assert variants[0]["name"] == "original"
+        assert variants[0]["query"] == query
+
+        # Each variant has name and query keys
+        for v in variants:
+            assert "name" in v
+            assert "query" in v
+            assert isinstance(v["name"], str)
+            assert isinstance(v["query"], str)
+
+    @pytest.mark.ci_fast
+    def test_get_query_variants_filters_noop(self):
+        """Test that no-op strategies (enhanced == original) are filtered out"""
+        rewriter = QueryRewriter()
+
+        query = "Show me videos of robots playing soccer"
+        # No entities/relationships → strategies produce no enhancement
+        variants = rewriter.get_query_variants(
+            original_query=query,
+            entities=[],
+            relationships=[],
+            variant_strategies=["relationship_expansion", "boolean_optimization"],
+            include_original=True,
+        )
+
+        # Only original should remain (strategies produce no-op without entities)
+        assert len(variants) == 1
+        assert variants[0]["name"] == "original"
+
+    @pytest.mark.ci_fast
+    def test_get_query_variants_without_original(self):
+        """Test include_original=False excludes the original query"""
+        rewriter = QueryRewriter()
+
+        query = "Show me videos of robots playing soccer"
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
+        ]
+        relationships = [
+            {
+                "subject": "robots",
+                "relation": "playing",
+                "object": "soccer",
+                "confidence": 0.85,
+            }
+        ]
+
+        variants = rewriter.get_query_variants(
+            original_query=query,
+            entities=entities,
+            relationships=relationships,
+            variant_strategies=["relationship_expansion"],
+            include_original=False,
+        )
+
+        assert all(v["name"] != "original" for v in variants)
+
+    @pytest.mark.ci_fast
+    def test_get_query_variants_unknown_strategy_raises(self):
+        """Test that unknown strategy names raise ValueError"""
+        rewriter = QueryRewriter()
+
+        with pytest.raises(ValueError, match="Unknown variant strategy"):
+            rewriter.get_query_variants(
+                original_query="test query",
+                entities=[],
+                relationships=[],
+                variant_strategies=["nonexistent_strategy"],
+                include_original=True,
+            )
+
+    @pytest.mark.ci_fast
+    def test_get_query_variants_produce_distinct_queries(self):
+        """Test that different strategies produce genuinely different queries"""
+        rewriter = QueryRewriter()
+
+        query = "Show me videos of robots playing soccer"
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.95},
+            {"text": "soccer", "label": "SPORT", "confidence": 0.9},
+        ]
+        relationships = [
+            {
+                "subject": "robots",
+                "relation": "playing",
+                "object": "soccer",
+                "confidence": 0.85,
+            }
+        ]
+
+        variants = rewriter.get_query_variants(
+            original_query=query,
+            entities=entities,
+            relationships=relationships,
+            variant_strategies=["relationship_expansion", "boolean_optimization"],
+            include_original=True,
+        )
+
+        # At least 2 variants (original + at least one strategy)
+        assert len(variants) >= 2
+
+        # All variant queries are distinct
+        queries = [v["query"] for v in variants]
+        assert len(queries) == len(
+            set(queries)
+        ), "Variants should produce distinct queries"
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_pipeline_parallel_mode_populates_variants(self):
+        """Test that parallel fusion mode populates query_variants in pipeline output"""
+        pipeline = QueryEnhancementPipeline(
+            query_fusion_config={
+                "mode": "parallel",
+                "variant_strategies": [
+                    "relationship_expansion",
+                    "boolean_optimization",
+                ],
+                "include_original": True,
+            }
+        )
+
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
+        ]
+        relationships = [
+            {
+                "subject": "robots",
+                "relation": "playing",
+                "object": "soccer",
+                "confidence": 0.85,
+            }
+        ]
+
+        result = await pipeline.enhance_query_with_relationships(
+            query="Show me videos of robots playing soccer",
+            entities=entities,
+            relationships=relationships,
+        )
+
+        assert "query_variants" in result
+        assert isinstance(result["query_variants"], list)
+        assert len(result["query_variants"]) >= 1
+        # Original should be included
+        assert any(v["name"] == "original" for v in result["query_variants"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_pipeline_single_mode_empty_variants(self):
+        """Test that single mode produces empty query_variants"""
+        pipeline = QueryEnhancementPipeline(query_fusion_config={"mode": "single"})
+
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+        ]
+        relationships = []
+
+        result = await pipeline.enhance_query_with_relationships(
+            query="Show me robot videos",
+            entities=entities,
+            relationships=relationships,
+        )
+
+        assert "query_variants" in result
+        assert result["query_variants"] == []
+
+
+@pytest.mark.unit
 class TestDSPyQueryEnhancer:
     """Test Phase 3 DSPy query enhancement module."""
 

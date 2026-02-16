@@ -309,6 +309,12 @@
       "max_cache_size": 1000,
       "backend": "integrated",
       "use_pipeline_cache": true
+    },
+    "query_fusion_config": {
+      "mode": "single",
+      "variant_strategies": ["relationship_expansion", "boolean_optimization"],
+      "include_original": true,
+      "rrf_k": 60
     }
   },
   "optimization": {

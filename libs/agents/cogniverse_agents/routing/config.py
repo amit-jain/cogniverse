@@ -208,6 +208,16 @@ Use exact JSON format in your response.""",
         }
     )
 
+    # Query fusion configuration (multi-query vs single mega-query)
+    query_fusion_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "mode": "single",  # "single" (mega-query) or "parallel" (multi-variant + RRF)
+            "variant_strategies": ["relationship_expansion", "boolean_optimization"],
+            "include_original": True,
+            "rrf_k": 60,
+        }
+    )
+
     # LangExtract configuration (for development/data generation)
     langextract_config: dict[str, Any] = field(
         default_factory=lambda: {
@@ -303,6 +313,7 @@ Use exact JSON format in your response.""",
                         "monitoring": "monitoring_config",
                         "cache": "cache_config",
                         "langextract": "langextract_config",
+                        "queryfusion": "query_fusion_config",
                     }
 
                     if section in section_map:

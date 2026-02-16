@@ -1283,3 +1283,479 @@ class TestSearchAgentEnsembleSearch:
 
         # Should return empty list
         assert len(fused) == 0
+
+
+@pytest.mark.unit
+class TestMultiQueryFusion:
+    """Unit tests for multi-query fusion search with RRF."""
+
+    @pytest.fixture
+    def agent_with_mock_backend(self):
+        """SearchAgent with mocked backend for multi-query fusion testing."""
+        mock_config = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
+            },
+        }
+
+        with (
+            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
+            patch(
+                "cogniverse_agents.search_agent.get_backend_registry"
+            ) as mock_registry,
+            patch(
+                "cogniverse_agents.search_agent.QueryEncoderFactory"
+            ) as mock_encoder_factory,
+        ):
+            mock_get_config.return_value = mock_config
+            mock_search_backend = Mock()
+            mock_search_backend.search.return_value = []
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
+
+            mock_query_encoder = Mock()
+            mock_query_encoder.encode.return_value = np.random.rand(128)
+            mock_encoder_factory.create_encoder.return_value = mock_query_encoder
+
+            agent = SearchAgent(
+                deps=SearchAgentDeps(
+                    tenant_id="test_tenant",
+                    backend_url="http://localhost",
+                    backend_port=8080,
+                ),
+                schema_loader=mock_schema_loader,
+            )
+            return agent
+
+    @pytest.mark.ci_fast
+    def test_multi_query_fusion_searches_all_variants(self, agent_with_mock_backend):
+        """Test _search_multi_query_fusion encodes each variant, searches, and fuses via RRF."""
+        agent = agent_with_mock_backend
+
+        searched_queries = []
+
+        def mock_search(query_dict):
+            searched_queries.append(query_dict["query"])
+            sr = Mock()
+            sr.document.id = f"doc_{len(searched_queries)}"
+            sr.score = 0.9 - (len(searched_queries) * 0.05)
+            sr.document.metadata = {"title": f"Result for {query_dict['query'][:30]}"}
+            sr_shared = Mock()
+            sr_shared.document.id = "doc_shared"
+            sr_shared.score = 0.85
+            sr_shared.document.metadata = {"title": "Shared result"}
+            return [sr, sr_shared]
+
+        agent.search_backend.search = mock_search
+
+        variants = [
+            {"name": "original", "query": "robots playing soccer"},
+            {
+                "name": "relationship_expansion",
+                "query": "robots playing soccer (robots playing soccer)",
+            },
+            {
+                "name": "boolean_optimization",
+                "query": "robots playing soccer (robots AND soccer)",
+            },
+        ]
+
+        results = agent._search_multi_query_fusion(
+            query_variants=variants,
+            modality="video",
+            top_k=10,
+            rrf_k=60,
+            ranking_strategy="binary_binary",
+        )
+
+        # All 3 variants were searched
+        assert len(searched_queries) == 3
+
+        # doc_shared appears in all 3 searches → should rank first
+        assert results[0]["id"] == "doc_shared"
+        assert results[0]["num_profiles"] == 3
+
+        # RRF scores are monotonically decreasing
+        for i in range(len(results) - 1):
+            assert results[i]["rrf_score"] >= results[i + 1]["rrf_score"]
+
+    @pytest.mark.ci_fast
+    def test_multi_query_fusion_empty_results(self, agent_with_mock_backend):
+        """Test _search_multi_query_fusion with variants that return no results."""
+        agent = agent_with_mock_backend
+        agent.search_backend.search = lambda q: []
+
+        results = agent._search_multi_query_fusion(
+            query_variants=[
+                {"name": "original", "query": "nonexistent topic xyz"},
+                {"name": "expansion", "query": "nonexistent topic xyz expanded"},
+            ],
+            modality="video",
+            top_k=10,
+            rrf_k=60,
+            ranking_strategy="binary_binary",
+        )
+
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    @pytest.mark.ci_fast
+    def test_multi_query_fusion_variant_encoder_failure(self, agent_with_mock_backend):
+        """Test _search_multi_query_fusion degrades gracefully when one variant's encoding fails."""
+        agent = agent_with_mock_backend
+
+        call_count = 0
+        original_encode = agent.query_encoder.encode
+
+        def failing_encode(query):
+            nonlocal call_count
+            call_count += 1
+            if "FAIL_THIS_VARIANT" in query:
+                raise RuntimeError("Encoder crashed for this variant")
+            return original_encode(query)
+
+        agent.query_encoder.encode = failing_encode
+
+        def mock_search(query_dict):
+            sr = Mock()
+            sr.document.id = f"doc_{hash(query_dict['query']) % 100}"
+            sr.score = 0.9
+            sr.document.metadata = {"title": f"Result for {query_dict['query'][:30]}"}
+            return [sr]
+
+        agent.search_backend.search = mock_search
+
+        variants = [
+            {"name": "original", "query": "robots playing soccer"},
+            {"name": "bad_variant", "query": "FAIL_THIS_VARIANT should crash"},
+            {"name": "boolean", "query": "robots AND soccer"},
+        ]
+
+        results = agent._search_multi_query_fusion(
+            query_variants=variants,
+            modality="video",
+            top_k=10,
+            rrf_k=60,
+            ranking_strategy="binary_binary",
+        )
+
+        # Should still return results from the 2 successful variants
+        assert len(results) > 0
+
+        # RRF metadata should reflect only the surviving variants
+        for doc in results:
+            assert "rrf_score" in doc
+            assert doc["rrf_score"] > 0
+
+    @pytest.mark.ci_fast
+    def test_relationship_context_branches_on_variants(self, agent_with_mock_backend):
+        """Test search_with_relationship_context uses multi-query fusion when variants present."""
+        from cogniverse_agents.search_agent import SearchContext
+
+        agent = agent_with_mock_backend
+
+        def mock_search(query_dict):
+            sr = Mock()
+            sr.document.id = "doc1"
+            sr.score = 0.9
+            sr.document.metadata = {"title": "Test"}
+            return [sr]
+
+        agent.search_backend.search = mock_search
+
+        # With variants → multi-query fusion path
+        context_with_variants = SearchContext(
+            original_query="robots soccer",
+            enhanced_query="robots soccer (enhanced)",
+            entities=[],
+            relationships=[],
+            routing_metadata={"rrf_k": 60},
+            confidence=0.8,
+            query_variants=[
+                {"name": "original", "query": "robots soccer"},
+                {"name": "expansion", "query": "robots soccer (expanded)"},
+            ],
+        )
+
+        result_multi = agent.search_with_relationship_context(
+            context_with_variants, top_k=10
+        )
+        assert result_multi["status"] == "completed"
+        assert "query_variants_used" in result_multi
+        assert len(result_multi["query_variants_used"]) == 2
+
+        # Without variants → single query path
+        context_without_variants = SearchContext(
+            original_query="robots soccer",
+            enhanced_query="robots soccer (enhanced)",
+            entities=[],
+            relationships=[],
+            routing_metadata={},
+            confidence=0.8,
+            query_variants=[],
+        )
+
+        result_single = agent.search_with_relationship_context(
+            context_without_variants, top_k=10
+        )
+        assert result_single["status"] == "completed"
+        assert "query_variants_used" not in result_single
+
+    @pytest.mark.ci_fast
+    def test_routing_decision_flows_to_multi_query_fusion(
+        self, agent_with_mock_backend
+    ):
+        """Test RoutingOutput with query_variants flows through search_with_routing_decision."""
+        from cogniverse_agents.routing_agent import RoutingOutput
+
+        agent = agent_with_mock_backend
+
+        def mock_search(query_dict):
+            sr = Mock()
+            sr.document.id = f"doc_{hash(query_dict['query']) % 100}"
+            sr.score = 0.9
+            sr.document.metadata = {"title": "Test result"}
+            sr_shared = Mock()
+            sr_shared.document.id = "shared_doc"
+            sr_shared.score = 0.85
+            sr_shared.document.metadata = {"title": "Shared"}
+            return [sr, sr_shared]
+
+        agent.search_backend.search = mock_search
+
+        routing_decision = RoutingOutput(
+            query="robots playing soccer",
+            recommended_agent="search_agent",
+            confidence=0.85,
+            reasoning="Video search with multi-query fusion",
+            enhanced_query="robots playing soccer (robots playing soccer)",
+            entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
+            relationships=[
+                {
+                    "subject": "robots",
+                    "relation": "playing",
+                    "object": "soccer",
+                    "confidence": 0.85,
+                }
+            ],
+            metadata={"rrf_k": 60},
+            query_variants=[
+                {"name": "original", "query": "robots playing soccer"},
+                {
+                    "name": "relationship_expansion",
+                    "query": "robots playing soccer (robots playing soccer)",
+                },
+            ],
+        )
+
+        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+
+        assert result["status"] == "completed"
+        assert result["total_results"] > 0
+        assert "query_variants_used" in result
+        assert "original" in result["query_variants_used"]
+        assert "relationship_expansion" in result["query_variants_used"]
+
+    @pytest.mark.ci_fast
+    def test_custom_rrf_k_propagates_to_fusion(self, agent_with_mock_backend):
+        """Test non-default rrf_k in routing_metadata flows to _fuse_results_rrf."""
+        from cogniverse_agents.routing_agent import RoutingOutput
+
+        agent = agent_with_mock_backend
+
+        def mock_search(query_dict):
+            sr = Mock()
+            sr.document.id = f"doc_{hash(query_dict['query']) % 100}"
+            sr.score = 0.9
+            sr.document.metadata = {"title": "Test result"}
+            return [sr]
+
+        agent.search_backend.search = mock_search
+
+        # Capture the k parameter passed to _fuse_results_rrf
+        captured_k = []
+        original_fuse = agent._fuse_results_rrf
+
+        def spy_fuse(profile_results, k=60, top_k=10):
+            captured_k.append(k)
+            return original_fuse(profile_results, k=k, top_k=top_k)
+
+        agent._fuse_results_rrf = spy_fuse
+
+        custom_rrf_k = 30  # Non-default
+        routing_decision = RoutingOutput(
+            query="robots playing soccer",
+            recommended_agent="search_agent",
+            confidence=0.85,
+            reasoning="Video search",
+            enhanced_query="robots playing soccer",
+            entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
+            relationships=[],
+            metadata={"rrf_k": custom_rrf_k},
+            query_variants=[
+                {"name": "original", "query": "robots playing soccer"},
+                {"name": "boolean_optimization", "query": "robots AND soccer"},
+            ],
+        )
+
+        agent.search_with_routing_decision(routing_decision, top_k=10)
+
+        assert (
+            len(captured_k) == 1
+        ), f"Expected _fuse_results_rrf called once, got {len(captured_k)}"
+        assert captured_k[0] == custom_rrf_k, (
+            f"Expected rrf_k={custom_rrf_k} passed to _fuse_results_rrf, "
+            f"got rrf_k={captured_k[0]}"
+        )
+
+
+@pytest.mark.unit
+class TestEnsembleVsFusionPaths:
+    """
+    Verify ensemble (multi-profile) and multi-query fusion (multi-variant) are
+    structurally disjoint entry paths that cannot overlap.
+
+    - Ensemble: _process_impl(SearchInput) → _search_ensemble()
+      Triggered by SearchInput.profiles with len > 1
+    - Multi-query fusion: search_with_routing_decision(RoutingDecision) → _search_multi_query_fusion()
+      Triggered by RoutingDecision.query_variants with len > 1
+    """
+
+    @pytest.fixture
+    def agent_with_mock_backend(self):
+        """SearchAgent with mocked backend for path exclusivity testing."""
+        mock_config = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
+            },
+        }
+
+        with (
+            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
+            patch(
+                "cogniverse_agents.search_agent.get_backend_registry"
+            ) as mock_registry,
+            patch(
+                "cogniverse_agents.search_agent.QueryEncoderFactory"
+            ) as mock_encoder_factory,
+        ):
+            mock_get_config.return_value = mock_config
+            mock_search_backend = Mock()
+            mock_search_backend.search.return_value = []
+            mock_registry.return_value.get_search_backend.return_value = (
+                mock_search_backend
+            )
+
+            mock_query_encoder = Mock()
+            mock_query_encoder.encode.return_value = np.random.rand(128)
+            mock_encoder_factory.create_encoder.return_value = mock_query_encoder
+
+            agent = SearchAgent(
+                deps=SearchAgentDeps(
+                    tenant_id="test_tenant",
+                    backend_url="http://localhost",
+                    backend_port=8080,
+                ),
+                schema_loader=mock_schema_loader,
+            )
+            return agent
+
+    @pytest.mark.ci_fast
+    def test_search_input_has_no_query_variants_field(self):
+        """SearchInput model does not expose query_variants — structural guarantee."""
+        from cogniverse_agents.search_agent import SearchInput
+
+        input_fields = set(SearchInput.model_fields.keys())
+        assert "query_variants" not in input_fields, (
+            "SearchInput should NOT have query_variants field. "
+            "Multi-query fusion is only reachable via search_with_routing_decision(), "
+            f"not _process_impl(). Fields: {input_fields}"
+        )
+
+    @pytest.mark.ci_fast
+    def test_ensemble_path_does_not_trigger_fusion(self, agent_with_mock_backend):
+        """search_with_relationship_context with empty variants uses single-query, not fusion."""
+        agent = agent_with_mock_backend
+
+        fusion_called = []
+        original_fusion = agent._search_multi_query_fusion
+
+        def spy_fusion(*args, **kwargs):
+            fusion_called.append(True)
+            return original_fusion(*args, **kwargs)
+
+        agent._search_multi_query_fusion = spy_fusion
+
+        from cogniverse_agents.search_agent import SearchContext
+
+        ctx = SearchContext(
+            original_query="test query",
+            enhanced_query="test query",
+            entities=[],
+            relationships=[],
+            routing_metadata={},
+            confidence=0.9,
+            query_variants=[],  # Empty → single-query path
+        )
+
+        agent.search_with_relationship_context(ctx, top_k=5)
+
+        assert (
+            len(fusion_called) == 0
+        ), "Expected _search_multi_query_fusion NOT called when query_variants is empty"
+
+    @pytest.mark.ci_fast
+    def test_fusion_path_uses_single_profile(self, agent_with_mock_backend):
+        """search_with_routing_decision with query_variants uses fusion, not ensemble."""
+        from cogniverse_agents.routing_agent import RoutingOutput
+
+        agent = agent_with_mock_backend
+
+        ensemble_called = []
+        original_ensemble = agent._search_ensemble
+
+        def spy_ensemble(*args, **kwargs):
+            ensemble_called.append(True)
+            return original_ensemble(*args, **kwargs)
+
+        agent._search_ensemble = spy_ensemble
+
+        def mock_search(query_dict):
+            sr = Mock()
+            sr.document.id = f"doc_{hash(query_dict['query']) % 100}"
+            sr.score = 0.9
+            sr.document.metadata = {"title": "Test"}
+            return [sr]
+
+        agent.search_backend.search = mock_search
+
+        routing_decision = RoutingOutput(
+            query="robots playing soccer",
+            recommended_agent="search_agent",
+            confidence=0.85,
+            reasoning="Test",
+            enhanced_query="robots playing soccer",
+            entities=[],
+            relationships=[],
+            metadata={"rrf_k": 60},
+            query_variants=[
+                {"name": "original", "query": "robots playing soccer"},
+                {"name": "boolean", "query": "robots AND soccer"},
+            ],
+        )
+
+        agent.search_with_routing_decision(routing_decision, top_k=10)
+
+        assert len(ensemble_called) == 0, (
+            "Expected _search_ensemble NOT called when using search_with_routing_decision "
+            "with query_variants (should use _search_multi_query_fusion instead)"
+        )

@@ -179,6 +179,11 @@ class SearchContext:
     relationships: List[Dict[str, Any]]
     routing_metadata: Dict[str, Any]
     confidence: float = 0.0
+    query_variants: List[Dict[str, str]] = None
+
+    def __post_init__(self):
+        if self.query_variants is None:
+            self.query_variants = []
 
 
 class RelationshipAwareSearchParams(BaseModel):
@@ -1269,6 +1274,7 @@ class SearchAgent(
             relationships=routing_decision.extracted_relationships,
             routing_metadata=routing_decision.routing_metadata,
             confidence=routing_decision.confidence,
+            query_variants=routing_decision.query_variants,
         )
 
         # Perform relationship-aware search
@@ -1305,42 +1311,60 @@ class SearchAgent(
             # Build relationship-aware search parameters
             search_params = self._build_enhanced_search_params(context, top_k, **kwargs)
 
-            # Execute search using enhanced query with backend
-            query_embeddings = self.query_encoder.encode(search_query)
-
-            if search_params.start_date or search_params.end_date:
-                logger.warning(
-                    "Date filters (start_date/end_date) not yet supported by backend"
+            # Multi-query fusion path: search each variant in parallel, fuse with RRF
+            if context.query_variants and len(context.query_variants) > 1:
+                rrf_k = context.routing_metadata.get("rrf_k", 60)
+                raw_results = self._search_multi_query_fusion(
+                    query_variants=context.query_variants,
+                    modality=search_params.modality,
+                    top_k=top_k,
+                    rrf_k=rrf_k,
+                    ranking_strategy=search_params.ranking_strategy
+                    or kwargs.get("ranking", "binary_binary"),
                 )
+                variant_names = [v["name"] for v in context.query_variants]
+                logger.info(
+                    f"Multi-query fusion search with {len(context.query_variants)} variants: {variant_names}"
+                )
+            else:
+                # Single query path (existing behavior)
+                query_embeddings = self.query_encoder.encode(search_query)
 
-            query_dict = {
-                "query": search_query,
-                "type": search_params.modality,
-                "query_embeddings": query_embeddings,
-                "top_k": top_k,
-                "filters": None,
-                "strategy": search_params.ranking_strategy
-                or kwargs.get("ranking", "binary_binary"),
-            }
+                if search_params.start_date or search_params.end_date:
+                    logger.warning(
+                        "Date filters (start_date/end_date) not yet supported by backend"
+                    )
 
-            search_results = self.search_backend.search(query_dict)
-
-            # Convert SearchResult objects to dict format
-            raw_results = []
-            for sr in search_results:
-                result_dict = {
-                    "id": sr.document.id,
-                    "score": sr.score,
-                    **sr.document.metadata,
+                query_dict = {
+                    "query": search_query,
+                    "type": search_params.modality,
+                    "query_embeddings": query_embeddings,
+                    "top_k": top_k,
+                    "filters": None,
+                    "strategy": search_params.ranking_strategy
+                    or kwargs.get("ranking", "binary_binary"),
+                    "profile": self.active_profile,
                 }
-                raw_results.append(result_dict)
+
+                search_results = self.search_backend.search(query_dict)
+
+                # Convert SearchResult objects to dict format
+                raw_results = []
+                for sr in search_results:
+                    result_dict = {
+                        "id": sr.document.id,
+                        "score": sr.score,
+                        **sr.document.metadata,
+                    }
+                    raw_results.append(result_dict)
+                variant_names = None
 
             # Enhance results with relationship context
             enhanced_results = self._enhance_results_with_relationships(
                 raw_results, context, search_params
             )
 
-            return {
+            result = {
                 "status": "completed",
                 "search_type": "relationship_aware",
                 "modality": search_params.modality,
@@ -1360,10 +1384,86 @@ class SearchAgent(
                     "confidence_threshold": search_params.confidence_threshold,
                 },
             }
+            if variant_names:
+                result["query_variants_used"] = variant_names
+            return result
 
         except Exception as e:
             logger.error(f"Relationship-aware search failed: {e}")
             return self._fallback_search(context.original_query, top_k, **kwargs)
+
+    def _search_multi_query_fusion(
+        self,
+        query_variants: List[Dict[str, str]],
+        modality: str,
+        top_k: int,
+        rrf_k: int,
+        ranking_strategy: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search each query variant in parallel and fuse results with RRF.
+
+        Args:
+            query_variants: List of {"name": str, "query": str} variants
+            modality: Content modality to search
+            top_k: Number of final results to return
+            rrf_k: RRF constant for fusion
+            ranking_strategy: Backend ranking strategy
+
+        Returns:
+            Fused results ranked by RRF score
+        """
+        import concurrent.futures
+
+        def search_single_variant(variant: Dict[str, str]) -> tuple:
+            """Encode and search a single query variant."""
+            variant_name = variant["name"]
+            variant_query = variant["query"]
+            try:
+                query_embeddings = self.query_encoder.encode(variant_query)
+                query_dict = {
+                    "query": variant_query,
+                    "type": modality,
+                    "query_embeddings": query_embeddings,
+                    "top_k": top_k * 2,
+                    "filters": None,
+                    "strategy": ranking_strategy,
+                    "profile": self.active_profile,
+                }
+                search_results = self.search_backend.search(query_dict)
+                results = []
+                for sr in search_results:
+                    result_dict = {
+                        "id": sr.document.id,
+                        "score": sr.score,
+                        **sr.document.metadata,
+                    }
+                    results.append(result_dict)
+                logger.info(
+                    f"Variant '{variant_name}': {len(results)} results for '{variant_query[:60]}'"
+                )
+                return variant_name, results
+            except Exception as e:
+                logger.error(f"Search failed for variant '{variant_name}': {e}")
+                return variant_name, []
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(query_variants)
+        ) as executor:
+            futures = [
+                executor.submit(search_single_variant, v) for v in query_variants
+            ]
+            variant_results = {}
+            for future in concurrent.futures.as_completed(futures):
+                name, results = future.result()
+                if results:
+                    variant_results[name] = results
+
+        if not variant_results:
+            logger.warning("No results from any query variant")
+            return []
+
+        return self._fuse_results_rrf(variant_results, k=rrf_k, top_k=top_k)
 
     def _build_enhanced_search_params(
         self, context: SearchContext, top_k: int, **kwargs

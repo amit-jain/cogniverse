@@ -440,6 +440,48 @@ metrics = {
 - Check profile compatibility
 - Log profile results for debugging
 
+## Multi-Query Fusion
+
+Multi-query fusion is a complementary technique to ensemble search. While **ensemble** varies the **profile** (embedding model) with a fixed query, **multi-query fusion** varies the **query** (via QueryRewriter strategies) against a single profile.
+
+### Comparison
+
+| | Ensemble (Multi-Profile) | Multi-Query Fusion |
+|---|---|---|
+| **What varies** | Profile (embedding model) | Query (rewritten variants) |
+| **Entry path** | `_process_impl()` → `_search_ensemble()` | `search_with_routing_decision()` → `_search_multi_query_fusion()` |
+| **Input** | `SearchInput.profiles` | `RoutingOutput.query_variants` |
+| **Fusion** | RRF across profiles | RRF across query variants |
+| **Config** | `SearchInput.profiles` list | `RoutingConfig.query_fusion_config` |
+
+### How It Works
+
+1. `RoutingAgent` extracts entities/relationships (GLiNER + LangExtract)
+2. `QueryRewriter.get_query_variants()` generates distinct query reformulations using configured strategies
+3. Each variant is encoded and searched in parallel against the same profile
+4. Results are fused with `_fuse_results_rrf()` (same algorithm as ensemble)
+
+### Configuration
+
+```json
+{
+  "query_fusion_config": {
+    "mode": "parallel",
+    "variant_strategies": ["relationship_expansion", "boolean_optimization"],
+    "include_original": true,
+    "rrf_k": 60
+  }
+}
+```
+
+Environment variable override: `ROUTING_QUERYFUSION_MODE=parallel`
+
+### Mutual Exclusivity
+
+Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingDecision` does not trigger ensemble. They cannot overlap in a single request.
+
+---
+
 ## Future Enhancements
 
 ### 1. Learned Fusion

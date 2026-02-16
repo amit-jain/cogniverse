@@ -119,6 +119,9 @@ class RoutingOutput(AgentOutput):
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
+    query_variants: List[Dict[str, str]] = Field(
+        default_factory=list, description="Query variants for parallel fusion search"
+    )
     timestamp: datetime = Field(
         default_factory=datetime.now, description="Decision timestamp"
     )
@@ -182,6 +185,12 @@ class RoutingDeps(AgentDeps):
             ],
         },
         description="Agent capability mapping",
+    )
+
+    # Query fusion configuration
+    query_fusion_config: Dict[str, Any] = Field(
+        default_factory=lambda: {"mode": "single"},
+        description="Query fusion config: mode='single' or 'parallel'",
     )
 
     # Enable/disable features
@@ -382,7 +391,9 @@ class RoutingAgent(
 
             # Phase 3: Query enhancement
             if deps.enable_query_enhancement:
-                self.query_enhancer = QueryEnhancementPipeline()
+                self.query_enhancer = QueryEnhancementPipeline(
+                    query_fusion_config=deps.query_fusion_config,
+                )
                 self.logger.info("Query enhancement pipeline initialized")
             else:
                 self.query_enhancer = None
@@ -777,6 +788,7 @@ class RoutingAgent(
                             query, entities, relationships
                         ),
                     },
+                    query_variants=enhancement_metadata.get("query_variants", []),
                 )
 
                 # Update statistics
@@ -898,6 +910,7 @@ class RoutingAgent(
             )
 
             enhanced_query = enhancement_result.get("enhanced_query", query)
+            query_variants = enhancement_result.get("query_variants", [])
             enhancement_metadata = {
                 "quality_score": enhancement_result.get("quality_score", 0.5),
                 "enhancement_strategy": enhancement_result.get(
@@ -906,6 +919,8 @@ class RoutingAgent(
                 "semantic_expansions": enhancement_result.get(
                     "semantic_expansions", []
                 ),
+                "query_variants": query_variants,
+                "rrf_k": self.query_enhancer.query_fusion_config.get("rrf_k", 60),
             }
 
             if enhanced_query != query:
