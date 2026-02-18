@@ -99,6 +99,9 @@ failing_test_files.txt
 
 # MLflow
 mlruns/
+
+# Test artifacts
+test_opt/
 workflow_intelligence.db
 .osgrep/
 .playwright-mcp/
