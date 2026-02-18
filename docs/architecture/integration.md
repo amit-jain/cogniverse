@@ -570,7 +570,7 @@ from cogniverse_foundation.config.unified_config import OptimizerGenerationConfi
 
 # RoutingGenerator requires OptimizerGenerationConfig as REQUIRED parameter
 # Configuration is REQUIRED - no fallbacks or defaults
-# Create minimal config for testing (production would load from config.yml)
+# Create minimal config for testing (production would load from configs/config.json)
 optimizer_config = OptimizerGenerationConfig(
     optimizer_type="routing",
     dspy_modules={},  # Empty for basic generation

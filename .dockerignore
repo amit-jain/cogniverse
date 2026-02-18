@@ -72,7 +72,6 @@ tests/
 *.test.py
 
 # Config that should be mounted
-config.yml
 config.yaml
 .env
 .env.*

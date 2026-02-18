@@ -1,7 +1,7 @@
 """Unified FastAPI Runtime - Single entry point for all Cogniverse services.
 
 This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
-- Dynamically loads backends/agents from config.yml
+- Dynamically loads backends/agents from configs/config.json
 - Consolidates all endpoints under one service
 - Enables clean deployment and scaling
 """

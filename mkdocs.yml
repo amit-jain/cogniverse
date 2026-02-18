@@ -5,6 +5,7 @@ site_url: https://amit-jain.github.io/cogniverse/
 repo_name: amit-jain/cogniverse
 repo_url: https://github.com/amit-jain/cogniverse
 edit_uri: edit/main/docs/
+site_dir: outputs/site
 
 # Exclude local planning docs from build
 exclude_docs: |

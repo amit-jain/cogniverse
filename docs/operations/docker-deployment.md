@@ -180,7 +180,7 @@ CACHE_ENABLED=true
 ```bash
 # Development docker-compose.yml mounts:
 volumes:
-  - ./config.yml:/app/config.yml:ro
+  - ./configs/config.json:/app/configs/config.json:ro
   - ./data:/data
   - ./outputs/logs:/logs
 
@@ -232,9 +232,9 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 #### 3. Production Configuration Files
 
 ```bash
-# Create production config (optional - config.yml can be used for production too)
-cp config.yml config.prod.yml
-nano config.prod.yml
+# Create production config (optional - configs/config.json can be used for production too)
+cp configs/config.json configs/config.prod.json
+nano configs/config.prod.json
 
 # Create OTEL collector config
 # Note: Create configs/otel-collector-config.yaml based on your requirements

@@ -47,7 +47,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY --chown=cogniverse:cogniverse libs/core ./libs/core
 COPY --chown=cogniverse:cogniverse libs/runtime ./libs/runtime
-COPY --chown=cogniverse:cogniverse config.yml ./config.yml
+COPY --chown=cogniverse:cogniverse configs/config.json ./configs/config.json
 
 # Switch to non-root user
 USER cogniverse

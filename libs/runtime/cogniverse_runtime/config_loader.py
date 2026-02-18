@@ -1,6 +1,6 @@
 """Configuration-driven backend and agent loader.
 
-This module dynamically loads backends and agents based on config.yml,
+This module dynamically loads backends and agents based on configs/config.json,
 enabling third-party extensions and clean separation of concerns.
 """
 

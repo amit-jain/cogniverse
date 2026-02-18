@@ -52,7 +52,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yml:/app/config.yml:ro
+      - ./configs/config.json:/app/configs/config.json:ro
       - runtime-data:/data
       - runtime-logs:/logs
     env_file:
@@ -112,7 +112,7 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./config.yml:/app/config.yml:ro
+      - ./configs/config.json:/app/configs/config.json:ro
       - runtime-data:/data:ro
       - runtime-logs:/app/outputs:ro
     env_file:
