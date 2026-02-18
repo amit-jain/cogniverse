@@ -4,9 +4,15 @@ DSPy 3.0 Relationship Router Module
 This module integrates DSPy 3.0 signatures with relationship extraction tools
 to create an intelligent routing system that leverages entity and relationship
 information for enhanced query analysis and routing decisions.
+
+The ComposableQueryAnalysisModule provides two paths:
+- Path A (GLiNER fast path): GLiNER extracts high-confidence entities, heuristic
+  relationships are inferred, and the LLM only reformulates the query.
+- Path B (LLM unified path): A single LLM call performs entity extraction,
+  relationship inference, and query reformulation together.
 """
 
-import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -15,256 +21,233 @@ import dspy
 from .dspy_routing_signatures import (
     AdvancedRoutingSignature,
     BasicQueryAnalysisSignature,
-    EntityExtractionSignature,
-    RelationshipExtractionSignature,
+    QueryReformulationSignature,
+    UnifiedExtractionReformulationSignature,
 )
-from .relationship_extraction_tools import RelationshipExtractorTool
+from .relationship_extraction_tools import (
+    GLiNERRelationshipExtractor,
+    SpaCyDependencyAnalyzer,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class DSPyEntityExtractorModule(dspy.Module):
+class ComposableQueryAnalysisModule(dspy.Module):
     """
-    DSPy 3.0 module for entity extraction using EntityExtractionSignature.
+    Composable DSPy module that combines entity extraction, relationship inference,
+    and query reformulation into a single optimizable unit.
 
-    Integrates with RelationshipExtractorTool to provide structured entity
-    extraction with confidence scores and domain classification.
+    Two paths:
+    - Path A (GLiNER fast path): GLiNER entities with avg confidence >= threshold
+      → heuristic relationships → LLM reformulation only
+    - Path B (LLM unified path): Single LLM call does everything
+
+    Both paths produce the same output shape and are individually optimizable
+    via DSPy optimizers (SIMBA, MIPROv2, BootstrapFewShot, GEPA).
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        gliner_extractor: GLiNERRelationshipExtractor,
+        spacy_analyzer: SpaCyDependencyAnalyzer,
+        entity_confidence_threshold: float = 0.6,
+        min_entities_for_fast_path: int = 1,
+    ):
         super().__init__()
-        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
-        self.relationship_tool = RelationshipExtractorTool()
+        self.gliner_extractor = gliner_extractor
+        self.spacy_analyzer = spacy_analyzer
+        self.entity_confidence_threshold = entity_confidence_threshold
+        self.min_entities_for_fast_path = min_entities_for_fast_path
 
-    def forward(
-        self, query: str, domain_context: Optional[str] = None
-    ) -> dspy.Prediction:
+        # Path A: reformulation only (entities already extracted by GLiNER)
+        self.reformulator = dspy.ChainOfThought(QueryReformulationSignature)
+        # Path B: unified extraction + reformulation
+        self.unified_extractor = dspy.ChainOfThought(
+            UnifiedExtractionReformulationSignature
+        )
+
+    def forward(self, query: str, search_context: str = "general") -> dspy.Prediction:
         """
-        Extract entities from query using DSPy 3.0 + GLiNER integration.
+        Analyze query: extract entities, infer relationships, and generate
+        enhanced query with variants.
 
         Args:
-            query: Input query text
-            domain_context: Optional domain context for better extraction
+            query: User query to analyze
+            search_context: Search context (general, video, text, multimodal)
 
         Returns:
-            DSPy prediction with entity extraction results
+            dspy.Prediction with entities, relationships, enhanced_query,
+            query_variants, confidence, path_used, domain_classification
         """
         try:
-            # Use relationship tool for actual extraction
-            # Handle async call properly - check if event loop is running
-            try:
-                # Try to get the current event loop
-                asyncio.get_running_loop()
-                # If we're already in an event loop, provide fallback to avoid async issue
-                extraction_result = {"entities": [], "confidence": 0.5}
-            except RuntimeError:
-                # No event loop running, safe to use asyncio.run()
-                extraction_result = asyncio.run(
-                    self.relationship_tool.extract_comprehensive_relationships(query)
-                )
+            # Step 1: Try GLiNER entity extraction (sync, fast)
+            entities = self.gliner_extractor.extract_entities(query)
 
-            entities = extraction_result["entities"]
+            # Step 2: Compute average confidence
+            avg_confidence = 0.0
+            if entities:
+                avg_confidence = sum(e["confidence"] for e in entities) / len(entities)
 
-            # Prepare DSPy inputs
-            entities_list = [
-                {
-                    "text": e["text"],
-                    "label": e["label"],
-                    "confidence": e["confidence"],
-                    "start_pos": e.get("start_pos"),
-                    "end_pos": e.get("end_pos"),
-                }
-                for e in entities
-            ]
-
-            entity_types = list(set(e["label"] for e in entities))
-            key_entities = [
-                e["text"]
-                for e in sorted(entities, key=lambda x: x["confidence"], reverse=True)[
-                    :5
-                ]
-            ]
-
-            # Domain classification based on entity types
-            domain_classification = self._classify_domain(entity_types, query)
-
-            # Calculate entity density
-            entity_density = (
-                len(entities) / len(query.split()) if query.split() else 0.0
+            # Step 3: Path decision
+            gliner_available = self.gliner_extractor.gliner_model is not None
+            has_enough_entities = len(entities) >= self.min_entities_for_fast_path
+            confidence_above_threshold = (
+                avg_confidence >= self.entity_confidence_threshold
             )
 
-            # Create mock prediction with real data
-            prediction = dspy.Prediction()
-            prediction.entities = entities_list
-            prediction.entity_types = entity_types
-            prediction.key_entities = key_entities
-            prediction.domain_classification = domain_classification
-            prediction.entity_density = round(entity_density, 3)
-            prediction.confidence = extraction_result["confidence"]
-
-            return prediction
+            if gliner_available and has_enough_entities and confidence_above_threshold:
+                return self._path_a(query, entities, search_context)
+            else:
+                return self._path_b(query, search_context)
 
         except Exception as e:
-            logger.error(f"Entity extraction failed: {e}")
+            logger.error(f"ComposableQueryAnalysisModule failed: {e}")
+            return self._fallback_prediction(query)
 
-            # Return empty prediction on error
-            prediction = dspy.Prediction()
-            prediction.entities = []
-            prediction.entity_types = []
-            prediction.key_entities = []
-            prediction.domain_classification = "unknown"
-            prediction.entity_density = 0.0
-            prediction.confidence = 0.0
-
-            return prediction
-
-    def _classify_domain(self, entity_types: List[str], query: str) -> str:
-        """
-        Classify domain based on entity types and query content.
-
-        Args:
-            entity_types: List of entity types found
-            query: Original query
-
-        Returns:
-            Domain classification
-        """
-        query_lower = query.lower()
-
-        # Technology domain
-        if any(t in entity_types for t in ["TECHNOLOGY", "PRODUCT", "TOOL"]):
-            if any(
-                word in query_lower
-                for word in ["ai", "machine learning", "algorithm", "robot"]
-            ):
-                return "artificial_intelligence"
-            else:
-                return "technology"
-
-        # Sports domain
-        if any(t in entity_types for t in ["SPORT", "ACTIVITY"]) or any(
-            word in query_lower for word in ["playing", "game", "sport", "competition"]
-        ):
-            return "sports"
-
-        # Entertainment domain
-        if any(
-            word in query_lower for word in ["video", "show", "movie", "entertainment"]
-        ):
-            return "entertainment"
-
-        # Education domain
-        if any(
-            word in query_lower
-            for word in ["learn", "teach", "education", "tutorial", "how to"]
-        ):
-            return "education"
-
-        # Location/Travel domain
-        if any(t in entity_types for t in ["LOCATION"]):
-            return "location_travel"
-
-        # Business domain
-        if any(t in entity_types for t in ["ORGANIZATION"]):
-            return "business"
-
-        # Default
-        return "general"
-
-
-class DSPyRelationshipExtractorModule(dspy.Module):
-    """
-    DSPy 3.0 module for relationship extraction using RelationshipExtractionSignature.
-
-    Takes entities as input and extracts relationships between them using
-    both GLiNER inference and spaCy dependency parsing.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.extractor = dspy.ChainOfThought(RelationshipExtractionSignature)
-        self.relationship_tool = RelationshipExtractorTool()
-
-    def forward(
+    def _path_a(
         self,
         query: str,
         entities: List[Dict[str, Any]],
-        linguistic_context: Optional[str] = None,
+        search_context: str,
     ) -> dspy.Prediction:
         """
-        Extract relationships between entities.
+        Path A: GLiNER fast path.
 
-        Args:
-            query: Original query text
-            entities: Previously extracted entities
-            linguistic_context: Optional linguistic analysis context
-
-        Returns:
-            DSPy prediction with relationship extraction results
+        GLiNER already extracted high-confidence entities. Infer relationships
+        heuristically, enrich with spaCy, then call LLM for reformulation only.
         """
+        # Infer relationships from GLiNER entities
+        gliner_relationships = self.gliner_extractor.infer_relationships_from_entities(
+            query, entities
+        )
+
+        # Enrich with spaCy semantic relationships
+        spacy_relationships = self.spacy_analyzer.extract_semantic_relationships(query)
+
+        # Deduplicate relationships
+        all_relationships = gliner_relationships + spacy_relationships
+        relationships = self._deduplicate_relationships(all_relationships)
+
+        # Call LLM reformulator with pre-extracted entities and relationships
+        entities_json = json.dumps(entities)
+        relationships_json = json.dumps(relationships)
+
         try:
-            # Use relationship tool for comprehensive analysis
-            # Handle async call properly - check if event loop is running
-            try:
-                # Try to get the current event loop
-                asyncio.get_running_loop()
-                # If we're already in an event loop, provide fallback
-                extraction_result = {
-                    "relationships": [],
-                    "relationship_types": [],
-                    "confidence": 0.5,
-                }
-            except RuntimeError:
-                # No event loop running, safe to use asyncio.run()
-                extraction_result = asyncio.run(
-                    self.relationship_tool.extract_comprehensive_relationships(query)
-                )
+            result = self.reformulator(
+                original_query=query,
+                entities=entities_json,
+                relationships=relationships_json,
+                search_context=search_context,
+            )
 
-            relationships = extraction_result["relationships"]
+            query_variants = self._parse_json_field(result.query_variants, [])
+            confidence = self._parse_confidence(result.confidence)
 
-            # Prepare relationship data
-            relationships_list = [
-                {
-                    "subject": r["subject"],
-                    "relation": r["relation"],
-                    "object": r["object"],
-                    "confidence": r["confidence"],
-                    "subject_type": r.get("subject_type"),
-                    "object_type": r.get("object_type"),
-                    "context": r.get("context", ""),
-                }
-                for r in relationships
-            ]
-
-            relationship_types = extraction_result["relationship_types"]
-            semantic_connections = extraction_result["semantic_connections"]
-            query_structure = extraction_result["query_structure"]
-            complexity_indicators = extraction_result["complexity_indicators"]
-
-            # Create prediction
             prediction = dspy.Prediction()
-            prediction.relationships = relationships_list
-            prediction.relationship_types = relationship_types
-            prediction.semantic_connections = semantic_connections
-            prediction.query_structure = query_structure
-            prediction.complexity_indicators = complexity_indicators
-            prediction.confidence = extraction_result["confidence"]
+            prediction.entities = entities
+            prediction.relationships = relationships
+            prediction.enhanced_query = result.enhanced_query
+            prediction.query_variants = query_variants
+            prediction.confidence = confidence
+            prediction.path_used = "gliner_fast_path"
+            prediction.domain_classification = "unknown"
+            prediction.reasoning = getattr(result, "reasoning", "")
 
             return prediction
 
         except Exception as e:
-            logger.error(f"Relationship extraction failed: {e}")
+            logger.warning(f"Path A reformulation failed: {e}")
+            raise
 
-            # Return empty prediction on error
+    def _path_b(self, query: str, search_context: str) -> dspy.Prediction:
+        """
+        Path B: LLM unified path.
+
+        Single LLM call does entity extraction, relationship inference,
+        and query reformulation together.
+        """
+        try:
+            result = self.unified_extractor(
+                original_query=query,
+                search_context=search_context,
+            )
+
+            entities = self._parse_json_field(result.entities, [])
+            relationships = self._parse_json_field(result.relationships, [])
+            query_variants = self._parse_json_field(result.query_variants, [])
+            confidence = self._parse_confidence(result.confidence)
+            domain_classification = getattr(result, "domain_classification", "unknown")
+
             prediction = dspy.Prediction()
-            prediction.relationships = []
-            prediction.relationship_types = []
-            prediction.semantic_connections = []
-            prediction.query_structure = "error"
-            prediction.complexity_indicators = []
-            prediction.confidence = 0.0
+            prediction.entities = entities
+            prediction.relationships = relationships
+            prediction.enhanced_query = result.enhanced_query
+            prediction.query_variants = query_variants
+            prediction.confidence = confidence
+            prediction.path_used = "llm_unified_path"
+            prediction.domain_classification = domain_classification
+            prediction.reasoning = getattr(result, "reasoning", "")
 
             return prediction
+
+        except Exception as e:
+            logger.warning(f"Path B unified extraction failed: {e}")
+            return self._fallback_prediction(query)
+
+    def _deduplicate_relationships(
+        self, relationships: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Remove duplicate relationships based on subject-relation-object triples."""
+        seen = set()
+        deduplicated = []
+        for rel in relationships:
+            key = (
+                rel.get("subject", "").lower(),
+                rel.get("relation", "").lower(),
+                rel.get("object", "").lower(),
+            )
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(rel)
+        return deduplicated
+
+    def _parse_json_field(self, value: Any, default: Any) -> Any:
+        """Parse a JSON string field from LLM output, returning default on failure."""
+        if isinstance(value, (list, dict)):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, type(default)):
+                    return parsed
+                return default
+            except (json.JSONDecodeError, TypeError):
+                return default
+        return default
+
+    def _parse_confidence(self, value: Any) -> float:
+        """Parse confidence from string or float."""
+        if isinstance(value, (int, float)):
+            return float(min(1.0, max(0.0, value)))
+        if isinstance(value, str):
+            try:
+                return float(min(1.0, max(0.0, float(value))))
+            except (ValueError, TypeError):
+                return 0.5
+        return 0.5
+
+    def _fallback_prediction(self, query: str) -> dspy.Prediction:
+        """Return safe fallback prediction when all paths fail."""
+        prediction = dspy.Prediction()
+        prediction.entities = []
+        prediction.relationships = []
+        prediction.enhanced_query = query
+        prediction.query_variants = []
+        prediction.confidence = 0.0
+        prediction.path_used = "fallback"
+        prediction.domain_classification = "unknown"
+        prediction.reasoning = "All analysis paths failed"
+        return prediction
 
 
 class DSPyBasicRoutingModule(dspy.Module):
@@ -429,16 +412,28 @@ class DSPyAdvancedRoutingModule(dspy.Module):
     """
     DSPy 3.0 module for advanced routing with full relationship analysis.
 
-    Combines entity extraction, relationship analysis, and query enhancement
-    to make sophisticated routing decisions.
+    Uses ComposableQueryAnalysisModule for entity extraction, relationship
+    analysis, and query enhancement, then makes routing decisions.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        analysis_module: Optional[ComposableQueryAnalysisModule] = None,
+    ):
         super().__init__()
         self.router = dspy.ChainOfThought(AdvancedRoutingSignature)
-        self.entity_module = DSPyEntityExtractorModule()
-        self.relationship_module = DSPyRelationshipExtractorModule()
         self.basic_module = DSPyBasicRoutingModule()
+
+        # Use provided analysis module or create a default one
+        if analysis_module is not None:
+            self.analysis_module = analysis_module
+        else:
+            gliner_extractor = GLiNERRelationshipExtractor()
+            spacy_analyzer = SpaCyDependencyAnalyzer()
+            self.analysis_module = ComposableQueryAnalysisModule(
+                gliner_extractor=gliner_extractor,
+                spacy_analyzer=spacy_analyzer,
+            )
 
     def forward(
         self,
@@ -463,34 +458,23 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             # Step 1: Basic query analysis
             basic_analysis = self.basic_module.forward(query, context)
 
-            # Step 2: Entity extraction
-            entity_analysis = self.entity_module.forward(query)
+            # Step 2: Composable query analysis (entities + relationships + enhancement)
+            analysis_result = self.analysis_module.forward(query)
 
-            # Step 3: Relationship extraction
-            relationship_analysis = self.relationship_module.forward(
-                query, entity_analysis.entities
-            )
-
-            # Step 4: Query enhancement (basic version)
-            enhanced_query = self._enhance_query_with_relationships(
-                query, entity_analysis.entities, relationship_analysis.relationships
-            )
-
-            # Step 5: Create comprehensive routing decision
+            # Step 3: Create comprehensive routing decision
             routing_decision = self._create_routing_decision(
                 basic_analysis,
-                entity_analysis,
-                relationship_analysis,
+                analysis_result,
                 user_preferences,
                 system_state,
             )
 
-            # Step 6: Create agent workflow
+            # Step 4: Create agent workflow
             agent_workflow = self._create_agent_workflow(routing_decision)
 
-            # Step 7: Generate optimization suggestions
+            # Step 5: Generate optimization suggestions
             optimization_suggestions = self._generate_optimization_suggestions(
-                query, entity_analysis, relationship_analysis
+                query, analysis_result
             )
 
             # Create comprehensive prediction
@@ -500,14 +484,14 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             prediction.query_analysis = {
                 "primary_intent": basic_analysis.primary_intent,
                 "complexity_level": basic_analysis.complexity_level,
-                "domain_classification": entity_analysis.domain_classification,
+                "domain_classification": analysis_result.domain_classification,
                 "confidence": basic_analysis.confidence_score,
             }
 
             # Extracted information
-            prediction.extracted_entities = entity_analysis.entities
-            prediction.extracted_relationships = relationship_analysis.relationships
-            prediction.enhanced_query = enhanced_query
+            prediction.extracted_entities = analysis_result.entities
+            prediction.extracted_relationships = analysis_result.relationships
+            prediction.enhanced_query = analysis_result.enhanced_query
 
             # Routing decision
             prediction.routing_decision = routing_decision
@@ -516,10 +500,10 @@ class DSPyAdvancedRoutingModule(dspy.Module):
 
             # Overall confidence and reasoning
             prediction.overall_confidence = self._calculate_overall_confidence(
-                basic_analysis, entity_analysis, relationship_analysis
+                basic_analysis, analysis_result
             )
             prediction.reasoning_chain = self._generate_reasoning_chain(
-                query, basic_analysis, entity_analysis, relationship_analysis
+                query, basic_analysis, analysis_result
             )
 
             return prediction
@@ -552,62 +536,14 @@ class DSPyAdvancedRoutingModule(dspy.Module):
 
             return prediction
 
-    def _enhance_query_with_relationships(
-        self,
-        original_query: str,
-        entities: List[Dict[str, Any]],
-        relationships: List[Dict[str, Any]],
-    ) -> str:
-        """
-        Enhance query with relationship context (basic version).
-
-        Args:
-            original_query: Original user query
-            entities: Extracted entities
-            relationships: Extracted relationships
-
-        Returns:
-            Enhanced query string
-        """
-        if not relationships:
-            return original_query
-
-        # Add top relationships as additional context
-        top_relations = relationships[:2]  # Top 2 relationships
-
-        enhancements = []
-        for rel in top_relations:
-            if rel["confidence"] > 0.6:
-                enhancement = f"{rel['subject']} {rel['relation'].replace('_', ' ')} {rel['object']}"
-                enhancements.append(enhancement)
-
-        if enhancements:
-            enhanced = f"{original_query} ({' OR '.join(enhancements)})"
-            return enhanced
-
-        return original_query
-
     def _create_routing_decision(
         self,
         basic_analysis: dspy.Prediction,
-        entity_analysis: dspy.Prediction,
-        relationship_analysis: dspy.Prediction,
+        analysis_result: dspy.Prediction,
         user_preferences: Optional[Dict[str, Any]],
         system_state: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """
-        Create comprehensive routing decision.
-
-        Args:
-            basic_analysis: Basic query analysis results
-            entity_analysis: Entity extraction results
-            relationship_analysis: Relationship extraction results
-            user_preferences: User preferences
-            system_state: System state
-
-        Returns:
-            Routing decision dictionary
-        """
+        """Create comprehensive routing decision."""
         # Determine search modality
         if basic_analysis.needs_multimodal:
             search_modality = "multimodal"
@@ -648,18 +584,16 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             execution_mode = "single"
 
         # Overall confidence
-        confidence = (
-            basic_analysis.confidence_score * 0.6
-            + entity_analysis.confidence * 0.2
-            + relationship_analysis.confidence * 0.2
-        )
+        analysis_confidence = analysis_result.confidence
+        confidence = basic_analysis.confidence_score * 0.6 + analysis_confidence * 0.4
 
         # Reasoning
         reasoning = (
             f"Routing based on {basic_analysis.primary_intent} intent, "
             f"{basic_analysis.complexity_level} complexity, "
-            f"{len(entity_analysis.entities)} entities, "
-            f"{len(relationship_analysis.relationships)} relationships"
+            f"{len(analysis_result.entities)} entities, "
+            f"{len(analysis_result.relationships)} relationships, "
+            f"path: {analysis_result.path_used}"
         )
 
         return {
@@ -675,18 +609,9 @@ class DSPyAdvancedRoutingModule(dspy.Module):
     def _create_agent_workflow(
         self, routing_decision: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """
-        Create step-by-step agent workflow.
-
-        Args:
-            routing_decision: Routing decision dictionary
-
-        Returns:
-            List of workflow steps
-        """
+        """Create step-by-step agent workflow."""
         workflow = []
 
-        # Primary agent step
         workflow.append(
             {
                 "step": 1,
@@ -699,7 +624,6 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             }
         )
 
-        # Secondary agent steps
         for i, secondary_agent in enumerate(routing_decision["secondary_agents"]):
             workflow.append(
                 {
@@ -718,113 +642,67 @@ class DSPyAdvancedRoutingModule(dspy.Module):
     def _generate_optimization_suggestions(
         self,
         query: str,
-        entity_analysis: dspy.Prediction,
-        relationship_analysis: dspy.Prediction,
+        analysis_result: dspy.Prediction,
     ) -> List[str]:
-        """
-        Generate suggestions for optimization.
-
-        Args:
-            query: Original query
-            entity_analysis: Entity analysis results
-            relationship_analysis: Relationship analysis results
-
-        Returns:
-            List of optimization suggestions
-        """
+        """Generate suggestions for optimization."""
         suggestions = []
 
-        # Entity-based suggestions
-        if len(entity_analysis.entities) > 5:
+        if len(analysis_result.entities) > 5:
             suggestions.append("Consider entity filtering for large entity sets")
-        elif len(entity_analysis.entities) == 0:
+        elif len(analysis_result.entities) == 0:
             suggestions.append("No entities detected - consider query expansion")
 
-        # Relationship-based suggestions
-        if len(relationship_analysis.relationships) > 3:
+        if len(analysis_result.relationships) > 3:
             suggestions.append(
                 "Rich relationship context available for enhanced search"
             )
-        elif len(relationship_analysis.relationships) == 0:
+        elif len(analysis_result.relationships) == 0:
             suggestions.append(
                 "No relationships detected - consider semantic expansion"
             )
 
-        # Complexity-based suggestions
-        if len(relationship_analysis.complexity_indicators) > 2:
-            suggestions.append("Complex query - consider multi-step processing")
-
-        # Domain-specific suggestions
-        domain = entity_analysis.domain_classification
+        domain = analysis_result.domain_classification
         if domain in ["artificial_intelligence", "technology"]:
             suggestions.append("Tech domain detected - prioritize technical accuracy")
         elif domain == "sports":
             suggestions.append("Sports domain detected - consider temporal context")
 
-        return suggestions[:5]  # Limit to top 5 suggestions
+        return suggestions[:5]
 
     def _calculate_overall_confidence(
         self,
         basic_analysis: dspy.Prediction,
-        entity_analysis: dspy.Prediction,
-        relationship_analysis: dspy.Prediction,
+        analysis_result: dspy.Prediction,
     ) -> float:
-        """
-        Calculate overall confidence in the routing decision.
-
-        Args:
-            basic_analysis: Basic analysis results
-            entity_analysis: Entity analysis results
-            relationship_analysis: Relationship analysis results
-
-        Returns:
-            Overall confidence score
-        """
-        # Weighted average of component confidences
-        weights = {"basic": 0.5, "entity": 0.3, "relationship": 0.2}
-
+        """Calculate overall confidence in the routing decision."""
         confidence = (
-            basic_analysis.confidence_score * weights["basic"]
-            + entity_analysis.confidence * weights["entity"]
-            + relationship_analysis.confidence * weights["relationship"]
+            basic_analysis.confidence_score * 0.6 + analysis_result.confidence * 0.4
         )
-
         return round(confidence, 3)
 
     def _generate_reasoning_chain(
         self,
         query: str,
         basic_analysis: dspy.Prediction,
-        entity_analysis: dspy.Prediction,
-        relationship_analysis: dspy.Prediction,
+        analysis_result: dspy.Prediction,
     ) -> List[str]:
-        """
-        Generate step-by-step reasoning process.
-
-        Args:
-            query: Original query
-            basic_analysis: Basic analysis results
-            entity_analysis: Entity analysis results
-            relationship_analysis: Relationship analysis results
-
-        Returns:
-            List of reasoning steps
-        """
+        """Generate step-by-step reasoning process."""
         reasoning = []
 
         reasoning.append(f"Analyzed query: '{query[:50]}...'")
         reasoning.append(f"Detected intent: {basic_analysis.primary_intent}")
         reasoning.append(f"Complexity level: {basic_analysis.complexity_level}")
-        reasoning.append(f"Found {len(entity_analysis.entities)} entities")
+        reasoning.append(f"Found {len(analysis_result.entities)} entities")
         reasoning.append(
-            f"Identified {len(relationship_analysis.relationships)} relationships"
+            f"Identified {len(analysis_result.relationships)} relationships"
         )
         reasoning.append(
-            f"Domain classification: {entity_analysis.domain_classification}"
+            f"Domain classification: {analysis_result.domain_classification}"
         )
+        reasoning.append(f"Analysis path used: {analysis_result.path_used}")
         reasoning.append(f"Recommended agent: {basic_analysis.recommended_agent}")
         reasoning.append(
-            f"Overall confidence: {self._calculate_overall_confidence(basic_analysis, entity_analysis, relationship_analysis)}"
+            f"Overall confidence: {self._calculate_overall_confidence(basic_analysis, analysis_result)}"
         )
 
         return reasoning
@@ -833,14 +711,19 @@ class DSPyAdvancedRoutingModule(dspy.Module):
 # Factory functions for easy instantiation
 
 
-def create_entity_extractor_module() -> DSPyEntityExtractorModule:
-    """Create DSPy entity extractor module."""
-    return DSPyEntityExtractorModule()
-
-
-def create_relationship_extractor_module() -> DSPyRelationshipExtractorModule:
-    """Create DSPy relationship extractor module."""
-    return DSPyRelationshipExtractorModule()
+def create_composable_query_analysis_module(
+    entity_confidence_threshold: float = 0.6,
+    min_entities_for_fast_path: int = 1,
+) -> ComposableQueryAnalysisModule:
+    """Create ComposableQueryAnalysisModule with default extractors."""
+    gliner_extractor = GLiNERRelationshipExtractor()
+    spacy_analyzer = SpaCyDependencyAnalyzer()
+    return ComposableQueryAnalysisModule(
+        gliner_extractor=gliner_extractor,
+        spacy_analyzer=spacy_analyzer,
+        entity_confidence_threshold=entity_confidence_threshold,
+        min_entities_for_fast_path=min_entities_for_fast_path,
+    )
 
 
 def create_basic_routing_module() -> DSPyBasicRoutingModule:
@@ -848,6 +731,8 @@ def create_basic_routing_module() -> DSPyBasicRoutingModule:
     return DSPyBasicRoutingModule()
 
 
-def create_advanced_routing_module() -> DSPyAdvancedRoutingModule:
+def create_advanced_routing_module(
+    analysis_module: Optional[ComposableQueryAnalysisModule] = None,
+) -> DSPyAdvancedRoutingModule:
     """Create DSPy advanced routing module."""
-    return DSPyAdvancedRoutingModule()
+    return DSPyAdvancedRoutingModule(analysis_module=analysis_module)

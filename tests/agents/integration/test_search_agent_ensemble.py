@@ -8,13 +8,19 @@ Tests with real Vespa backend, real query encoders, real search:
 - Multi-query fusion (parallel variant search + RRF)
 - Latency validation
 - Error handling (profile failures, sparse results)
+
+Tests requiring real Ollama for ComposableQueryAnalysisModule query variant
+generation use @skip_if_no_ollama and configure DSPy with ollama/gemma3:4b.
 """
 
 import logging
 import time
 from pathlib import Path
 
+import dspy
 import pytest
+
+from .conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
 
@@ -758,6 +764,7 @@ class TestSingleProfileSearchIntegration:
         )
 
 
+@skip_if_no_ollama
 @pytest.mark.integration
 @pytest.mark.slow
 class TestEndToEndQueryFusionPipeline:
@@ -766,11 +773,24 @@ class TestEndToEndQueryFusionPipeline:
 
     Validates the complete pipeline where RoutingAgent generates query variants
     and SearchAgent fuses them via RRF.
+
+    Requires real Ollama for ComposableQueryAnalysisModule to generate variants.
     """
+
+    @pytest.fixture(autouse=True)
+    def configure_dspy_lm(self):
+        """Configure DSPy with real Ollama for variant generation."""
+        lm = dspy.LM(
+            model="ollama/gemma3:4b",
+            api_base="http://localhost:11434",
+        )
+        dspy.configure(lm=lm)
+        yield lm
+        dspy.configure(lm=None)
 
     @pytest.fixture
     def routing_agent_parallel(self):
-        """RoutingAgent configured with query_fusion_config mode='parallel'."""
+        """RoutingAgent configured with query_fusion_config for multi-query fusion."""
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
@@ -788,12 +808,9 @@ class TestEndToEndQueryFusionPipeline:
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": [
-                    "relationship_expansion",
-                    "boolean_optimization",
-                ],
                 "include_original": True,
                 "rrf_k": 60,
             },
@@ -801,8 +818,8 @@ class TestEndToEndQueryFusionPipeline:
         return RoutingAgent(deps=deps)
 
     @pytest.fixture
-    def routing_agent_single(self):
-        """RoutingAgent with default query_fusion_config (mode='single')."""
+    def routing_agent_no_enhancement(self):
+        """RoutingAgent with query enhancement disabled (no variants produced)."""
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
@@ -820,6 +837,7 @@ class TestEndToEndQueryFusionPipeline:
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
+            enable_query_enhancement=False,
         )
         return RoutingAgent(deps=deps)
 
@@ -828,9 +846,9 @@ class TestEndToEndQueryFusionPipeline:
         self, routing_agent_parallel
     ):
         """
-        RoutingAgent with mode='parallel' populates query_variants in RoutingOutput.
+        RoutingAgent populates query_variants in RoutingOutput via composable module.
 
-        Validates: relationship extraction → query enhancement → variant generation.
+        Validates: entity extraction → relationship inference → variant generation.
         """
         agent = routing_agent_parallel
 
@@ -870,28 +888,30 @@ class TestEndToEndQueryFusionPipeline:
         )
 
     @pytest.mark.asyncio
-    async def test_routing_single_mode_produces_no_variants(self, routing_agent_single):
+    async def test_routing_no_enhancement_produces_no_variants(
+        self, routing_agent_no_enhancement
+    ):
         """
-        RoutingAgent with default mode='single' produces empty query_variants.
+        RoutingAgent with enhancement disabled produces empty query_variants.
 
-        Ensures backward compatibility — single mode is the default.
+        When enhancement is off, no composable module runs → no variants.
         """
-        agent = routing_agent_single
+        agent = routing_agent_no_enhancement
 
         result = await agent.analyze_and_route_with_relationships(
             query="robots playing soccer",
             enable_relationship_extraction=True,
-            enable_query_enhancement=True,
+            enable_query_enhancement=False,
         )
 
-        # VALIDATE: No query variants in single mode
+        # VALIDATE: No query variants when enhancement is disabled
         assert isinstance(result.query_variants, list)
         assert len(result.query_variants) == 0, (
-            f"Expected empty query_variants in single mode, "
+            f"Expected empty query_variants with enhancement disabled, "
             f"got {len(result.query_variants)}: {result.query_variants}"
         )
 
-        logger.info("✅ Single mode routing produces no query variants")
+        logger.info("✅ Enhancement-disabled routing produces no query variants")
 
     @pytest.mark.asyncio
     async def test_end_to_end_routing_to_search_with_fusion(
@@ -956,22 +976,22 @@ class TestEndToEndQueryFusionPipeline:
         )
 
     @pytest.mark.asyncio
-    async def test_end_to_end_single_mode_uses_single_query_path(
-        self, routing_agent_single, search_agent_single_profile
+    async def test_end_to_end_no_enhancement_uses_single_query_path(
+        self, routing_agent_no_enhancement, search_agent_single_profile
     ):
         """
-        End-to-end: RoutingAgent (single mode) → SearchAgent uses single-query path.
+        End-to-end: RoutingAgent (enhancement disabled) → SearchAgent uses single-query path.
 
-        Confirms that default config flows through correctly and SearchAgent
+        Confirms that when enhancement is off, SearchAgent
         does NOT use multi-query fusion when no variants are present.
         """
-        routing_agent = routing_agent_single
+        routing_agent = routing_agent_no_enhancement
 
-        # Route with single mode (no variants expected)
+        # Route with enhancement disabled (no variants expected)
         routing_result = await routing_agent.analyze_and_route_with_relationships(
             query="robots playing soccer",
             enable_relationship_extraction=True,
-            enable_query_enhancement=True,
+            enable_query_enhancement=False,
         )
 
         assert len(routing_result.query_variants) == 0
@@ -990,7 +1010,7 @@ class TestEndToEndQueryFusionPipeline:
         )
 
         logger.info(
-            f"✅ End-to-end single mode: {search_result['total_results']} results, "
+            f"✅ Enhancement-disabled: {search_result['total_results']} results, "
             f"no fusion applied"
         )
 
@@ -1022,12 +1042,9 @@ class TestEndToEndQueryFusionPipeline:
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": [
-                    "relationship_expansion",
-                    "boolean_optimization",
-                ],
                 "include_original": True,
                 "rrf_k": custom_rrf_k,
             },
@@ -1078,12 +1095,9 @@ class TestEndToEndQueryFusionPipeline:
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": [
-                    "relationship_expansion",
-                    "boolean_optimization",
-                ],
                 "include_original": False,
                 "rrf_k": 60,
             },
@@ -1139,17 +1153,14 @@ class TestEndToEndQueryFusionPipeline:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        # Parallel mode but include_original=False, so if strategies produce
-        # nothing distinct, we get empty variants → single-query fallback
+        # include_original=False, so if entity extraction produces nothing,
+        # we get empty variants → single-query fallback
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": [
-                    "relationship_expansion",
-                    "boolean_optimization",
-                ],
                 "include_original": False,
                 "rrf_k": 60,
             },

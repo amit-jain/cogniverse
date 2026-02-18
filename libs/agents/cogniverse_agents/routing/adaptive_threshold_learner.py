@@ -1100,8 +1100,11 @@ class AdaptiveThresholdLearner:
 
 # Factory function
 def create_adaptive_threshold_learner(
+    tenant_id: str,
     config: Optional[AdaptiveThresholdConfig] = None,
-    storage_dir: str = "data/adaptive_learning",
+    base_storage_dir: str = "data/adaptive_learning",
 ) -> AdaptiveThresholdLearner:
     """Create adaptive threshold learner instance"""
-    return AdaptiveThresholdLearner(config=config, storage_dir=storage_dir)
+    return AdaptiveThresholdLearner(
+        tenant_id=tenant_id, config=config, base_storage_dir=base_storage_dir
+    )

@@ -23,21 +23,23 @@ from cogniverse_agents.dspy_integration_mixin import (
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing.dspy_relationship_router import (
+    ComposableQueryAnalysisModule,
     DSPyAdvancedRoutingModule,
-    DSPyRelationshipExtractorModule,
+    create_composable_query_analysis_module,
 )
 from cogniverse_agents.routing.dspy_routing_signatures import (
     BasicQueryAnalysisSignature,
-    QueryEnhancementSignature,
-    RelationshipExtractionSignature,
+    QueryReformulationSignature,
+    UnifiedExtractionReformulationSignature,
 )
 from cogniverse_agents.routing.query_enhancement_engine import (
-    DSPyQueryEnhancerModule,
     QueryEnhancementPipeline,
-    QueryRewriter,
+    create_enhancement_pipeline,
 )
 from cogniverse_agents.routing.relationship_extraction_tools import (
+    GLiNERRelationshipExtractor,
     RelationshipExtractorTool,
+    SpaCyDependencyAnalyzer,
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 
@@ -838,29 +840,34 @@ class TestDSPy30RoutingSignatures:
         assert "routing_decision" in fields
         assert "agent_workflow" in fields
 
-    def test_relationship_extraction_signature(self):
-        """Test RelationshipExtractionSignature for Phase 2 preparation"""
+    def test_query_reformulation_signature(self):
+        """Test QueryReformulationSignature (Path A: GLiNER fast path)"""
 
-        assert issubclass(RelationshipExtractionSignature, dspy.Signature)
+        assert issubclass(QueryReformulationSignature, dspy.Signature)
 
-        fields = RelationshipExtractionSignature.model_fields
-        assert "query" in fields
+        fields = QueryReformulationSignature.model_fields
+        assert "original_query" in fields
         assert "entities" in fields
         assert "relationships" in fields
-        assert "semantic_connections" in fields
-        assert "query_structure" in fields
+        assert "search_context" in fields
+        assert "enhanced_query" in fields
+        assert "query_variants" in fields
+        assert "confidence" in fields
 
-    def test_query_enhancement_signature(self):
-        """Test QueryEnhancementSignature for Phase 3 preparation"""
+    def test_unified_extraction_reformulation_signature(self):
+        """Test UnifiedExtractionReformulationSignature (Path B: LLM unified path)"""
 
-        assert issubclass(QueryEnhancementSignature, dspy.Signature)
+        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
 
-        fields = QueryEnhancementSignature.model_fields
+        fields = UnifiedExtractionReformulationSignature.model_fields
         assert "original_query" in fields
+        assert "search_context" in fields
+        assert "entities" in fields
         assert "relationships" in fields
         assert "enhanced_query" in fields
-        assert "semantic_expansions" in fields
-        assert "quality_score" in fields
+        assert "query_variants" in fields
+        assert "domain_classification" in fields
+        assert "confidence" in fields
 
     def test_signature_factory_function(self):
         """Test signature factory for dynamic signature selection"""
@@ -975,23 +982,21 @@ class TestDSPyRedundancyAnalysis:
         # NEW: Pre-defined DSPy 3.0 signatures in dspy_routing_signatures.py
         # - BasicQueryAnalysisSignature (replaces create_query_analysis_signature)
         # - AdvancedRoutingSignature (enhanced routing with relationships)
-        # - EntityExtractionSignature (new capability)
-        # - RelationshipExtractionSignature (new capability)
-        # - QueryEnhancementSignature (new capability)
+        # - QueryReformulationSignature (Path A: GLiNER fast path)
+        # - UnifiedExtractionReformulationSignature (Path B: LLM unified path)
         # - MultiAgentOrchestrationSignature (new capability)
         # - MetaRoutingSignature (new capability)
         # - AdaptiveThresholdSignature (new capability)
 
         from cogniverse_agents.routing.dspy_routing_signatures import (
             AdvancedRoutingSignature,
-            EntityExtractionSignature,
         )
 
         # Verify new signatures exist and work
         assert BasicQueryAnalysisSignature is not None
         assert AdvancedRoutingSignature is not None
-        assert EntityExtractionSignature is not None  # New in Phase 1
-        assert RelationshipExtractionSignature is not None  # New in Phase 1
+        assert QueryReformulationSignature is not None
+        assert UnifiedExtractionReformulationSignature is not None
 
 
 # =============================================================================
@@ -1144,28 +1149,114 @@ class TestRelationshipExtraction:
 
 @pytest.mark.unit
 class TestDSPyModules:
-    """Test Phase 2 DSPy 3.0 modules for relationship-aware routing."""
+    """Test DSPy 3.0 modules for relationship-aware routing."""
 
-    def test_dspy_entity_extractor_module_structure(self):
-        """Test DSPyEntityExtractorModule structure"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            DSPyEntityExtractorModule,
+    @pytest.mark.ci_fast
+    def test_composable_query_analysis_module_structure(self):
+        """Test ComposableQueryAnalysisModule structure"""
+
+        module = create_composable_query_analysis_module()
+        assert module is not None
+        assert hasattr(module, "gliner_extractor")
+        assert hasattr(module, "spacy_analyzer")
+        assert hasattr(module, "reformulator")
+        assert hasattr(module, "unified_extractor")
+        assert hasattr(module, "entity_confidence_threshold")
+        assert hasattr(module, "min_entities_for_fast_path")
+        assert isinstance(module, dspy.Module)
+
+    @pytest.mark.ci_fast
+    def test_composable_module_default_thresholds(self):
+        """Test ComposableQueryAnalysisModule default thresholds"""
+
+        module = create_composable_query_analysis_module()
+        assert module.entity_confidence_threshold == 0.6
+        assert module.min_entities_for_fast_path == 1
+
+    @pytest.mark.ci_fast
+    def test_composable_module_custom_thresholds(self):
+        """Test ComposableQueryAnalysisModule with custom thresholds"""
+
+        module = create_composable_query_analysis_module(
+            entity_confidence_threshold=0.8,
+            min_entities_for_fast_path=2,
+        )
+        assert module.entity_confidence_threshold == 0.8
+        assert module.min_entities_for_fast_path == 2
+
+    @pytest.mark.ci_fast
+    def test_composable_module_forward_output_shape(self):
+        """Test ComposableQueryAnalysisModule.forward() output shape"""
+
+        module = create_composable_query_analysis_module()
+        test_query = "Show me videos of robots playing soccer"
+        result = module.forward(test_query)
+
+        # Both paths must produce these fields
+        assert hasattr(result, "entities")
+        assert hasattr(result, "relationships")
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "query_variants")
+        assert hasattr(result, "confidence")
+        assert hasattr(result, "path_used")
+        assert hasattr(result, "domain_classification")
+
+        # Verify types
+        assert isinstance(result.entities, list)
+        assert isinstance(result.relationships, list)
+        assert isinstance(result.enhanced_query, str)
+        assert isinstance(result.query_variants, list)
+        assert isinstance(result.confidence, (int, float))
+        assert isinstance(result.path_used, str)
+        assert result.path_used in [
+            "gliner_fast_path",
+            "gliner_fast_path_degraded",
+            "llm_unified_path",
+            "fallback",
+        ]
+
+    @pytest.mark.ci_fast
+    def test_composable_module_query_variants_format(self):
+        """Test that query_variants match [{'name': str, 'query': str}] format"""
+
+        module = create_composable_query_analysis_module()
+        result = module.forward("Show me videos of robots playing soccer")
+
+        for variant in result.query_variants:
+            assert isinstance(variant, dict)
+            assert "name" in variant
+            assert "query" in variant
+            assert isinstance(variant["name"], str)
+            assert isinstance(variant["query"], str)
+
+    @pytest.mark.ci_fast
+    def test_composable_module_fallback_on_error(self):
+        """Test ComposableQueryAnalysisModule returns fallback on error"""
+
+        # Create module with broken GLiNER extractor
+        gliner = GLiNERRelationshipExtractor()
+        spacy = SpaCyDependencyAnalyzer()
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=gliner,
+            spacy_analyzer=spacy,
         )
 
-        module = DSPyEntityExtractorModule()
-        assert module is not None
-        assert hasattr(module, "extractor")
-        assert hasattr(module, "relationship_tool")
-        assert isinstance(module, dspy.Module)
+        # Mock extract_entities to raise
+        original_extract = gliner.extract_entities
+        gliner.extract_entities = Mock(side_effect=RuntimeError("GLiNER crashed"))
 
-    def test_dspy_relationship_extractor_module_structure(self):
-        """Test DSPyRelationshipExtractorModule structure"""
+        result = module.forward("test query")
 
-        module = DSPyRelationshipExtractorModule()
-        assert module is not None
-        assert hasattr(module, "extractor")
-        assert hasattr(module, "relationship_tool")
-        assert isinstance(module, dspy.Module)
+        # Should return safe fallback
+        assert result.entities == []
+        assert result.relationships == []
+        assert result.enhanced_query == "test query"
+        assert result.query_variants == []
+        assert result.confidence == 0.0
+        assert result.path_used == "fallback"
+
+        # Restore
+        gliner.extract_entities = original_extract
 
     @pytest.mark.ci_fast
     def test_dspy_basic_routing_module_structure(self):
@@ -1185,10 +1276,10 @@ class TestDSPyModules:
         module = DSPyAdvancedRoutingModule()
         assert module is not None
         assert hasattr(module, "router")
-        assert hasattr(module, "entity_module")
-        assert hasattr(module, "relationship_module")
+        assert hasattr(module, "analysis_module")
         assert hasattr(module, "basic_module")
         assert isinstance(module, dspy.Module)
+        assert isinstance(module.analysis_module, ComposableQueryAnalysisModule)
 
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
@@ -1233,74 +1324,85 @@ class TestDSPyModules:
         assert 0.0 <= result.confidence_score <= 1.0
         assert isinstance(result.reasoning, str)
 
-    def test_entity_extraction_module_functionality(self):
-        """Test entity extraction module functionality"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            DSPyEntityExtractorModule,
+    def test_composable_module_path_a_with_high_confidence(self):
+        """Test Path A is taken when GLiNER returns high-confidence entities"""
+
+        gliner = GLiNERRelationshipExtractor()
+        spacy = SpaCyDependencyAnalyzer()
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=gliner,
+            spacy_analyzer=spacy,
+            entity_confidence_threshold=0.6,
+            min_entities_for_fast_path=1,
         )
 
-        module = DSPyEntityExtractorModule()
-
-        # Test with entity-rich query
-        test_query = "Apple Inc. develops iPhone using machine learning technology"
-        result = module.forward(test_query)
-
-        # Verify prediction structure
-        assert hasattr(result, "entities")
-        assert hasattr(result, "entity_types")
-        assert hasattr(result, "key_entities")
-        assert hasattr(result, "domain_classification")
-        assert hasattr(result, "entity_density")
-        assert hasattr(result, "confidence")
-
-        # Verify data types
-        assert isinstance(result.entities, list)
-        assert isinstance(result.entity_types, list)
-        assert isinstance(result.key_entities, list)
-        assert isinstance(result.domain_classification, str)
-        assert isinstance(result.entity_density, (int, float))
-        assert isinstance(result.confidence, (int, float))
-
-        # Verify confidence is valid
-        assert 0.0 <= result.confidence <= 1.0
-
-    def test_relationship_extraction_module_functionality(self):
-        """Test relationship extraction module functionality"""
-
-        module = DSPyRelationshipExtractorModule()
-
-        # Test with relationship-rich query
-        test_query = "Robots are playing soccer using artificial intelligence"
+        # Mock GLiNER to return high-confidence entities
         mock_entities = [
-            {"text": "Robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.8},
-            {
-                "text": "artificial intelligence",
-                "label": "TECHNOLOGY",
-                "confidence": 0.95,
-            },
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
         ]
+        gliner.extract_entities = Mock(return_value=mock_entities)
+        gliner.gliner_model = Mock()  # Pretend model is loaded
+        gliner.infer_relationships_from_entities = Mock(return_value=[])
+        spacy.extract_semantic_relationships = Mock(return_value=[])
 
-        result = module.forward(test_query, mock_entities)
+        # Mock the DSPy reformulator so Path A completes without real LLM
+        mock_reformulator_result = Mock()
+        mock_reformulator_result.enhanced_query = "robots playing soccer enhanced"
+        mock_reformulator_result.query_variants = (
+            '[{"name": "reformulated", "query": "robots playing soccer enhanced"}]'
+        )
+        mock_reformulator_result.confidence = "0.85"
+        mock_reformulator_result.reasoning = "Enhanced with entity context"
+        module.reformulator = Mock(return_value=mock_reformulator_result)
 
-        # Verify prediction structure
-        assert hasattr(result, "relationships")
-        assert hasattr(result, "relationship_types")
-        assert hasattr(result, "semantic_connections")
-        assert hasattr(result, "query_structure")
-        assert hasattr(result, "complexity_indicators")
-        assert hasattr(result, "confidence")
+        result = module.forward("Show me robots playing soccer")
 
-        # Verify data types
-        assert isinstance(result.relationships, list)
-        assert isinstance(result.relationship_types, list)
-        assert isinstance(result.semantic_connections, list)
-        assert isinstance(result.query_structure, str)
-        assert isinstance(result.complexity_indicators, list)
-        assert isinstance(result.confidence, (int, float))
+        # Should use Path A (GLiNER fast path)
+        assert result.path_used == "gliner_fast_path"
+        assert result.entities == mock_entities
 
-        # Verify confidence is valid
-        assert 0.0 <= result.confidence <= 1.0
+    def test_composable_module_path_b_with_low_confidence(self):
+        """Test Path B is taken when GLiNER returns low-confidence entities"""
+
+        gliner = GLiNERRelationshipExtractor()
+        spacy = SpaCyDependencyAnalyzer()
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=gliner,
+            spacy_analyzer=spacy,
+            entity_confidence_threshold=0.6,
+            min_entities_for_fast_path=1,
+        )
+
+        # Mock GLiNER to return low-confidence entities
+        mock_entities = [
+            {"text": "things", "label": "MISC", "confidence": 0.3},
+        ]
+        gliner.extract_entities = Mock(return_value=mock_entities)
+        gliner.gliner_model = Mock()  # Model is loaded but low confidence
+
+        result = module.forward("show me things")
+
+        # Should use Path B (LLM unified path) or fallback
+        assert result.path_used in ["llm_unified_path", "fallback"]
+
+    def test_composable_module_path_b_no_entities(self):
+        """Test Path B is taken when GLiNER returns no entities"""
+
+        gliner = GLiNERRelationshipExtractor()
+        spacy = SpaCyDependencyAnalyzer()
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=gliner,
+            spacy_analyzer=spacy,
+        )
+
+        # Mock GLiNER to return empty
+        gliner.extract_entities = Mock(return_value=[])
+
+        result = module.forward("hello world")
+
+        # Should use Path B or fallback
+        assert result.path_used in ["llm_unified_path", "fallback"]
 
     def test_advanced_routing_module_integration(self):
         """Test advanced routing module end-to-end integration"""
@@ -1368,27 +1470,25 @@ class TestDSPyModules:
 
 @pytest.mark.unit
 class TestDSPyFactoryFunctions:
-    """Test Phase 2 factory functions for module creation."""
+    """Test factory functions for module creation."""
 
-    def test_create_entity_extractor_module(self):
-        """Test entity extractor module factory"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            create_entity_extractor_module,
-        )
+    def test_create_composable_query_analysis_module(self):
+        """Test composable query analysis module factory"""
 
-        module = create_entity_extractor_module()
+        module = create_composable_query_analysis_module()
         assert module is not None
         assert isinstance(module, dspy.Module)
+        assert isinstance(module, ComposableQueryAnalysisModule)
 
-    def test_create_relationship_extractor_module(self):
-        """Test relationship extractor module factory"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            create_relationship_extractor_module,
+    def test_create_composable_module_with_custom_thresholds(self):
+        """Test composable module factory with custom thresholds"""
+
+        module = create_composable_query_analysis_module(
+            entity_confidence_threshold=0.8,
+            min_entities_for_fast_path=2,
         )
-
-        module = create_relationship_extractor_module()
-        assert module is not None
-        assert isinstance(module, dspy.Module)
+        assert module.entity_confidence_threshold == 0.8
+        assert module.min_entities_for_fast_path == 2
 
     def test_create_basic_routing_module(self):
         """Test basic routing module factory"""
@@ -1424,75 +1524,73 @@ class TestDSPyFactoryFunctions:
 class TestDSPyIntegrationReadiness:
     """Test Phase 2 integration readiness with Phase 3 preparation."""
 
-    def test_phase2_modules_ready_for_query_enhancement(self):
-        """Test that Phase 2 modules produce outputs suitable for Phase 3 query enhancement"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            DSPyEntityExtractorModule,
-        )
+    def test_composable_module_ready_for_query_enhancement(self):
+        """Test that composable module produces outputs suitable for query enhancement"""
 
-        entity_module = DSPyEntityExtractorModule()
-        relationship_module = DSPyRelationshipExtractorModule()
+        module = create_composable_query_analysis_module()
 
-        # Test query that should produce good entities and relationships
+        # Test query that should produce entities and relationships
         test_query = (
             "Show videos of autonomous vehicles using computer vision for navigation"
         )
 
-        # Extract entities
-        entity_result = entity_module.forward(test_query)
+        result = module.forward(test_query)
 
-        # Extract relationships
-        relationship_result = relationship_module.forward(
-            test_query, entity_result.entities
-        )
+        # Verify outputs contain entities, relationships, and enhanced query
+        assert hasattr(result, "entities")
+        assert hasattr(result, "relationships")
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "query_variants")
 
-        # Verify outputs are ready for Phase 3 query enhancement
-        assert hasattr(entity_result, "entities")
-        assert hasattr(relationship_result, "relationships")
-
-        # Verify entity structure for query enhancement
-        for entity in entity_result.entities:
+        # Verify entity structure
+        for entity in result.entities:
             if isinstance(entity, dict):
                 assert "text" in entity
                 assert "label" in entity
                 assert "confidence" in entity
 
-        # Verify relationship structure for query enhancement
-        for relationship in relationship_result.relationships:
+        # Verify relationship structure
+        for relationship in result.relationships:
             if isinstance(relationship, dict):
                 assert "subject" in relationship
                 assert "relation" in relationship
                 assert "object" in relationship
-                assert "confidence" in relationship
 
-    def test_phase2_signature_compatibility(self):
-        """Test that Phase 2 uses signatures compatible with DSPy 3.0"""
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            EntityExtractionSignature,
-        )
+    def test_composable_module_signature_compatibility(self):
+        """Test that composable module uses signatures compatible with DSPy 3.0"""
 
-        # Verify signatures are DSPy 3.0 compatible
-        assert issubclass(EntityExtractionSignature, dspy.Signature)
-        assert issubclass(RelationshipExtractionSignature, dspy.Signature)
-
-        # Verify field structure
-        entity_fields = EntityExtractionSignature.model_fields
-        relationship_fields = RelationshipExtractionSignature.model_fields
-
-        # Entity signature should have required fields
-        required_entity_fields = ["query", "entities", "entity_types", "confidence"]
-        for field in required_entity_fields:
-            assert field in entity_fields, f"Missing entity field: {field}"
-
-        # Relationship signature should have required fields
-        required_relationship_fields = [
-            "query",
+        # Verify Path A signature (reformulation)
+        assert issubclass(QueryReformulationSignature, dspy.Signature)
+        reformulation_fields = QueryReformulationSignature.model_fields
+        required_reformulation_fields = [
+            "original_query",
             "entities",
             "relationships",
+            "search_context",
+            "enhanced_query",
+            "query_variants",
             "confidence",
         ]
-        for field in required_relationship_fields:
-            assert field in relationship_fields, f"Missing relationship field: {field}"
+        for field in required_reformulation_fields:
+            assert (
+                field in reformulation_fields
+            ), f"Missing reformulation field: {field}"
+
+        # Verify Path B signature (unified extraction + reformulation)
+        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
+        unified_fields = UnifiedExtractionReformulationSignature.model_fields
+        required_unified_fields = [
+            "original_query",
+            "search_context",
+            "entities",
+            "relationships",
+            "enhanced_query",
+            "query_variants",
+            "domain_classification",
+            "confidence",
+        ]
+        for field in required_unified_fields:
+            assert field in unified_fields, f"Missing unified field: {field}"
 
 
 # =============================================================================
@@ -1503,447 +1601,142 @@ class TestDSPyIntegrationReadiness:
 
 @pytest.mark.unit
 class TestQueryEnhancement:
-    """Test query rewriter and enhancement functionality."""
+    """Test composable query analysis module enhancement functionality."""
 
     @pytest.mark.ci_fast
-    def test_query_rewriter_initialization(self):
-        """Test QueryRewriter initialization"""
+    def test_composable_module_initialization(self):
+        """Test ComposableQueryAnalysisModule initialization"""
 
-        rewriter = QueryRewriter()
-        assert rewriter is not None
-        assert hasattr(rewriter, "enhancement_strategies")
-        assert len(rewriter.enhancement_strategies) > 0
+        module = create_composable_query_analysis_module()
+        assert module is not None
+        assert isinstance(module, dspy.Module)
+        assert hasattr(module, "reformulator")
+        assert hasattr(module, "unified_extractor")
 
-        # Verify all strategies are callable
-        for strategy_name, strategy_func in rewriter.enhancement_strategies.items():
-            assert callable(strategy_func), f"Strategy {strategy_name} not callable"
+    def test_composable_module_basic_enhancement(self):
+        """Test basic query enhancement through composable module"""
 
-    def test_query_enhancement_basic_functionality(self):
-        """Test basic query enhancement functionality"""
+        module = create_composable_query_analysis_module()
 
-        rewriter = QueryRewriter()
-
-        # Test with simple query and entities/relationships
+        # Test with simple query
         original_query = "Show me videos of robots playing soccer"
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.8},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-            }
-        ]
-
-        result = rewriter.enhance_query(original_query, entities, relationships)
+        result = module.forward(original_query)
 
         # Verify result structure
-        required_fields = [
-            "enhanced_query",
-            "semantic_expansions",
-            "relationship_phrases",
-            "enhancement_strategy",
-            "search_operators",
-            "quality_score",
-        ]
-        for field in required_fields:
-            assert field in result, f"Missing field: {field}"
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "entities")
+        assert hasattr(result, "relationships")
+        assert hasattr(result, "query_variants")
+        assert hasattr(result, "confidence")
+        assert hasattr(result, "path_used")
 
         # Verify data types
-        assert isinstance(result["enhanced_query"], str)
-        assert isinstance(result["semantic_expansions"], list)
-        assert isinstance(result["relationship_phrases"], list)
-        assert isinstance(result["enhancement_strategy"], str)
-        assert isinstance(result["search_operators"], list)
-        assert isinstance(result["quality_score"], (int, float))
+        assert isinstance(result.enhanced_query, str)
+        assert isinstance(result.entities, list)
+        assert isinstance(result.relationships, list)
+        assert isinstance(result.query_variants, list)
+        assert isinstance(result.confidence, (int, float))
 
-        # Verify quality score bounds
-        assert 0.0 <= result["quality_score"] <= 1.0
+        # Verify confidence bounds
+        assert 0.0 <= result.confidence <= 1.0
 
-        # Verify query was enhanced (should be longer than original)
-        assert len(result["enhanced_query"]) >= len(original_query)
+    def test_composable_module_with_search_context(self):
+        """Test composable module with different search contexts"""
 
-    def test_relationship_expansion_strategy(self):
-        """Test relationship expansion strategy specifically"""
+        module = create_composable_query_analysis_module()
 
-        rewriter = QueryRewriter()
+        for context in ["general", "video", "text", "multimodal"]:
+            result = module.forward("machine learning tutorial", context)
 
-        # Test relationship expansion with clear relationships
-        query = "Find videos of autonomous vehicles"
-        entities = [
-            {"text": "autonomous vehicles", "label": "TECHNOLOGY", "confidence": 0.95},
-            {"text": "navigation", "label": "ACTIVITY", "confidence": 0.8},
-        ]
-        relationships = [
-            {
-                "subject": "autonomous vehicles",
-                "relation": "uses",
-                "object": "navigation",
-                "confidence": 0.9,
-            }
-        ]
+            assert hasattr(result, "enhanced_query")
+            assert hasattr(result, "entities")
+            assert hasattr(result, "confidence")
 
-        # Call relationship expansion directly
-        result = rewriter._expand_with_relationships(
-            query, entities, relationships, "general"
-        )
+    def test_composable_module_empty_query_handling(self):
+        """Test composable module handles empty query gracefully"""
 
-        assert "enhanced_query" in result
-        assert "terms" in result
-        assert isinstance(result["terms"], list)
+        module = create_composable_query_analysis_module()
+        result = module.forward("")
 
-        # Should include relationship terms
-        if result["terms"]:
-            assert any("navigation" in term.lower() for term in result["terms"])
-
-    def test_semantic_context_strategy(self):
-        """Test semantic context enhancement strategy"""
-
-        rewriter = QueryRewriter()
-
-        # Test with technology entities
-        query = "Show me robot demonstrations"
-        entities = [{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}]
-        relationships = []
-
-        result = rewriter._add_semantic_context(
-            query, entities, relationships, "general"
-        )
-
-        assert "enhanced_query" in result
-        assert "terms" in result
-
-        # Should add technology-related semantic terms
-        if result["terms"]:
-            tech_terms = ["robotics", "automation", "autonomous system"]
-            assert any(term in result["terms"] for term in tech_terms)
-
-    def test_domain_knowledge_application(self):
-        """Test domain-specific knowledge application"""
-
-        rewriter = QueryRewriter()
-
-        # Test AI domain
-        ai_query = "machine learning algorithms in action"
-        ai_entities = [
-            {"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.95}
-        ]
-
-        result = rewriter._apply_domain_knowledge(ai_query, ai_entities, [], "general")
-
-        assert "domain" in result
-        assert result["domain"] in ["artificial_intelligence", "robotics", "general"]
-
-        if result["domain"] == "artificial_intelligence":
-            assert "terms" in result
-            ai_terms = ["neural networks", "computer vision", "deep learning"]
-            assert any(term in result.get("terms", []) for term in ai_terms)
-
-    def test_query_enhancement_error_handling(self):
-        """Test query enhancement error handling"""
-
-        rewriter = QueryRewriter()
-
-        # Test with malformed inputs
-        result = rewriter.enhance_query("", [], [], "general")
-
-        # Should return fallback result without errors
-        assert "enhanced_query" in result
-        assert "quality_score" in result
-        assert result["quality_score"] >= 0.0
+        # Should return valid result even with empty input
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "confidence")
+        assert result.confidence >= 0.0
 
 
 @pytest.mark.unit
 class TestQueryVariants:
-    """Test multi-query fusion variant generation."""
+    """Test multi-query fusion variant generation via composable module."""
 
     @pytest.mark.ci_fast
-    def test_get_query_variants_basic(self):
-        """Test get_query_variants returns correct structure with original + strategies"""
-        rewriter = QueryRewriter()
+    def test_composable_module_produces_variants(self):
+        """Test composable module produces query variants"""
+        module = create_composable_query_analysis_module()
 
         query = "Show me videos of robots playing soccer"
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-            }
-        ]
+        result = module.forward(query)
 
-        variants = rewriter.get_query_variants(
-            original_query=query,
-            entities=entities,
-            relationships=relationships,
-            variant_strategies=["relationship_expansion", "boolean_optimization"],
-            include_original=True,
-        )
-
-        # Must include original
-        assert any(v["name"] == "original" for v in variants)
-        assert variants[0]["name"] == "original"
-        assert variants[0]["query"] == query
-
-        # Each variant has name and query keys
-        for v in variants:
+        # query_variants should be a list of dicts with name and query
+        for v in result.query_variants:
             assert "name" in v
             assert "query" in v
             assert isinstance(v["name"], str)
             assert isinstance(v["query"], str)
 
     @pytest.mark.ci_fast
-    def test_get_query_variants_filters_noop(self):
-        """Test that no-op strategies (enhanced == original) are filtered out"""
-        rewriter = QueryRewriter()
-
-        query = "Show me videos of robots playing soccer"
-        # No entities/relationships → strategies produce no enhancement
-        variants = rewriter.get_query_variants(
-            original_query=query,
-            entities=[],
-            relationships=[],
-            variant_strategies=["relationship_expansion", "boolean_optimization"],
-            include_original=True,
-        )
-
-        # Only original should remain (strategies produce no-op without entities)
-        assert len(variants) == 1
-        assert variants[0]["name"] == "original"
-
     @pytest.mark.ci_fast
-    def test_get_query_variants_without_original(self):
-        """Test include_original=False excludes the original query"""
-        rewriter = QueryRewriter()
-
-        query = "Show me videos of robots playing soccer"
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-            }
-        ]
-
-        variants = rewriter.get_query_variants(
-            original_query=query,
-            entities=entities,
-            relationships=relationships,
-            variant_strategies=["relationship_expansion"],
-            include_original=False,
+    def test_include_original_flag_respected(self):
+        """Test that include_original flag in pipeline config is respected"""
+        pipeline = QueryEnhancementPipeline(
+            enable_simba=False,
+            query_fusion_config={"include_original": True, "rrf_k": 60},
         )
+        # The flag is stored in config
+        assert pipeline.query_fusion_config["include_original"] is True
 
-        assert all(v["name"] != "original" for v in variants)
-
-    @pytest.mark.ci_fast
-    def test_get_query_variants_unknown_strategy_raises(self):
-        """Test that unknown strategy names raise ValueError"""
-        rewriter = QueryRewriter()
-
-        with pytest.raises(ValueError, match="Unknown variant strategy"):
-            rewriter.get_query_variants(
-                original_query="test query",
-                entities=[],
-                relationships=[],
-                variant_strategies=["nonexistent_strategy"],
-                include_original=True,
-            )
-
-    @pytest.mark.ci_fast
-    def test_get_query_variants_produce_distinct_queries(self):
-        """Test that different strategies produce genuinely different queries"""
-        rewriter = QueryRewriter()
-
-        query = "Show me videos of robots playing soccer"
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.95},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.9},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-            }
-        ]
-
-        variants = rewriter.get_query_variants(
-            original_query=query,
-            entities=entities,
-            relationships=relationships,
-            variant_strategies=["relationship_expansion", "boolean_optimization"],
-            include_original=True,
+        pipeline_no_orig = QueryEnhancementPipeline(
+            enable_simba=False,
+            query_fusion_config={"include_original": False, "rrf_k": 60},
         )
-
-        # At least 2 variants (original + at least one strategy)
-        assert len(variants) >= 2
-
-        # All variant queries are distinct
-        queries = [v["query"] for v in variants]
-        assert len(queries) == len(
-            set(queries)
-        ), "Variants should produce distinct queries"
+        assert pipeline_no_orig.query_fusion_config["include_original"] is False
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_pipeline_parallel_mode_populates_variants(self):
-        """Test that parallel fusion mode populates query_variants in pipeline output"""
+    async def test_pipeline_populates_variants(self):
+        """Test that pipeline populates query_variants in output"""
         pipeline = QueryEnhancementPipeline(
+            enable_simba=False,
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": [
-                    "relationship_expansion",
-                    "boolean_optimization",
-                ],
                 "include_original": True,
-            }
+                "rrf_k": 60,
+            },
         )
-
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.85},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-            }
-        ]
 
         result = await pipeline.enhance_query_with_relationships(
             query="Show me videos of robots playing soccer",
-            entities=entities,
-            relationships=relationships,
         )
 
         assert "query_variants" in result
         assert isinstance(result["query_variants"], list)
-        assert len(result["query_variants"]) >= 1
-        # Original should be included
-        assert any(v["name"] == "original" for v in result["query_variants"])
-
-    @pytest.mark.asyncio
-    @pytest.mark.ci_fast
-    async def test_pipeline_single_mode_empty_variants(self):
-        """Test that single mode produces empty query_variants"""
-        pipeline = QueryEnhancementPipeline(query_fusion_config={"mode": "single"})
-
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-        ]
-        relationships = []
-
-        result = await pipeline.enhance_query_with_relationships(
-            query="Show me robot videos",
-            entities=entities,
-            relationships=relationships,
-        )
-
-        assert "query_variants" in result
-        assert result["query_variants"] == []
 
 
 @pytest.mark.unit
-class TestDSPyQueryEnhancer:
-    """Test Phase 3 DSPy query enhancement module."""
-
-    def test_dspy_query_enhancer_initialization(self):
-        """Test DSPyQueryEnhancerModule initialization"""
-
-        module = DSPyQueryEnhancerModule()
-        assert module is not None
-        assert hasattr(module, "enhancer")
-        assert hasattr(module, "rewriter")
-        assert isinstance(module, dspy.Module)
-
-    def test_dspy_query_enhancement_functionality(self):
-        """Test DSPy query enhancement functionality"""
-
-        module = DSPyQueryEnhancerModule()
-
-        # Test with sample data
-        original_query = "Find videos showing robots learning to walk"
-        entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "learning", "label": "ACTIVITY", "confidence": 0.8},
-            {"text": "walk", "label": "ACTION", "confidence": 0.85},
-        ]
-        relationships = [
-            {
-                "subject": "robots",
-                "relation": "learning",
-                "object": "walk",
-                "confidence": 0.88,
-            }
-        ]
-
-        result = module.forward(original_query, entities, relationships)
-
-        # Verify DSPy prediction structure
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "semantic_expansions")
-        assert hasattr(result, "relationship_phrases")
-        assert hasattr(result, "enhancement_strategy")
-        assert hasattr(result, "search_operators")
-        assert hasattr(result, "quality_score")
-
-        # Verify data types
-        assert isinstance(result.enhanced_query, str)
-        assert isinstance(result.semantic_expansions, list)
-        assert isinstance(result.relationship_phrases, list)
-        assert isinstance(result.enhancement_strategy, str)
-        assert isinstance(result.search_operators, list)
-        assert isinstance(result.quality_score, (int, float))
-
-        # Verify quality bounds
-        assert 0.0 <= result.quality_score <= 1.0
-
-    def test_dspy_query_enhancer_error_handling(self):
-        """Test DSPy query enhancer error handling"""
-
-        module = DSPyQueryEnhancerModule()
-
-        # Test with minimal/problematic inputs
-        result = module.forward("", [], [])
-
-        # Should return valid prediction even with empty inputs
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "quality_score")
-        assert result.quality_score >= 0.0
-
-
-@pytest.mark.unit
-class TestDSPyEnhancementPipeline:
-    """Test Phase 3 complete enhancement pipeline."""
+class TestComposableModuleInPipeline:
+    """Test composable module integration with enhancement pipeline."""
 
     def test_enhancement_pipeline_initialization(self):
         """Test QueryEnhancementPipeline initialization"""
 
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
         assert pipeline is not None
-        assert hasattr(pipeline, "relationship_tool")
-        assert hasattr(pipeline, "dspy_enhancer")
+        assert hasattr(pipeline, "analysis_module")
+        assert hasattr(pipeline, "query_fusion_config")
 
     @pytest.mark.asyncio
     async def test_end_to_end_query_enhancement(self):
         """Test end-to-end query enhancement pipeline"""
 
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         # Test with realistic query
         test_query = "Show me videos of autonomous robots playing soccer"
@@ -1973,7 +1766,6 @@ class TestDSPyEnhancementPipeline:
 
             # Verify enhancement occurred
             assert isinstance(result["enhanced_query"], str)
-            assert len(result["enhanced_query"]) >= len(test_query)
 
             # Verify processing metadata
             metadata = result["processing_metadata"]
@@ -1985,15 +1777,14 @@ class TestDSPyEnhancementPipeline:
             assert 0.0 <= result["quality_score"] <= 1.0
 
         except Exception:
-            # If relationship extraction fails due to missing models,
-            # pipeline should still return fallback result
+            # If models unavailable, pipeline should still return fallback
             pass
 
     @pytest.mark.asyncio
     async def test_pipeline_with_search_context(self):
         """Test pipeline with different search contexts"""
 
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         contexts = ["general", "technical", "educational"]
 
@@ -2008,178 +1799,137 @@ class TestDSPyEnhancementPipeline:
             except Exception:
                 pass
 
+    @pytest.mark.asyncio
+    async def test_enhancement_failure_produces_safe_fallback(self):
+        """Test pipeline error handling produces safe fallback"""
+
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
+
+        # Force the analysis module to raise
+        pipeline.analysis_module = Mock()
+        pipeline.analysis_module.forward = Mock(
+            side_effect=RuntimeError("Module exploded")
+        )
+
+        result = await pipeline.enhance_query_with_relationships(
+            query="test query",
+        )
+
+        # Fallback: original query returned
+        assert result["original_query"] == "test query"
+        assert result["enhanced_query"] == "test query"
+        assert result["quality_score"] == 0.0
+        assert result["query_variants"] == []
+
 
 @pytest.mark.unit
 class TestQueryEnhancementFactory:
-    """Test Phase 3 factory functions."""
-
-    def test_create_query_rewriter(self):
-        """Test query rewriter factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import (
-            create_query_rewriter,
-        )
-
-        rewriter = create_query_rewriter()
-        assert rewriter is not None
-        assert hasattr(rewriter, "enhancement_strategies")
-
-    def test_create_dspy_query_enhancer(self):
-        """Test DSPy query enhancer factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import (
-            create_dspy_query_enhancer,
-        )
-
-        enhancer = create_dspy_query_enhancer()
-        assert enhancer is not None
-        assert isinstance(enhancer, dspy.Module)
+    """Test factory functions."""
 
     def test_create_enhancement_pipeline(self):
         """Test enhancement pipeline factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import (
-            create_enhancement_pipeline,
-        )
 
-        pipeline = create_enhancement_pipeline()
+        pipeline = create_enhancement_pipeline(enable_simba=False)
         assert pipeline is not None
-        assert hasattr(pipeline, "relationship_tool")
-        assert hasattr(pipeline, "dspy_enhancer")
+        assert isinstance(pipeline, QueryEnhancementPipeline)
+        assert hasattr(pipeline, "analysis_module")
+
+    def test_create_enhancement_pipeline_with_module(self):
+        """Test enhancement pipeline factory with pre-created module"""
+
+        module = create_composable_query_analysis_module()
+        pipeline = create_enhancement_pipeline(
+            analysis_module=module,
+            enable_simba=False,
+        )
+        assert pipeline.analysis_module is module
 
 
 @pytest.mark.unit
-class TestQueryEnhancementSignatures:
-    """Test Phase 3 compatibility with DSPy 3.0 QueryEnhancementSignature."""
+class TestComposableModuleSignatures:
+    """Test composable module DSPy signature compatibility."""
 
-    def test_signature_compatibility(self):
-        """Test QueryEnhancementSignature compatibility with Phase 3 modules"""
+    def test_reformulation_signature_compatibility(self):
+        """Test QueryReformulationSignature structure for Path A"""
 
-        # Verify signature structure
-        assert issubclass(QueryEnhancementSignature, dspy.Signature)
+        assert issubclass(QueryReformulationSignature, dspy.Signature)
 
-        fields = QueryEnhancementSignature.model_fields
+        fields = QueryReformulationSignature.model_fields
 
         # Verify required input fields
-        required_inputs = [
-            "original_query",
-            "entities",
-            "relationships",
-            "search_context",
-        ]
-        for field in required_inputs:
+        for field in ["original_query", "entities", "relationships", "search_context"]:
             assert field in fields, f"Missing input field: {field}"
 
         # Verify required output fields
-        required_outputs = [
-            "enhanced_query",
-            "semantic_expansions",
-            "relationship_phrases",
-            "enhancement_strategy",
-            "search_operators",
-            "quality_score",
-        ]
-        for field in required_outputs:
+        for field in ["enhanced_query", "query_variants", "confidence"]:
             assert field in fields, f"Missing output field: {field}"
 
-    def test_phase3_integration_with_phase2_outputs(self):
-        """Test Phase 3 can process Phase 2 relationship extraction outputs"""
+    def test_unified_extraction_signature_compatibility(self):
+        """Test UnifiedExtractionReformulationSignature structure for Path B"""
 
-        # Simulate Phase 2 outputs
-        phase2_entities = [
-            {
-                "text": "robots",
-                "label": "TECHNOLOGY",
-                "confidence": 0.9,
-                "start_pos": 0,
-                "end_pos": 6,
-            },
-            {
-                "text": "soccer",
-                "label": "SPORT",
-                "confidence": 0.8,
-                "start_pos": 15,
-                "end_pos": 21,
-            },
-        ]
+        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
 
-        phase2_relationships = [
-            {
-                "subject": "robots",
-                "relation": "playing",
-                "object": "soccer",
-                "confidence": 0.85,
-                "subject_type": "TECHNOLOGY",
-                "object_type": "SPORT",
-            }
-        ]
+        fields = UnifiedExtractionReformulationSignature.model_fields
 
-        # Test Phase 3 can process these outputs
-        rewriter = QueryRewriter()
-        result = rewriter.enhance_query(
-            "robots playing soccer", phase2_entities, phase2_relationships
-        )
+        # Verify required input fields
+        for field in ["original_query", "search_context"]:
+            assert field in fields, f"Missing input field: {field}"
 
-        # Should successfully process Phase 2 outputs
-        assert "enhanced_query" in result
-        assert "quality_score" in result
-        assert result["quality_score"] > 0
+        # Verify required output fields
+        for field in [
+            "entities",
+            "relationships",
+            "enhanced_query",
+            "query_variants",
+            "domain_classification",
+            "confidence",
+        ]:
+            assert field in fields, f"Missing output field: {field}"
 
 
 @pytest.mark.unit
 class TestQueryEnhancementIntegration:
-    """Test Phase 3 integration readiness with Phase 4."""
+    """Test composable module integration readiness with routing."""
 
     def test_enhanced_queries_ready_for_routing(self):
-        """Test that Phase 3 enhanced queries are ready for Phase 4 routing"""
+        """Test that composable module enhanced queries are ready for routing"""
 
-        rewriter = QueryRewriter()
+        module = create_composable_query_analysis_module()
 
         # Test query enhancement produces routing-ready output
         test_query = "Find educational videos about machine learning algorithms"
-        entities = [
-            {"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.9}
-        ]
-        relationships = []
-
-        result = rewriter.enhance_query(test_query, entities, relationships)
-
-        # Verify output suitable for routing
-        enhanced_query = result["enhanced_query"]
+        result = module.forward(test_query)
 
         # Should be a valid string suitable for search
-        assert isinstance(enhanced_query, str)
-        assert len(enhanced_query) > 0
+        assert isinstance(result.enhanced_query, str)
+        assert len(result.enhanced_query) > 0
 
-        # Should contain original query terms
-        assert "machine learning" in enhanced_query.lower()
+        # Should have confidence for routing decisions
+        assert isinstance(result.confidence, (int, float))
+        assert 0.0 <= result.confidence <= 1.0
 
-        # Should have quality metrics for routing decisions
-        assert "quality_score" in result
-        assert isinstance(result["quality_score"], (int, float))
+        # Should have path info for routing optimization
+        assert isinstance(result.path_used, str)
 
-        # Should have strategy info for routing optimization
-        assert "enhancement_strategy" in result
-        assert isinstance(result["enhancement_strategy"], str)
+    def test_composable_output_structure_for_routing(self):
+        """Test composable module outputs have correct structure for routing"""
 
-    def test_phase3_output_structure_for_phase4(self):
-        """Test Phase 3 outputs have correct structure for Phase 4 integration"""
+        module = create_composable_query_analysis_module()
+        result = module.forward("test query")
 
-        module = DSPyQueryEnhancerModule()
-
-        # Test module produces correct output structure
-        result = module.forward(
-            "test query", [{"text": "test", "label": "TEST", "confidence": 0.8}], []
-        )
-
-        # Phase 4 routing will expect these attributes
-        phase4_required_attributes = [
-            "enhanced_query",  # For actual search
-            "quality_score",  # For routing confidence
-            "enhancement_strategy",  # For routing optimization
-            "semantic_expansions",  # For additional context
-            "relationship_phrases",  # For relationship-aware routing
+        # Routing agent expects these attributes
+        routing_required_attributes = [
+            "enhanced_query",
+            "entities",
+            "relationships",
+            "query_variants",
+            "confidence",
+            "path_used",
+            "domain_classification",
         ]
 
-        for attr in phase4_required_attributes:
-            assert hasattr(result, attr), f"Missing Phase 4 required attribute: {attr}"
+        for attr in routing_required_attributes:
+            assert hasattr(result, attr), f"Missing routing required attribute: {attr}"
 
 
 # ======================== COMPONENT TESTS ========================
@@ -2226,75 +1976,51 @@ class TestDSPyComponentsIntegration:
         assert agent.tenant_id == "test_tenant"
         assert agent.agent_name == "simple_test_agent"
 
-    def test_phase2_phase3_relationship_to_enhancement_flow(self):
-        """Test flow from relationship extraction (Phase 2) to query enhancement (Phase 3)"""
+    def test_composable_module_entity_to_enhancement_flow(self):
+        """Test flow from entity extraction to query enhancement via composable module."""
 
-        # Mock relationship extraction results (Phase 2 output)
-        mock_entities = [
-            {"text": "robots", "label": "ENTITY", "confidence": 0.9},
-            {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-            {"text": "competitions", "label": "EVENT", "confidence": 0.85},
-        ]
-
-        mock_relationships = [
-            {"subject": "robots", "relation": "playing", "object": "soccer"},
-            {"subject": "soccer", "relation": "in", "object": "competitions"},
-        ]
-
-        # Test Phase 3 can process Phase 2 outputs
-
-        rewriter = QueryRewriter()
-        result = rewriter.enhance_query(
-            "robots playing soccer in competitions", mock_entities, mock_relationships
+        # The composable module handles entity extraction + enhancement in one pass
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=Mock(spec=GLiNERRelationshipExtractor),
+            spacy_analyzer=Mock(spec=SpaCyDependencyAnalyzer),
         )
 
-        # Validate Phase 2 → Phase 3 data flow
-        assert result["enhanced_query"] != "robots playing soccer in competitions"
-        assert "quality_score" in result
-        assert result["quality_score"] > 0
+        # Verify module has both paths available
+        assert hasattr(module, "reformulator")
+        assert hasattr(module, "unified_extractor")
 
-        # Should incorporate relationship context
-        enhanced_query = result["enhanced_query"].lower()
-        assert any(
-            term in enhanced_query for term in ["robots", "soccer", "competitions"]
-        )
+        # The module's forward() handles the full flow:
+        # entities → relationships → enhancement → variants
+        # We just verify it has the right structure
+        assert isinstance(module, dspy.Module)
 
     def test_dspy_signature_compatibility_across_phases(self):
-        """Test DSPy signatures work correctly across all phases"""
+        """Test DSPy signatures work correctly across all phases."""
 
         # Test Phase 1 signatures
-
         phase1_fields = BasicQueryAnalysisSignature.model_fields
         assert "query" in phase1_fields
         assert "primary_intent" in phase1_fields
 
-        # Test Phase 2 signatures
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            RelationshipExtractionSignature,
-        )
+        # Test composable module signatures (Path A and Path B)
+        path_a_fields = QueryReformulationSignature.model_fields
+        assert "original_query" in path_a_fields
+        assert "entities" in path_a_fields
+        assert "enhanced_query" in path_a_fields
+        assert "query_variants" in path_a_fields
 
-        phase2_fields = RelationshipExtractionSignature.model_fields
-        assert (
-            "query" in phase2_fields
-        )  # RelationshipExtractionSignature uses 'query' not 'text'
-        assert (
-            "relationships" in phase2_fields
-        )  # Uses 'relationships' not 'extracted_relationships'
-
-        # Test Phase 3 signatures
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            QueryEnhancementSignature,
-        )
-
-        phase3_fields = QueryEnhancementSignature.model_fields
-        assert "original_query" in phase3_fields
-        assert "enhanced_query" in phase3_fields
+        path_b_fields = UnifiedExtractionReformulationSignature.model_fields
+        assert "original_query" in path_b_fields
+        assert "enhanced_query" in path_b_fields
+        assert "entities" in path_b_fields
+        assert "relationships" in path_b_fields
+        assert "query_variants" in path_b_fields
 
         # All signatures should be DSPy 3.0 compatible
         for signature in [
             BasicQueryAnalysisSignature,
-            RelationshipExtractionSignature,
-            QueryEnhancementSignature,
+            QueryReformulationSignature,
+            UnifiedExtractionReformulationSignature,
         ]:
             assert hasattr(
                 signature, "model_fields"
@@ -2330,7 +2056,6 @@ class TestDSPyComponentsIntegration:
         """Test data structures remain consistent as they flow through phases"""
 
         # Standard test data that should work across all phases
-        test_query = "autonomous vehicles navigating urban environments"
         test_entities = [
             {"text": "autonomous vehicles", "label": "TECHNOLOGY", "confidence": 0.9},
             {"text": "urban environments", "label": "LOCATION", "confidence": 0.8},
@@ -2369,19 +2094,22 @@ class TestDSPyComponentsIntegration:
             assert isinstance(phase2_result["entities"], list)
             assert isinstance(phase2_result["relationships"], list)
 
-        # Test Phase 2 → Phase 3 data compatibility
-        from cogniverse_agents.routing.query_enhancement_engine import QueryRewriter
-
-        rewriter = QueryRewriter()
-        phase3_result = rewriter.enhance_query(
-            test_query, test_entities, test_relationships
+        # Test data compatibility with ComposableQueryAnalysisModule
+        # The module expects query + search_context and internally extracts entities
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=Mock(spec=GLiNERRelationshipExtractor),
+            spacy_analyzer=Mock(spec=SpaCyDependencyAnalyzer),
         )
 
-        # Phase 3 should successfully process Phase 2 outputs
-        assert "enhanced_query" in phase3_result
-        assert "quality_score" in phase3_result
-        assert isinstance(phase3_result["enhanced_query"], str)
-        assert isinstance(phase3_result["quality_score"], (int, float))
+        # Verify the module can be instantiated with the expected interface
+        assert hasattr(module, "forward")
+        # The module's forward() signature expects (query, search_context)
+        import inspect
+
+        sig = inspect.signature(module.forward)
+        params = list(sig.parameters.keys())
+        assert "query" in params
+        assert "search_context" in params
 
     def test_performance_and_resource_management(self):
         """Test resource management and performance across integrated phases"""

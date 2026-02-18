@@ -15,8 +15,8 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
 )
 from cogniverse_agents.routing.dspy_relationship_router import (
-    DSPyEntityExtractorModule,
-    DSPyRelationshipExtractorModule,
+    ComposableQueryAnalysisModule,
+    create_composable_query_analysis_module,
 )
 from cogniverse_agents.routing.dspy_routing_signatures import (
     AdvancedRoutingSignature,
@@ -203,17 +203,14 @@ class TestAdvancedRoutingOptimizer:
 class TestDSPyRouterModules:
     """Test DSPy router modules"""
 
-    def test_entity_extractor_module(self):
-        """Test DSPy entity extractor module"""
-        module = DSPyEntityExtractorModule()
+    def test_composable_query_analysis_module(self):
+        """Test ComposableQueryAnalysisModule creation and structure."""
+        module = create_composable_query_analysis_module()
         assert module is not None
+        assert isinstance(module, ComposableQueryAnalysisModule)
         assert hasattr(module, "forward")
-
-    def test_relationship_extractor_module(self):
-        """Test DSPy relationship extractor module"""
-        module = DSPyRelationshipExtractorModule()
-        assert module is not None
-        assert hasattr(module, "forward")
+        assert hasattr(module, "reformulator")
+        assert hasattr(module, "unified_extractor")
 
 
 class TestDSPyRoutingIntegration:

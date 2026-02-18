@@ -824,13 +824,11 @@ class TestRealEndToEndIntegration:
                 )
                 enhanced_query = enhancement_result.get("enhanced_query", test_query)
             else:
-                # Fallback to basic enhancement
-                from cogniverse_agents.routing.query_enhancement_engine import (
-                    QueryRewriter,
+                # Fallback: use the pipeline directly (it handles missing entities)
+                enhancement_result = (
+                    await query_enhancer.enhance_query_with_relationships(test_query)
                 )
-
-                rewriter = QueryRewriter()
-                enhanced_query = rewriter.enhance_query(test_query)
+                enhanced_query = enhancement_result.get("enhanced_query", test_query)
             print(f"   ✅ Enhanced query: {enhanced_query}")
 
             # STRICT ASSERTION 5: Enhanced query should be different/longer than original

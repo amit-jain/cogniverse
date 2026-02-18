@@ -442,7 +442,7 @@ metrics = {
 
 ## Multi-Query Fusion
 
-Multi-query fusion is a complementary technique to ensemble search. While **ensemble** varies the **profile** (embedding model) with a fixed query, **multi-query fusion** varies the **query** (via QueryRewriter strategies) against a single profile.
+Multi-query fusion is a complementary technique to ensemble search. While **ensemble** varies the **profile** (embedding model) with a fixed query, **multi-query fusion** varies the **query** (via `ComposableQueryAnalysisModule` LLM-generated variants) against a single profile.
 
 ### Comparison
 
@@ -456,25 +456,24 @@ Multi-query fusion is a complementary technique to ensemble search. While **ense
 
 ### How It Works
 
-1. `RoutingAgent` extracts entities/relationships (GLiNER + LangExtract)
-2. `QueryRewriter.get_query_variants()` generates distinct query reformulations using configured strategies
-3. Each variant is encoded and searched in parallel against the same profile
-4. Results are fused with `_fuse_results_rrf()` (same algorithm as ensemble)
+1. `RoutingAgent` calls `ComposableQueryAnalysisModule.forward(query)` which extracts entities, infers relationships, enhances the query, and generates query variants in a single composable step
+2. Each variant is encoded and searched in parallel against the same profile
+3. Results are fused with `_fuse_results_rrf()` (same algorithm as ensemble)
 
 ### Configuration
 
 ```json
 {
   "query_fusion_config": {
-    "mode": "parallel",
-    "variant_strategies": ["relationship_expansion", "boolean_optimization"],
     "include_original": true,
     "rrf_k": 60
   }
 }
 ```
 
-Environment variable override: `ROUTING_QUERYFUSION_MODE=parallel`
+Additional routing config fields control the composable module's path selection:
+- `entity_confidence_threshold` (default: 0.6) — GLiNER confidence threshold for Path A vs Path B
+- `min_entities_for_fast_path` (default: 1) — minimum entities required for Path A
 
 ### Mutual Exclusivity
 

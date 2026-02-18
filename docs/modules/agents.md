@@ -330,13 +330,10 @@ async def route_query(
         # 1. Get memory context
         memory_context = self.get_relevant_context(query, top_k=5)
 
-        # 2. Extract entities and relationships
-        entities, relationships = await self._extract_relationships(query)
+        # 2. Analyze and enhance query (composable module: entity extraction + relationship inference + query reformulation)
+        entities, relationships, enhanced_query, enhancement_metadata = await self._analyze_and_enhance_query(query)
 
-        # 3. Enhance query
-        enhanced_query, enhancement_metadata = await self._enhance_query(query, entities, relationships)
-
-        # 4. Select agents (DSPy)
+        # 3. Select agents (DSPy)
         decision = await self._make_routing_decision(query, enhanced_query, entities, relationships, context)
 
         # 5. Record decision
@@ -346,36 +343,29 @@ async def route_query(
         return decision
 ```
 
-**`_extract_relationships(query: str) -> Tuple[List[Dict], List[Dict]]`**
+**`_analyze_and_enhance_query(query: str) -> Tuple[List[Dict], List[Dict], str, Dict]`**
 
-Extract entities and relationships from query using the relationship extractor tool.
+Unified analysis and enhancement using `ComposableQueryAnalysisModule`. The module has two paths:
+- **Path A (GLiNER fast path):** GLiNER extracts high-confidence entities → heuristic relationship inference → LLM reformulates and generates variants
+- **Path B (LLM unified path):** Single LLM call does entity extraction, relationship extraction, query reformulation, and variant generation
+
+Path selection is automatic based on GLiNER entity confidence (threshold: `entity_confidence_threshold`, default 0.6).
 
 ```python
-async def _extract_relationships(
+async def _analyze_and_enhance_query(
     self,
-    query: str
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    query: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str, Dict[str, Any]]:
     """
-    Extract relationships and entities from query.
+    Analyze and enhance query using composable module.
 
     Returns:
-        Tuple of (entities, relationships):
-        - entities: [{"text": "Einstein", "type": "PERSON"}, ...]
+        Tuple of (entities, relationships, enhanced_query, enhancement_metadata):
+        - entities: [{"text": "Einstein", "type": "PERSON", "confidence": 0.85}, ...]
         - relationships: [{"subject": "Einstein", "relation": "discusses", "object": "physics"}, ...]
+        - enhanced_query: "Einstein's contributions to theoretical physics"
+        - enhancement_metadata: {"path_used": "A", "query_variants": [...], "confidence": 0.9}
     """
-    if not self.deps.enable_relationship_extraction or not self.relationship_extractor:
-        return [], []
-
-    try:
-        extraction_result = await self.relationship_extractor.extract_comprehensive_relationships(query)
-
-        entities = extraction_result.get("entities", [])
-        relationships = extraction_result.get("relationships", [])
-
-        return entities, relationships
-    except Exception as e:
-        self.logger.warning(f"Relationship extraction failed: {e}")
-        return [], []
 ```
 
 #### Configuration
@@ -1156,14 +1146,12 @@ class EntityExtractionAgent(A2AAgent[EntityExtractionInput, EntityExtractionOutp
         super().__init__(deps=deps, config=config, dspy_module=None)
 
     async def _process_impl(self, input: EntityExtractionInput) -> EntityExtractionOutput:
-        """Type-safe entity extraction."""
-        entities = self._extract_entities(input.query)
-        relationships = self._extract_relationships(input.query, entities)
+        """Type-safe entity extraction using DSPy module."""
+        result = self.dspy_module.forward(query=input.query)
+        entities = self._parse_entities(result.entities, input.query)
         return EntityExtractionOutput(
             entities=entities,
-            relationships=relationships,
             entity_count=len(entities),
-            relationship_count=len(relationships)
         )
 ```
 

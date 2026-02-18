@@ -93,90 +93,75 @@ class BasicQueryAnalysisSignature(dspy.Signature):
     reasoning: str = dspy.OutputField(desc="Brief explanation of routing decision")
 
 
-class EntityExtractionSignature(dspy.Signature):
-    """Enhanced entity extraction with relationship awareness"""
+class QueryReformulationSignature(dspy.Signature):
+    """Reformulate a query using pre-extracted entities and relationships (Path A: GLiNER fast path).
 
-    query: str = dspy.InputField(desc="Query text for entity extraction")
-    domain_context: Optional[str] = dspy.InputField(
-        desc="Domain context for better extraction"
-    )
-
-    # Entity outputs
-    entities: List[Dict[str, Any]] = dspy.OutputField(
-        desc="Extracted entities with types, positions, and confidence scores"
-    )
-    entity_types: List[str] = dspy.OutputField(desc="Unique entity types found")
-    key_entities: List[str] = dspy.OutputField(
-        desc="Most important entities for the query"
-    )
-
-    # Context analysis
-    domain_classification: str = dspy.OutputField(
-        desc="Identified domain/topic of the query"
-    )
-    entity_density: float = dspy.OutputField(desc="Ratio of entities to total words")
-    confidence: float = dspy.OutputField(desc="Overall extraction confidence")
-
-
-class RelationshipExtractionSignature(dspy.Signature):
-    """Extract relationships between entities for query enhancement"""
-
-    query: str = dspy.InputField(desc="Query text for relationship extraction")
-    entities: List[Dict[str, Any]] = dspy.InputField(
-        desc="Previously extracted entities"
-    )
-    linguistic_context: Optional[str] = dspy.InputField(
-        desc="Linguistic analysis context"
-    )
-
-    # Relationship outputs
-    relationships: List[Dict[str, Any]] = dspy.OutputField(
-        desc="Relationship tuples: subject, relation, object with confidence scores"
-    )
-    relationship_types: List[str] = dspy.OutputField(
-        desc="Types of relationships found"
-    )
-    semantic_connections: List[str] = dspy.OutputField(
-        desc="Semantic connections between entities"
-    )
-
-    # Analysis outputs
-    query_structure: str = dspy.OutputField(
-        desc="Grammatical/semantic structure analysis"
-    )
-    complexity_indicators: List[str] = dspy.OutputField(
-        desc="Factors indicating query complexity"
-    )
-    confidence: float = dspy.OutputField(desc="Relationship extraction confidence")
-
-
-class QueryEnhancementSignature(dspy.Signature):
-    """Enhance queries using extracted relationships and entities"""
+    Given the original query, extracted entities, and inferred relationships,
+    produce an enhanced query and diverse search variants for multi-query fusion.
+    """
 
     original_query: str = dspy.InputField(desc="Original user query")
-    entities: List[Dict[str, Any]] = dspy.InputField(desc="Extracted entities")
-    relationships: List[Dict[str, Any]] = dspy.InputField(
-        desc="Extracted relationship tuples"
+    entities: str = dspy.InputField(
+        desc="JSON array of extracted entities, each with text, label, confidence"
     )
-    search_context: str = dspy.InputField(desc="Target search system context")
+    relationships: str = dspy.InputField(
+        desc="JSON array of relationship tuples, each with subject, relation, object, confidence"
+    )
+    search_context: str = dspy.InputField(
+        desc="Search context: general, video, text, multimodal"
+    )
 
-    # Enhancement outputs
     enhanced_query: str = dspy.OutputField(
-        desc="Query enhanced with relationship context"
+        desc="Query enhanced with entity and relationship context for better retrieval"
     )
-    semantic_expansions: List[str] = dspy.OutputField(
-        desc="Additional terms for better retrieval"
+    query_variants: str = dspy.OutputField(
+        desc='JSON array of query variants, each {"name": str, "query": str}. '
+        "Generate 2-4 diverse reformulations: synonym expansion, relationship-focused, "
+        "boolean-structured, domain-specialized."
     )
-    relationship_phrases: List[str] = dspy.OutputField(
-        desc="Natural language relationship descriptions"
+    reasoning: str = dspy.OutputField(
+        desc="Brief explanation of enhancement strategy and variant generation rationale"
+    )
+    confidence: str = dspy.OutputField(
+        desc="Confidence score 0.0-1.0 as string for the quality of reformulation"
     )
 
-    # Strategy outputs
-    enhancement_strategy: str = dspy.OutputField(desc="Strategy used for enhancement")
-    search_operators: List[str] = dspy.OutputField(
-        desc="Suggested search operators (AND, OR)"
+
+class UnifiedExtractionReformulationSignature(dspy.Signature):
+    """Extract entities, relationships, and reformulate query in a single pass (Path B: LLM unified path).
+
+    When GLiNER entities are unavailable or low-confidence, perform entity extraction,
+    relationship inference, and query reformulation together.
+    """
+
+    original_query: str = dspy.InputField(desc="Original user query")
+    search_context: str = dspy.InputField(
+        desc="Search context: general, video, text, multimodal"
     )
-    quality_score: float = dspy.OutputField(desc="Enhancement quality estimate")
+
+    entities: str = dspy.OutputField(
+        desc='JSON array of entities, each {"text": str, "label": str, "confidence": float}'
+    )
+    relationships: str = dspy.OutputField(
+        desc='JSON array of relationships, each {"subject": str, "relation": str, "object": str, "confidence": float}'
+    )
+    enhanced_query: str = dspy.OutputField(
+        desc="Query enhanced with entity and relationship context for better retrieval"
+    )
+    query_variants: str = dspy.OutputField(
+        desc='JSON array of query variants, each {"name": str, "query": str}. '
+        "Generate 2-4 diverse reformulations: synonym expansion, relationship-focused, "
+        "boolean-structured, domain-specialized."
+    )
+    domain_classification: str = dspy.OutputField(
+        desc="Domain/topic classification of the query"
+    )
+    reasoning: str = dspy.OutputField(
+        desc="Brief explanation of extraction and reformulation strategy"
+    )
+    confidence: str = dspy.OutputField(
+        desc="Confidence score 0.0-1.0 as string for overall extraction and reformulation quality"
+    )
 
 
 class MultiAgentOrchestrationSignature(dspy.Signature):
@@ -365,9 +350,8 @@ if __name__ == "__main__":
     # Test signature creation
     signatures = [
         ("BasicQueryAnalysis", BasicQueryAnalysisSignature),
-        ("EntityExtraction", EntityExtractionSignature),
-        ("RelationshipExtraction", RelationshipExtractionSignature),
-        ("QueryEnhancement", QueryEnhancementSignature),
+        ("QueryReformulation", QueryReformulationSignature),
+        ("UnifiedExtractionReformulation", UnifiedExtractionReformulationSignature),
         ("MultiAgentOrchestration", MultiAgentOrchestrationSignature),
         ("AdvancedRouting", AdvancedRoutingSignature),
         ("MetaRouting", MetaRoutingSignature),

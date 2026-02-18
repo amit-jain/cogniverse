@@ -2,7 +2,6 @@
 Unit tests for Mem0MemoryManager
 """
 
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest

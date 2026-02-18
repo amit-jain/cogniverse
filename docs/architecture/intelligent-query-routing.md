@@ -24,9 +24,7 @@ graph LR
     end
 
     subgraph "Query Analysis Pipeline"
-        NER["<span style='color:#000'>Entity Extraction<br/>(GLiNER)</span>"]
-        REL["<span style='color:#000'>Relationship<br/>Extraction</span>"]
-        ENH["<span style='color:#000'>Query<br/>Enhancement</span>"]
+        CQA["<span style='color:#000'>Composable Query<br/>Analysis Module<br/>(entities + rels + enhancement)</span>"]
         DSPy["<span style='color:#000'>DSPy Routing<br/>Decision</span>"]
         GRPO["<span style='color:#000'>GRPO<br/>Optimization</span>"]
     end
@@ -44,9 +42,9 @@ graph LR
         RPT["<span style='color:#000'>Report Generator</span>"]
     end
 
-    Q --> NER
+    Q --> CQA
     CTX --> DSPy
-    NER --> REL --> ENH --> DSPy --> GRPO
+    CQA --> DSPy --> GRPO
     GRPO --> OD
     OD -- "No" --> SA --> VS
     OD -- "Yes (≥3 signals)" --> MAO
@@ -54,9 +52,7 @@ graph LR
 
     style Q fill:#90caf9,stroke:#1565c0,color:#000
     style CTX fill:#90caf9,stroke:#1565c0,color:#000
-    style NER fill:#a5d6a7,stroke:#388e3c,color:#000
-    style REL fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ENH fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CQA fill:#a5d6a7,stroke:#388e3c,color:#000
     style DSPy fill:#a5d6a7,stroke:#388e3c,color:#000
     style GRPO fill:#a5d6a7,stroke:#388e3c,color:#000
     style OD fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -72,7 +68,7 @@ graph LR
 
 ## Query Analysis Pipeline
 
-The routing pipeline processes each query through five sequential phases, progressively enriching the query representation before making a routing decision.
+The routing pipeline processes each query through four phases, progressively enriching the query representation before making a routing decision.
 
 ### Phase 1: Entity Extraction via GLiNER
 
@@ -127,36 +123,18 @@ flowchart TD
 
 **Why GLiNER over spaCy NER?** GLiNER handles domain-specific entities (TECHNOLOGY, ACTIVITY, TOOL) without training data. Traditional NER models are limited to PERSON/ORG/GPE and miss the entity types most relevant to multi-modal content queries.
 
-### Phase 2: Relationship Extraction
+### Phase 2: Composable Query Analysis (Entity Extraction + Relationship Inference + Query Enhancement)
 
-Combines proximity-based heuristics with type-pattern matching to infer relationships between extracted entities, enhanced by spaCy's dependency parsing.
+The `ComposableQueryAnalysisModule` (a `dspy.Module`) combines entity extraction, relationship inference, and LLM-powered query reformulation into a single composable step with two paths:
 
-The relationship extractor produces structured tuples:
+- **Path A (GLiNER fast path):** GLiNER extracts high-confidence entities (confidence >= `entity_confidence_threshold`, default 0.6) → heuristic relationship inference via proximity and type-pattern matching, enriched by SpaCy dependency parsing → LLM reformulates the query and generates search variants via `QueryReformulationSignature`
+- **Path B (LLM unified path):** When GLiNER entities are absent, low-confidence, or the GLiNER model is unavailable, a single LLM call via `UnifiedExtractionReformulationSignature` performs entity extraction, relationship extraction, query reformulation, and variant generation together
 
-```
-(subject, relation, object, confidence, subject_type, object_type)
-```
+Both paths produce identical output: `entities`, `relationships`, `enhanced_query`, `query_variants` (list of `{name, query}` dicts for multi-query fusion), `confidence`, `path_used`, and `domain_classification`.
 
-**Extraction strategies:**
-- **Proximity-based** — entities within N tokens of each other likely share a relationship
-- **Type-pattern matching** — certain entity type pairs imply specific relations (PERSON + ACTIVITY → "performs", ANIMAL + LOCATION → "found at")
-- **Dependency parse** — spaCy's dependency tree reveals grammatical relationships (nsubj → verb → dobj chains)
+The `QueryEnhancementPipeline` wraps the composable module and adds SIMBA (Similarity-Based Memory Augmentation) as a fast-path shortcut: if SIMBA finds successful enhancement patterns from similar past queries, it applies those patterns directly. Otherwise, it falls back to the composable module.
 
-### Phase 3: Query Enhancement
-
-Five strategies are applied to enrich the query before routing:
-
-| Strategy | What It Does | Example |
-|---|---|---|
-| **Relationship Expansion** | Injects relationship tuples as context | "retriever plays fetch" → "golden retriever playing fetch (retriever performs activity: fetch)" |
-| **Semantic Enrichment** | Adds contextual terms from entity types | "park" → "park outdoor setting recreational area" |
-| **Domain Specialization** | Applies domain-specific vocabulary | Video domain: adds temporal markers, visual descriptors |
-| **Boolean Optimization** | Structures query with AND/OR operators | "dog OR retriever AND fetch AND park" |
-| **Synonym Expansion** | Adds synonyms for key terms | "playing" → "playing performing engaging in" |
-
-All strategies run independently and are combined via an intelligent merging step that avoids redundancy.
-
-### Phase 4: DSPy Routing Decision
+### Phase 3: DSPy Routing Decision
 
 The enhanced query, entities, and relationships feed into a DSPy `ChainOfThought` module that produces a structured routing decision with confidence calibration.
 
@@ -203,7 +181,7 @@ The routing decision includes:
 - **Execution mode**: sequential, parallel, or hybrid
 - **Confidence**: calibrated via learned thresholds (see AdaptiveThresholdSignature)
 
-### Phase 5: GRPO Optimization
+### Phase 4: GRPO Optimization
 
 Group Relative Policy Optimization continuously improves routing decisions from outcome signals. The optimizer tracks routing experiences and periodically retrains.
 
@@ -233,14 +211,13 @@ The optimizer adaptively selects its strategy based on available training data v
 
 ## DSPy Signatures & Modules
 
-The routing system is built on 8 DSPy 3.0 signatures, each defining a typed contract between inputs and outputs. DSPy signatures are automatically optimizable — the framework learns prompts/demonstrations that maximize a metric.
+The routing system is built on 7 DSPy 3.0 signatures, each defining a typed contract between inputs and outputs. DSPy signatures are automatically optimizable — the framework learns prompts/demonstrations that maximize a metric.
 
 | Signature | Purpose | Key Outputs |
 |---|---|---|
 | `BasicQueryAnalysis` | Fast-path intent + complexity classification | primary_intent, complexity_level, recommended_agent |
-| `EntityExtraction` | Structured entity extraction with domain awareness | entities, entity_types, domain_classification, entity_density |
-| `RelationshipExtraction` | Entity relationship inference with linguistic context | relationships, relationship_types, query_structure |
-| `QueryEnhancement` | Relationship-aware query rewriting | enhanced_query, semantic_expansions, search_operators |
+| `QueryReformulation` | Path A: Reformulate query using pre-extracted GLiNER entities and relationships | enhanced_query, query_variants, reasoning, confidence |
+| `UnifiedExtractionReformulation` | Path B: Single LLM call for entity extraction + relationship inference + query reformulation + variant generation | entities, relationships, enhanced_query, query_variants, domain_classification, confidence |
 | `AdvancedRouting` | Full routing with entity/relationship context | routing_decision, agent_workflow, overall_confidence |
 | `MetaRouting` | Strategy selection: fast_path vs slow_path vs hybrid | recommended_strategy, threshold_adjustments |
 | `AdaptiveThreshold` | Learn confidence thresholds from performance data | fast_path_threshold, slow_path_threshold, escalation_threshold |
@@ -430,7 +407,7 @@ The `ContextualAnalyzer` maintains session state across queries to provide routi
 | Technique | Category | Role in System |
 |---|---|---|
 | **GLiNER** | Zero-shot NER | Entity extraction across 15 custom types without training data |
-| **DSPy 3.0 Signatures** | Prompt optimization | 8 typed signatures that are automatically optimizable |
+| **DSPy 3.0 Signatures** | Prompt optimization | 7 typed signatures that are automatically optimizable |
 | **ChainOfThought** | Reasoning | Step-by-step reasoning for routing decisions |
 | **GRPO** | Reinforcement learning | Continuous routing improvement from outcome signals |
 | **Topological Sort** | Graph algorithms | Dependency-aware task scheduling for multi-agent workflows |

@@ -114,6 +114,9 @@ class SIMBAConfig:
     # Minimum patterns before starting SIMBA optimization
     min_patterns_for_optimization: int = 20
 
+    # Trigger optimization every N patterns (after min_patterns_for_optimization is met)
+    optimization_trigger_frequency: int = 50
+
 
 class SIMBAQueryEnhancer:
     """
@@ -608,7 +611,7 @@ class SIMBAQueryEnhancer:
         self, new_pattern: QueryEnhancementPattern
     ) -> Optional[QueryEnhancementPattern]:
         """Find if similar pattern already exists"""
-        if not new_pattern.query_embedding is not None:
+        if new_pattern.query_embedding is None:
             return None
 
         for existing in self.enhancement_patterns:
@@ -632,8 +635,11 @@ class SIMBAQueryEnhancer:
         if len(self.enhancement_patterns) < self.config.min_patterns_for_optimization:
             return False
 
-        # Trigger every 50 new patterns
-        if len(self.enhancement_patterns) % 50 == 0:
+        # Trigger every N new patterns (configurable)
+        if (
+            len(self.enhancement_patterns) % self.config.optimization_trigger_frequency
+            == 0
+        ):
             return True
 
         # Trigger if pattern quality is declining
@@ -645,9 +651,37 @@ class SIMBAQueryEnhancer:
 
         return False
 
+    @staticmethod
+    def _enhancement_quality_metric(example, pred, trace=None):
+        """Metric for SIMBA optimization: evaluates if the predicted enhancement is valid."""
+        pred_query = getattr(pred, "enhanced_query", "")
+        if not pred_query or not pred_query.strip():
+            return 0.0
+        # Non-trivial enhancement (not just echoing the original)
+        original = getattr(example, "original_query", "")
+        if pred_query.strip().lower() == original.strip().lower():
+            return 0.5
+        return 1.0
+
     async def _run_simba_optimization(self):
         """Run SIMBA optimization to improve enhancement policy"""
-        if not self.simba_optimizer or not self.enhancement_policy:
+        # Lazy initialize SIMBA optimizer when enough patterns have accumulated
+        if self.simba_optimizer is None:
+            if (
+                len(self.enhancement_patterns)
+                >= self.config.min_patterns_for_optimization
+            ):
+                self.simba_optimizer = SIMBA(
+                    metric=self._enhancement_quality_metric,
+                )
+                logger.info(
+                    "Lazy-initialized SIMBA optimizer after reaching "
+                    f"{len(self.enhancement_patterns)} patterns"
+                )
+            else:
+                return
+
+        if not self.enhancement_policy:
             return
 
         try:
@@ -679,8 +713,6 @@ class SIMBAQueryEnhancer:
                 optimized_policy = self.simba_optimizer.compile(
                     self.enhancement_policy,
                     trainset=training_examples,
-                    max_bootstrapped_demos=4,
-                    max_labeled_demos=8,
                 )
 
                 self.enhancement_policy = optimized_policy

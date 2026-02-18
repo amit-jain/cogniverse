@@ -38,7 +38,7 @@ libs/agents/cogniverse_agents/routing/
 ├── strategies.py                       # Core routing strategies (1291 lines)
 ├── advanced_optimizer.py               # GRPO optimization (1358 lines)
 ├── config.py                           # Configuration system (390 lines)
-├── query_enhancement_engine.py         # Query enhancement with SIMBA (1036 lines)
+├── query_enhancement_engine.py         # Query enhancement with SIMBA (345 lines)
 ├── cross_modal_optimizer.py            # Multi-modal fusion (685 lines)
 ├── modality_cache.py                   # Per-modality caching (300 lines)
 ├── modality_optimizer.py               # Per-modality optimization (783 lines)
@@ -107,21 +107,27 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    OriginalQuery["<span style='color:#000'>Original Query</span>"] --> Extraction["<span style='color:#000'>Relationship Extraction<br/>GLiNER/LLM<br/>• Entities: subject, object, action<br/>• Relationships: subj, relation, obj</span>"]
+    OriginalQuery["<span style='color:#000'>Original Query</span>"] --> SimbaCheck["<span style='color:#000'>SIMBA Pattern Matching<br/>• Find similar queries in memory<br/>• Retrieve successful enhancement patterns</span>"]
 
-    Extraction --> SimbaPattern["<span style='color:#000'>SIMBA Pattern Matching<br/>• Find similar queries in memory<br/>• Retrieve successful enhancement patterns<br/>• Confidence: avg improvement from patterns</span>"]
+    SimbaCheck -->|SIMBA match found| SimbaEnhance["<span style='color:#000'>Apply Learned Patterns<br/>• Expansion terms<br/>• Relationship phrases</span>"]
+    SimbaCheck -->|No match / below threshold| Composable["<span style='color:#000'>ComposableQueryAnalysisModule</span>"]
 
-    SimbaPattern -->|confidence > threshold| SimbaEnhance["<span style='color:#000'>Apply Learned Patterns<br/>• Expansion terms<br/>• Relationship phrases<br/>• Semantic enrichment</span>"]
-    SimbaPattern -->|confidence <= threshold| DspyBaseline["<span style='color:#000'>DSPy Baseline Enhancement<br/>• Relationship expansion<br/>• Semantic enrichment<br/>• Domain specialization<br/>• Boolean optimization<br/>• Synonym expansion</span>"]
+    Composable --> GLiNER["<span style='color:#000'>GLiNER Entity Extraction<br/>• Entities with confidence scores</span>"]
 
-    SimbaEnhance --> Enhanced["<span style='color:#000'>Enhanced Query<br/>+ metadata + quality score</span>"]
-    DspyBaseline --> Enhanced
+    GLiNER -->|"high confidence (≥0.6)"| PathA["<span style='color:#000'>Path A: GLiNER Fast<br/>• Heuristic relationships<br/>• SpaCy enrichment<br/>• LLM reformulates + generates variants</span>"]
+    GLiNER -->|"low confidence / no entities"| PathB["<span style='color:#000'>Path B: LLM Unified<br/>• Single LLM call: entities +<br/>  relationships + reformulation +<br/>  variant generation</span>"]
+
+    SimbaEnhance --> Enhanced["<span style='color:#000'>Enhanced Query + Query Variants<br/>+ metadata + quality score</span>"]
+    PathA --> Enhanced
+    PathB --> Enhanced
 
     style OriginalQuery fill:#90caf9,stroke:#1565c0,color:#000
-    style Extraction fill:#b0bec5,stroke:#546e7a,color:#000
-    style SimbaPattern fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SimbaCheck fill:#ffcc80,stroke:#ef6c00,color:#000
     style SimbaEnhance fill:#a5d6a7,stroke:#388e3c,color:#000
-    style DspyBaseline fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Composable fill:#b0bec5,stroke:#546e7a,color:#000
+    style GLiNER fill:#b0bec5,stroke:#546e7a,color:#000
+    style PathA fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PathB fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Enhanced fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
@@ -187,13 +193,15 @@ class RoutingConfig:
         "max_cache_size": 1000,
     }
 
-    # Query fusion (multi-query vs single mega-query)
+    # Query fusion (ComposableQueryAnalysisModule always generates variants)
     query_fusion_config: dict = {
-        "mode": "single",       # "single" (mega-query) or "parallel" (multi-variant + RRF)
-        "variant_strategies": ["relationship_expansion", "boolean_optimization"],
         "include_original": True,  # Include unmodified query as a variant
         "rrf_k": 60,             # RRF constant for fusing variant results
     }
+
+    # Composable module path selection thresholds
+    entity_confidence_threshold: float = 0.6  # GLiNER confidence for Path A vs Path B
+    min_entities_for_fast_path: int = 1       # Minimum entities required for Path A
 ```
 
 **Key Methods**:
@@ -203,7 +211,6 @@ def merge_with_env(self):
     # Format: ROUTING_<SECTION>_<KEY>
     # Examples:
     #   ROUTING_LLM_MODEL=gemma2:2b
-    #   ROUTING_QUERYFUSION_MODE=parallel
 
 @classmethod
 def from_file(cls, filepath: Path) -> "RoutingConfig":
@@ -448,17 +455,16 @@ else:
 
 ---
 
-### 5. QueryEnhancementPipeline (query_enhancement_engine.py:743-1036)
+### 5. QueryEnhancementPipeline (query_enhancement_engine.py:21-345)
 
-**Purpose**: Complete query enhancement with SIMBA learning and relationship extraction
+**Purpose**: Complete query enhancement using ComposableQueryAnalysisModule with SIMBA learning
 
 **Key Features**:
 
-- Relationship extraction (entities + relationships)
-- SIMBA pattern-based enhancement
-- DSPy baseline enhancement (fallback)
-- Multiple enhancement strategies
-- Outcome recording for learning
+- ComposableQueryAnalysisModule integration (Path A: GLiNER fast, Path B: LLM unified)
+- SIMBA pattern-based enhancement (fast shortcut for known patterns)
+- LLM-generated query variant generation for multi-query fusion
+- Outcome recording for SIMBA learning
 
 **Key Methods**:
 
@@ -475,20 +481,22 @@ async def enhance_query_with_relationships(
     Complete end-to-end query enhancement
 
     Process:
-    1. Extract entities and relationships (if not provided)
-    2. Try SIMBA enhancement (pattern matching)
-    3. Fallback to DSPy baseline if SIMBA confidence low
-    4. Combine results with metadata
+    1. Try SIMBA enhancement (pattern matching from successful past queries)
+    2. Fall back to ComposableQueryAnalysisModule (Path A or Path B)
+    3. Apply include_original flag and build result metadata
 
     Returns:
         {
+            "original_query": str,
+            "extracted_entities": List[Dict],
+            "extracted_relationships": List[Dict],
             "enhanced_query": str,
-            "semantic_expansions": List[str],
-            "relationship_phrases": List[str],
-            "enhancement_strategy": str,  # "simba" or "dspy_baseline"
+            "enhancement_strategy": str,  # "simba" or "composable_A" or "composable_B"
             "quality_score": float,
+            "query_variants": List[Dict[str, str]],  # [{"name": str, "query": str}]
             "simba_applied": bool,
             "simba_patterns_used": int,
+            "processing_metadata": {"enhancement_method": str, "analysis_path": str, ...},
             ...
         }
     """
@@ -511,52 +519,36 @@ async def record_enhancement_outcome(
     """
 ```
 
-**Enhancement Strategies** (QueryRewriter):
-```python
-# 1. Relationship Expansion
-# Expand query using relationship tuples
-enhanced = f"{query} ({' OR '.join(relationship_phrases)})"
+**Composable Query Analysis** (`ComposableQueryAnalysisModule`):
 
-# 2. Semantic Enrichment
-# Add domain-specific semantic terms
-enhanced = f"{query} OR {' OR '.join(semantic_terms)}"
+The composable module replaces the former rule-based `QueryRewriter` with a two-path DSPy module
+that generates query variants via LLM:
 
-# 3. Domain Specialization
-# Apply domain knowledge (AI, robotics, sports, etc.)
-enhanced = f"{query} ({' OR '.join(domain_terms)})"
+- **Path A (GLiNER fast path):** GLiNER extracts high-confidence entities → heuristic relationship
+  inference → LLM reformulates query and generates variants
+- **Path B (LLM unified path):** Single LLM call does entity extraction, relationship extraction,
+  query reformulation, and variant generation together
 
-# 4. Boolean Optimization
-# Optimize AND/OR logic based on entity relationships
-enhanced = f"{query} {' '.join(boolean_groups)}"
+Path selection is automatic based on GLiNER entity confidence (threshold: `entity_confidence_threshold`,
+default 0.6). Both paths produce identical output: `entities`, `relationships`, `enhanced_query`,
+`query_variants`, `confidence`, and `path_used`.
 
-# 5. Synonym Expansion
-# Expand with synonyms and related terms
-enhanced = f"{query} OR {' OR '.join(synonyms)}"
-```
+**Multi-Query Variant Generation:**
 
-**Multi-Query Variant Generation** (`get_query_variants()`):
-
-When `query_fusion_config.mode == "parallel"`, the QueryRewriter generates distinct query variants
-by running only the configured `variant_strategies`. Each variant is searched in parallel and results
-are fused with RRF (see [Ensemble Composition](../architecture/ensemble-composition.md#multi-query-fusion)).
+The composable module always generates query variants. Each variant is searched in parallel and
+results are fused with RRF (see [Ensemble Composition](../architecture/ensemble-composition.md#multi-query-fusion)).
 
 ```python
-variants = rewriter.get_query_variants(
-    original_query="robots playing soccer",
-    entities=entities,
-    relationships=relationships,
-    variant_strategies=["relationship_expansion", "boolean_optimization"],
-    include_original=True,
-)
-# Returns: [
-#   {"name": "original", "query": "robots playing soccer"},
-#   {"name": "relationship_expansion", "query": "robots playing soccer (robots playing soccer)"},
-#   {"name": "boolean_optimization", "query": "robots playing soccer (robots AND soccer)"},
+# ComposableQueryAnalysisModule.forward() returns:
+# prediction.query_variants = [
+#   {"name": "entity_focused", "query": "humanoid robots autonomous soccer match"},
+#   {"name": "relationship_expanded", "query": "robots playing competitive soccer game"},
+#   {"name": "semantic_broadened", "query": "robotic athletes in football competition"},
 # ]
 ```
 
-Invalid strategy names raise `ValueError` (not silently skipped). Strategies that produce a query
-identical to the original are filtered out automatically.
+The `include_original` flag in `query_fusion_config` controls whether the original query is
+prepended as a variant. `rrf_k` is passed through to the fusion algorithm.
 
 ---
 
@@ -1305,7 +1297,7 @@ similar = find_similar_patterns(new_query, successful_patterns)
 if similar and avg_improvement(similar) > 0.2:
     enhanced_query = apply_pattern(new_query, similar[0])
 else:
-    enhanced_query = dspy_baseline_enhance(new_query)
+    enhanced_query = composable_module.forward(new_query).enhanced_query
 ```
 
 ---
@@ -1318,7 +1310,7 @@ else:
 flowchart TB
     UserQuery["<span style='color:#000'>USER QUERY</span>"]
 
-    Enhancement["<span style='color:#000'>QUERY ENHANCEMENT PIPELINE<br/><br/>1. Extract entities (GLiNER)<br/>2. SIMBA pattern matching<br/>3. DSPy baseline fallback<br/><br/>Output: enhanced_query, expansions</span>"]
+    Enhancement["<span style='color:#000'>QUERY ENHANCEMENT PIPELINE<br/><br/>1. SIMBA pattern matching (fast shortcut)<br/>2. ComposableQueryAnalysisModule<br/>   Path A: GLiNER → LLM reformulation<br/>   Path B: LLM unified extraction<br/><br/>Output: enhanced_query, query_variants</span>"]
 
     Cache["<span style='color:#000'>MODALITY CACHE CHECK<br/><br/>• Generate cache key<br/>• Check LRU cache<br/>• Verify TTL (3600s)</span>"]
 

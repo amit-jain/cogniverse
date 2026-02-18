@@ -96,8 +96,6 @@ class TestRoutingConfigLoading:
 
         data = {
             "query_fusion_config": {
-                "mode": "parallel",
-                "variant_strategies": ["relationship_expansion"],
                 "include_original": False,
                 "rrf_k": 30,
             }
@@ -105,42 +103,34 @@ class TestRoutingConfigLoading:
 
         config = RoutingConfig.from_dict(data)
 
-        assert config.query_fusion_config["mode"] == "parallel"
-        assert config.query_fusion_config["variant_strategies"] == [
-            "relationship_expansion"
-        ]
         assert config.query_fusion_config["include_original"] is False
         assert config.query_fusion_config["rrf_k"] == 30
 
     @pytest.mark.ci_fast
     def test_default_query_fusion_config(self):
-        """RoutingConfig defaults to mode='single' when no query_fusion_config provided."""
+        """RoutingConfig defaults have include_original=True, rrf_k=60."""
         from cogniverse_agents.routing.config import RoutingConfig
 
         config = RoutingConfig()
 
-        assert config.query_fusion_config["mode"] == "single"
         assert config.query_fusion_config["rrf_k"] == 60
         assert config.query_fusion_config["include_original"] is True
-        assert (
-            "relationship_expansion" in config.query_fusion_config["variant_strategies"]
-        )
-        assert (
-            "boolean_optimization" in config.query_fusion_config["variant_strategies"]
-        )
+        # No mode or variant_strategies — composable module always generates variants
+        assert "mode" not in config.query_fusion_config
+        assert "variant_strategies" not in config.query_fusion_config
 
     @pytest.mark.ci_fast
-    def test_env_var_overrides_query_fusion_mode(self, monkeypatch):
-        """ROUTING_QUERYFUSION_MODE=parallel overrides config."""
+    def test_env_var_overrides_query_fusion_rrf_k(self, monkeypatch):
+        """ROUTING_QUERYFUSION_RRF_K overrides config."""
         from cogniverse_agents.routing.config import RoutingConfig
 
         config = RoutingConfig()
-        assert config.query_fusion_config["mode"] == "single"
+        assert config.query_fusion_config["rrf_k"] == 60
 
-        monkeypatch.setenv("ROUTING_QUERYFUSION_MODE", "parallel")
+        monkeypatch.setenv("ROUTING_QUERYFUSION_RRF_K", "30")
         config.merge_with_env()
 
-        assert config.query_fusion_config["mode"] == "parallel"
+        assert config.query_fusion_config["rrf_k"] == 30
 
     @pytest.mark.ci_fast
     def test_config_file_roundtrip(self, tmp_path):
@@ -150,8 +140,6 @@ class TestRoutingConfigLoading:
         original = RoutingConfig.from_dict(
             {
                 "query_fusion_config": {
-                    "mode": "parallel",
-                    "variant_strategies": ["boolean_optimization"],
                     "include_original": True,
                     "rrf_k": 42,
                 }
@@ -164,8 +152,17 @@ class TestRoutingConfigLoading:
         loaded = RoutingConfig.from_file(config_file)
 
         assert loaded.query_fusion_config == original.query_fusion_config
-        assert loaded.query_fusion_config["mode"] == "parallel"
         assert loaded.query_fusion_config["rrf_k"] == 42
+
+    @pytest.mark.ci_fast
+    def test_entity_confidence_threshold_defaults(self):
+        """RoutingConfig has composable module threshold defaults."""
+        from cogniverse_agents.routing.config import RoutingConfig
+
+        config = RoutingConfig()
+
+        assert config.entity_confidence_threshold == 0.6
+        assert config.min_entities_for_fast_path == 1
 
 
 @pytest.mark.unit
@@ -174,18 +171,16 @@ class TestEnhancementFailureFallback:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_enhance_query_failure_produces_no_variants(self):
+    async def test_analyze_and_enhance_query_failure_produces_no_variants(self):
         """
-        When _enhance_query() crashes under parallel mode config,
-        it returns (query, {}) → no query_variants → single-query path.
+        When _analyze_and_enhance_query() crashes,
+        it returns ([], [], query, {}) → no query_variants → single-query path.
         """
         telemetry_config = TelemetryConfig(enabled=False)
         deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             query_fusion_config={
-                "mode": "parallel",
-                "variant_strategies": ["relationship_expansion"],
                 "include_original": True,
                 "rrf_k": 60,
             },
@@ -197,39 +192,17 @@ class TestEnhancementFailureFallback:
             side_effect=RuntimeError("Enhancement exploded")
         )
 
-        enhanced_query, metadata = await agent._enhance_query(
-            query="robots playing soccer",
-            entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
-            relationships=[],
+        entities, relationships, enhanced_query, metadata = (
+            await agent._analyze_and_enhance_query(
+                query="robots playing soccer",
+            )
         )
 
-        # Fallback: original query returned, empty metadata
+        # Fallback: original query returned, empty metadata, no entities/relationships
         assert enhanced_query == "robots playing soccer"
         assert metadata == {}
+        assert entities == []
+        assert relationships == []
 
         # This means no variants flow to SearchAgent → single-query path
         assert metadata.get("query_variants", []) == []
-
-
-@pytest.mark.unit
-class TestInvalidStrategyValidation:
-    """Test that invalid strategy names are caught."""
-
-    @pytest.mark.ci_fast
-    def test_invalid_strategy_raises_on_get_query_variants(self):
-        """
-        Invalid strategy names in variant_strategies should raise ValueError,
-        not silently skip.
-        """
-        from cogniverse_agents.routing.query_enhancement_engine import QueryRewriter
-
-        rewriter = QueryRewriter()
-
-        with pytest.raises(ValueError, match="Unknown variant strateg"):
-            rewriter.get_query_variants(
-                original_query="test query",
-                entities=[],
-                relationships=[],
-                variant_strategies=["nonexistent_strategy"],
-                include_original=True,
-            )
