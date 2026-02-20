@@ -65,8 +65,9 @@ class TestDashboardProfileIntegration:
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
 
-        # Reset registries
+        # Reset registries (including cached backend instances)
         BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
         SchemaRegistry._instance = None
 
         # Create config manager with SQLite store (no Vespa required)
@@ -74,13 +75,15 @@ class TestDashboardProfileIntegration:
         store = SQLiteConfigStore(db_path=db_path)
         config_manager = ConfigManager(store=store)
 
-        # Set up system config
-        system_config = SystemConfig(
-            tenant_id="default",
-            backend_url="http://nonexistent",
-            backend_port=9999,
-        )
-        config_manager.set_system_config(system_config)
+        # Set up system config for both default and test_tenant
+        # (get_system_config falls back to defaults if tenant-specific config missing)
+        for tid in ("default", "test_tenant"):
+            system_config = SystemConfig(
+                tenant_id=tid,
+                backend_url="http://nonexistent",
+                backend_port=9999,
+            )
+            config_manager.set_system_config(system_config, tenant_id=tid)
 
         # Set ConfigManager and schema directory
         schema_loader = FilesystemSchemaLoader(temp_schema_dir)
@@ -95,6 +98,9 @@ class TestDashboardProfileIntegration:
 
         # Cleanup
         admin.reset_dependencies()
+        BackendRegistry._backend_instances.clear()
+        BackendRegistry._instance = None
+        SchemaRegistry._instance = None
 
     def test_deploy_schema_via_api_success(self, running_api):
         """Test deploy_schema_via_api function with successful deployment"""
