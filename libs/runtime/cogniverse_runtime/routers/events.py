@@ -240,15 +240,17 @@ async def cancel_ingestion(job_id: str, request: CancelRequest = None):
 
 @router.get("/queues", response_model=list[QueueInfo])
 async def list_active_queues(
-    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
+    tenant_id: str = Query(..., description="Tenant ID to list queues for"),
 ):
     """
-    List all active event queues.
+    List active event queues for a tenant.
 
-    Admin endpoint for monitoring active workflows and ingestion jobs.
+    Users see their own tenant's active workflows and ingestion jobs.
+    When auth is added, tenant_id will be extracted from the auth token
+    and validated against the query param.
 
     Args:
-        tenant_id: Optional filter by tenant ID
+        tenant_id: Tenant ID (required — users only see their own queues)
     """
     queue_manager = get_queue_manager()
     queues = await queue_manager.list_active_queues(tenant_id)

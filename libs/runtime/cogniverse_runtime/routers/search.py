@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -211,15 +211,22 @@ async def list_strategies() -> Dict[str, Any]:
 
 @router.get("/profiles")
 async def list_profiles(
+    tenant_id: str = Query(default="default", description="Tenant identifier"),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> Dict[str, Any]:
-    """List available search profiles."""
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    """List available search profiles for a tenant.
+
+    Returns profile name, type, and model — safe for user-facing display.
+    Detailed config (pipeline, strategies, schema internals) is admin-only
+    via GET /admin/profiles.
+    """
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
     backend_config = config.get("backend", {})
     profiles = backend_config.get("profiles", {})
 
     return {
+        "tenant_id": tenant_id,
         "count": len(profiles),
         "profiles": [
             {
