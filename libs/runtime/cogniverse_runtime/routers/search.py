@@ -181,7 +181,7 @@ async def search(
                 return SearchResponse(
                     query=request.query,
                     profile=request.profile,
-                    ranking_strategy=request.strategy,
+                    strategy=request.strategy,
                     results_count=len(results),
                     results=[r.to_dict() for r in results],
                     session_id=request.session_id,

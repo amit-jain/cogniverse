@@ -156,7 +156,7 @@ class NoDescriptionStrategy(BaseStrategy):
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
-    def __init__(self, model_name: str = "vidore/colsmol-500m"):
+    def __init__(self, model_name: str = "vidore/colsmol-500m", **kwargs):
         self.model_name = model_name
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
@@ -188,7 +188,7 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
 class SingleVectorEmbeddingStrategy(BaseStrategy):
     """Generate single-vector embeddings."""
 
-    def __init__(self, model_name: str = "google/videoprism-base"):
+    def __init__(self, model_name: str = "google/videoprism-base", **kwargs):
         self.model_name = model_name
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:

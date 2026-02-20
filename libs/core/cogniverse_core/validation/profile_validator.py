@@ -285,8 +285,7 @@ class ProfileValidator:
             if "." not in class_path:
                 # Try common locations
                 possible_modules = [
-                    "cogniverse_runtime.ingestion.processors.segmentation.strategies",
-                    "cogniverse_runtime.ingestion.processors.embedding_generator.strategies",
+                    "cogniverse_runtime.ingestion.strategies",
                 ]
 
                 for module_path in possible_modules:

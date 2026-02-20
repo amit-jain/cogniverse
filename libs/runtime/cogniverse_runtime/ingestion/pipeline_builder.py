@@ -270,9 +270,19 @@ def build_simple_pipeline(
         backend: Search backend type
         debug: Enable debug mode
     """
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(
+        base_path=Path(__file__).resolve().parents[4] / "configs" / "schemas"
+    )
+
     return (
         create_pipeline()
         .with_tenant_id(tenant_id)
+        .with_config_manager(config_manager)
+        .with_schema_loader(schema_loader)
         .with_video_dir(video_dir)
         .with_schema(schema)
         .with_backend(backend)
@@ -301,9 +311,19 @@ def build_test_pipeline(
         .build()
     )
 
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(
+        base_path=Path(__file__).resolve().parents[4] / "configs" / "schemas"
+    )
+
     return (
         create_pipeline()
         .with_tenant_id(tenant_id)
+        .with_config_manager(config_manager)
+        .with_schema_loader(schema_loader)
         .with_config(config)
         .with_schema(schema)
         .with_debug(True)

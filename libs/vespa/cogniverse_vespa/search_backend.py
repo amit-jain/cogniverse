@@ -368,8 +368,9 @@ class VespaSearchBackend(SearchBackend):
 
         # Transform schema name to tenant-scoped format if tenant_id provided
         if tenant_id and base_schema_name:
-            # Generate tenant-specific schema name
-            self.schema_name = f"{base_schema_name}_{tenant_id}"
+            # Generate tenant-specific schema name (replace : with _ to match deployed schema names)
+            safe_tenant_id = tenant_id.replace(":", "_")
+            self.schema_name = f"{base_schema_name}_{safe_tenant_id}"
             logger.info(
                 f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})"
             )
@@ -690,8 +691,9 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
-        # Generate tenant-specific schema name
-        schema_name = f"{base_schema_name}_{self.tenant_id}"
+        # Generate tenant-specific schema name (replace : with _ to match deployed schema names)
+        safe_tenant_id = self.tenant_id.replace(":", "_")
+        schema_name = f"{base_schema_name}_{safe_tenant_id}"
         logger.info(
             f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}"
         )

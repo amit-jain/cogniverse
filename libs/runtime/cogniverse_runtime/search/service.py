@@ -52,7 +52,7 @@ class SearchService:
         self.schema_loader = schema_loader
 
         # Initialize new telemetry system
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         get_telemetry_manager()  # Initialize singleton
 
@@ -113,15 +113,18 @@ class SearchService:
         # Get backend from registry
         backend_registry = get_backend_registry()
 
-        # Prepare backend configuration (no strategy parameter)
+        # Prepare backend configuration with full profile data
+        backend_section = self.config.get("backend", {})
         backend_config = {
             "vespa_url": self.config.get("vespa_url")
-            or self.config.get("backend", {}).get("url", "http://localhost"),
+            or backend_section.get("url", "http://localhost"),
             "vespa_port": self.config.get("vespa_port")
-            or self.config.get("backend", {}).get("port", 8080),
+            or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": self.profile,
             "query_encoder": self.query_encoder,
+            "profiles": backend_section.get("profiles", {}),
+            "default_profiles": backend_section.get("default_profiles", {}),
         }
 
         # Get backend instance from registry with dependency injection
@@ -143,6 +146,7 @@ class SearchService:
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> List[SearchResult]:
         """
         Search for videos matching the query.
@@ -158,7 +162,7 @@ class SearchService:
             List of SearchResult objects
         """
         # Use new multi-tenant telemetry system
-        from cogniverse_core.telemetry.context import (
+        from cogniverse_foundation.telemetry.context import (
             add_embedding_details_to_span,
             add_search_results_to_span,
             backend_search_span,
@@ -231,13 +235,17 @@ class SearchService:
                         "embedding_shape", str(query_embeddings.shape)
                     )
 
-                results = self.search_backend.search(
-                    query_embeddings=query_embeddings,
-                    query_text=query,
-                    top_k=top_k,
-                    filters=filters,
-                    ranking_strategy=ranking_strategy,
-                )
+                query_dict = {
+                    "query": query,
+                    "type": "video",
+                    "profile": self.profile,
+                    "strategy": ranking_strategy,
+                    "top_k": top_k,
+                    "filters": filters,
+                }
+                if query_embeddings is not None:
+                    query_dict["query_embeddings"] = query_embeddings
+                results = self.search_backend.search(query_dict)
 
                 # Add result details to backend span
                 add_search_results_to_span(backend_span_ctx, results)

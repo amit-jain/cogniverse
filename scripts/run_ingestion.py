@@ -38,7 +38,10 @@ async def main_async():
     args = parser.parse_args()
 
     # Get profiles to process
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     config_manager = create_default_config_manager()
     app_config = get_config(tenant_id="default", config_manager=config_manager)
     
@@ -133,18 +136,19 @@ async def main_async():
         
         # Process videos using concurrent async method
         start_time = time.time()
-        results = await pipeline.process_videos_concurrent(video_files, max_concurrent=args.max_concurrent)
+        job_result = await pipeline.process_videos_concurrent(video_files, max_concurrent=args.max_concurrent)
         total_time = time.time() - start_time
-        
-        # Calculate statistics from results list
-        if results:
-            num_videos = len(results)
-            successful = sum(1 for result in results if result.get('status') == 'completed')
+
+        # Calculate statistics from structured job result
+        if job_result:
+            num_videos = job_result.get('total_videos', 0)
+            successful = job_result.get('successful', 0)
+            failed = job_result.get('failed', 0)
+            per_video_results = job_result.get('results', [])
             total_docs_fed = sum(
-                result.get('results', {}).get('embeddings', {}).get('documents_fed', 0)
-                for result in results if result.get('status') == 'completed'
+                r.get('results', {}).get('embeddings', {}).get('documents_fed', 0)
+                for r in per_video_results if isinstance(r, dict) and r.get('status') == 'completed'
             )
-            failed = num_videos - successful
         else:
             num_videos = successful = total_docs_fed = failed = 0
         
@@ -172,7 +176,7 @@ async def main_async():
         
         # Store results
         all_results[profile] = {
-            'results': results,
+            'results': job_result,
             'time': total_time,
             'docs_fed': total_docs_fed,
             'successful': successful,

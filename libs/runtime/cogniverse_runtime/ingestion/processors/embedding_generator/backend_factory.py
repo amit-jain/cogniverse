@@ -66,7 +66,7 @@ class BackendFactory:
         # Get backend from registry with dependency injection
         from cogniverse_core.registries.backend_registry import BackendRegistry
 
-        registry = BackendRegistry()
+        registry = BackendRegistry.get_instance()
 
         backend = registry.get_ingestion_backend(
             backend_type,

@@ -100,7 +100,7 @@ async def start_ingestion(
             )
 
         # Get backend with dependency injection
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        backend_registry = BackendRegistry.get_instance()
         backend = backend_registry.get_backend(request.backend)
         if not backend:
             raise HTTPException(
@@ -171,7 +171,7 @@ async def upload_video(
             tmp_path = tmp.name
 
         # Get backend with dependency injection
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        backend_registry = BackendRegistry.get_instance()
         backend_instance = backend_registry.get_backend(backend)
         if not backend_instance:
             raise HTTPException(

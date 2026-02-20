@@ -322,6 +322,13 @@ class ConfigUtils:
         """Support 'in' operator (dict-like interface)"""
         return key in self.keys()
 
+    def __getitem__(self, key):
+        """Support [] subscript operator (dict-like interface)"""
+        value = self.get(key)
+        if value is None and key not in self.keys():
+            raise KeyError(key)
+        return value
+
     def get_all(self) -> dict[str, Any]:
         """
         Return all configuration as a dictionary.

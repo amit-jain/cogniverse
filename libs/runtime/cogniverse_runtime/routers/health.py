@@ -18,7 +18,7 @@ router = APIRouter()
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint with system status."""
     config_manager = create_default_config_manager()
-    backend_registry = BackendRegistry(config_manager=config_manager)
+    backend_registry = BackendRegistry.get_instance()
     agent_registry = AgentRegistry(config_manager=config_manager)
 
     return {
@@ -44,8 +44,7 @@ async def liveness_probe() -> Dict[str, str]:
 @router.get("/health/ready")
 async def readiness_probe() -> Dict[str, Any]:
     """Kubernetes readiness probe - checks if service is ready to accept traffic."""
-    config_manager = create_default_config_manager()
-    backend_registry = BackendRegistry(config_manager=config_manager)
+    backend_registry = BackendRegistry.get_instance()
     backends = backend_registry.list_backends()
 
     if not backends:
