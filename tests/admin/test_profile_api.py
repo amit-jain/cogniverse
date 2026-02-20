@@ -335,9 +335,9 @@ class TestProfileAPICRUD:
         }
         assert data["embedding_type"] == "frame_based"
         assert data["schema_config"] == {"embedding_dim": 128}
-        assert (
-            data["schema_deployed"] is False
-        ), f"Expected schema_deployed=False but got {data['schema_deployed']}"
+        assert data["schema_deployed"] is False, (
+            f"Expected schema_deployed=False but got {data['schema_deployed']}"
+        )
 
     def test_get_nonexistent_profile(self, test_client: TestClient):
         """Test getting a profile that doesn't exist."""
@@ -719,9 +719,9 @@ class TestProfileAPISchemaDeployment:
             f"Expected: deployment_status='success', Got: deployment_status='{data['deployment_status']}'"
         )
 
-        assert (
-            data["deployment_status"] == "success"
-        ), f"Got '{data['deployment_status']}' instead of 'success'"
+        assert data["deployment_status"] == "success", (
+            f"Got '{data['deployment_status']}' instead of 'success'"
+        )
         assert data["schema_name"] == "video_deploy_test3"
         assert "deploy_tenant" in data["tenant_schema_name"]
 
@@ -863,7 +863,9 @@ class TestProfileAPISchemaDeployment:
                     timeout=2,
                 )
                 if resp.status_code == 200:
-                    print(f"Document type '{tenant_schema_name}' ready for feeding after {i+1}s")
+                    print(
+                        f"Document type '{tenant_schema_name}' ready for feeding after {i + 1}s"
+                    )
                     # Clean up probe document
                     requests.delete(
                         f"http://localhost:{http_port}/document/v1/video/"
@@ -970,9 +972,9 @@ class TestProfileAPISchemaDeployment:
             )
 
             # Verify ingestion succeeded
-            assert (
-                ingest_results["success_count"] == 1
-            ), f"Ingestion failed: {ingest_results}"
+            assert ingest_results["success_count"] == 1, (
+                f"Ingestion failed: {ingest_results}"
+            )
 
             # Step 4: Query for the ingested document
             # TODO: Once config refactoring is complete (see docs/plan/config-management-issues.md),
@@ -981,24 +983,24 @@ class TestProfileAPISchemaDeployment:
             # After consolidating ConfigManagers and implementing dependency injection, this should work:
             #   search_results = backend.search({"query": "test_video_001", "type": "video", "top_k": 10})
             yql_query = f"select * from sources {tenant_schema_name} where video_id contains 'test_video_001'"
-            query_url = f"http://localhost:{vespa_instance["http_port"]}/search/"
+            query_url = f"http://localhost:{vespa_instance['http_port']}/search/"
             query_response = requests.get(
                 query_url, params={"yql": yql_query}, timeout=10
             )
 
             # Verify query succeeded
-            assert (
-                query_response.status_code == 200
-            ), f"Query failed: {query_response.text}"
+            assert query_response.status_code == 200, (
+                f"Query failed: {query_response.text}"
+            )
             query_json = query_response.json()
 
             # Verify document was found
             assert "root" in query_json
             assert "children" in query_json["root"]
             children = query_json["root"]["children"]
-            assert (
-                len(children) >= 1
-            ), f"Document not found. Query response: {query_json}"
+            assert len(children) >= 1, (
+                f"Document not found. Query response: {query_json}"
+            )
 
             # Verify document content
             found_doc = children[0]

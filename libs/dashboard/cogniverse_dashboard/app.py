@@ -1654,7 +1654,7 @@ if enable_rca and len(tabs) > 6:
                                 failure_data["temporal_patterns"]
                             ):
                                 if pattern["type"] == "burst":
-                                    st.write(f"**Burst {i+1}:**")
+                                    st.write(f"**Burst {i + 1}:**")
                                     # Format timestamps for Phoenix query
                                     start_iso = pattern["start_time"]
                                     end_iso = pattern.get(
@@ -1703,7 +1703,7 @@ if enable_rca and len(tabs) > 6:
                     )
 
                     # Show exact Phoenix query for slow traces
-                    phoenix_duration_query = f'latency_ms > {perf["threshold"]:.0f}'
+                    phoenix_duration_query = f"latency_ms > {perf['threshold']:.0f}"
                     st.code(phoenix_duration_query, language="python")
                     st.caption(
                         f"☝️ Copy this query and paste it in the [Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces) search bar"
@@ -2836,7 +2836,7 @@ with main_tabs[8]:
                         score = result["confidence"]
                         if score >= confidence_threshold:
                             with st.expander(
-                                f"Result {i+1}: {result['video_id']} (Score: {score:.3f})"
+                                f"Result {i + 1}: {result['video_id']} (Score: {score:.3f})"
                             ):
                                 col1, col2 = st.columns([2, 1])
                                 with col1:
@@ -2851,7 +2851,7 @@ with main_tabs[8]:
                                 with col2:
                                     # Relevance annotation
                                     relevance = st.selectbox(
-                                        f"Relevance (Result {i+1})",
+                                        f"Relevance (Result {i + 1})",
                                         [
                                             "Not Rated",
                                             "Highly Relevant",

@@ -70,9 +70,9 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[str, Any] = (
-            {}
-        )  # For async ingestion (optional)
+        self._async_ingestion_clients: Dict[
+            str, Any
+        ] = {}  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
@@ -187,9 +187,7 @@ class VespaBackend(Backend):
         # so schema_manager can preserve existing tenant schemas when needed
         if self.schema_registry:
             self.schema_manager._schema_registry = self.schema_registry
-            logger.debug(
-                "Injected schema_registry into schema_manager"
-            )
+            logger.debug("Injected schema_registry into schema_manager")
 
         # NOTE: Metadata schemas are NOT deployed here.
         # deploy_schemas() already includes metadata via add_metadata_schemas_to_package().
@@ -981,7 +979,7 @@ class VespaBackend(Backend):
                 # Get all documents - Vespa requires at least one search term
                 # Using a match-all pattern with limit
                 query_params["yql"] = (
-                    f'select * from {schema} where true limit {kwargs.get("hits", 100)}'
+                    f"select * from {schema} where true limit {kwargs.get('hits', 100)}"
                 )
 
             # Execute query

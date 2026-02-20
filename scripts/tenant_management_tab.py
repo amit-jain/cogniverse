@@ -34,10 +34,20 @@ def _api_call(method: str, path: str, **kwargs) -> Dict[str, Any]:
             if response.status_code < 300:
                 return {"success": True, "data": response.json()}
             else:
-                detail = response.json().get("detail", response.text) if response.text else "Unknown error"
-                return {"success": False, "error": f"HTTP {response.status_code}: {detail}"}
+                detail = (
+                    response.json().get("detail", response.text)
+                    if response.text
+                    else "Unknown error"
+                )
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {detail}",
+                }
     except httpx.ConnectError:
-        return {"success": False, "error": "Runtime not running. Start it on port 8000."}
+        return {
+            "success": False,
+            "error": "Runtime not running. Start it on port 8000.",
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -73,12 +83,14 @@ def _fetch_profiles() -> List[str]:
 
 def render_tenant_management_tab():
     """Main entry point for tenant management UI."""
-    sub_tabs = st.tabs([
-        "Organizations",
-        "Create Organization",
-        "Tenants",
-        "Create Tenant",
-    ])
+    sub_tabs = st.tabs(
+        [
+            "Organizations",
+            "Create Organization",
+            "Tenants",
+            "Create Tenant",
+        ]
+    )
 
     with sub_tabs[0]:
         _render_organizations_list()
@@ -110,7 +122,9 @@ def _render_organizations_list():
 
     for org in orgs:
         org_id = org.get("org_id", "unknown")
-        with st.expander(f"{org_id} - {org.get('org_name', '')} ({org.get('tenant_count', 0)} tenants)"):
+        with st.expander(
+            f"{org_id} - {org.get('org_name', '')} ({org.get('tenant_count', 0)} tenants)"
+        ):
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.text(f"Status: {org.get('status', 'unknown')}")
@@ -121,8 +135,12 @@ def _render_organizations_list():
 
             # Delete button with confirmation
             confirm_key = f"confirm_delete_org_{org_id}"
-            if st.checkbox(f"Confirm delete '{org_id}' and ALL its tenants", key=confirm_key):
-                if st.button(f"Delete {org_id}", key=f"delete_org_{org_id}", type="primary"):
+            if st.checkbox(
+                f"Confirm delete '{org_id}' and ALL its tenants", key=confirm_key
+            ):
+                if st.button(
+                    f"Delete {org_id}", key=f"delete_org_{org_id}", type="primary"
+                ):
                     with st.spinner(f"Deleting organization {org_id}..."):
                         result = _api_call("delete", f"/admin/organizations/{org_id}")
                         if result["success"]:
@@ -167,11 +185,15 @@ def _render_create_organization():
                 return
 
             with st.spinner("Creating organization..."):
-                result = _api_call("post", "/admin/organizations", json={
-                    "org_id": org_id,
-                    "org_name": org_name,
-                    "created_by": created_by,
-                })
+                result = _api_call(
+                    "post",
+                    "/admin/organizations",
+                    json={
+                        "org_id": org_id,
+                        "org_name": org_name,
+                        "created_by": created_by,
+                    },
+                )
                 if result["success"]:
                     st.success(f"Organization '{org_id}' created successfully!")
                     st.rerun()
@@ -189,7 +211,9 @@ def _render_tenants_list():
         return
 
     org_ids = [org["org_id"] for org in orgs]
-    selected_org = st.selectbox("Select Organization", options=org_ids, key="tenant_list_org")
+    selected_org = st.selectbox(
+        "Select Organization", options=org_ids, key="tenant_list_org"
+    )
 
     if st.button("Refresh Tenants", key="refresh_tenants"):
         st.rerun()
@@ -223,8 +247,14 @@ def _render_tenants_list():
 
             # Delete button
             confirm_key = f"confirm_delete_tenant_{tenant_id}"
-            if st.checkbox(f"Confirm delete '{tenant_id}' and its schemas", key=confirm_key):
-                if st.button(f"Delete {tenant_id}", key=f"delete_tenant_{tenant_id}", type="primary"):
+            if st.checkbox(
+                f"Confirm delete '{tenant_id}' and its schemas", key=confirm_key
+            ):
+                if st.button(
+                    f"Delete {tenant_id}",
+                    key=f"delete_tenant_{tenant_id}",
+                    type="primary",
+                ):
                     with st.spinner(f"Deleting tenant {tenant_id}..."):
                         result = _api_call("delete", f"/admin/tenants/{tenant_id}")
                         if result["success"]:
@@ -290,11 +320,15 @@ def _render_create_tenant():
             tenant_full_id = f"{org_id}:{tenant_name}"
 
             with st.spinner(f"Creating tenant {tenant_full_id}..."):
-                result = _api_call("post", "/admin/tenants", json={
-                    "tenant_id": tenant_full_id,
-                    "created_by": created_by,
-                    "base_schemas": base_schemas if base_schemas else None,
-                })
+                result = _api_call(
+                    "post",
+                    "/admin/tenants",
+                    json={
+                        "tenant_id": tenant_full_id,
+                        "created_by": created_by,
+                        "base_schemas": base_schemas if base_schemas else None,
+                    },
+                )
                 if result["success"]:
                     data = result["data"]
                     schemas_deployed = data.get("schemas_deployed", [])

@@ -203,7 +203,6 @@ async def create_profile(
         HTTPException 500: Creation or deployment failed
     """
     try:
-
         # Create BackendProfileConfig from request
         profile = BackendProfileConfig(
             profile_name=request.profile_name,
@@ -321,7 +320,6 @@ async def list_profiles(
         HTTPException 500: List operation failed
     """
     try:
-
         # Get all profiles for tenant
         profiles = config_manager.list_backend_profiles(
             tenant_id=tenant_id, service="backend"
@@ -395,7 +393,6 @@ async def get_profile(
         HTTPException 500: Get operation failed
     """
     try:
-
         # Get profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
@@ -494,7 +491,6 @@ async def update_profile(
         HTTPException 500: Update operation failed
     """
     try:
-
         # Get existing profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
@@ -605,7 +601,6 @@ async def delete_profile(
         HTTPException 500: Deletion failed
     """
     try:
-
         # Check if profile exists
         profile = config_manager.get_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
@@ -707,7 +702,6 @@ async def deploy_profile_schema(
         HTTPException 500: Deployment failed
     """
     try:
-
         # Get profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,

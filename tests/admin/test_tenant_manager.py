@@ -200,9 +200,9 @@ class TestTenantManagerAPI:
                 "created_by": "test",
             },
         )
-        assert (
-            response1.status_code == 200
-        ), f"First org creation failed: {response1.status_code} - {response1.text}"
+        assert response1.status_code == 200, (
+            f"First org creation failed: {response1.status_code} - {response1.text}"
+        )
 
         # Wait for Vespa to index the document
         wait_for_vespa_indexing(delay=6, description="organization indexing")

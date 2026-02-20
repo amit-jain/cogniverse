@@ -127,7 +127,7 @@ async def search(
                 async def generate():
                     try:
                         # Emit status event
-                        yield f'data: {json.dumps({"type": "status", "message": "Searching...", "query": request.query})}\n\n'
+                        yield f"data: {json.dumps({'type': 'status', 'message': 'Searching...', 'query': request.query})}\n\n"
 
                         # Execute search
                         results = search_service.search(

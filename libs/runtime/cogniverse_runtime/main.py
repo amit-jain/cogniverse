@@ -79,7 +79,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     system_backend = BackendRegistry.get_instance().get_ingestion_backend(
         name=bootstrap.backend_type,
         tenant_id="system",
-        config={"backend": {"url": bootstrap.backend_url, "port": bootstrap.backend_port}},
+        config={
+            "backend": {"url": bootstrap.backend_url, "port": bootstrap.backend_port}
+        },
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
