@@ -16,9 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import get_config
-from cogniverse_runtime.config_loader import get_config_loader
 
 # Import routers
+from cogniverse_runtime.admin import tenant_manager
+from cogniverse_runtime.config_loader import get_config_loader
 from cogniverse_runtime.routers import admin, agents, events, health, ingestion, search
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         f"{len(agent_registry.list_agents())} agents"
     )
 
+    # 7. Create system backend and deploy metadata schemas
+    from cogniverse_foundation.config.bootstrap import BootstrapConfig
+
+    bootstrap = BootstrapConfig.from_environment()
+    system_backend = BackendRegistry.get_instance().get_ingestion_backend(
+        name=bootstrap.backend_type,
+        tenant_id="system",
+        config={"backend": {"url": bootstrap.backend_url, "port": bootstrap.backend_port}},
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+    # Deploy metadata schemas once at startup (not in every VespaBackend.__init__)
+    system_config = config_manager.get_system_config()
+    system_backend.schema_manager.upload_metadata_schemas(
+        app_name=system_config.application_name
+    )
+    logger.info("Metadata schemas deployed via system backend")
+
+    # 8. Wire tenant manager dependencies
+    tenant_manager.set_config_manager(config_manager)
+    tenant_manager.set_schema_loader(schema_loader)
+    tenant_manager.backend = system_backend
+    logger.info("Tenant manager wired to Runtime")
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
@@ -104,6 +130,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 
 

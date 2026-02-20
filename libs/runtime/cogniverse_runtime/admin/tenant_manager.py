@@ -32,7 +32,7 @@ import time
 from typing import Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_foundation.config.utils import get_config
@@ -49,6 +49,10 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 
+# Router for tenant management endpoints (mountable by Runtime)
+router = APIRouter()
+
+# Standalone app (for running tenant_manager independently)
 app = FastAPI(
     title="Tenant Management API",
     description="Organization and tenant CRUD operations (Phase 7.8 - no auth)",
@@ -165,7 +169,7 @@ def validate_tenant_name(tenant_name: str) -> None:
 # ============================================================================
 
 
-@app.post("/admin/organizations", response_model=Organization)
+@router.post("/organizations", response_model=Organization)
 async def create_organization(request: CreateOrganizationRequest) -> Organization:
     """
     Create a new organization with default tenant.
@@ -238,7 +242,7 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/admin/organizations", response_model=OrganizationListResponse)
+@router.get("/organizations", response_model=OrganizationListResponse)
 async def list_organizations() -> OrganizationListResponse:
     """
     List all organizations.
@@ -282,7 +286,7 @@ async def list_organizations() -> OrganizationListResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/admin/organizations/{org_id}", response_model=Organization)
+@router.get("/organizations/{org_id}", response_model=Organization)
 async def get_organization(org_id: str) -> Organization:
     """
     Get single organization by ID.
@@ -331,7 +335,7 @@ async def get_organization_internal(org_id: str) -> Optional[Organization]:
         return None
 
 
-@app.delete("/admin/organizations/{org_id}")
+@router.delete("/organizations/{org_id}")
 async def delete_organization(org_id: str) -> Dict:
     """
     Delete organization and all its tenants.
@@ -399,7 +403,7 @@ async def delete_organization(org_id: str) -> Dict:
 # ============================================================================
 
 
-@app.post("/admin/tenants", response_model=Tenant)
+@router.post("/tenants", response_model=Tenant)
 async def create_tenant(request: CreateTenantRequest) -> Tenant:
     """
     Create a new tenant (auto-creates org if doesn't exist).
@@ -541,7 +545,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/admin/organizations/{org_id}/tenants", response_model=TenantListResponse)
+@router.get("/organizations/{org_id}/tenants", response_model=TenantListResponse)
 async def list_tenants_for_org(org_id: str) -> TenantListResponse:
     """
     List all tenants for an organization.
@@ -613,7 +617,7 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
         return []
 
 
-@app.get("/admin/tenants/{tenant_full_id}", response_model=Tenant)
+@router.get("/tenants/{tenant_full_id}", response_model=Tenant)
 async def get_tenant(tenant_full_id: str) -> Tenant:
     """
     Get single tenant by full ID.
@@ -661,7 +665,7 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
         return None
 
 
-@app.delete("/admin/tenants/{tenant_full_id}")
+@router.delete("/tenants/{tenant_full_id}")
 async def delete_tenant(tenant_full_id: str) -> Dict:
     """
     Delete tenant and its schemas.
@@ -740,6 +744,10 @@ async def health_check():
             "schema_deployment",
         ],
     }
+
+
+# Mount router on standalone app (after all endpoints are defined)
+app.include_router(router, prefix="/admin")
 
 
 if __name__ == "__main__":

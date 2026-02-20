@@ -184,21 +184,18 @@ class VespaBackend(Backend):
         # based on query type and default_profiles
 
         # Inject schema_registry into schema_manager if available
-        # This happens before metadata schema deployment so schema_manager can preserve existing schemas
+        # so schema_manager can preserve existing tenant schemas when needed
         if self.schema_registry:
             self.schema_manager._schema_registry = self.schema_registry
             logger.debug(
-                "Injected schema_registry into schema_manager before metadata deployment"
+                "Injected schema_registry into schema_manager"
             )
 
-        # Deploy metadata schemas automatically during backend initialization
-        # upload_metadata_schemas() is schema-aware and preserves existing video schemas
-        system_config = self._config_manager_instance.get_system_config()
-        app_name = system_config.application_name
-        self.schema_manager.upload_metadata_schemas(app_name=app_name)
-        logger.info(
-            "Automatically deployed metadata schemas during backend initialization"
-        )
+        # NOTE: Metadata schemas are NOT deployed here.
+        # deploy_schemas() already includes metadata via add_metadata_schemas_to_package().
+        # Standalone metadata deployment is done once at system startup (Runtime lifespan
+        # or test conftest), not on every backend instantiation — rapid re-deployments
+        # prevent Vespa data nodes from converging tenant schemas.
 
         logger.info(
             f"Initialized Vespa backend for tenant '{self._tenant_id}' with {len(self.config.get('profiles', {}))} profiles"

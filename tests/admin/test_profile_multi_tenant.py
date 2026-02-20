@@ -12,6 +12,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _cleanup_tenant_profiles(client: TestClient, tenant_ids: list[str]) -> None:
+    """Remove all profiles for the given tenants to ensure test isolation."""
+    for tenant_id in tenant_ids:
+        response = client.get("/admin/profiles", params={"tenant_id": tenant_id})
+        if response.status_code == 200:
+            for profile in response.json().get("profiles", []):
+                client.delete(
+                    f"/admin/profiles/{profile['profile_name']}",
+                    params={"tenant_id": tenant_id},
+                )
+
+
 @pytest.mark.integration
 class TestProfileMultiTenantIsolation:
     """Tests for multi-tenant isolation in profile management"""
@@ -42,24 +54,30 @@ class TestProfileMultiTenantIsolation:
         return schema_dir
 
     @pytest.fixture
-    def test_client(self, temp_schema_dir: Path, tmp_path: Path):
-        """Create test client with properly configured instances."""
+    def test_client(self, vespa_instance, temp_schema_dir: Path):
+        """Create test client with isolated Vespa instance."""
+        from fastapi import FastAPI
+
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
+        from cogniverse_vespa.config.config_store import VespaConfigStore
 
         # Reset registries
         BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
         SchemaRegistry._instance = None
 
-        # Create config manager with backend store
-        config_manager = create_default_config_manager()
+        # Create config store pointing to isolated Vespa (metadata schemas already deployed)
+        store = VespaConfigStore(
+            vespa_url="http://localhost",
+            vespa_port=vespa_instance["http_port"],
+        )
+        config_manager = ConfigManager(store=store)
 
-        # Set up system config
         system_config = SystemConfig(
             tenant_id="default",
             backend_url="http://nonexistent",
@@ -67,19 +85,26 @@ class TestProfileMultiTenantIsolation:
         )
         config_manager.set_system_config(system_config)
 
-        # Set ConfigManager and schema directory
         schema_loader = FilesystemSchemaLoader(temp_schema_dir)
+
+        # Create minimal app with admin router (no lifespan needed)
+        test_app = FastAPI()
+        test_app.include_router(admin.router, prefix="/admin")
+
         admin.set_config_manager(config_manager)
         admin.set_schema_loader(schema_loader)
         admin.set_profile_validator_schema_dir(temp_schema_dir)
 
-        # Create test client
-        client = TestClient(app)
-
-        yield client
-
-        # Cleanup
-        admin.reset_dependencies()
+        try:
+            client = TestClient(test_app)
+            # Clean up any profiles from previous test runs (Vespa is session-scoped)
+            _cleanup_tenant_profiles(client, ["tenant_a", "tenant_b"])
+            yield client
+        finally:
+            admin.reset_dependencies()
+            BackendRegistry._instance = None
+            BackendRegistry._backend_instances.clear()
+            SchemaRegistry._instance = None
 
     def test_tenant_isolation_create_same_profile_name(self, test_client):
         """Test that two tenants can create profiles with the same name"""

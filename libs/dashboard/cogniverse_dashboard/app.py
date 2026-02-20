@@ -33,6 +33,7 @@ import streamlit as st
 # Import config and memory management tabs
 from config_management_tab import render_config_management_tab
 from memory_management_tab import render_memory_management_tab
+from tenant_management_tab import render_tenant_management_tab
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -564,6 +565,7 @@ main_tabs = st.tabs(
         "📥 Ingestion Testing",
         "🔍 Interactive Search",
         "⚙️ Configuration",
+        "👥 Tenant Management",
         "🧠 Memory",
     ]
 )
@@ -3009,8 +3011,13 @@ with main_tabs[9]:
     st.header("⚙️ Configuration Management")
     render_config_management_tab()
 
-# Memory Management Tab
+# Tenant Management Tab
 with main_tabs[10]:
+    st.header("👥 Tenant Management")
+    render_tenant_management_tab()
+
+# Memory Management Tab
+with main_tabs[11]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
 

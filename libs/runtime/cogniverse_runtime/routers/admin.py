@@ -1,7 +1,4 @@
-"""Admin endpoints - system administration.
-
-Note: Tenant management is available through the standalone tenant_manager app.
-"""
+"""Admin endpoints - system administration and profile management."""
 
 import logging
 from datetime import datetime
@@ -132,10 +129,6 @@ def get_profile_validator_dependency(
     return ProfileValidator(
         config_manager, schema_templates_dir=_profile_validator_schema_dir
     )
-
-
-# Tenant management endpoints removed - use standalone tenant_manager app
-# See: libs/runtime/cogniverse_runtime/admin/tenant_manager.py
 
 
 @router.get("/system/stats")
@@ -280,13 +273,24 @@ async def create_profile(
                 # Don't fail profile creation if deployment fails
                 # User can deploy later via /deploy endpoint
 
+        # Get the actual version from the store after creation
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        config_entry = config_manager.store.get_config(
+            tenant_id=request.tenant_id,
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="backend_config",
+        )
+        actual_version = config_entry.version if config_entry else 1
+
         return ProfileCreateResponse(
             profile_name=request.profile_name,
             tenant_id=request.tenant_id,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
             created_at=datetime.now().isoformat(),
-            version=1,  # First version
+            version=actual_version,
         )
 
     except HTTPException:
@@ -426,6 +430,17 @@ async def get_profile(
         except Exception as e:
             logger.warning(f"Failed to check schema status: {e}")
 
+        # Get actual version from the config store
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        config_entry = config_manager.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="backend_config",
+        )
+        config_version = config_entry.version if config_entry else 1
+
         return ProfileDetail(
             profile_name=profile.profile_name,
             tenant_id=tenant_id,
@@ -441,7 +456,7 @@ async def get_profile(
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
             created_at=datetime.now().isoformat(),  # TODO: Get actual creation time
-            version=1,  # TODO: Get actual version from config store
+            version=config_version,
         )
 
     except HTTPException:

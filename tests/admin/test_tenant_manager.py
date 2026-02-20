@@ -79,7 +79,7 @@ class TestTenantManagerAPI:
         logger.info(
             f"Creating backend for system tenant on port {vespa_backend.http_port}"
         )
-        BackendRegistry.get_instance().get_ingestion_backend(
+        system_backend = BackendRegistry.get_instance().get_ingestion_backend(
             name="vespa",
             tenant_id="system",
             config={
@@ -92,7 +92,9 @@ class TestTenantManagerAPI:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        logger.info("Backend created successfully - metadata schemas deployed")
+        # Deploy metadata schemas explicitly (not done in VespaBackend.__init__)
+        system_backend.schema_manager.upload_metadata_schemas(app_name="cogniverse")
+        logger.info("Backend created and metadata schemas deployed")
 
         # Wait for Vespa to be ready and for schemas to be fully activated
         from tests.utils.vespa_health import wait_for_vespa_ready
