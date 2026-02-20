@@ -285,6 +285,8 @@ async def rerank_results(request: Dict[str, Any]) -> Dict[str, Any]:
             "results": reranked,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Rerank error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
