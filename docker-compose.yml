@@ -8,6 +8,7 @@ services:
   vespa:
     image: vespaengine/vespa:latest
     container_name: cogniverse-vespa
+    hostname: vespa
     ports:
       - "8080:8080"  # Query/Document API
       - "19071:19071"  # Config API

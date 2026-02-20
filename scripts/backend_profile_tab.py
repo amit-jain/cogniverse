@@ -6,11 +6,11 @@ Supports profile creation, editing, deletion, and schema deployment.
 """
 
 import json
-from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 import streamlit as st
+
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -32,7 +32,9 @@ def get_runtime_api_url() -> str:
     return "http://localhost:8000"
 
 
-def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False) -> Dict[str, Any]:
+def deploy_schema_via_api(
+    profile_name: str, tenant_id: str, force: bool = False
+) -> Dict[str, Any]:
     """
     Deploy schema for a profile via the admin API.
 
@@ -45,40 +47,47 @@ def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.post(
-                endpoint,
-                json={"tenant_id": tenant_id, "force": force}
+                endpoint, json={"tenant_id": tenant_id, "force": force}
             )
 
             if response.status_code == 200:
                 data = response.json()
+                deployment_status = data.get("deployment_status", "")
+                success = deployment_status not in ("failed",)
                 return {
-                    "success": True,
+                    "success": success,
                     "tenant_schema_name": data.get("tenant_schema_name", ""),
-                    "deployment_status": data.get("deployment_status", ""),
-                    "error": None
+                    "deployment_status": deployment_status,
+                    "error": data.get("error_message") if not success else None,
                 }
             else:
-                error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
+                error_detail = (
+                    response.json().get("detail", response.text)
+                    if response.text
+                    else "Unknown error"
+                )
                 return {
                     "success": False,
                     "tenant_schema_name": None,
-                    "error": f"HTTP {response.status_code}: {error_detail}"
+                    "error": f"HTTP {response.status_code}: {error_detail}",
                 }
     except httpx.TimeoutException:
         return {
             "success": False,
             "tenant_schema_name": None,
-            "error": "Request timed out (>30s). Schema deployment may still be in progress."
+            "error": "Request timed out (>30s). Schema deployment may still be in progress.",
         }
     except Exception as e:
         return {
             "success": False,
             "tenant_schema_name": None,
-            "error": f"Failed to connect to API: {str(e)}"
+            "error": f"Failed to connect to API: {str(e)}",
         }
 
 
-def delete_profile_via_api(profile_name: str, tenant_id: str, delete_schema: bool = False) -> Dict[str, Any]:
+def delete_profile_via_api(
+    profile_name: str, tenant_id: str, delete_schema: bool = False
+) -> Dict[str, Any]:
     """
     Delete a profile via the admin API.
 
@@ -92,7 +101,7 @@ def delete_profile_via_api(profile_name: str, tenant_id: str, delete_schema: boo
         with httpx.Client(timeout=30.0) as client:
             response = client.delete(
                 endpoint,
-                params={"tenant_id": tenant_id, "delete_schema": delete_schema}
+                params={"tenant_id": tenant_id, "delete_schema": delete_schema},
             )
 
             if response.status_code == 200:
@@ -100,19 +109,20 @@ def delete_profile_via_api(profile_name: str, tenant_id: str, delete_schema: boo
                 return {
                     "success": True,
                     "schema_deleted": data.get("schema_deleted", False),
-                    "error": None
+                    "error": None,
                 }
             else:
-                error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
+                error_detail = (
+                    response.json().get("detail", response.text)
+                    if response.text
+                    else "Unknown error"
+                )
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {error_detail}"
+                    "error": f"HTTP {response.status_code}: {error_detail}",
                 }
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to connect to API: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to connect to API: {str(e)}"}
 
 
 def get_profile_schema_status(profile_name: str, tenant_id: str) -> Dict[str, Any]:
@@ -127,30 +137,31 @@ def get_profile_schema_status(profile_name: str, tenant_id: str) -> Dict[str, An
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                endpoint,
-                params={"tenant_id": tenant_id}
-            )
+            response = client.get(endpoint, params={"tenant_id": tenant_id})
 
             if response.status_code == 200:
                 data = response.json()
                 return {
                     "schema_deployed": data.get("schema_deployed", False),
                     "tenant_schema_name": data.get("tenant_schema_name"),
-                    "error": None
+                    "error": None,
                 }
             else:
-                error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
+                error_detail = (
+                    response.json().get("detail", response.text)
+                    if response.text
+                    else "Unknown error"
+                )
                 return {
                     "schema_deployed": False,
                     "tenant_schema_name": None,
-                    "error": f"HTTP {response.status_code}: {error_detail}"
+                    "error": f"HTTP {response.status_code}: {error_detail}",
                 }
     except Exception as e:
         return {
             "schema_deployed": False,
             "tenant_schema_name": None,
-            "error": f"Failed to connect to API: {str(e)}"
+            "error": f"Failed to connect to API: {str(e)}",
         }
 
 
@@ -167,7 +178,9 @@ def render_backend_profile_tab():
 
     # Profile list
     try:
-        profiles_dict = manager.list_backend_profiles(tenant_id, service="video_processing")
+        profiles_dict = manager.list_backend_profiles(
+            tenant_id, service="video_processing"
+        )
         profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
     except Exception as e:
         st.error(f"Failed to load profiles: {e}")
@@ -186,9 +199,7 @@ def render_backend_profile_tab():
 
         # Profile selection
         selected_profile = st.selectbox(
-            "Select Profile to Manage",
-            options=profile_names,
-            key="profile_selector"
+            "Select Profile to Manage", options=profile_names, key="profile_selector"
         )
 
         if selected_profile:
@@ -210,7 +221,7 @@ def render_create_profile_form(manager, tenant_id: str):
             profile_name = st.text_input(
                 "Profile Name *",
                 help="Unique identifier (alphanumeric, underscore, hyphen only)",
-                placeholder="e.g., video_colpali_custom"
+                placeholder="e.g., video_colpali_custom",
             )
 
         with col2:
@@ -218,13 +229,13 @@ def render_create_profile_form(manager, tenant_id: str):
                 "Profile Type *",
                 options=["video", "image", "audio", "text"],
                 index=0,
-                help="Type of content this profile processes"
+                help="Type of content this profile processes",
             )
 
         description = st.text_area(
             "Description",
             help="Human-readable description of this profile",
-            placeholder="e.g., High-quality ColPali with 60 FPS keyframe extraction"
+            placeholder="e.g., High-quality ColPali with 60 FPS keyframe extraction",
         )
 
         # Schema configuration
@@ -235,15 +246,20 @@ def render_create_profile_form(manager, tenant_id: str):
             schema_name = st.text_input(
                 "Schema Name *",
                 help="Base schema template name (must exist in configs/schemas/)",
-                placeholder="e.g., video_colpali_smol500_mv_frame"
+                placeholder="e.g., video_colpali_smol500_mv_frame",
             )
 
         with col2:
             embedding_type = st.selectbox(
                 "Embedding Type *",
-                options=["frame_based", "video_chunks", "direct_video_segment", "single_vector"],
+                options=[
+                    "frame_based",
+                    "video_chunks",
+                    "direct_video_segment",
+                    "single_vector",
+                ],
                 index=0,
-                help="How content is embedded"
+                help="How content is embedded",
             )
 
         # Model configuration
@@ -251,53 +267,62 @@ def render_create_profile_form(manager, tenant_id: str):
         embedding_model = st.text_input(
             "Embedding Model *",
             help="Model identifier (e.g., HuggingFace model path)",
-            placeholder="e.g., vidore/colsmol-500m"
+            placeholder="e.g., vidore/colsmol-500m",
         )
 
         # Pipeline configuration (JSON)
         st.markdown("##### Pipeline Configuration")
         pipeline_config_str = st.text_area(
             "Pipeline Config (JSON)",
-            value=json.dumps({
-                "extract_keyframes": True,
-                "transcribe_audio": False,
-                "generate_descriptions": False,
-                "keyframe_fps": 1.0
-            }, indent=2),
+            value=json.dumps(
+                {
+                    "extract_keyframes": True,
+                    "transcribe_audio": False,
+                    "generate_descriptions": False,
+                    "keyframe_fps": 1.0,
+                },
+                indent=2,
+            ),
             height=150,
-            help="Pipeline processing configuration"
+            help="Pipeline processing configuration",
         )
 
         # Strategies configuration (JSON)
         st.markdown("##### Processing Strategies")
         strategies_str = st.text_area(
             "Strategies (JSON)",
-            value=json.dumps({
-                "segmentation": {
-                    "class": "FrameSegmentationStrategy",
-                    "params": {"fps": 1.0, "max_frames": 100}
+            value=json.dumps(
+                {
+                    "segmentation": {
+                        "class": "FrameSegmentationStrategy",
+                        "params": {"fps": 1.0, "max_frames": 100},
+                    },
+                    "embedding": {
+                        "class": "MultiVectorEmbeddingStrategy",
+                        "params": {},
+                    },
                 },
-                "embedding": {
-                    "class": "MultiVectorEmbeddingStrategy",
-                    "params": {}
-                }
-            }, indent=2),
+                indent=2,
+            ),
             height=150,
-            help="Strategy class configurations"
+            help="Strategy class configurations",
         )
 
         # Schema config (JSON)
         st.markdown("##### Schema Metadata")
         schema_config_str = st.text_area(
             "Schema Config (JSON)",
-            value=json.dumps({
-                "schema_name": "video_colpali",
-                "model_name": "ColPali",
-                "embedding_dim": 128,
-                "binary_dim": 16
-            }, indent=2),
+            value=json.dumps(
+                {
+                    "schema_name": "video_colpali",
+                    "model_name": "ColPali",
+                    "embedding_dim": 128,
+                    "binary_dim": 16,
+                },
+                indent=2,
+            ),
             height=150,
-            help="Schema structure metadata"
+            help="Schema structure metadata",
         )
 
         # Model-specific config (JSON, optional)
@@ -305,7 +330,7 @@ def render_create_profile_form(manager, tenant_id: str):
             "Model-Specific Config (JSON, Optional)",
             value="{}",
             height=100,
-            help="Optional model-specific parameters"
+            help="Optional model-specific parameters",
         )
 
         # Deployment option
@@ -314,7 +339,7 @@ def render_create_profile_form(manager, tenant_id: str):
             deploy_schema = st.checkbox(
                 "Deploy Schema Immediately",
                 value=False,
-                help="Deploy schema to Vespa after creation"
+                help="Deploy schema to Vespa after creation",
             )
 
         # Submit button
@@ -337,7 +362,11 @@ def render_create_profile_form(manager, tenant_id: str):
                 pipeline_config = json.loads(pipeline_config_str)
                 strategies = json.loads(strategies_str)
                 schema_config = json.loads(schema_config_str)
-                model_specific = json.loads(model_specific_str) if model_specific_str.strip() != "{}" else None
+                model_specific = (
+                    json.loads(model_specific_str)
+                    if model_specific_str.strip() != "{}"
+                    else None
+                )
             except json.JSONDecodeError as e:
                 st.error(f"Invalid JSON: {e}")
                 return
@@ -364,19 +393,25 @@ def render_create_profile_form(manager, tenant_id: str):
                     tenant_id=tenant_id,
                     profile_name=profile_name,
                     config=profile_data,
-                    service="video_processing"
+                    service="video_processing",
                 )
                 st.success(f"✅ Profile '{profile_name}' created successfully!")
 
                 # Deploy schema if requested
                 if deploy_schema:
                     with st.spinner("Deploying schema to backend..."):
-                        deployment_result = deploy_schema_via_api(profile_name, tenant_id, force=False)
+                        deployment_result = deploy_schema_via_api(
+                            profile_name, tenant_id, force=False
+                        )
 
                         if deployment_result["success"]:
-                            st.success(f"✅ Schema deployed: {deployment_result['tenant_schema_name']}")
+                            st.success(
+                                f"✅ Schema deployed: {deployment_result['tenant_schema_name']}"
+                            )
                         else:
-                            st.error(f"❌ Schema deployment failed: {deployment_result['error']}")
+                            st.error(
+                                f"❌ Schema deployment failed: {deployment_result['error']}"
+                            )
 
                 st.rerun()
             except Exception as e:
@@ -388,9 +423,7 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
 
     try:
         profile = manager.get_backend_profile(
-            profile_name=profile_name,
-            tenant_id=tenant_id,
-            service="video_processing"
+            profile_name=profile_name, tenant_id=tenant_id, service="video_processing"
         )
     except Exception as e:
         st.error(f"Failed to load profile: {e}")
@@ -412,9 +445,17 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
         if status_result["error"]:
             st.metric("Schema Status", "Unknown", help=status_result["error"])
         elif status_result["schema_deployed"]:
-            st.metric("Schema Status", "✅ Deployed", help=f"Tenant schema: {status_result['tenant_schema_name']}")
+            st.metric(
+                "Schema Status",
+                "✅ Deployed",
+                help=f"Tenant schema: {status_result['tenant_schema_name']}",
+            )
         else:
-            st.metric("Schema Status", "⚠️ Not Deployed", help="Click 'Deploy Schema' tab to deploy")
+            st.metric(
+                "Schema Status",
+                "⚠️ Not Deployed",
+                help="Click 'Deploy Schema' tab to deploy",
+            )
 
     if profile.get("description"):
         st.info(f"**Description:** {profile['description']}")
@@ -432,17 +473,21 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
         render_delete_profile_section(manager, tenant_id, profile_name)
 
 
-def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile: Dict[str, Any]):
+def render_edit_profile_form(
+    manager, tenant_id: str, profile_name: str, profile: Dict[str, Any]
+):
     """Render form for editing mutable profile fields"""
     st.markdown("#### Edit Profile")
-    st.info("Only mutable fields can be edited. Immutable fields (schema_name, embedding_model, etc.) cannot be changed after creation.")
+    st.info(
+        "Only mutable fields can be edited. Immutable fields (schema_name, embedding_model, etc.) cannot be changed after creation."
+    )
 
     with st.form("edit_profile_form"):
         # Description
         description = st.text_area(
             "Description",
             value=profile.get("description", ""),
-            help="Human-readable description"
+            help="Human-readable description",
         )
 
         # Pipeline config (mutable)
@@ -450,7 +495,7 @@ def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile
         pipeline_config_str = st.text_area(
             "Pipeline Config (JSON)",
             value=json.dumps(profile.get("pipeline_config", {}), indent=2),
-            height=150
+            height=150,
         )
 
         # Strategies (mutable)
@@ -458,15 +503,20 @@ def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile
         strategies_str = st.text_area(
             "Strategies (JSON)",
             value=json.dumps(profile.get("strategies", {}), indent=2),
-            height=150
+            height=150,
         )
 
         # Model-specific (mutable)
         st.markdown("##### Model-Specific Config (Mutable)")
         model_specific_str = st.text_area(
             "Model-Specific Config (JSON, Optional)",
-            value=json.dumps(profile.get("model_specific", {}) if profile.get("model_specific") else {}, indent=2),
-            height=100
+            value=json.dumps(
+                profile.get("model_specific", {})
+                if profile.get("model_specific")
+                else {},
+                indent=2,
+            ),
+            height=100,
         )
 
         # Submit button
@@ -477,7 +527,11 @@ def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile
             try:
                 pipeline_config = json.loads(pipeline_config_str)
                 strategies = json.loads(strategies_str)
-                model_specific = json.loads(model_specific_str) if model_specific_str.strip() != "{}" else None
+                model_specific = (
+                    json.loads(model_specific_str)
+                    if model_specific_str.strip() != "{}"
+                    else None
+                )
             except json.JSONDecodeError as e:
                 st.error(f"Invalid JSON: {e}")
                 return
@@ -506,7 +560,7 @@ def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile
                     overrides=updates,
                     base_tenant_id=tenant_id,
                     target_tenant_id=tenant_id,
-                    service="video_processing"
+                    service="video_processing",
                 )
                 st.success(f"✅ Profile '{profile_name}' updated successfully!")
                 st.rerun()
@@ -514,7 +568,9 @@ def render_edit_profile_form(manager, tenant_id: str, profile_name: str, profile
                 st.error(f"❌ Failed to update profile: {e}")
 
 
-def render_deploy_schema_section(manager, tenant_id: str, profile_name: str, profile: Dict[str, Any]):
+def render_deploy_schema_section(
+    manager, tenant_id: str, profile_name: str, profile: Dict[str, Any]
+):
     """Render schema deployment section"""
     st.markdown("#### Deploy Schema to Backend")
     st.info("Schema deployment creates/updates the Vespa schema for this profile.")
@@ -527,9 +583,7 @@ def render_deploy_schema_section(manager, tenant_id: str, profile_name: str, pro
         st.metric("Embedding Model", profile.get("embedding_model", "N/A"))
 
     force_deploy = st.checkbox(
-        "Force Redeployment",
-        value=False,
-        help="Redeploy even if schema already exists"
+        "Force Redeployment", value=False, help="Redeploy even if schema already exists"
     )
 
     if st.button("🚀 Deploy Schema", type="primary"):
@@ -537,11 +591,11 @@ def render_deploy_schema_section(manager, tenant_id: str, profile_name: str, pro
             result = deploy_schema_via_api(profile_name, tenant_id, force=force_deploy)
 
             if result["success"]:
-                st.success(f"✅ Schema deployed successfully!")
+                st.success("✅ Schema deployed successfully!")
                 st.info(f"**Tenant Schema Name:** `{result['tenant_schema_name']}`")
                 st.info(f"**Deployment Status:** {result['deployment_status']}")
             else:
-                st.error(f"❌ Schema deployment failed!")
+                st.error("❌ Schema deployment failed!")
                 st.error(result["error"])
 
                 # Show debug info
@@ -560,24 +614,27 @@ def render_delete_profile_section(manager, tenant_id: str, profile_name: str):
     delete_schema = st.checkbox(
         "Also delete associated schema from backend",
         value=False,
-        help="If checked, the schema will be removed from Vespa"
+        help="If checked, the schema will be removed from Vespa",
     )
 
     # Confirmation
     st.markdown("##### Confirmation")
     confirm_text = st.text_input(
-        f"Type '{profile_name}' to confirm deletion",
-        key="delete_confirmation"
+        f"Type '{profile_name}' to confirm deletion", key="delete_confirmation"
     )
 
     if st.button("🗑️ Delete Profile", type="primary"):
         if confirm_text != profile_name:
-            st.error(f"Confirmation text does not match. Please type '{profile_name}' exactly.")
+            st.error(
+                f"Confirmation text does not match. Please type '{profile_name}' exactly."
+            )
             return
 
         with st.spinner("Deleting profile..."):
             # Delete via API (which handles both profile and optional schema deletion)
-            result = delete_profile_via_api(profile_name, tenant_id, delete_schema=delete_schema)
+            result = delete_profile_via_api(
+                profile_name, tenant_id, delete_schema=delete_schema
+            )
 
             if result["success"]:
                 st.success(f"✅ Profile '{profile_name}' deleted successfully!")
@@ -588,7 +645,7 @@ def render_delete_profile_section(manager, tenant_id: str, profile_name: str):
                         st.info("ℹ️ No schema was found to delete")
                 st.rerun()
             else:
-                st.error(f"❌ Failed to delete profile!")
+                st.error("❌ Failed to delete profile!")
                 st.error(result["error"])
 
                 # Show debug info

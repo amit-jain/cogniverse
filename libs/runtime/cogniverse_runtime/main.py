@@ -49,12 +49,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 3. Set dependencies on routers
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
-    ingestion.set_config_manager(config_manager)
-    ingestion.set_schema_loader(schema_loader)
+
+    # Wire ingestion and search routers via FastAPI dependency overrides
+    app.dependency_overrides[ingestion.get_config_manager_dependency] = (
+        lambda: config_manager
+    )
+    app.dependency_overrides[ingestion.get_schema_loader_dependency] = (
+        lambda: schema_loader
+    )
+    app.dependency_overrides[search.get_config_manager_dependency] = (
+        lambda: config_manager
+    )
+    app.dependency_overrides[search.get_schema_loader_dependency] = (
+        lambda: schema_loader
+    )
     logger.info("Router dependencies configured")
 
     # 4. Initialize registries
-    backend_registry = BackendRegistry(config_manager=config_manager)
+    backend_registry = BackendRegistry.get_instance()
     agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 

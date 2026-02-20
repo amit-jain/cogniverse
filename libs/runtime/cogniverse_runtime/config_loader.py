@@ -43,7 +43,7 @@ class ConfigLoader:
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         self.config_manager = create_default_config_manager()
-        self.backend_registry = BackendRegistry(config_manager=self.config_manager)
+        self.backend_registry = BackendRegistry.get_instance()
         self.agent_registry = AgentRegistry(config_manager=self.config_manager)
         self.config = get_config(
             tenant_id=tenant_id, config_manager=self.config_manager
