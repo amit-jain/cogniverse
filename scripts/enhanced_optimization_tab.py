@@ -200,13 +200,15 @@ def _render_search_annotation_tab():
     if st.button("🔍 Fetch Search Results", key="fetch_search_results"):
         with st.spinner("Fetching search results..."):
             try:
-                from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+                from cogniverse_foundation.telemetry.manager import (
+                    get_telemetry_manager,
+                )
 
                 # Get telemetry provider
                 telemetry_manager = get_telemetry_manager()
                 provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-                project_name = f"cogniverse-{tenant_id}-search"
+                phoenix_project = f"cogniverse-{tenant_id}"
 
                 end_time = datetime.now()
                 start_time = end_time - timedelta(hours=lookback_hours)
@@ -214,7 +216,7 @@ def _render_search_annotation_tab():
                 # Fetch spans using provider abstraction
                 async def fetch_spans():
                     return await provider.traces.get_spans(
-                        project_name=project_name,
+                        project=phoenix_project,
                         start_time=start_time,
                         end_time=end_time
                     )
@@ -474,14 +476,14 @@ async def _build_golden_dataset_from_phoenix(
     telemetry_manager = get_telemetry_manager()
     provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    project_name = f"cogniverse-{tenant_id}-search"
+    phoenix_project = f"cogniverse-{tenant_id}"
 
     # Query annotated spans
     end_time = datetime.now()
     start_time = end_time - timedelta(days=lookback_days)
 
     spans_df = await provider.traces.get_spans(
-        project_name=project_name,
+        project=phoenix_project,
         start_time=start_time,
         end_time=end_time
     )
@@ -1143,7 +1145,7 @@ def _render_profile_selection_tab():
                 await provider.traces.get_spans(
                     start_time=datetime.now() - timedelta(minutes=1),
                     end_time=datetime.now(),
-                    project_name=f"cogniverse-{tenant_id}",
+                    project=f"cogniverse-{tenant_id}",
                     limit=1
                 )
                 return True
@@ -1420,7 +1422,7 @@ def _render_metrics_dashboard_tab():
                 await provider.traces.get_spans(
                     start_time=datetime.now() - timedelta(minutes=1),
                     end_time=datetime.now(),
-                    project_name=f"cogniverse-{tenant_id}",
+                    project=f"cogniverse-{tenant_id}",
                     limit=1
                 )
                 return True
@@ -1466,11 +1468,14 @@ def _render_metrics_dashboard_tab():
         start_time = end_time - timedelta(days=lookback_days)
 
         # Get spans from provider
-        spans_df = await provider.traces.get_spans(
-            project="cogniverse-default",
-            start_time=start_time,
-            end_time=end_time
-        )
+        async def _fetch_spans():
+            return await provider.traces.get_spans(
+                project=f"cogniverse-{tenant_id}",
+                start_time=start_time,
+                end_time=end_time
+            )
+
+        spans_df = run_async_in_streamlit(_fetch_spans())
 
         if spans_df is None or spans_df.empty:
             st.warning(f"No spans found in the last {lookback_days} days. Run some queries first.")

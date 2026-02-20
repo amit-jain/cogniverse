@@ -90,10 +90,10 @@ def render_routing_evaluation_tab():
         async def check_provider():
             try:
                 await provider.traces.get_spans(
+                    project=project_name,
                     start_time=datetime.now() - timedelta(minutes=1),
                     end_time=datetime.now(),
-                    project_name=project_name,
-                    limit=1
+                    limit=1,
                 )
                 return True
             except Exception:
@@ -115,9 +115,11 @@ def render_routing_evaluation_tab():
     # Fetch and evaluate routing spans
     with st.spinner("Fetching routing spans from telemetry..."):
         try:
-            # Query routing spans from telemetry
-            routing_spans = evaluator.query_routing_spans(
-                start_time=start_time, end_time=end_time, limit=1000
+            # Query routing spans from telemetry (async method)
+            routing_spans = run_async_in_streamlit(
+                evaluator.query_routing_spans(
+                    start_time=start_time, end_time=end_time, limit=1000
+                )
             )
 
             # Calculate metrics from spans
@@ -253,7 +255,7 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
         # Fetch spans using provider abstraction (async call)
         async def fetch_spans():
             return await evaluator.provider.traces.get_spans(
-                project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+                project=evaluator.project_name, start_time=start_time, end_time=end_time
             )
 
         spans_df = run_async_in_streamlit(fetch_spans())
@@ -365,7 +367,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
         # Fetch spans using provider abstraction (async call)
         async def fetch_spans():
             return await evaluator.provider.traces.get_spans(
-                project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+                project=evaluator.project_name, start_time=start_time, end_time=end_time
             )
 
         spans_df = run_async_in_streamlit(fetch_spans())

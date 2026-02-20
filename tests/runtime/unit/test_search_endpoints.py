@@ -170,7 +170,7 @@ class TestSearchEndpoint:
     def test_search_request_defaults(self):
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")
-        assert req.strategy == "hybrid"
+        assert req.strategy == "default"
         assert req.top_k == 10
         assert req.stream is False
         assert req.filters == {}

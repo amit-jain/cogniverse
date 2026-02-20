@@ -20,7 +20,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from cogniverse_sdk.interfaces.backend import SearchBackend
-from src.backends.vespa.search_backend import VespaSearchBackend
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Configure logging
 logging.basicConfig(
@@ -198,7 +198,7 @@ class BackendEmbeddingExporter:
                             embedding = embedding[2:]
                         bytes_data = bytes.fromhex(embedding)
                         return np.frombuffer(bytes_data, dtype=np.float32)
-                    except:
+                    except Exception:
                         logger.warning(f"Could not decode binary embedding from {field_name}")
                         
         return None
@@ -321,8 +321,6 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
         SearchBackend instance
     """
     if backend_type.lower() == "vespa":
-        # Parse URL and port
-        url = kwargs.get("url", "http://localhost:8080")
         # Simple parsing - just use localhost for now
         base_url = "http://localhost"
         port = 8080
@@ -334,7 +332,6 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
             vespa_port=port,
             schema_name=schema,
             profile=None,  # No profile needed for export
-            strategy=None,  # No strategy needed for export
             query_encoder=None,  # No encoder needed for export
             enable_metrics=False,  # Disable for export
             enable_connection_pool=False  # Disable for export

@@ -21,7 +21,7 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -92,11 +92,11 @@ class AutoOptimizationTrigger:
             start_time = end_time - timedelta(hours=lookback_hours)
 
             # Query spans using provider abstraction
-            project_name = f"cogniverse-{self.tenant_id}-cogniverse.routing"
+            phoenix_project = f"cogniverse-{self.tenant_id}"
             spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
                 end_time=end_time,
-                project_name=project_name
+                project=phoenix_project
             )
 
             if spans_df is None or spans_df.empty:

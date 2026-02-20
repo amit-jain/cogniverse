@@ -36,35 +36,30 @@ class VespaEmbeddingProcessor:
             Dict with processed embeddings ready for Vespa
         """
         if isinstance(raw_embeddings, np.ndarray):
-            # Check if it's a valid 2D array
+            # Squeeze leading batch dimension: (1, N, D) → (N, D)
+            if raw_embeddings.ndim == 3 and raw_embeddings.shape[0] == 1:
+                raw_embeddings = raw_embeddings.squeeze(0)
+
             if raw_embeddings.ndim == 2 and raw_embeddings.shape[0] > 0:
-                # Single embedding array - convert to float/binary
-                # All schemas now use consistent field names
+                # Multi-vector or patch embeddings: (num_patches, embedding_dim)
                 return {
                     "embedding": self._convert_to_float_dict(raw_embeddings),
                     "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
                 }
+            elif raw_embeddings.ndim == 1:
+                # Global embeddings: (embedding_dim,) → treat as single patch
+                raw_embeddings = raw_embeddings.reshape(1, -1)
+                return {
+                    "embedding": self._convert_to_float_dict(raw_embeddings),
+                    "embedding_binary": self._convert_to_binary_dict(
+                        raw_embeddings
+                    ),
+                }
             else:
-                # For 1D arrays (global embeddings), we still need to convert to patch format
-                # Treat the entire embedding as a single patch
-                if raw_embeddings.ndim == 1:
-                    # Reshape to (1, embedding_dim) to treat as single patch
-                    raw_embeddings = raw_embeddings.reshape(1, -1)
-
-                    # All schemas now use consistent field names
-                    return {
-                        "embedding": self._convert_to_float_dict(raw_embeddings),
-                        "embedding_binary": self._convert_to_binary_dict(
-                            raw_embeddings
-                        ),
-                    }
-                else:
-                    # Empty arrays - return as-is
-                    return (
-                        raw_embeddings.tolist()
-                        if hasattr(raw_embeddings, "tolist")
-                        else raw_embeddings
-                    )
+                raise ValueError(
+                    f"Unexpected embedding array shape: {raw_embeddings.shape}. "
+                    f"Expected 1D (global), 2D (patches, dim), or 3D (1, patches, dim)."
+                )
         elif isinstance(raw_embeddings, dict):
             # Multiple embeddings - process each
             processed = {}

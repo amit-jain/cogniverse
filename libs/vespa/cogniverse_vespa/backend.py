@@ -546,6 +546,26 @@ class VespaBackend(Backend):
         if not self._vespa_search_backend:
             logger.debug("Creating VespaSearchBackend on-demand with config")
 
+            # Ensure profiles are loaded (may be missing if ingestion created
+            # the cached backend instance without passing profiles)
+            if not self.config.get("profiles") and self._config_manager_instance:
+                from cogniverse_foundation.config.utils import get_config
+
+                config_utils = get_config(
+                    tenant_id=self._tenant_id,
+                    config_manager=self._config_manager_instance,
+                )
+                backend_section = config_utils.get("backend", {})
+                if backend_section.get("profiles"):
+                    self.config["profiles"] = backend_section["profiles"]
+                    self.config["default_profiles"] = backend_section.get(
+                        "default_profiles", {}
+                    )
+                    logger.info(
+                        f"Loaded {len(self.config['profiles'])} profiles from config "
+                        f"for tenant {self._tenant_id}"
+                    )
+
             # Create VespaSearchBackend with merged backend config
             # VespaSearchBackend will handle profile/strategy resolution per query
             self._vespa_search_backend = VespaSearchBackend(
@@ -562,7 +582,10 @@ class VespaBackend(Backend):
 
     def get_document(self, document_id: str) -> Optional[Document]:
         """
-        Retrieve a document by ID (uses batch method).
+        Retrieve a document by ID.
+
+        Uses the search backend if available, otherwise falls back to the
+        ingestion client's get_data for simple document retrieval.
 
         Args:
             document_id: Document ID
@@ -570,9 +593,37 @@ class VespaBackend(Backend):
         Returns:
             Document or None
         """
-        # Use batch method for consistency and optimization
-        results = self.batch_get_documents([document_id])
-        return results[0] if results else None
+        # Try search backend first if available
+        if self._vespa_search_backend:
+            results = self.batch_get_documents([document_id])
+            return results[0] if results else None
+
+        # Fallback: use ingestion client for simple document retrieval
+        schema_name = self.config.get("schema_name")
+        if not schema_name:
+            logger.error("No schema_name in config for get_document operation")
+            return None
+
+        try:
+            client = self._get_or_create_ingestion_client(schema_name)
+            fields = client.get_document_data(document_id)
+            if fields is None:
+                return None
+
+            # Convert raw Vespa fields to Document object
+            doc = Document(
+                id=document_id,
+                text_content=fields.get("text", ""),
+                metadata={
+                    k: v
+                    for k, v in fields.items()
+                    if k not in ("text", "embedding", "id")
+                },
+            )
+            return doc
+        except Exception as e:
+            logger.error(f"Failed to retrieve document {document_id}: {e}")
+            return None
 
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """

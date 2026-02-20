@@ -34,6 +34,7 @@ from config_management_tab import render_config_management_tab
 from ingestion_testing_tab import render_ingestion_testing_tab
 from interactive_search_tab import render_interactive_search_tab
 from memory_management_tab import render_memory_management_tab
+from tenant_management_tab import render_tenant_management_tab
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -49,15 +50,16 @@ def import_module_directly(module_path):
 
 # Import only what we need - wrap in try/except to handle missing dependencies
 try:
-    analytics_module = import_module_directly(project_root / "libs/core/cogniverse_core/evaluation/phoenix/analytics.py")
-    Analytics = analytics_module.PhoenixAnalytics
+    from cogniverse_telemetry_phoenix.evaluation.analytics import (
+        PhoenixAnalytics as Analytics,
+    )
+    from cogniverse_telemetry_phoenix.evaluation.analytics import TraceMetrics
 except Exception as e:
     Analytics = None
     print(f"Warning: Could not load Phoenix Analytics: {e}")
 
 try:
-    rca_module = import_module_directly(project_root / "libs/core/cogniverse_core/evaluation/phoenix/root_cause_analysis.py")
-    RootCauseAnalyzer = rca_module.RootCauseAnalyzer
+    from cogniverse_evaluation.analysis.root_cause_analysis import RootCauseAnalyzer
 except Exception as e:
     RootCauseAnalyzer = None
     print(f"Warning: Could not load RootCauseAnalyzer: {e}")
@@ -66,8 +68,9 @@ except Exception as e:
 import asyncio
 
 import httpx
+
 from cogniverse_agents.tools.a2a_utils import A2AClient
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 def run_async_in_streamlit(coro):
@@ -210,11 +213,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state
+# Initialize analytics with explicit Phoenix endpoint
 if 'analytics' not in st.session_state:
     if Analytics is not None:
-        st.session_state.analytics = Analytics()
+        st.session_state.analytics = Analytics(phoenix_url="http://localhost:6006")
     else:
         st.session_state.analytics = None
+
+# Ensure analytics client points to Phoenix API (not OTel collector)
+if st.session_state.analytics is not None:
+    import phoenix as _phoenix
+    st.session_state.analytics.client = _phoenix.Client(endpoint="http://localhost:6006")
 
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
@@ -330,12 +339,22 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
 
-        # Display current tenant
-        current_tenant = st.session_state.get("current_tenant", "default")
-        st.info(f"📌 Current tenant: **{current_tenant}**")
+    # Active tenant selector — always visible, always syncs
+    active_tenant = st.text_input(
+        "Active Tenant",
+        value=st.session_state.get("current_tenant", "default"),
+        placeholder="org_name:tenant_name",
+        help="Tenant used for analytics, search, and all dashboard features",
+        key="active_tenant_input",
+    )
+    if active_tenant and ":" in active_tenant:
+        st.session_state["current_tenant"] = active_tenant
+    st.info(f"📌 Current tenant: **{st.session_state.get('current_tenant', 'default')}**")
 
-        st.markdown("---")
-        st.markdown("### Quick Ingestion")
+    st.markdown("---")
+
+    # Quick Ingestion section (inside expander)
+    with st.expander("📦 Quick Ingestion", expanded=False):
 
         # Fast ingestion interface
         with st.form("quick_ingestion"):
@@ -375,7 +394,7 @@ with st.sidebar:
                                 json={
                                     "video_url": video_url,
                                     "profile": profile_select,
-                                    "tenant_id": current_tenant
+                                    "tenant_id": st.session_state.get("current_tenant", "default")
                                 },
                                 timeout=30.0
                             )
@@ -709,18 +728,22 @@ with top_level_tabs[1]:
     st.markdown("### Admin Interface")
     st.markdown("Administrative tools for system configuration and management")
 
-    admin_tabs = st.tabs(["⚙️ Configuration", "📥 Ingestion Testing", "🔧 Optimization"])
+    admin_tabs = st.tabs(["🏢 Tenant Management", "⚙️ Configuration", "📥 Ingestion Testing", "🔧 Optimization"])
+
+    # Tenant Management Tab
+    with admin_tabs[0]:
+        render_tenant_management_tab()
 
     # Configuration Tab
-    with admin_tabs[0]:
+    with admin_tabs[1]:
         render_config_management_tab()
 
     # Ingestion Testing Tab
-    with admin_tabs[1]:
+    with admin_tabs[2]:
         render_ingestion_testing_tab(agent_status)
 
     # Optimization Tab
-    with admin_tabs[2]:
+    with admin_tabs[3]:
         if enhanced_optimization_tab_available:
             render_enhanced_optimization_tab()
         else:
@@ -745,14 +768,23 @@ with top_level_tabs[2]:
 
 # Analytics Tab
 with monitoring_tabs[0]:
-    # Fetch traces
-    with st.spinner("Fetching traces..."):
-        traces = st.session_state.analytics.get_traces(
-            start_time=start_datetime,
-            end_time=end_datetime,
-            operation_filter=operation_filter if operation_filter else None,
-            limit=10000
-        )
+    if st.session_state.analytics is None:
+        st.error("Analytics module is not available. Check that cogniverse_telemetry_phoenix is installed.")
+        traces = []
+    else:
+        # Derive Phoenix project name from current tenant
+        current_tenant = st.session_state.get("current_tenant", "default")
+        phoenix_project = f"cogniverse-{current_tenant}"
+
+        # Fetch traces
+        with st.spinner("Fetching traces..."):
+            traces = st.session_state.analytics.get_traces(
+                start_time=start_datetime,
+                end_time=end_datetime,
+                operation_filter=operation_filter if operation_filter else None,
+                limit=10000,
+                project_name=phoenix_project,
+            )
 
     if not traces:
         st.warning("No traces found for the selected time range and filters.")
@@ -780,7 +812,7 @@ with monitoring_tabs[0]:
     # Calculate statistics with operation grouping
     if not traces_df.empty:
         stats = st.session_state.analytics.calculate_statistics(
-            [analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()],
+            [TraceMetrics(**row) for _, row in traces_df.iterrows()],
             group_by="operation"
         )
     else:
@@ -1368,7 +1400,7 @@ if enable_rca and len(tabs) > 6:
         # Run analysis - use filtered traces to match the stats
         with st.spinner("Analyzing failures and performance issues..."):
             # Convert filtered DataFrame back to TraceMetrics objects
-            filtered_traces = [analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()]
+            filtered_traces = [TraceMetrics(**row) for _, row in traces_df.iterrows()]
             
             rca_results = rca.analyze_failures(
                 filtered_traces,  # Use filtered traces instead of all traces
@@ -1820,7 +1852,9 @@ with monitoring_tabs[5]:
     try:
         from cogniverse_agents.routing.modality_cache import ModalityCacheManager
         from cogniverse_agents.search.multi_modal_reranker import QueryModality
-        from cogniverse_foundation.telemetry.modality_metrics import ModalityMetricsTracker
+        from cogniverse_foundation.telemetry.modality_metrics import (
+            ModalityMetricsTracker,
+        )
 
         # Initialize components
         if 'metrics_tracker' not in st.session_state:
@@ -2218,7 +2252,7 @@ with monitoring_tabs[6]:
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            ft_tenant_id = st.text_input("Tenant ID", value="tenant1", key="ft_tenant")
+            ft_tenant_id = st.text_input("Tenant ID", value=st.session_state.get("current_tenant", "default"), key="ft_tenant")
 
         with col2:
             ft_project = st.text_input("Project", value=f"cogniverse-{ft_tenant_id}", key="ft_project")
@@ -2245,8 +2279,13 @@ with monitoring_tabs[6]:
             with st.spinner("Analyzing dataset..."):
                 try:
                     import asyncio
-                    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
-                    from cogniverse_finetuning.orchestrator import analyze_dataset_status
+
+                    from cogniverse_finetuning.orchestrator import (
+                        analyze_dataset_status,
+                    )
+                    from cogniverse_foundation.telemetry.registry import (
+                        TelemetryRegistry,
+                    )
 
                     # Initialize telemetry
                     registry = TelemetryRegistry()
@@ -2256,6 +2295,7 @@ with monitoring_tabs[6]:
                         config={
                             "project_name": ft_project,
                             "http_endpoint": agent_config["phoenix_base_url"],
+                            "grpc_endpoint": agent_config.get("phoenix_grpc_endpoint", "http://localhost:4317"),
                         }
                     )
 
@@ -2556,8 +2596,11 @@ with monitoring_tabs[6]:
                     import asyncio
                     import threading
                     from datetime import datetime
-                    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+
                     from cogniverse_finetuning import finetune
+                    from cogniverse_foundation.telemetry.registry import (
+                        TelemetryRegistry,
+                    )
 
                     # Initialize telemetry
                     registry = TelemetryRegistry()
@@ -2567,6 +2610,7 @@ with monitoring_tabs[6]:
                         config={
                             "project_name": ft_project,
                             "http_endpoint": agent_config["phoenix_base_url"],
+                            "grpc_endpoint": agent_config.get("phoenix_grpc_endpoint", "http://localhost:4317"),
                         }
                     )
 
@@ -2690,7 +2734,7 @@ with monitoring_tabs[6]:
                     st.markdown("**Results:**")
                     st.json(job_info["result"])
 
-                    if st.button(f"View in Experiments", key=f"view_exp_{job_id}"):
+                    if st.button("View in Experiments", key=f"view_exp_{job_id}"):
                         st.info("Scroll down to Experiment History to see this run")
 
                 elif job_info["status"] == "failed":
@@ -2706,8 +2750,9 @@ with monitoring_tabs[6]:
         with st.spinner("Loading experiments from Phoenix..."):
             try:
                 import asyncio
-                from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+
                 from cogniverse_finetuning.orchestrator import list_experiments
+                from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
                 # Initialize telemetry
                 registry = TelemetryRegistry()
@@ -2717,6 +2762,7 @@ with monitoring_tabs[6]:
                     config={
                         "project_name": ft_project,
                         "http_endpoint": agent_config["phoenix_base_url"],
+                        "grpc_endpoint": agent_config.get("phoenix_grpc_endpoint", "http://localhost:4317"),
                     }
                 )
 
@@ -3004,8 +3050,9 @@ with monitoring_tabs[6]:
                 st.subheader("🔬 Compare Experiments")
 
                 try:
-                    from cogniverse_finetuning.orchestrator import compare_experiments
                     import asyncio
+
+                    from cogniverse_finetuning.orchestrator import compare_experiments
 
                     run_ids = [df.iloc[i]["run_id"] for i in selected_indices if "run_id" in df.columns]
                     comparison_df = asyncio.run(compare_experiments(

@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -101,11 +100,13 @@ async def start_ingestion(
 
         # Get backend with dependency injection
         backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_backend(request.backend)
-        if not backend:
-            raise HTTPException(
-                status_code=400, detail=f"Backend '{request.backend}' not found"
-            )
+        tenant_id = request.tenant_id or "default"
+        _backend = backend_registry.get_ingestion_backend(
+            name=request.backend,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Create job ID
         import uuid
@@ -125,7 +126,8 @@ async def start_ingestion(
             run_ingestion,
             job_id=job_id,
             request=request,
-            backend=backend,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
         return {
@@ -172,11 +174,13 @@ async def upload_video(
 
         # Get backend with dependency injection
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_backend(backend)
-        if not backend_instance:
-            raise HTTPException(
-                status_code=400, detail=f"Backend '{backend}' not found"
-            )
+        upload_tenant_id = tenant_id or "default"
+        backend_instance = backend_registry.get_ingestion_backend(
+            name=backend,
+            tenant_id=upload_tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Process video
         from cogniverse_foundation.config.utils import get_config
@@ -209,18 +213,23 @@ async def upload_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def run_ingestion(job_id: str, request: IngestionRequest, backend: Any) -> None:
+async def run_ingestion(
+    job_id: str,
+    request: IngestionRequest,
+    config_manager: ConfigManager,
+    schema_loader: SchemaLoader,
+) -> None:
     """Run ingestion process (background task)."""
     try:
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        config_manager = create_default_config_manager()
-        config = get_config(
-            tenant_id=request.tenant_id or "default", config_manager=config_manager
-        )
+        tenant_id = request.tenant_id or "default"
 
         pipeline = VideoIngestionPipeline(
-            config=config, profile=request.profile, backend=backend
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            schema_name=request.profile,
         )
 
         # Get video files
@@ -234,21 +243,16 @@ async def run_ingestion(job_id: str, request: IngestionRequest, backend: Any) ->
         ingestion_jobs[job_id].videos_total = len(video_files)
         ingestion_jobs[job_id].status = "processing"
 
-        # Process videos
-        for video_path in video_files:
-            try:
-                _ = pipeline.process_video(
-                    video_path=str(video_path),
-                    tenant_id=request.tenant_id,
-                    org_id=request.org_id,
-                )
-                ingestion_jobs[job_id].videos_processed += 1
-                logger.info(f"Processed video: {video_path.name}")
+        # Process videos using the async concurrent method
+        result = await pipeline.process_videos_concurrent(
+            video_files=video_files,
+            max_concurrent=request.batch_size,
+        )
 
-            except Exception as e:
-                error_msg = f"Error processing {video_path.name}: {e}"
-                logger.error(error_msg)
-                ingestion_jobs[job_id].errors.append(error_msg)
+        # Update job status from pipeline result
+        ingestion_jobs[job_id].videos_processed = result.get("successful", 0)
+        for error in result.get("errors", []):
+            ingestion_jobs[job_id].errors.append(str(error))
 
         # Mark complete
         ingestion_jobs[job_id].status = "completed"

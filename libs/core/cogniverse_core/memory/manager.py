@@ -106,11 +106,11 @@ class Mem0MemoryManager:
 
     def initialize(
         self,
-        backend_host: str = "localhost",
+        backend_host: str = "http://localhost",
         backend_port: int = 8080,
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
-        llm_model: str = "llama3.2",
+        llm_model: str = "llama3.1:8b",
         embedding_model: str = "nomic-embed-text",
         ollama_base_url: str = "http://localhost:11434/v1",
         auto_create_schema: bool = True,
@@ -125,7 +125,7 @@ class Mem0MemoryManager:
             backend_port: Backend data endpoint port (default: 8080)
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
-            llm_model: Ollama model name (default: llama3.2)
+            llm_model: Ollama model name (default: llama3.1:8b)
             embedding_model: Ollama embedding model (default: nomic-embed-text)
             ollama_base_url: Ollama OpenAI-compatible API endpoint
             auto_create_schema: Auto-deploy tenant schema if not exists
@@ -457,6 +457,7 @@ class Mem0MemoryManager:
             # Get all memories and delete them
             memories = self.get_all_memories(tenant_id, agent_name)
 
+            failed_count = 0
             for memory in memories:
                 # Memory can be a dict or a string ID
                 if isinstance(memory, dict):
@@ -465,7 +466,16 @@ class Mem0MemoryManager:
                     memory_id = str(memory)
 
                 if memory_id:
-                    self.delete_memory(memory_id, tenant_id, agent_name)
+                    success = self.delete_memory(memory_id, tenant_id, agent_name)
+                    if not success:
+                        failed_count += 1
+
+            if failed_count > 0:
+                logger.error(
+                    f"Failed to delete {failed_count}/{len(memories)} memories "
+                    f"for {tenant_id}/{agent_name}"
+                )
+                return False
 
             logger.info(f"Cleared all memory for {tenant_id}/{agent_name}")
             return True

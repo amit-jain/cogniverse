@@ -96,8 +96,6 @@ class RoutingInput(AgentInput):
         None, description="Force orchestration decision"
     )
 
-    model_config = ConfigDict(extra="forbid")
-
 
 class RoutingOutput(AgentOutput):
     """

@@ -123,6 +123,14 @@ class VespaPyClient:
 
         self.logger.info(f"Feed configuration: {self.feed_config}")
 
+        # Compute namespace based on content type (schema determines namespace)
+        if "agent_memories" in self.schema_name:
+            self.namespace = "memory_content"
+        elif "config_metadata" in self.schema_name or "tenant_metadata" in self.schema_name or "organization_metadata" in self.schema_name:
+            self.namespace = "metadata"
+        else:
+            self.namespace = "video"
+
     def _load_schema_fields(self):
         """Load the fields defined in the schema using base schema name"""
         import json
@@ -320,11 +328,7 @@ class VespaPyClient:
                 fields[key] = value
 
         # Create Vespa document with this client's schema
-        # Use appropriate namespace based on schema type
-        namespace = (
-            "memory_content" if "agent_memories" in self.schema_name else "video"
-        )
-        doc_id_string = f"id:{namespace}:{self.schema_name}::{doc.id}"
+        doc_id_string = f"id:{self.namespace}:{self.schema_name}::{doc.id}"
 
         # CRITICAL: Log schema being used for each document (first doc only to avoid spam)
         if doc.id.endswith("_0_0") or doc.id.endswith(
@@ -450,7 +454,7 @@ class VespaPyClient:
                 self.app.feed_iterable(
                     iter=feed_batch_iter(),
                     schema=self.schema_name,  # Use this client's schema
-                    namespace="video",
+                    namespace=self.namespace,
                     callback=callback,
                     # Production configuration parameters from self.feed_config
                     max_queue_size=self.feed_config["max_queue_size"],
@@ -493,12 +497,29 @@ class VespaPyClient:
 
         try:
             response = self.app.get_data(
-                schema=self.schema_name, data_id=doc_id, namespace="video"
+                schema=self.schema_name, data_id=doc_id, namespace=self.namespace
             )
             return response is not None and response.status_code == 200
         except Exception as e:
             self.logger.error(f"Error checking document existence: {e}")
             return False
+
+    def get_document_data(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """Get document data using pyvespa. Returns raw fields dict or None."""
+        if not self._connected:
+            if not self.connect():
+                return None
+
+        try:
+            response = self.app.get_data(
+                schema=self.schema_name, data_id=doc_id, namespace=self.namespace
+            )
+            if response is not None and response.status_code == 200:
+                return response.json.get("fields", {})
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting document: {e}")
+            return None
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete document using pyvespa"""
@@ -508,7 +529,7 @@ class VespaPyClient:
 
         try:
             response = self.app.delete_data(
-                schema=self.schema_name, data_id=doc_id, namespace="video"
+                schema=self.schema_name, data_id=doc_id, namespace=self.namespace
             )
             return response is not None and response.status_code in [200, 404]
         except Exception as e:

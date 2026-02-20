@@ -51,7 +51,7 @@ class SearchRequest(BaseModel):
 
     query: str
     profile: Optional[str] = None
-    strategy: Optional[str] = "hybrid"
+    strategy: Optional[str] = "default"
     top_k: int = 10
     filters: Dict[str, Any] = {}
     tenant_id: Optional[str] = None

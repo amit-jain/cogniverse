@@ -76,7 +76,7 @@ def render_orchestration_annotation_tab():
                 # Fetch spans using provider abstraction (async call)
                 async def fetch_spans():
                     return await provider.traces.get_spans(
-                        project_name=f"cogniverse-{tenant_id}-cogniverse.orchestration",
+                        project=f"cogniverse-{tenant_id}",
                         start_time=start_time,
                         end_time=end_time,
                     )

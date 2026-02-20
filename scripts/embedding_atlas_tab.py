@@ -24,7 +24,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 # Import search backend
 try:
     from src.backends.vespa.search_backend import VespaSearchBackend as SearchBackend
-    from src.common.config_utils import get_config
     VESPA_AVAILABLE = True
 except ImportError:
     VESPA_AVAILABLE = False
@@ -40,7 +39,10 @@ def get_available_videos() -> Dict[str, Dict]:
         return {}
 
     try:
-        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
         config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         backend = SearchBackend(
@@ -68,7 +70,7 @@ def get_available_videos() -> Dict[str, Dict]:
         
         try:
             response = backend.app.query(yql=yql)
-        except:
+        except Exception:
             # Fallback to simple query
             response = backend.app.query(yql=simple_yql)
         
@@ -171,9 +173,9 @@ def render_embedding_atlas_tab():
                             schema_data = json.load(f)
                             schema_name = schema_data.get("name", schema_file.stem.replace("_schema", ""))
                             available_schemas.append(schema_name)
-                    except:
+                    except Exception:
                         pass
-        
+
         # Default to video_frame if no schemas found
         if not available_schemas:
             available_schemas = ["video_frame"]
@@ -406,22 +408,28 @@ def export_and_visualize(
 ):
     """Export embeddings from backend and prepare for visualization"""
     
+    # Construct tenant-scoped schema name
+    # Documents live in {base_schema}_{tenant_id} where ':' is replaced with '_'
+    current_tenant = st.session_state.get("current_tenant", "default")
+    tenant_suffix = current_tenant.replace(":", "_")
+    tenant_schema = f"{schema}_{tenant_suffix}"
+
     # Generate output filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path("outputs/embeddings")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"vespa_embeddings_{timestamp}.parquet"
-    
+
     # Set reduction method
     reduction_method = "umap"  # Default to UMAP for dimension reduction
-    
+
     # Build export command using backend abstraction
     cmd = [
         "uv", "run", "python", "scripts/export_backend_embeddings.py",
         "--backend", "vespa",  # Can be made configurable
         "--backend-url", "http://localhost:8080",
         "--output", str(output_file),
-        "--schema", schema,
+        "--schema", tenant_schema,
         "--profile", profile,  # Always pass the profile
         "--max-documents", str(max_docs),
         "--reduction-method", reduction_method
@@ -535,9 +543,9 @@ def display_existing_exports():
                     "Size (MB)": f"{file.stat().st_size / 1024 / 1024:.1f}",
                     "Modified": datetime.fromtimestamp(file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
                 })
-            except:
+            except Exception:
                 continue
-        
+
         if export_data:
             export_df = pd.DataFrame(export_data)
             
@@ -750,21 +758,21 @@ def compare_multiple_queries_with_embeddings(query_texts: list, schema: str):
                 df["is_query"] = False
             else:
                 # Remove any existing queries from df
-                df = df[df["is_query"] != True].copy()
+                df = df[~df["is_query"]].copy()
                 # Ensure remaining docs are marked as not queries
                 df["is_query"] = False
-            
+
             # Add all new queries to dataframe
             query_df = pd.DataFrame(query_rows)
             df = pd.concat([df, query_df], ignore_index=True)
-            
+
             # Added queries to dataframe
-            
+
             # Handle ColPali-specific projection
             if strategy_profile == "frame_based_colpali":
                 # Get document embeddings (all non-query rows)
-                doc_df = df[df["is_query"] != True]
-                query_df_indices = df[df["is_query"] == True].index.tolist()
+                doc_df = df[~df["is_query"]]
+                query_df_indices = df[df["is_query"]].index.tolist()
                 
                 # First compute MaxSim scores to get actual similarities
                 from sklearn.metrics.pairwise import cosine_similarity
@@ -1051,7 +1059,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
                 if col in query_df.columns and col != "embedding":
                     try:
                         query_df[col] = query_df[col].astype(df[col].dtype)
-                    except:
+                    except Exception:
                         pass  # Keep original dtype if conversion fails
             df = pd.concat([df, query_df], ignore_index=True)
             
@@ -1071,7 +1079,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
                 
                 # Filter for non-query rows
                 if "is_query" in df.columns:
-                    doc_df = df[df["is_query"] != True]
+                    doc_df = df[~df["is_query"]]
                 else:
                     doc_df = df[:-1]  # All except last row (which is the query we just added)
                 
@@ -1144,7 +1152,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
                 
                 # Average query token positions
                 query_coords = coords_2d[query_start_idx:].mean(axis=0)
-                query_idx = df[df["is_query"] == True].index[0]
+                query_idx = df[df["is_query"]].index[0]
                 df.loc[query_idx, "x"] = query_coords[0]
                 df.loc[query_idx, "y"] = query_coords[1]
                 
@@ -1204,7 +1212,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
                     df["z"] = np.random.randn(len(df))
             
             # Ensure query has a z-coordinate
-            query_idx = df[df["is_query"] == True].index[0] if "is_query" in df.columns else -1
+            query_idx = df[df["is_query"]].index[0] if "is_query" in df.columns else -1
             if query_idx >= 0 and pd.isna(df.loc[query_idx, "z"]):
                 # Place query slightly above mean for visibility
                 mean_z = df[df.index != query_idx]["z"].mean()
@@ -1222,7 +1230,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
             st.session_state.embedding_data["df"] = df
             st.session_state.embedding_data["file"] = str(output_path)
             
-            query_point = df[df["is_query"] == True].iloc[0]
+            query_point = df[df["is_query"]].iloc[0]
             st.success(f"✅ Query added at ({query_point['x']:.2f}, {query_point['y']:.2f})")
             st.info(f"Saved to: {output_path.name}")
             
@@ -1247,7 +1255,7 @@ def display_query_comparison():
     # Show query positions
     st.subheader("📍 Query Positions in Embedding Space")
     
-    query_df = df[df["is_query"] == True]
+    query_df = df[df["is_query"]]
     if not query_df.empty:
         # Display query coordinates
         query_info = []
@@ -1266,8 +1274,8 @@ def display_query_comparison():
     if any(col.startswith("query_similarity_") for col in df.columns):
         st.subheader("🎯 Top Similar Documents")
         
-        doc_df = df[df["is_query"] != True]
-        
+        doc_df = df[~df["is_query"]]
+
         for i, query_text in enumerate(queries):
             similarity_col = f"query_similarity_{query_df.index[i]}"
             if similarity_col in doc_df.columns:
@@ -1321,10 +1329,6 @@ def open_atlas_viewer(viewer_type="apple"):
             import time
             time.sleep(1)
             
-            # Build URL with file parameter
-            import urllib.parse
-            file_param = urllib.parse.quote(str(file_path))
-            
             # Choose which viewer to launch
             if viewer_type == "custom":
                 script = "scripts/simple_atlas.py"
@@ -1342,7 +1346,7 @@ def open_atlas_viewer(viewer_type="apple"):
             
             # Run in background
             with open(log_file, "w") as log:
-                process = subprocess.Popen(
+                _process = subprocess.Popen(
                     cmd,
                     stdout=log,
                     stderr=subprocess.STDOUT,

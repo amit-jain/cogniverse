@@ -31,6 +31,7 @@ class VideoSearchAgent:
         profile: Optional[str] = None,
         tenant_id: str = "default",
         config_manager: "ConfigManager" = None,
+        schema_loader=None,
     ):
         """
         Initialize video search agent.
@@ -39,6 +40,7 @@ class VideoSearchAgent:
             profile: Profile name to use (optional)
             tenant_id: Tenant identifier for config scoping
             config_manager: ConfigManager instance (required for dependency injection)
+            schema_loader: SchemaLoader instance (required for dependency injection)
 
         Raises:
             ValueError: If config_manager is not provided
@@ -53,6 +55,15 @@ class VideoSearchAgent:
         self.config_manager = config_manager
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
+        # Create schema_loader if not provided
+        if schema_loader is None:
+            from pathlib import Path
+
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        self.schema_loader = schema_loader
+
         # Determine profile
         if profile:
             self.profile = profile
@@ -63,7 +74,13 @@ class VideoSearchAgent:
 
         # Initialize search service
         try:
-            self.search_service = SearchService(self.config, self.profile)
+            self.search_service = SearchService(
+                self.config,
+                self.profile,
+                tenant_id=self.tenant_id,
+                config_manager=self.config_manager,
+                schema_loader=self.schema_loader,
+            )
             logger.info("Search service initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize search service: {e}")
@@ -120,11 +137,19 @@ async def startup_event():
     """Initialize agent on startup."""
     global video_agent
 
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
     # Get profile from environment or config
     profile = os.environ.get("VIDEO_PROFILE")
+    tenant_id = os.environ.get("TENANT_ID", "default")
+    config_manager = create_default_config_manager()
 
     try:
-        video_agent = VideoSearchAgent(profile)
+        video_agent = VideoSearchAgent(
+            profile=profile,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+        )
         logger.info("Video search agent initialized")
     except Exception as e:
         logger.error(f"Failed to initialize agent: {e}")
@@ -141,9 +166,40 @@ async def health_check():
     }
 
 
+@app.post("/search")
+async def search_endpoint(request: dict):
+    """Direct search endpoint for dashboard integration."""
+    if not video_agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    query = request.get("query")
+    if not query:
+        raise HTTPException(status_code=400, detail="No query provided")
+
+    try:
+        results = video_agent.search(
+            query=query,
+            top_k=request.get("top_k", 10),
+            start_date=request.get("start_date"),
+            end_date=request.get("end_date"),
+        )
+
+        return {
+            "status": "completed",
+            "query": query,
+            "results_count": len(results),
+            "results": [r.to_dict() if hasattr(r, "to_dict") else r for r in results],
+            "profile": video_agent.profile,
+        }
+
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/process")
 async def process_task(task: Task):
-    """Process search task."""
+    """Process search task (A2A protocol)."""
     if not video_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 

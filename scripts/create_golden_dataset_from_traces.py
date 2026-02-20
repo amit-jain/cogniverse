@@ -72,11 +72,11 @@ class GoldenDatasetGenerator:
 
         try:
             # Get spans using provider abstraction
-            project_name = f"cogniverse-{self.tenant_id}"
+            phoenix_project = f"cogniverse-{self.tenant_id}"
             spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
                 end_time=end_time,
-                project_name=project_name
+                project=phoenix_project
             )
 
             if spans_df is None or spans_df.empty:

@@ -520,17 +520,42 @@ def render_telemetry_config_ui(manager, tenant_id: str):
                 index=["disabled", "basic", "detailed", "verbose"].index(telemetry_config.level.value),
             )
 
+        st.markdown("### Provider Configuration")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            provider = st.selectbox(
+                "Telemetry Provider",
+                options=["phoenix", "langsmith", ""],
+                index=["phoenix", "langsmith", ""].index(telemetry_config.provider or ""),
+                help="Select telemetry backend provider (empty for auto-detect)",
+            )
+
+        with col2:
+            existing_http_endpoint = telemetry_config.provider_config.get("http_endpoint", "")
+            http_endpoint = st.text_input(
+                "Provider HTTP Endpoint",
+                value=existing_http_endpoint,
+                help="HTTP endpoint for the telemetry provider (e.g., http://localhost:6006 for Phoenix)",
+            )
+
         # Submit
         submitted = st.form_submit_button("💾 Save Telemetry Configuration")
 
         if submitted:
             from cogniverse_foundation.telemetry.config import TelemetryLevel
 
+            provider_config = {}
+            if http_endpoint:
+                provider_config["http_endpoint"] = http_endpoint
+
             updated_config = TelemetryConfig(
                 enabled=telemetry_enabled,
                 level=TelemetryLevel(telemetry_level),
                 otlp_enabled=otlp_enabled,
                 otlp_endpoint=otlp_endpoint,
+                provider=provider or None,
+                provider_config=provider_config,
             )
 
             try:

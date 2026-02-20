@@ -40,7 +40,7 @@ class PhoenixAnalytics:
 
     def __init__(self, phoenix_url: str = "http://localhost:6006"):
         self.phoenix_url = phoenix_url
-        self.client = px.Client()
+        self.client = px.Client(endpoint=phoenix_url)
         self._cache = {}
 
     def get_traces(
@@ -49,6 +49,7 @@ class PhoenixAnalytics:
         end_time: datetime | None = None,
         operation_filter: str | None = None,
         limit: int = 10000,
+        project_name: str | None = None,
     ) -> list[TraceMetrics]:
         """
         Fetch traces from Phoenix with optional filters
@@ -58,6 +59,7 @@ class PhoenixAnalytics:
             end_time: End of time range
             operation_filter: Filter by operation name
             limit: Maximum traces to fetch
+            project_name: Phoenix project name (e.g. 'cogniverse-tenant_id')
 
         Returns:
             List of TraceMetrics objects
@@ -75,9 +77,10 @@ class PhoenixAnalytics:
 
         # Fetch spans using the new Phoenix API
         try:
-            spans_df = self.client.get_spans_dataframe(
-                start_time=start_time, end_time=end_time, limit=limit
-            )
+            kwargs = {"start_time": start_time, "end_time": end_time, "limit": limit}
+            if project_name:
+                kwargs["project_name"] = project_name
+            spans_df = self.client.get_spans_dataframe(**kwargs)
         except Exception as e:
             logger.error(f"Failed to fetch spans: {e}")
             return []

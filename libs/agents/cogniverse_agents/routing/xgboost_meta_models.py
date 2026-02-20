@@ -12,12 +12,27 @@ import pickle
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import xgboost as xgb
 
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+
+if TYPE_CHECKING:
+    pass
+
+
+def _import_xgboost():
+    """Lazy import xgboost to avoid libomp conflict with GLiNER/transformers on macOS.
+
+    XGBoost and transformers (used by GLiNER) each link their own copy of libomp.dylib.
+    If xgboost is imported first, the conflicting libomp causes a segfault when
+    transformers loads its sentencepiece tokenizer. Deferring xgboost import ensures
+    transformers loads first.
+    """
+    import xgboost as xgb
+
+    return xgb
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +101,11 @@ class TrainingDecisionModel:
         self.model_dir = model_dir or Path("outputs/models/xgboost")
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self.model: Optional[xgb.XGBClassifier] = None
+        self.model: Any = None
         self.is_trained = False
 
         logger.info(
-            f"🧠 Initialized TrainingDecisionModel (model_dir: {self.model_dir})"
+            f"Initialized TrainingDecisionModel (model_dir: {self.model_dir})"
         )
 
     def train(
@@ -110,9 +125,11 @@ class TrainingDecisionModel:
         Returns:
             Training metrics
         """
+        xgb = _import_xgboost()
+
         if len(training_contexts) < 10:
             logger.warning(
-                f"⚠️ Only {len(training_contexts)} samples - need at least 10 for training"
+                f"Only {len(training_contexts)} samples - need at least 10 for training"
             )
             return {"status": "insufficient_data", "samples": len(training_contexts)}
 
@@ -141,7 +158,7 @@ class TrainingDecisionModel:
         accuracy = (predictions == y).mean()
 
         logger.info(
-            f"✅ Trained TrainingDecisionModel on {len(training_contexts)} samples "
+            f"Trained TrainingDecisionModel on {len(training_contexts)} samples "
             f"(accuracy: {accuracy:.3f})"
         )
 
@@ -176,7 +193,7 @@ class TrainingDecisionModel:
         )  # Scale to reasonable improvement estimate
 
         logger.info(
-            f"🤔 Training decision for {context.modality.value}: "
+            f"Training decision for {context.modality.value}: "
             f"should_train={should_train}, expected_improvement={expected_improvement:.3f}"
         )
 
@@ -267,11 +284,11 @@ class TrainingStrategyModel:
         self.model_dir = model_dir or Path("outputs/models/xgboost")
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self.model: Optional[xgb.XGBClassifier] = None
+        self.model: Any = None
         self.is_trained = False
 
         logger.info(
-            f"🧠 Initialized TrainingStrategyModel (model_dir: {self.model_dir})"
+            f"Initialized TrainingStrategyModel (model_dir: {self.model_dir})"
         )
 
     def train(
@@ -291,9 +308,11 @@ class TrainingStrategyModel:
         Returns:
             Training metrics
         """
+        xgb = _import_xgboost()
+
         if len(training_contexts) < 20:
             logger.warning(
-                f"⚠️ Only {len(training_contexts)} samples - need at least 20 for training"
+                f"Only {len(training_contexts)} samples - need at least 20 for training"
             )
             return {"status": "insufficient_data", "samples": len(training_contexts)}
 
@@ -322,7 +341,7 @@ class TrainingStrategyModel:
         accuracy = (predictions == y).mean()
 
         logger.info(
-            f"✅ Trained TrainingStrategyModel on {len(training_contexts)} samples "
+            f"Trained TrainingStrategyModel on {len(training_contexts)} samples "
             f"(accuracy: {accuracy:.3f})"
         )
 
@@ -352,7 +371,7 @@ class TrainingStrategyModel:
         strategy = self._label_to_strategy(int(prediction))
 
         logger.info(
-            f"📋 Strategy for {context.modality.value}: {strategy.value} "
+            f"Strategy for {context.modality.value}: {strategy.value} "
             f"(real: {context.real_sample_count}, synthetic: {context.synthetic_sample_count})"
         )
 
@@ -468,10 +487,10 @@ class FusionBenefitModel:
         self.model_dir = model_dir or Path("outputs/models/xgboost")
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self.model: Optional[xgb.XGBRegressor] = None
+        self.model: Any = None
         self.is_trained = False
 
-        logger.info(f"🧠 Initialized FusionBenefitModel (model_dir: {self.model_dir})")
+        logger.info(f"Initialized FusionBenefitModel (model_dir: {self.model_dir})")
 
     def train(
         self,
@@ -490,9 +509,11 @@ class FusionBenefitModel:
         Returns:
             Training metrics
         """
+        xgb = _import_xgboost()
+
         if len(fusion_contexts) < 10:
             logger.warning(
-                f"⚠️ Only {len(fusion_contexts)} samples - need at least 10 for training"
+                f"Only {len(fusion_contexts)} samples - need at least 10 for training"
             )
             return {"status": "insufficient_data", "samples": len(fusion_contexts)}
 
@@ -521,7 +542,7 @@ class FusionBenefitModel:
         rmse = np.sqrt(((predictions - y) ** 2).mean())
 
         logger.info(
-            f"✅ Trained FusionBenefitModel on {len(fusion_contexts)} samples "
+            f"Trained FusionBenefitModel on {len(fusion_contexts)} samples "
             f"(MAE: {mae:.3f}, RMSE: {rmse:.3f})"
         )
 

@@ -118,7 +118,7 @@ def render_memory_management_tab():
 
         col1, col2 = st.columns(2)
         with col1:
-            limit = st.slider("Number of Results", 1, 20, 5)
+            limit = st.slider("Number of Results", 1, 20, 5, key="memory_search_limit")
 
         if st.button("🔍 Search", key="search_btn"):
             if search_query:

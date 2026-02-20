@@ -287,6 +287,7 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         if tenant_id != st.session_state.chat_tenant_id:
             if validate_tenant_id(tenant_id):
                 st.session_state.chat_tenant_id = tenant_id
+                st.session_state["current_tenant"] = tenant_id
                 st.success(f"✅ Tenant set to: {tenant_id}")
             else:
                 st.error("❌ Invalid format. Use: org_name:tenant_name")
