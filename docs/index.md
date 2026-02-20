@@ -79,7 +79,7 @@ git clone <repository-url> && cd cogniverse
 uv sync
 
 # Start services (Vespa, Phoenix, Ollama)
-docker compose up -d
+docker compose -f deployment/docker-compose.yml up -d
 
 # Launch dashboard
 uv run streamlit run scripts/phoenix_dashboard_standalone.py

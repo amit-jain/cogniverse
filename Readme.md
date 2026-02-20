@@ -59,7 +59,7 @@ cd cogniverse
 uv sync
 
 # Start infrastructure
-docker compose up -d  # Starts Vespa, Phoenix, Mem0
+docker compose -f deployment/docker-compose.yml up -d  # Starts Vespa, Phoenix, Ollama
 
 # Verify services
 curl -s http://localhost:8080/ApplicationStatus  # Vespa
@@ -347,7 +347,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 ### Docker Compose
 ```bash
 # Production stack
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f deployment/docker-compose.prod.yml up -d
 
 # Verify health
 ./scripts/health_check.sh

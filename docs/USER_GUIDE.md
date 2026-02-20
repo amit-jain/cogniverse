@@ -75,7 +75,7 @@ cd cogniverse
 uv sync
 
 # Start infrastructure services
-docker compose up -d
+docker compose -f deployment/docker-compose.yml up -d
 ```
 
 #### 2. Verify Services

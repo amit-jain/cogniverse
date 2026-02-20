@@ -43,7 +43,7 @@ services:
   # Cogniverse Runtime (Unified FastAPI)
   runtime:
     build:
-      context: .
+      context: ..
       dockerfile: libs/runtime/Dockerfile
       args:
         - BUILDKIT_INLINE_CACHE=1
@@ -52,7 +52,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./configs/config.json:/app/configs/config.json:ro
+      - ../configs/config.json:/app/configs/config.json:ro
       - runtime-data:/data
       - runtime-logs:/logs
     env_file:
@@ -66,7 +66,7 @@ services:
       - PHOENIX_ENDPOINT=http://phoenix:6006
       - OLLAMA_ENDPOINT=http://ollama:11434
       - PYTHONUNBUFFERED=1
-      - OTLP_ENDPOINT=http://otel-collector:4317
+      - OTLP_ENDPOINT=http://phoenix:4317
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WORKERS=${RUNTIME_WORKERS:-4}
     deploy:
@@ -103,7 +103,7 @@ services:
   # Cogniverse Dashboard (Streamlit)
   dashboard:
     build:
-      context: .
+      context: ..
       dockerfile: libs/dashboard/Dockerfile
       args:
         - BUILDKIT_INLINE_CACHE=1
@@ -112,7 +112,7 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./configs/config.json:/app/configs/config.json:ro
+      - ../configs/config.json:/app/configs/config.json:ro
       - runtime-data:/data:ro
       - runtime-logs:/app/outputs:ro
     env_file:
@@ -155,7 +155,8 @@ services:
     image: arizephoenix/phoenix:4.11.0  # Pinned version for production
     container_name: cogniverse-phoenix-prod
     ports:
-      - "6006:6006"
+      - "6006:6006"   # UI + REST API
+      - "4317:4317"   # OTLP gRPC collector
     volumes:
       - phoenix-data:/phoenix-data
     environment:
@@ -184,41 +185,6 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-
-  # OpenTelemetry Collector
-  otel-collector:
-    image: otel/opentelemetry-collector:0.92.0  # Pinned version for production
-    container_name: cogniverse-otel-collector-prod
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    ports:
-      - "4317:4317"  # OTLP gRPC
-      - "4318:4318"  # OTLP HTTP
-      - "8888:8888"  # Prometheus metrics
-      - "13133:13133"  # Health check
-    volumes:
-      - ./configs/otel-collector-config.prod.yaml:/etc/otel-collector-config.yaml:ro
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:13133/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - cogniverse
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # Ollama (Local LLM inference)
   ollama:
@@ -268,9 +234,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./configs/nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
+      - ../configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../configs/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../configs/nginx/ssl:/etc/nginx/ssl:ro
       - nginx-logs:/var/log/nginx
     depends_on:
       - runtime
@@ -325,23 +291,23 @@ volumes:
 # Production Usage:
 #
 # 1. Create production environment file:
-#    cp .env.prod.example .env.prod
+#    cp deployment/.env.prod.example deployment/.env.prod
 #    # Edit .env.prod with production values
 #
 # 2. Start all services:
-#    docker-compose -f docker-compose.prod.yml up -d
+#    docker compose -f deployment/docker-compose.prod.yml up -d
 #
 # 3. Start with Nginx reverse proxy:
-#    docker-compose -f docker-compose.prod.yml --profile with-nginx up -d
+#    docker compose -f deployment/docker-compose.prod.yml --profile with-nginx up -d
 #
 # 4. Scale runtime instances:
-#    docker-compose -f docker-compose.prod.yml up -d --scale runtime=4
+#    docker compose -f deployment/docker-compose.prod.yml up -d --scale runtime=4
 #
 # 5. View logs:
-#    docker-compose -f docker-compose.prod.yml logs -f runtime
+#    docker compose -f deployment/docker-compose.prod.yml logs -f runtime
 #
 # 6. Monitor services:
-#    docker-compose -f docker-compose.prod.yml ps
+#    docker compose -f deployment/docker-compose.prod.yml ps
 #    docker stats
 #
 # 7. Health checks:
@@ -350,14 +316,14 @@ volumes:
 #    curl http://localhost:6006/health
 #
 # 8. Rolling updates:
-#    docker-compose -f docker-compose.prod.yml pull
-#    docker-compose -f docker-compose.prod.yml up -d --no-deps --build runtime
+#    docker compose -f deployment/docker-compose.prod.yml pull
+#    docker compose -f deployment/docker-compose.prod.yml up -d --no-deps --build runtime
 #
 # 9. Backup volumes:
 #    docker run --rm -v cogniverse_vespa-data:/data -v $(pwd)/backups:/backup alpine tar czf /backup/vespa-$(date +%Y%m%d).tar.gz /data
 #
 # 10. Stop all services:
-#     docker-compose -f docker-compose.prod.yml down
+#     docker compose -f deployment/docker-compose.prod.yml down
 #
 # 11. Stop and remove volumes (CAUTION - data loss):
-#     docker-compose -f docker-compose.prod.yml down -v
+#     docker compose -f deployment/docker-compose.prod.yml down -v

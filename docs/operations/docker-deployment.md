@@ -22,8 +22,8 @@
 
 Cogniverse provides Docker Compose configurations for both development and production deployments:
 
-- **`docker-compose.yml`** - Development environment with debug settings and local volume mounts
-- **`docker-compose.prod.yml`** - Production environment with resource limits, security hardening, and scaling
+- **`deployment/docker-compose.yml`** - Development environment with debug settings and local volume mounts
+- **`deployment/docker-compose.prod.yml`** - Production environment with resource limits, security hardening, and scaling
 
 ### Service Stack
 
@@ -178,7 +178,7 @@ CACHE_ENABLED=true
 ### Working with Local Code
 
 ```bash
-# Development docker-compose.yml mounts:
+# Development deployment/docker-compose.yml mounts:
 volumes:
   - ./configs/config.json:/app/configs/config.json:ro
   - ./data:/data
@@ -198,7 +198,7 @@ docker-compose up -d --build runtime
 
 ```bash
 # Copy production template
-cp .env.prod.example .env.prod
+cp deployment/.env.prod.example deployment/.env.prod
 
 # Edit with production values
 nano .env.prod
@@ -236,11 +236,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 cp configs/config.json configs/config.prod.json
 nano configs/config.prod.json
 
-# Create OTEL collector config
-# Note: Create configs/otel-collector-config.yaml based on your requirements
-# Create production version:
-cp configs/otel-collector-config.yaml configs/otel-collector-config.prod.yaml
-nano configs/otel-collector-config.prod.yaml
+# Phoenix accepts OTLP gRPC natively on port 4317 — no separate collector needed
 ```
 
 ### Deployment
@@ -249,13 +245,13 @@ nano configs/otel-collector-config.prod.yaml
 
 ```bash
 # Pull latest images
-docker-compose -f docker-compose.prod.yml pull
+docker compose -f deployment/docker-compose.prod.yml pull
 
 # Start services
-docker-compose -f docker-compose.prod.yml up -d
+docker compose -f deployment/docker-compose.prod.yml up -d
 
 # With Nginx reverse proxy
-docker-compose -f docker-compose.prod.yml --profile with-nginx up -d
+docker compose -f deployment/docker-compose.prod.yml --profile with-nginx up -d
 
 # Initialize services with multiple tenants
 TENANTS="default acme_corp globex_inc" \
@@ -267,10 +263,10 @@ OLLAMA_MODELS="mistral:7b-instruct llama2:13b" \
 
 ```bash
 # Scale runtime instances
-docker-compose -f docker-compose.prod.yml up -d --scale runtime=4
+docker compose -f deployment/docker-compose.prod.yml up -d --scale runtime=4
 
 # Scale with resource limits
-docker-compose -f docker-compose.prod.yml up -d \
+docker compose -f deployment/docker-compose.prod.yml up -d \
   --scale runtime=4 \
   --scale dashboard=2
 ```
@@ -572,7 +568,7 @@ docker-compose up -d --build
 docker-compose up -d --no-deps --build runtime
 
 # Update specific version
-VERSION=2.1.0 docker-compose -f docker-compose.prod.yml up -d
+VERSION=2.1.0 docker compose -f deployment/docker-compose.prod.yml up -d
 ```
 
 ### Data Management
@@ -754,7 +750,7 @@ docker exec cogniverse-ollama nvidia-smi --query-gpu=name,driver_version --forma
 docker-compose restart ollama
 
 # Fallback to CPU mode (slower)
-# Edit docker-compose.yml and remove GPU reservation
+# Edit deployment/docker-compose.yml and remove GPU reservation
 ```
 
 #### Runtime API Errors
@@ -852,12 +848,12 @@ docker-compose up -d
 
 4. **Enable SSL/TLS**
    ```bash
-   docker-compose -f docker-compose.prod.yml --profile with-nginx up -d
+   docker compose -f deployment/docker-compose.prod.yml --profile with-nginx up -d
    ```
 
 5. **Use specific version tags**
    ```bash
-   VERSION=2.0.0 docker-compose -f docker-compose.prod.yml up -d
+   VERSION=2.0.0 docker compose -f deployment/docker-compose.prod.yml up -d
    ```
 
 ### Performance
@@ -887,7 +883,7 @@ docker-compose up -d
 
 4. **Scale Runtime**
    ```bash
-   docker-compose -f docker-compose.prod.yml up -d --scale runtime=4
+   docker compose -f deployment/docker-compose.prod.yml up -d --scale runtime=4
    ```
 
 ### Monitoring
@@ -942,7 +938,7 @@ docker-compose up -d
 3. **Version control**
    ```bash
    # Commit configuration changes
-   git add docker-compose.prod.yml .env.prod.example
+   git add deployment/docker-compose.prod.yml deployment/.env.prod.example
    git commit -m "Update production configuration"
    ```
 

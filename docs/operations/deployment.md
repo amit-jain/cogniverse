@@ -193,7 +193,7 @@ For manual Docker Compose setup, here's the reference configuration:
 ### Complete Stack
 
 ```yaml
-# docker-compose.yml
+# deployment/docker-compose.yml
 version: '3.8'
 
 services:
@@ -213,7 +213,8 @@ services:
   phoenix:
     image: arizephoenix/phoenix:latest
     ports:
-      - "6006:6006"
+      - "6006:6006"   # UI + REST API
+      - "4317:4317"   # OTLP gRPC collector
     volumes:
       - phoenix-data:/data
     environment:
@@ -223,12 +224,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-  otel-collector:
-    image: otel/opentelemetry-collector:latest
-    ports:
-      - "4317:4317"  # OTLP gRPC collector
-      - "4318:4318"  # OTLP HTTP
 
   ollama:
     image: ollama/ollama:latest
@@ -252,7 +247,7 @@ services:
       - BACKEND_URL=http://vespa
       - BACKEND_PORT=8080
       - BACKEND_CONFIG_PORT=19071
-      - PHOENIX_COLLECTOR_ENDPOINT=otel-collector:4317
+      - PHOENIX_COLLECTOR_ENDPOINT=phoenix:4317
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - ENVIRONMENT=production
       - PHOENIX_ENABLED=true

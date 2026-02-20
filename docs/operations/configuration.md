@@ -717,7 +717,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_vespa_config_store.py
 
 ```bash
 # Test with real backends
-docker compose up -d vespa postgres redis
+docker compose -f deployment/docker-compose.yml up -d vespa
 
 # Run integration tests
 JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v

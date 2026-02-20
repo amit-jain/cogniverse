@@ -29,22 +29,22 @@ services:
   # Cogniverse Runtime (Unified FastAPI)
   runtime:
     build:
-      context: .
+      context: ..
       dockerfile: libs/runtime/Dockerfile
     container_name: cogniverse-runtime
     ports:
       - "8000:8000"
     volumes:
-      - ./configs/config.json:/app/configs/config.json:ro
-      - ./data:/data
-      - ./outputs/logs:/logs
+      - ../configs/config.json:/app/configs/config.json:ro
+      - ../data:/data
+      - ../outputs/logs:/logs
     environment:
       - RUNTIME_HOST=0.0.0.0
       - RUNTIME_PORT=8000
       - VESPA_URL=http://vespa
       - VESPA_PORT=8080
       - PYTHONUNBUFFERED=1
-      - OTLP_ENDPOINT=http://otel-collector:4317
+      - OTLP_ENDPOINT=http://phoenix:4317
     depends_on:
       vespa:
         condition: service_healthy
@@ -61,15 +61,15 @@ services:
   # Cogniverse Dashboard (Streamlit)
   dashboard:
     build:
-      context: .
+      context: ..
       dockerfile: libs/dashboard/Dockerfile
     container_name: cogniverse-dashboard
     ports:
       - "8501:8501"
     volumes:
-      - ./configs/config.json:/app/configs/config.json:ro
-      - ./data:/data:ro
-      - ./outputs:/app/outputs:ro
+      - ../configs/config.json:/app/configs/config.json:ro
+      - ../data:/data:ro
+      - ../outputs:/app/outputs:ro
     environment:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
@@ -93,26 +93,12 @@ services:
     image: arizephoenix/phoenix:latest
     container_name: cogniverse-phoenix
     ports:
-      - "6006:6006"
+      - "6006:6006"   # UI + REST API
+      - "4317:4317"   # OTLP gRPC collector
     volumes:
       - phoenix-data:/phoenix-data
     environment:
       - PHOENIX_WORKING_DIR=/phoenix-data
-    networks:
-      - cogniverse
-    restart: unless-stopped
-
-  # OpenTelemetry Collector (optional - for telemetry)
-  otel-collector:
-    image: otel/opentelemetry-collector:latest
-    container_name: cogniverse-otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    ports:
-      - "4317:4317"  # OTLP gRPC
-      - "4318:4318"  # OTLP HTTP
-      - "8888:8888"  # Prometheus metrics
-    volumes:
-      - ./configs/otel-collector-config.yaml:/etc/otel-collector-config.yaml
     networks:
       - cogniverse
     restart: unless-stopped
@@ -157,13 +143,12 @@ volumes:
   ollama-data:
     driver: local
 
-# Usage:
+# Usage (run from project root):
 # 1. Start all services:
-#    docker-compose up -d
+#    docker compose -f deployment/docker-compose.yml up -d
 #
 # 2. View logs:
-#    docker-compose logs -f runtime
-#    docker-compose logs -f dashboard
+#    docker compose -f deployment/docker-compose.yml logs -f runtime
 #
 # 3. Access services:
 #    - Runtime API: http://localhost:8000
@@ -173,11 +158,8 @@ volumes:
 #    - Vespa: http://localhost:8080
 #    - Ollama: http://localhost:11434
 #
-# 4. Health checks:
-#    docker-compose ps
+# 4. Stop all services:
+#    docker compose -f deployment/docker-compose.yml down
 #
-# 5. Stop all services:
-#    docker-compose down
-#
-# 6. Stop and remove volumes:
-#    docker-compose down -v
+# 5. Stop and remove volumes:
+#    docker compose -f deployment/docker-compose.yml down -v
