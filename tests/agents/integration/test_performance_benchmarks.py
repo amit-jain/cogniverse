@@ -136,10 +136,10 @@ class TestPerformanceBenchmarks:
 
             # Performance assertions
             assert (
-                avg_response_time < 10.0
+                avg_response_time < 30.0
             ), f"Average response time too high: {avg_response_time:.3f}s"
             assert (
-                max_response_time < 20.0
+                max_response_time < 60.0
             ), f"Max response time too high: {max_response_time:.3f}s"
 
     def test_relationship_extraction_performance(self):

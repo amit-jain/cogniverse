@@ -225,6 +225,23 @@ class RoutingDeps(AgentDeps):
     )
     max_concurrent_agents: int = Field(5, description="Max concurrent agents")
     enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
+    memory_backend_host: Optional[str] = Field(
+        None, description="Backend host for memory storage"
+    )
+    memory_backend_port: Optional[int] = Field(
+        None, description="Backend port for memory storage"
+    )
+    memory_llm_model: Optional[str] = Field(
+        None, description="LLM model for memory extraction"
+    )
+    memory_embedding_model: Optional[str] = Field(
+        None, description="Embedding model for memory search"
+    )
+    memory_llm_base_url: Optional[str] = Field(
+        None, description="LLM API base URL for memory"
+    )
+    memory_config_manager: Any = Field(None, description="ConfigManager for memory")
+    memory_schema_loader: Any = Field(None, description="SchemaLoader for memory")
     enable_contextual_analysis: bool = Field(
         True, description="Enable contextual analysis"
     )
@@ -545,17 +562,34 @@ class RoutingAgent(
 
             # Initialize memory system (if enabled)
             if deps.enable_memory:
-                try:
-                    # MemoryAwareMixin provides memory initialization
-                    self.initialize_memory(
-                        agent_name="routing_agent",
-                        tenant_id=deps.tenant_id,
-                    )
-                    self.logger.info(
-                        f"Memory system initialized for tenant: {deps.tenant_id}"
-                    )
-                except Exception as e:
-                    self.logger.warning(f"Failed to initialize memory: {e}")
+                for field in (
+                    "memory_backend_host",
+                    "memory_backend_port",
+                    "memory_llm_model",
+                    "memory_embedding_model",
+                    "memory_llm_base_url",
+                    "memory_config_manager",
+                    "memory_schema_loader",
+                ):
+                    if getattr(deps, field) is None:
+                        raise ValueError(
+                            f"enable_memory=True but {field} is None — "
+                            "all memory_* fields are required when memory is enabled"
+                        )
+                self.initialize_memory(
+                    agent_name="routing_agent",
+                    tenant_id=deps.tenant_id,
+                    backend_host=deps.memory_backend_host,
+                    backend_port=deps.memory_backend_port,
+                    llm_model=deps.memory_llm_model,
+                    embedding_model=deps.memory_embedding_model,
+                    llm_base_url=deps.memory_llm_base_url,
+                    config_manager=deps.memory_config_manager,
+                    schema_loader=deps.memory_schema_loader,
+                )
+                self.logger.info(
+                    f"Memory system initialized for tenant: {deps.tenant_id}"
+                )
 
             # Initialize contextual analysis
             if deps.enable_contextual_analysis:

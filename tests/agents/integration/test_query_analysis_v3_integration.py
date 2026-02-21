@@ -677,9 +677,9 @@ To run these integration tests with real Ollama:
    ollama pull qwen:7b
 
 3. Set environment variables:
-   export OLLAMA_BASE_URL=http://localhost:11434
-   export OLLAMA_QUERY_MODEL=smollm3:8b
-   export OLLAMA_REASONING_MODEL=qwen:7b
+   export LLM_BASE_URL=http://localhost:11434/v1
+   export LLM_QUERY_MODEL=smollm3:8b
+   export LLM_REASONING_MODEL=qwen:7b
 
 4. Run integration tests:
    pytest tests/agents/integration/test_query_analysis_v3_integration.py -v

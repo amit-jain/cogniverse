@@ -418,32 +418,37 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 ```python
 def initialize(
     self,
-    backend_host: str = "localhost",
-    backend_port: int = 8080,
+    backend_host: str,
+    backend_port: int,
+    llm_model: str,
+    embedding_model: str,
+    llm_base_url: str,
+    config_manager,
+    schema_loader,
     backend_config_port: Optional[int] = None,
     base_schema_name: str = "agent_memories",
-    llm_model: str = "llama3.2",
-    embedding_model: str = "nomic-embed-text",
-    ollama_base_url: str = "http://localhost:11434/v1",
     auto_create_schema: bool = True,
-    config_manager=None,
-    schema_loader=None,
 ) -> None:
     """
     Initialize Mem0 with backend using tenant-specific schema.
 
     Configuration:
-    - LLM: Ollama llama3.2 for memory processing
-    - Embedder: Ollama nomic-embed-text (768-dim)
+    - LLM: Configured via llm_model param (e.g. "ollama/llama3.2")
+    - Embedder: Configured via embedding_model param (e.g. "nomic-embed-text", 768-dim)
     - Vector Store: Vespa with schema-per-tenant
+
+    All params are required - no defaults for LLM/embedding configuration.
 
     Example:
         manager = Mem0MemoryManager(tenant_id="acme")
         manager.initialize(
-            backend_host="localhost",
+            backend_host="http://localhost",
             backend_port=8080,
-            llm_model="llama3.2",
-            embedding_model="nomic-embed-text"
+            llm_model=config["memory"]["llm_model"],
+            embedding_model=config["memory"]["embedding_model"],
+            llm_base_url=config["memory"]["llm_base_url"],
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
     """
 ```
@@ -461,8 +466,8 @@ def add_memory(
     Add content to agent's memory.
 
     Process:
-    1. Mem0 processes content with LLM (llama3.2)
-    2. Generates embedding (nomic-embed-text, 768-dim)
+    1. Mem0 processes content with configured LLM
+    2. Generates embedding with configured embedding model (768-dim for nomic-embed-text)
     3. Stores in tenant-specific Vespa schema
 
     Args:
@@ -1003,10 +1008,13 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 tenant_id = "acme"
 memory = Mem0MemoryManager(tenant_id=tenant_id)
 memory.initialize(
-    backend_host="localhost",
+    backend_host="http://localhost",
     backend_port=8080,
-    llm_model="llama3.2",
-    embedding_model="nomic-embed-text"
+    llm_model=config["memory"]["llm_model"],
+    embedding_model=config["memory"]["embedding_model"],
+    llm_base_url=config["memory"]["llm_base_url"],
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 agent_name = "routing_agent"

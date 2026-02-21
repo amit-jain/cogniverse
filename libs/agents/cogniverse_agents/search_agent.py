@@ -457,8 +457,7 @@ class SearchAgent(
         else:
             backend_port = 8080
 
-        # Extract backend_host for memory initialization
-        backend_host = backend_url.replace("http://", "").replace("https://", "")
+        backend_host = backend_url
 
         # Get config port for schema deployment
         backend_config_port = deps.backend_config_port
@@ -503,12 +502,15 @@ class SearchAgent(
             tenant_id=deps.tenant_id, config_manager=config_manager
         )
 
-        # Initialize memory for search agent
+        memory_config = self.search_config.get("memory", {})
         memory_initialized = self.initialize_memory(
             agent_name="search_agent",
             tenant_id=deps.tenant_id,
             backend_host=backend_host,
             backend_port=backend_port,
+            llm_model=memory_config.get("llm_model", ""),
+            embedding_model=memory_config.get("embedding_model", ""),
+            llm_base_url=memory_config.get("llm_base_url", ""),
             backend_config_port=backend_config_port,
             auto_create_schema=deps.auto_create_memory_schema,
             config_manager=self.config_manager,

@@ -38,6 +38,9 @@ def memory_manager(shared_memory_vespa):
         backend_port=shared_memory_vespa["http_port"],
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
+        llm_model="llama3.2",
+        embedding_model="nomic-embed-text",
+        llm_base_url="http://localhost:11434/v1",
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
         schema_loader=schema_loader,
@@ -334,11 +337,21 @@ class TestMemorySystemCompleteE2E:
 
         # Initialize with shared Vespa ports
         # Use same tenant as shared fixture to reuse existing schema via singleton pattern
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
         success = agent.initialize_memory(
             agent_name="mixin_e2e_test",
             tenant_id="test_tenant",  # Same tenant = reuses manager singleton
             backend_host="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
+            llm_model="llama3.2",
+            embedding_model="nomic-embed-text",
+            llm_base_url="http://localhost:11434/v1",
+            config_manager=create_default_config_manager(),
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
             backend_config_port=shared_memory_vespa["config_port"],
             auto_create_schema=False,  # Explicitly don't try to create (already exists)
         )

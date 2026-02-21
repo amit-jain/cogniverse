@@ -74,6 +74,9 @@ class TestMem0MemoryManager:
         manager.initialize(
             backend_host="localhost",
             backend_port=8080,
+            llm_model="test-llm",
+            embedding_model="test-embed",
+            llm_base_url="http://localhost:11434/v1",
             base_schema_name="agent_memories",
             config_manager=config_manager,
             schema_loader=schema_loader,

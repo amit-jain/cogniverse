@@ -35,7 +35,7 @@ class TestTextAnalysisAgent:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 
@@ -77,7 +77,7 @@ class TestTextAnalysisAgent:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 
@@ -119,7 +119,7 @@ class TestTextAnalysisAgent:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 
@@ -174,7 +174,7 @@ class TestTextAnalysisEndpoints:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 
@@ -214,7 +214,7 @@ class TestTextAnalysisEndpoints:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 
@@ -250,7 +250,7 @@ class TestTextAnalysisEndpoints:
         mock_config = {
             "text_analysis_port": 8005,
             "llm_model": "gpt-4",
-            "ollama_base_url": "http://localhost:11434",
+            "llm_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
 

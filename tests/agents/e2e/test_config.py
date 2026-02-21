@@ -8,9 +8,9 @@ from typing import Any, Dict
 # Test environment configuration
 E2E_CONFIG: Dict[str, Any] = {
     # LLM Configuration
-    "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-    "ollama_model": os.getenv("OLLAMA_MODEL", "smollm3:8b"),
-    "openai_api_key": "fake-key",  # Ollama doesn't need real key
+    "llm_base_url": os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+    "llm_model": os.getenv("LLM_MODEL", "smollm3:8b"),
+    "llm_api_key": os.getenv("LLM_API_KEY", "no-key"),
     # Backend Services
     "vespa_url": os.getenv("VESPA_URL", "http://localhost:8080"),
     "phoenix_url": os.getenv("PHOENIX_URL", "http://localhost:6006"),
@@ -67,9 +67,9 @@ def is_service_available(service_name: str) -> bool:
     try:
         import requests
 
-        if service_name == "ollama":
-            url = E2E_CONFIG["ollama_base_url"].replace("/v1", "/api/tags")
-            response = requests.get(url, timeout=5)
+        if service_name == "llm":
+            base = E2E_CONFIG["llm_base_url"].rstrip("/")
+            response = requests.get(f"{base}/models", timeout=5)
             return response.status_code == 200
 
         elif service_name == "vespa":
@@ -89,16 +89,17 @@ def is_service_available(service_name: str) -> bool:
 
 
 def get_available_models() -> list:
-    """Get list of available models from Ollama."""
+    """Get list of available models from the LLM server."""
     try:
         import requests
 
-        url = E2E_CONFIG["ollama_base_url"].replace("/v1", "/api/tags")
-        response = requests.get(url, timeout=5)
+        base = E2E_CONFIG["llm_base_url"].rstrip("/")
+        response = requests.get(f"{base}/models", timeout=5)
 
         if response.status_code == 200:
-            models = response.json().get("models", [])
-            return [model["name"] for model in models]
+            data = response.json()
+            models = data.get("data", [])
+            return [model.get("id", "") for model in models]
 
         return []
 

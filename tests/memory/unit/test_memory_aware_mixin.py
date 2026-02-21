@@ -16,6 +16,18 @@ class MockAgentWithMemory(MemoryAwareMixin):
         super().__init__()
 
 
+# Default memory init kwargs for tests (all required params)
+MEMORY_INIT_DEFAULTS = {
+    "backend_host": "http://localhost",
+    "backend_port": 8080,
+    "llm_model": "test-llm",
+    "embedding_model": "test-embed",
+    "llm_base_url": "http://localhost:11434/v1",
+    "config_manager": MagicMock(),
+    "schema_loader": MagicMock(),
+}
+
+
 class TestMemoryAwareMixin:
     """Test MemoryAwareMixin"""
 
@@ -53,7 +65,9 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize memory
-        success = agent.initialize_memory("test_agent", "test_tenant")
+        success = agent.initialize_memory(
+            "test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS
+        )
 
         assert success is True
         assert agent._memory_agent_name == "test_agent"
@@ -69,22 +83,32 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize memory with custom backend config
+        mock_cm = MagicMock()
+        mock_sl = MagicMock()
         success = agent.initialize_memory(
             "test_agent",
             "test_tenant",
             backend_host="backend.local",
             backend_port=9090,
+            llm_model="test-llm",
+            embedding_model="test-embed",
+            llm_base_url="http://localhost:11434/v1",
+            config_manager=mock_cm,
+            schema_loader=mock_sl,
         )
 
         assert success is True
         mock_manager.initialize.assert_called_once_with(
             backend_host="backend.local",
             backend_port=9090,
+            llm_model="test-llm",
+            embedding_model="test-embed",
+            llm_base_url="http://localhost:11434/v1",
             backend_config_port=None,
             base_schema_name="agent_memories",
             auto_create_schema=True,
-            config_manager=None,
-            schema_loader=None,
+            config_manager=mock_cm,
+            schema_loader=mock_sl,
         )
 
     def test_get_relevant_context_without_initialization(self, agent):
@@ -115,7 +139,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and get context
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
         context = agent.get_relevant_context("test query")
 
         assert context is not None
@@ -133,7 +157,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and update
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
         success = agent.update_memory("test content")
 
         assert success is True
@@ -154,7 +178,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and clear
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
         assert agent._memory_initialized is True
 
         success = agent.clear_memory()
@@ -174,7 +198,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
 
         # Inject context
         original_prompt = "Answer the query"
@@ -196,7 +220,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
 
         # Inject context
         original_prompt = "Answer the query"
@@ -217,7 +241,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
 
         # Remember success
         success = agent.remember_success("test query", "test result", {"key": "value"})
@@ -238,7 +262,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
 
         # Remember failure
         success = agent.remember_failure("test query", "test error")
@@ -262,7 +286,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent", "test_tenant")
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
 
         # Get summary
         summary = agent.get_memory_summary()

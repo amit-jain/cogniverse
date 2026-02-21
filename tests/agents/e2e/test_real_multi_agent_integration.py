@@ -5,7 +5,7 @@ These tests use actual LLMs, real DSPy optimization, and real backend services
 to test the complete multi-agent workflow without mocks.
 
 Requirements:
-- Ollama running locally with smollm3:8b model
+- LLM server running locally (e.g. Ollama with gemma3:4b)
 - Vespa backend available (optional, falls back gracefully)
 - Phoenix telemetry server (optional)
 """
@@ -14,7 +14,7 @@ import logging
 
 import pytest
 
-# E2E tests require Ollama server with smollm3:8b model
+# E2E tests require an LLM server (default: Ollama with gemma3:4b)
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
@@ -35,27 +35,27 @@ logger = logging.getLogger(__name__)
 
 # Test configuration
 TEST_CONFIG = {
-    "ollama_base_url": "http://localhost:11434/v1",
-    "ollama_model": "gemma3:4b",  # Use available model
-    "openai_api_key": "fake-key",  # Ollama doesn't need real key
+    "llm_base_url": "http://localhost:11434/v1",
+    "llm_model": "gemma3:4b",
+    "llm_api_key": "no-key",
     "vespa_url": "http://localhost:8080",
     "test_timeout": 300,  # 5 minutes for real LLM calls
     "optimization_rounds": 1,  # Keep optimization quick for tests
 }
 
 
-class TestOllamaAvailability:
-    """Check if Ollama is available for real integration tests."""
+class TestLLMAvailability:
+    """Check if LLM server is available for real integration tests."""
 
-    def test_ollama_model_available(self):
-        """Test if Ollama is running and has the required model."""
+    def test_llm_model_available(self):
+        """Test if LLM server is running and has the required model."""
         try:
+            import requests
 
-            # Check
-            # Check
-            logger.info(
-                f"✅ Ollama available with model: {TEST_CONFIG['ollama_model']}"
-            )
+            base = TEST_CONFIG["llm_base_url"].rstrip("/")
+            response = requests.get(f"{base}/models", timeout=5)
+            assert response.status_code == 200, "LLM server not reachable"
+            logger.info(f"LLM server available with model: {TEST_CONFIG['llm_model']}")
         except Exception:
             pass
 
@@ -72,9 +72,9 @@ class TestRealQueryAnalysisIntegration:
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["openai_api_key"],
-            openai_base_url=TEST_CONFIG["ollama_base_url"],
-            model_name=TEST_CONFIG["ollama_model"],
+            openai_api_key=TEST_CONFIG["llm_api_key"],
+            openai_base_url=TEST_CONFIG["llm_base_url"],
+            model_name=TEST_CONFIG["llm_model"],
             config_manager=create_default_config_manager(),
         )
 
@@ -378,9 +378,9 @@ class TestRealDSPyOptimizationIntegration:
 
         # Initialize with local LLM
         _success = optimizer.initialize_language_model(
-            api_base=TEST_CONFIG["ollama_base_url"],
-            model=TEST_CONFIG["ollama_model"],
-            api_key=TEST_CONFIG["openai_api_key"],
+            api_base=TEST_CONFIG["llm_base_url"],
+            model=TEST_CONFIG["llm_model"],
+            api_key=TEST_CONFIG["llm_api_key"],
         )
         # Create optimization pipeline
         pipeline = DSPyAgentOptimizerPipeline(optimizer)
@@ -435,9 +435,9 @@ class TestRealDSPyOptimizationIntegration:
 
         # Create agent with DSPy disabled first
         analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["openai_api_key"],
-            openai_base_url=TEST_CONFIG["ollama_base_url"],
-            model_name=TEST_CONFIG["ollama_model"],
+            openai_api_key=TEST_CONFIG["llm_api_key"],
+            openai_base_url=TEST_CONFIG["llm_base_url"],
+            model_name=TEST_CONFIG["llm_model"],
             enable_dspy=False,
             config_manager=create_default_config_manager(),
         )
@@ -476,9 +476,9 @@ class TestRealEndToEndWorkflow:
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["openai_api_key"],
-            openai_base_url=TEST_CONFIG["ollama_base_url"],
-            model_name=TEST_CONFIG["ollama_model"],
+            openai_api_key=TEST_CONFIG["llm_api_key"],
+            openai_base_url=TEST_CONFIG["llm_base_url"],
+            model_name=TEST_CONFIG["llm_model"],
             config_manager=create_default_config_manager(),
         )
 
@@ -591,18 +591,18 @@ class TestRealPerformanceComparison:
 
         # Initialize agent without DSPy optimization
         default_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["openai_api_key"],
-            openai_base_url=TEST_CONFIG["ollama_base_url"],
-            model_name=TEST_CONFIG["ollama_model"],
+            openai_api_key=TEST_CONFIG["llm_api_key"],
+            openai_base_url=TEST_CONFIG["llm_base_url"],
+            model_name=TEST_CONFIG["llm_model"],
             enable_dspy=False,
             config_manager=create_default_config_manager(),
         )
 
         # Initialize agent with DSPy optimization (simulated)
         optimized_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["openai_api_key"],
-            openai_base_url=TEST_CONFIG["ollama_base_url"],
-            model_name=TEST_CONFIG["ollama_model"],
+            openai_api_key=TEST_CONFIG["llm_api_key"],
+            openai_base_url=TEST_CONFIG["llm_base_url"],
+            model_name=TEST_CONFIG["llm_model"],
             enable_dspy=True,  # Would use actual optimized prompts in real scenario
             config_manager=create_default_config_manager(),
         )

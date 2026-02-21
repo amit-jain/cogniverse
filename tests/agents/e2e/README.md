@@ -6,8 +6,8 @@ This directory contains **real** end-to-end integration tests for **cogniverse-a
 
 ## Test Categories
 
-### 1. **TestOllamaAvailability**
-- Checks if Ollama server is running and has required models
+### 1. **TestLLMAvailability**
+- Checks if LLM server is running and has required models
 - Acts as a gate for all other real integration tests
 
 ### 2. **TestRealQueryAnalysisIntegration**
@@ -88,8 +88,8 @@ JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/ -v --timeout=600
 
 ### Run Specific Test Categories
 ```bash
-# Test only Ollama availability
-uv run python -m pytest tests/agents/e2e/::TestOllamaAvailability -v
+# Test only LLM availability
+uv run python -m pytest tests/agents/e2e/::TestLLMAvailability -v
 
 # Test only query analysis
 uv run python -m pytest tests/agents/e2e/::TestRealQueryAnalysisIntegration -v
@@ -103,19 +103,19 @@ uv run python -m pytest tests/agents/e2e/::TestRealEndToEndWorkflow -v
 
 ### Run with Different Models
 ```bash
-# Use different model (must be available in Ollama)
-OLLAMA_MODEL=llama3.2:3b uv run python -m pytest tests/agents/e2e/ -v
+# Use different model (must be available on the LLM server)
+LLM_MODEL=llama3.2:3b uv run python -m pytest tests/agents/e2e/ -v
 
-# Use different Ollama server
-OLLAMA_BASE_URL=http://remote-server:11434/v1 uv run python -m pytest tests/agents/e2e/ -v
+# Use different LLM server
+LLM_BASE_URL=http://remote-server:11434/v1 uv run python -m pytest tests/agents/e2e/ -v
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-- `OLLAMA_BASE_URL`: Ollama API endpoint (default: http://localhost:11434/v1)
-- `OLLAMA_MODEL`: Model to use for tests (default: smollm3:8b)
+- `LLM_BASE_URL`: LLM API endpoint (default: http://localhost:11434/v1)
+- `LLM_MODEL`: Model to use for tests (default: smollm3:8b)
 - `E2E_TEST_TIMEOUT`: Test timeout in seconds (default: 300)
 - `DSPY_OPTIMIZATION_ROUNDS`: DSPy optimization rounds (default: 1)
 - `MAX_TRAINING_EXAMPLES`: Max examples for training (default: 3)
@@ -125,7 +125,7 @@ OLLAMA_BASE_URL=http://remote-server:11434/v1 uv run python -m pytest tests/agen
 
 ### Example Configuration
 ```bash
-export OLLAMA_MODEL="smollm3:8b"
+export LLM_MODEL="smollm3:8b"
 export E2E_TEST_TIMEOUT="600"
 export ENABLE_VESPA_TESTS="true"
 export ENABLE_LONG_RUNNING_TESTS="true"
@@ -137,15 +137,15 @@ uv run python -m pytest tests/agents/e2e/ -v
 
 ### Successful Test Run
 ```
-tests/agents/e2e/test_real_multi_agent_integration.py::TestOllamaAvailability::test_ollama_model_available PASSED
+tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability::test_llm_model_available PASSED
 tests/agents/e2e/test_real_multi_agent_integration.py::TestRealQueryAnalysisIntegration::test_real_query_analysis_with_local_llm PASSED
 tests/agents/e2e/test_real_multi_agent_integration.py::TestRealEndToEndWorkflow::test_real_multi_agent_workflow PASSED
 ```
 
 ### Skipped Due to Missing Services
 ```
-tests/agents/e2e/test_real_multi_agent_integration.py::TestOllamaAvailability::test_ollama_model_available SKIPPED [100%]
-SKIPPED [1] Model smollm3:8b not available in Ollama - skipping real integration tests
+tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability::test_llm_model_available SKIPPED [100%]
+SKIPPED [1] Model not available on LLM server - skipping real integration tests
 ```
 
 ## Comparison with Existing Tests

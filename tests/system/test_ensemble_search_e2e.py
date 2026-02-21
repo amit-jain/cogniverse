@@ -150,7 +150,7 @@ def _create_test_documents():
 @pytest.fixture
 def ensemble_search_agent(ensemble_system_setup):
     """Create SearchAgent with ensemble configuration"""
-    from cogniverse_agents.search_agent import SearchAgent
+    from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     vespa_http_port = ensemble_system_setup["http_port"]
@@ -164,15 +164,17 @@ def ensemble_search_agent(ensemble_system_setup):
     )
 
     # Create SearchAgent with same tenant_id as VespaTestManager uses
-    agent = SearchAgent(
-        tenant_id="test_tenant",  # Must match VespaTestManager's tenant_id
-        schema_loader=schema_loader,
-        config_manager=config_manager,
+    search_deps = SearchAgentDeps(
+        tenant_id="test_tenant",
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
         profile=list(profiles.values())[0]["schema"],
-        auto_create_schema=False,
+    )
+    agent = SearchAgent(
+        deps=search_deps,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
         port=8017,
     )
 
@@ -238,7 +240,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 start_time = time.time()
@@ -256,20 +258,19 @@ class TestEnsembleSearchEndToEnd:
         finally:
             agent.search_backend.search = original_search
 
-        # VALIDATE: Ensemble mode
-        assert result["search_mode"] == "ensemble", "Should use ensemble mode"
-        assert set(result["profiles"]) == set(
+        # VALIDATE: Ensemble mode (result is a SearchOutput pydantic model)
+        assert result.search_mode == "ensemble", "Should use ensemble mode"
+        assert set(result.profiles) == set(
             profiles.keys()
         ), "Should query all profiles"
 
         # VALIDATE: Results structure
-        assert "results" in result
-        assert "total_results" in result
-        assert isinstance(result["results"], list)
+        assert isinstance(result.results, list)
+        assert result.total_results is not None
 
         # VALIDATE: RRF metadata on results (if any returned)
-        if result["results"]:
-            first_result = result["results"][0]
+        if result.results:
+            first_result = result.results[0]
             assert "rrf_score" in first_result, "Should have RRF score"
             assert "profile_ranks" in first_result, "Should have profile ranks"
             assert "num_profiles" in first_result, "Should have profile count"
@@ -284,7 +285,7 @@ class TestEnsembleSearchEndToEnd:
         assert elapsed_ms < 10000, f"E2E ensemble took {elapsed_ms:.2f}ms (too slow)"
 
         logger.info(
-            f"✅ E2E ensemble search completed: {result['total_results']} results in {elapsed_ms:.2f}ms"
+            f"✅ E2E ensemble search completed: {result.total_results} results in {elapsed_ms:.2f}ms"
         )
 
     @pytest.mark.asyncio
@@ -335,7 +336,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 # Run multiple times to get average latency
@@ -430,7 +431,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(
@@ -442,7 +443,7 @@ class TestEnsembleSearchEndToEnd:
                     }
                 )
 
-            results = result["results"]
+            results = result.results
 
             # VALIDATE: test_video_1 should rank high (appears in all 3 profiles)
             video1_results = [r for r in results if r["id"] == "test_video_1"]
@@ -518,7 +519,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder",
+                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(
@@ -531,11 +532,11 @@ class TestEnsembleSearchEndToEnd:
                 )
 
             # VALIDATE: Ensemble still succeeded despite one failure
-            assert result["search_mode"] == "ensemble"
+            assert result.search_mode == "ensemble"
 
             # Should have results from 2/3 profiles
             logger.info(
-                f"✅ Error recovery validated: {result['total_results']} results from 2/3 profiles"
+                f"✅ Error recovery validated: {result.total_results} results from 2/3 profiles"
             )
 
         finally:

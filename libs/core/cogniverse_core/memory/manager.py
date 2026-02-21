@@ -106,31 +106,31 @@ class Mem0MemoryManager:
 
     def initialize(
         self,
-        backend_host: str = "http://localhost",
-        backend_port: int = 8080,
+        backend_host: str,
+        backend_port: int,
+        llm_model: str,
+        embedding_model: str,
+        llm_base_url: str,
+        config_manager,
+        schema_loader,
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
-        llm_model: str = "llama3.1:8b",
-        embedding_model: str = "nomic-embed-text",
-        ollama_base_url: str = "http://localhost:11434/v1",
         auto_create_schema: bool = True,
-        config_manager=None,
-        schema_loader=None,
     ) -> None:
         """
         Initialize Mem0 with backend using tenant-specific schema.
 
         Args:
-            backend_host: Backend endpoint host
-            backend_port: Backend data endpoint port (default: 8080)
+            backend_host: Backend endpoint URL (e.g. "http://localhost")
+            backend_port: Backend data endpoint port
+            llm_model: LLM model name for memory extraction
+            embedding_model: Embedding model name for memory search
+            llm_base_url: OpenAI-compatible LLM API endpoint
+            config_manager: ConfigManager instance
+            schema_loader: SchemaLoader instance
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
-            llm_model: Ollama model name (default: llama3.1:8b)
-            embedding_model: Ollama embedding model (default: nomic-embed-text)
-            ollama_base_url: Ollama OpenAI-compatible API endpoint
             auto_create_schema: Auto-deploy tenant schema if not exists
-            config_manager: ConfigManager instance (REQUIRED)
-            schema_loader: SchemaLoader instance (REQUIRED)
 
         Raises:
             ValueError: If tenant_id not set
@@ -140,14 +140,8 @@ class Mem0MemoryManager:
 
         # Get backend instance for memory operations
         from cogniverse_core.registries.backend_registry import get_backend_registry
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-            get_config,
-        )
+        from cogniverse_foundation.config.utils import get_config
 
-        # Use passed config_manager or create default if not provided
-        if config_manager is None:
-            config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
@@ -178,9 +172,7 @@ class Mem0MemoryManager:
                 "strategy": "semantic_search",  # Default to semantic search for memories
             }
 
-        # Build backend section with ollama_base_url and profiles for encoder initialization
         backend_section = {
-            "ollama_base_url": ollama_base_url,  # Required for Ollama encoder
             "profiles": profiles,  # Profiles for VespaSearchBackend._initialize_encoders()
             **config.get("backend", {}),  # Merge any existing backend config
         }
@@ -224,14 +216,14 @@ class Mem0MemoryManager:
                 "config": {
                     "model": llm_model,
                     "temperature": 0.1,
-                    "ollama_base_url": "http://localhost:11434",
+                    "ollama_base_url": llm_base_url,
                 },
             },
             "embedder": {
                 "provider": "ollama",
                 "config": {
                     "model": embedding_model,
-                    "ollama_base_url": "http://localhost:11434",
+                    "ollama_base_url": llm_base_url,
                 },
             },
             "vector_store": {

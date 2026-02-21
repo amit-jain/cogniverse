@@ -34,6 +34,7 @@ def _import_xgboost():
 
     return xgb
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,9 +105,7 @@ class TrainingDecisionModel:
         self.model: Any = None
         self.is_trained = False
 
-        logger.info(
-            f"Initialized TrainingDecisionModel (model_dir: {self.model_dir})"
-        )
+        logger.info(f"Initialized TrainingDecisionModel (model_dir: {self.model_dir})")
 
     def train(
         self,
@@ -287,9 +286,7 @@ class TrainingStrategyModel:
         self.model: Any = None
         self.is_trained = False
 
-        logger.info(
-            f"Initialized TrainingStrategyModel (model_dir: {self.model_dir})"
-        )
+        logger.info(f"Initialized TrainingStrategyModel (model_dir: {self.model_dir})")
 
     def train(
         self,

@@ -67,6 +67,24 @@ class DocumentAgentDeps(AgentDeps):
 
     vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
     colpali_model: str = Field("vidore/colsmol-500m", description="ColPali model name")
+    enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
+    memory_backend_host: Optional[str] = Field(
+        None, description="Backend host for memory storage"
+    )
+    memory_backend_port: Optional[int] = Field(
+        None, description="Backend port for memory storage"
+    )
+    memory_llm_model: Optional[str] = Field(
+        None, description="LLM model for memory extraction"
+    )
+    memory_embedding_model: Optional[str] = Field(
+        None, description="Embedding model for memory search"
+    )
+    memory_llm_base_url: Optional[str] = Field(
+        None, description="LLM API base URL for memory"
+    )
+    memory_config_manager: Any = Field(None, description="ConfigManager for memory")
+    memory_schema_loader: Any = Field(None, description="SchemaLoader for memory")
 
 
 class DocumentAgent(
@@ -134,17 +152,36 @@ class DocumentAgent(
         # Initialize A2A base
         super().__init__(deps=deps, config=config, dspy_module=DocumentSearchModule())
 
-        # Initialize memory for document agent
-        memory_initialized = self.initialize_memory(
-            agent_name="document_agent",
-            tenant_id=deps.tenant_id,
-        )
-        if memory_initialized:
-            logger.info(
-                f"✅ Memory initialized for document_agent (tenant: {deps.tenant_id})"
+        if deps.enable_memory:
+            for field in (
+                "memory_backend_host",
+                "memory_backend_port",
+                "memory_llm_model",
+                "memory_embedding_model",
+                "memory_llm_base_url",
+                "memory_config_manager",
+                "memory_schema_loader",
+            ):
+                if getattr(deps, field) is None:
+                    raise ValueError(
+                        f"enable_memory=True but {field} is None — "
+                        "all memory_* fields are required when memory is enabled"
+                    )
+            memory_initialized = self.initialize_memory(
+                agent_name="document_agent",
+                tenant_id=deps.tenant_id,
+                backend_host=deps.memory_backend_host,
+                backend_port=deps.memory_backend_port,
+                llm_model=deps.memory_llm_model,
+                embedding_model=deps.memory_embedding_model,
+                llm_base_url=deps.memory_llm_base_url,
+                config_manager=deps.memory_config_manager,
+                schema_loader=deps.memory_schema_loader,
             )
-        else:
-            logger.info("ℹ️  Memory disabled or not configured for document_agent")
+            if memory_initialized:
+                logger.info(
+                    f"Memory initialized for document_agent (tenant: {deps.tenant_id})"
+                )
 
         self._vespa_endpoint = deps.vespa_endpoint
         self._colpali_model_name = deps.colpali_model

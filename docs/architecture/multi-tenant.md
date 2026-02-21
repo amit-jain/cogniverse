@@ -609,14 +609,16 @@ Memory is stored in tenant-specific Vespa schemas:
 memory_mgr = Mem0MemoryManager(tenant_id="acme")
 
 # Initialize with backend configuration (only needed once per tenant)
-# IMPORTANT: Requires config_manager via dependency injection (schema_loader is optional)
-# Additional optional parameters: llm_model, embedding_model, ollama_base_url, auto_create_schema
+# All parameters are required — no vendor-specific defaults
 memory_mgr.initialize(
-    backend_host="localhost",
-    backend_port=8080,
+    backend_host=system_config["backend_url"],
+    backend_port=system_config["backend_port"],
+    llm_model=memory_config["llm_model"],
+    embedding_model=memory_config["embedding_model"],
+    llm_base_url=memory_config["llm_base_url"],
     base_schema_name="agent_memories",  # Base schema (becomes agent_memories_acme)
-    config_manager=config_manager,  # ConfigManager instance (optional, creates default if None)
-    schema_loader=schema_loader  # Optional: required when auto_create_schema=True
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 # Add memory (stored in agent_memories_acme schema)
@@ -1613,14 +1615,15 @@ def add_user_preference(
 
     config_manager = create_default_config_manager()
     memory_mgr.initialize(
-        backend_host="localhost",
-        backend_port=8080,
+        backend_host=system_config["backend_url"],
+        backend_port=system_config["backend_port"],
+        llm_model=memory_config["llm_model"],       # Required
+        embedding_model=memory_config["embedding_model"],  # Required
+        llm_base_url=memory_config["llm_base_url"],  # Required
+        config_manager=config_manager,               # Required for schema deployment
+        schema_loader=schema_loader,                 # Required for schema templates
         base_schema_name="agent_memories",
-        config_manager=config_manager,  # ConfigManager instance (optional, creates default if None)
-        schema_loader=None,  # Optional: required when auto_create_schema=True
-        llm_model="llama3.2",  # Optional: Ollama model name
-        embedding_model="nomic-embed-text",  # Optional: Ollama embedding model
-        auto_create_schema=True  # Optional: auto-deploy tenant schema if not exists
+        auto_create_schema=True,
     )
 
     # Add memory (automatically scoped to tenant)

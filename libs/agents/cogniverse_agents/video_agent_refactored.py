@@ -43,7 +43,7 @@ class VideoSearchAgent:
             schema_loader: SchemaLoader instance (required for dependency injection)
 
         Raises:
-            ValueError: If config_manager is not provided
+            ValueError: If config_manager or schema_loader is not provided
         """
         if config_manager is None:
             raise ValueError(
@@ -51,17 +51,15 @@ class VideoSearchAgent:
                 "Pass create_default_config_manager() explicitly."
             )
 
+        if schema_loader is None:
+            raise ValueError(
+                "schema_loader is required for VideoSearchAgent. "
+                "Pass FilesystemSchemaLoader or SchemaLoader instance explicitly."
+            )
+
         self.tenant_id = tenant_id
         self.config_manager = config_manager
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-
-        # Create schema_loader if not provided
-        if schema_loader is None:
-            from pathlib import Path
-
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         self.schema_loader = schema_loader
 
         # Determine profile
@@ -137,18 +135,23 @@ async def startup_event():
     """Initialize agent on startup."""
     global video_agent
 
+    from pathlib import Path
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     # Get profile from environment or config
     profile = os.environ.get("VIDEO_PROFILE")
     tenant_id = os.environ.get("TENANT_ID", "default")
     config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     try:
         video_agent = VideoSearchAgent(
             profile=profile,
             tenant_id=tenant_id,
             config_manager=config_manager,
+            schema_loader=schema_loader,
         )
         logger.info("Video search agent initialized")
     except Exception as e:

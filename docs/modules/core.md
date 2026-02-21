@@ -248,13 +248,16 @@ Adds Mem0-based persistent memory to agents:
 def initialize_memory(
     self,
     agent_name: str,
-    tenant_id: str,                           # Required - no default tenant
-    backend_host: str = "localhost",
-    backend_port: int = 8080,
-    backend_config_port: Optional[int] = None,  # Defaults to 19071
+    tenant_id: str,
+    backend_host: str,               # Required - e.g. "http://localhost"
+    backend_port: int,               # Required - e.g. 8080
+    llm_model: str,                  # Required - e.g. "ollama/llama3.2"
+    embedding_model: str,            # Required - e.g. "nomic-embed-text"
+    llm_base_url: str,               # Required - e.g. "http://localhost:11434/v1"
+    config_manager,                  # Required for schema deployment
+    schema_loader,                   # Required for schema templates
+    backend_config_port: Optional[int] = None,
     auto_create_schema: bool = True,
-    config_manager=None,                      # Required for schema deployment
-    schema_loader=None,                       # Required for schema templates
 ) -> bool:
 ```
 
@@ -266,16 +269,19 @@ from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 class MyAgent(AgentBase[...], MemoryAwareMixin):
     def __init__(self, deps, config_manager, schema_loader):
         super().__init__(deps)
+        memory_config = self.search_config.get("memory", {})
         # Initialize memory with required parameters
         self.initialize_memory(
             agent_name="my_agent",
-            tenant_id=deps.tenant_id,  # Required - no default tenant
-            backend_host="localhost",
-            backend_port=8080,
-            backend_config_port=19071,  # Optional - for Vespa config endpoint
-            auto_create_schema=True,
-            config_manager=config_manager,  # Required for schema deployment
-            schema_loader=schema_loader,    # Required for loading schema templates
+            tenant_id=deps.tenant_id,
+            backend_host=system_config.get("backend_url"),
+            backend_port=system_config.get("backend_port"),
+            llm_model=memory_config.get("llm_model"),
+            embedding_model=memory_config.get("embedding_model"),
+            llm_base_url=memory_config.get("llm_base_url"),
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            backend_config_port=system_config.get("backend_config_port"),
         )
 
     async def _process_impl(self, input: MyInput) -> MyOutput:

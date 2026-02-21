@@ -149,7 +149,7 @@ class TestComprehensiveEnsembleSearch:
         - RRF fusion works across heterogeneous profiles
         """
 
-        from cogniverse_agents.search_agent import SearchAgent
+        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.unified_config import (
             BackendConfig,
@@ -185,15 +185,17 @@ class TestComprehensiveEnsembleSearch:
         config_manager.set_backend_config(backend_config)
 
         # Create SearchAgent
-        agent = SearchAgent(
+        search_deps = SearchAgentDeps(
             tenant_id="test_tenant",
-            schema_loader=schema_loader,
-            config_manager=config_manager,
             backend_url=vespa_url,
             backend_port=vespa_http_port,
             backend_config_port=vespa_config_port,
             profile=list(profiles.keys())[0],
-            auto_create_schema=False,
+        )
+        agent = SearchAgent(
+            deps=search_deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager,
             port=8018,
         )
 
@@ -212,22 +214,22 @@ class TestComprehensiveEnsembleSearch:
 
             logger.info(f"Result from REAL Vespa with REAL encoders: {result}")
 
-            # VALIDATE: Ensemble executed successfully
-            assert result["search_mode"] == "ensemble"
-            assert set(result["profiles"]) == set(profiles.keys())
+            # VALIDATE: Ensemble executed successfully (result is SearchOutput pydantic model)
+            assert result.search_mode == "ensemble"
+            assert set(result.profiles) == set(profiles.keys())
 
             # VALIDATE: Results structure
-            assert "results" in result
-            assert "total_results" in result
+            assert isinstance(result.results, list)
+            assert result.total_results is not None
 
             # VALIDATE: MUST have results (real Vespa with ingested data)
             assert (
-                result["total_results"] > 0
+                result.total_results > 0
             ), "Should return results from REAL Vespa with ingested videos"
-            assert len(result["results"]) > 0, "Results list should not be empty"
+            assert len(result.results) > 0, "Results list should not be empty"
 
             # VALIDATE: RRF fusion metadata on ALL results
-            for doc in result["results"]:
+            for doc in result.results:
                 assert "rrf_score" in doc, "Should have RRF score"
                 assert "profile_ranks" in doc, "Should have profile ranks"
                 assert "num_profiles" in doc, "Should have profile count"
@@ -237,7 +239,7 @@ class TestComprehensiveEnsembleSearch:
                 )
 
             logger.info(
-                f"✅ Comprehensive test passed: {result['total_results']} results from REAL Vespa with REAL encoders"
+                f"✅ Comprehensive test passed: {result.total_results} results from REAL Vespa with REAL encoders"
             )
 
         except Exception as e:
@@ -257,7 +259,7 @@ class TestComprehensiveEnsembleSearch:
         - Production-realistic latency
         """
 
-        from cogniverse_agents.search_agent import SearchAgent
+        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.unified_config import (
             BackendConfig,
@@ -292,15 +294,17 @@ class TestComprehensiveEnsembleSearch:
         )
         config_manager.set_backend_config(backend_config)
 
-        agent = SearchAgent(
+        search_deps = SearchAgentDeps(
             tenant_id="test_tenant",
-            schema_loader=schema_loader,
-            config_manager=config_manager,
             backend_url=vespa_url,
             backend_port=vespa_http_port,
             backend_config_port=vespa_config_port,
             profile=list(profiles.keys())[0],
-            auto_create_schema=False,
+        )
+        agent = SearchAgent(
+            deps=search_deps,
+            schema_loader=schema_loader,
+            config_manager=config_manager,
             port=8018,
         )
 

@@ -37,7 +37,7 @@ def memory_manager(shared_memory_vespa):
         base_schema_name="agent_memories",
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
-        ollama_base_url="http://localhost:11434/v1",
+        llm_base_url="http://localhost:11434/v1",
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
         schema_loader=schema_loader,
@@ -420,6 +420,9 @@ class TestMem0MemoryAwareMixinIntegration:
             backend_host="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
             backend_config_port=shared_memory_vespa["config_port"],
+            llm_model="llama3.2",
+            embedding_model="nomic-embed-text",
+            llm_base_url="http://localhost:11434/v1",
             config_manager=config_manager,
             schema_loader=schema_loader,
         )

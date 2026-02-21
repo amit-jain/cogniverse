@@ -2,25 +2,31 @@
 Local Provider Implementation
 
 Implements the provider interfaces for local infrastructure:
-- Ollama for model hosting
+- LiteLLM for unified model access (any provider: Ollama, vLLM, OpenAI, etc.)
 - Local filesystem for artifact storage
 """
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
-import requests
+import litellm
 
 from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
 
+logger = logging.getLogger(__name__)
+
 
 class LocalModelProvider(ModelProvider):
-    """Local implementation using Ollama."""
+    """Local implementation using LiteLLM for unified model access."""
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.ollama_base_url = config.get("ollama_base_url", "http://localhost:11434")
+        if "base_url" not in config:
+            raise ValueError("LocalModelProvider requires 'base_url' in config")
+        self.base_url = config["base_url"].rstrip("/")
+        self.api_key = config.get("api_key", "no-key")
 
     def call_model(
         self,
@@ -30,87 +36,68 @@ class LocalModelProvider(ModelProvider):
         temperature: float = 0.1,
         max_tokens: int = 150,
     ) -> str:
-        """Call a model via Ollama API."""
-
-        # Remove any provider prefix from model_id
-        if model_id.startswith("ollama/"):
-            model_id = model_id[7:]
-
+        """Call a model via LiteLLM."""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        request_data = {
-            "model": model_id,
-            "messages": messages,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
-        }
-
         try:
-            response = requests.post(
-                f"{self.ollama_base_url}/api/chat", json=request_data, timeout=120
+            response = litellm.completion(
+                model=model_id,
+                messages=messages,
+                api_base=self.base_url,
+                api_key=self.api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=120,
             )
-
-            if response.status_code != 200:
-                raise Exception(f"Ollama call failed: {response.text}")
-
-            result = response.json()
-            return result["message"]["content"]
+            return response.choices[0].message.content
 
         except Exception as e:
             raise Exception(f"Local model call failed: {e}")
 
     def deploy_model_service(self, model_id: str = None, **kwargs) -> Dict[str, Any]:
         """
-        For local provider, this ensures Ollama is running and model is available.
+        Check that the local LLM server is running and model is accessible.
         """
-        print("🔧 Checking local Ollama service...")
+        logger.info("Checking local LLM service via LiteLLM...")
 
         try:
-            # Check if Ollama is running
-            health_response = requests.get(
-                f"{self.ollama_base_url}/api/tags", timeout=5
+            # Use a minimal completion to verify the server is reachable
+            litellm.completion(
+                model=model_id or "test",
+                messages=[{"role": "user", "content": "ping"}],
+                api_base=self.base_url,
+                api_key=self.api_key,
+                max_tokens=1,
+                timeout=10,
             )
-
-            if health_response.status_code != 200:
-                raise Exception(f"Ollama returned status {health_response.status_code}")
-
-            models = health_response.json().get("models", [])
-            model_names = [m.get("name", "") for m in models]
-
-            print(f"✅ Ollama is running with {len(models)} models")
-
-            # Check if specific model is available
-            if model_id:
-                clean_model_id = model_id.replace("ollama/", "")
-                if not any(clean_model_id in name for name in model_names):
-                    print(
-                        f"⚠️ Model {clean_model_id} not found. Available models: {model_names}"
-                    )
-                else:
-                    print(f"✅ Model {clean_model_id} is available")
-
+            logger.info(f"LLM server reachable, model {model_id} responded")
             return {
-                "inference_endpoint": f"{self.ollama_base_url}/api/chat",
-                "health_endpoint": f"{self.ollama_base_url}/api/tags",
-                "models_available": model_names,
+                "inference_endpoint": self.base_url,
+                "model": model_id,
+                "status": "available",
             }
 
         except Exception as e:
-            raise Exception(f"Failed to connect to local Ollama: {e}")
+            raise Exception(f"Failed to connect to local LLM server: {e}")
 
     def health_check(self) -> Dict[str, Any]:
-        """Check Ollama health."""
+        """Check LLM server health."""
         try:
-            response = requests.get(f"{self.ollama_base_url}/api/tags", timeout=5)
+            # LiteLLM doesn't have a generic health check,
+            # so we check if the base_url is reachable
+            import requests
+
+            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
             if response.status_code == 200:
                 data = response.json()
                 return {
                     "status": "healthy",
                     "provider": "local",
-                    "ollama_url": self.ollama_base_url,
-                    "models_count": len(data.get("models", [])),
+                    "url": self.base_url,
+                    "models_count": len(data.get("data", [])),
                 }
             else:
                 return {
@@ -136,17 +123,13 @@ class LocalArtifactProvider(ArtifactProvider):
             source = Path(local_path)
             target = self.base_path / remote_path.lstrip("/")
 
-            # Create parent directories if needed
             target.parent.mkdir(parents=True, exist_ok=True)
-
-            print(f"📁 Copying {source} to {target}")
             shutil.copy2(source, target)
-
-            print("✅ Artifact copied successfully")
+            logger.info(f"Artifact copied: {source} -> {target}")
             return True
 
         except Exception as e:
-            print(f"⚠️ Local copy error: {e}")
+            logger.error(f"Local copy error: {e}")
             return False
 
     def download_artifact(self, remote_path: str, local_path: str) -> bool:
@@ -156,20 +139,16 @@ class LocalArtifactProvider(ArtifactProvider):
             target = Path(local_path)
 
             if not source.exists():
-                print(f"⚠️ Artifact not found: {source}")
+                logger.warning(f"Artifact not found: {source}")
                 return False
 
-            # Create parent directories if needed
             target.parent.mkdir(parents=True, exist_ok=True)
-
-            print(f"📁 Copying {source} to {target}")
             shutil.copy2(source, target)
-
-            print("✅ Artifact copied successfully")
+            logger.info(f"Artifact copied: {source} -> {target}")
             return True
 
         except Exception as e:
-            print(f"⚠️ Local copy error: {e}")
+            logger.error(f"Local copy error: {e}")
             return False
 
     def list_artifacts(self, path_prefix: str = "") -> List[str]:
@@ -193,7 +172,7 @@ class LocalArtifactProvider(ArtifactProvider):
             return sorted(artifacts)
 
         except Exception as e:
-            print(f"⚠️ Local list error: {e}")
+            logger.error(f"Local list error: {e}")
             return []
 
 

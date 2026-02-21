@@ -110,7 +110,7 @@ class TextAnalysisAgent(
                 ],
                 module_config=module_config,
                 llm_model=self.system_config.get("llm_model", "gpt-4"),
-                llm_base_url=self.system_config.get("ollama_base_url"),
+                llm_base_url=self.system_config.get("llm_base_url"),
                 llm_temperature=0.7,
             )
 

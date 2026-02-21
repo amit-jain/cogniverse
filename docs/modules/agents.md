@@ -282,11 +282,11 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
         self.telemetry = TelemetryManager()
         self.tenant_id = deps.tenant_id  # Used in span calls
 
-        # Initialize memory (tenant-scoped)
-        self.initialize_memory(
-            agent_name="routing_agent",
-            tenant_id=deps.tenant_id
-        )
+        # Initialize memory (tenant-scoped, config-driven)
+        # Memory params (llm_model, embedding_model, llm_base_url) come from
+        # the "memory" section of SystemConfig
+        if deps.enable_memory:
+            self._init_memory(deps)
 
         # DSPy modules (shared, but decisions per-tenant)
         self._init_dspy_modules()
@@ -2608,13 +2608,21 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
-        backend_host: str = "localhost",
-        backend_port: int = 8080
+        backend_host: str,          # Required - e.g. "http://localhost"
+        backend_port: int,          # Required - e.g. 8080
+        llm_model: str,             # Required - e.g. "ollama/llama3.2"
+        embedding_model: str,       # Required - e.g. "nomic-embed-text"
+        llm_base_url: str,          # Required - e.g. "http://localhost:11434/v1"
+        config_manager,             # Required for schema deployment
+        schema_loader,              # Required for schema templates
+        backend_config_port: Optional[int] = None,
+        auto_create_schema: bool = True,
     ) -> bool:
         """
         Initialize memory for agent.
 
         Creates tenant-specific Mem0MemoryManager instance.
+        All LLM/embedding params are required - no defaults.
         """
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
@@ -2622,7 +2630,13 @@ class MemoryAwareMixin:
         self.memory_manager.initialize(
             backend_host=backend_host,
             backend_port=backend_port,
-            base_schema_name="agent_memories"  # Creates agent_memories_{tenant_id}
+            llm_model=llm_model,
+            embedding_model=embedding_model,
+            llm_base_url=llm_base_url,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            base_schema_name="agent_memories",  # Creates agent_memories_{tenant_id}
+            auto_create_schema=auto_create_schema,
         )
 
         self.agent_name = agent_name
@@ -2847,8 +2861,9 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
         config = A2AAgentConfig(agent_name="routing_agent", ...)
         super().__init__(deps=deps, config=config, dspy_module=None)
 
-        # Initialize memory support
-        self.initialize_memory("routing_agent", deps.tenant_id)
+        # Initialize memory support (config-driven via deps)
+        if deps.enable_memory:
+            self._init_memory(deps)  # Reads memory config from SystemConfig
 
         # Now deps.tenant_id is available for agent logic
         logger.info(f"RoutingAgent initialized for tenant: {deps.tenant_id}")
@@ -2956,7 +2971,7 @@ sequenceDiagram
     Middleware->>API: request.state.tenant_id = "acme"
 
     API->>Agent: RoutingAgent(deps=RoutingDeps(tenant_id="acme", ...))
-    Agent->>Memory: initialize_memory("routing_agent", "acme")
+    Agent->>Memory: initialize_memory("routing_agent", "acme", ...config)
     Memory-->>Agent: Memory ready (agent_memories_acme)
 
     API->>Agent: route_query("cooking videos")
@@ -2985,15 +3000,22 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Two tenants using same agent class
 
-# Tenant A
+# Tenant A - memory initialization happens inside __init__ when enable_memory=True
 deps_a = RoutingDeps(
     tenant_id="acme",
     telemetry_config=TelemetryConfig(),
     model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    base_url="http://localhost:11434/v1",
+    enable_memory=True,
+    memory_backend_host="http://localhost",
+    memory_backend_port=8080,
+    memory_llm_model="ollama/llama3.2",
+    memory_embedding_model="nomic-embed-text",
+    memory_llm_base_url="http://localhost:11434/v1",
+    memory_config_manager=config_manager,
+    memory_schema_loader=schema_loader,
 )
 agent_a = RoutingAgent(deps=deps_a)
-agent_a.initialize_memory("routing_agent", "acme")
 # Uses: agent_memories_acme schema
 
 # Tenant B
@@ -3001,10 +3023,17 @@ deps_b = RoutingDeps(
     tenant_id="startup",
     telemetry_config=TelemetryConfig(),
     model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    base_url="http://localhost:11434/v1",
+    enable_memory=True,
+    memory_backend_host="http://localhost",
+    memory_backend_port=8080,
+    memory_llm_model="ollama/llama3.2",
+    memory_embedding_model="nomic-embed-text",
+    memory_llm_base_url="http://localhost:11434/v1",
+    memory_config_manager=config_manager,
+    memory_schema_loader=schema_loader,
 )
 agent_b = RoutingAgent(deps=deps_b)
-agent_b.initialize_memory("routing_agent", "startup")
 # Uses: agent_memories_startup schema
 
 # Completely isolated - no shared memory or data
@@ -3519,9 +3548,7 @@ class TestRoutingAgent:
         agent_b = RoutingAgent(deps=deps_b)
 
         assert agent_a.deps.tenant_id != agent_b.deps.tenant_id
-        # Memory managers should be different instances
-        agent_a.initialize_memory("routing", "tenant_a")
-        agent_b.initialize_memory("routing", "tenant_b")
+        # Memory managers should be different per-tenant instances
         assert agent_a.memory_manager is not agent_b.memory_manager
 ```
 

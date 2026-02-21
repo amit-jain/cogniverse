@@ -212,8 +212,8 @@ Test complete system functionality using real external services.
 
 #### Environment Variables
 ```bash
-export OLLAMA_BASE_URL="http://localhost:11434/v1"
-export OLLAMA_MODEL="smollm3:8b"
+export LLM_BASE_URL="http://localhost:11434/v1"
+export LLM_MODEL="smollm3:8b"
 export VESPA_URL="http://localhost:8080"
 export PHOENIX_URL="http://localhost:6006"
 export ENABLE_VESPA_TESTS="true"
@@ -226,8 +226,8 @@ export E2E_TEST_TIMEOUT="300"
 The E2E tests use a centralized configuration system:
 ```python
 E2E_CONFIG = {
-    "ollama_base_url": "http://localhost:11434/v1",
-    "ollama_model": "smollm3:8b",
+    "llm_base_url": "http://localhost:11434/v1",
+    "llm_model": "smollm3:8b",
     "vespa_url": "http://localhost:8080",
     "test_timeout": 300,
     "enable_vespa_tests": False,  # Set to True when Vespa available
@@ -240,12 +240,12 @@ E2E_CONFIG = {
 Comprehensive real-world testing of the multi-agent system:
 
 ```python
-class TestOllamaAvailability:
-    def test_ollama_service_available(self)
-    def test_ollama_model_available(self)
+class TestLLMAvailability:
+    def test_llm_service_available(self)
+    def test_llm_model_available(self)
 
 class TestRealQueryAnalysis:
-    def test_real_query_analysis_with_ollama(self)
+    def test_real_query_analysis_with_local_llm(self)
     def test_query_analysis_different_types(self)
 
 class TestRealAgentRouting:
@@ -276,7 +276,7 @@ class TestRealPerformanceAndReliability:
 # Check service availability
 JAX_PLATFORM_NAME=cpu uv run python -c "
 from tests.agents.e2e.test_config import is_service_available
-print('Ollama:', is_service_available('ollama'))
+print('LLM:', is_service_available('llm'))
 print('Vespa:', is_service_available('vespa'))
 print('Phoenix:', is_service_available('phoenix'))
 "
@@ -287,8 +287,8 @@ print('Phoenix:', is_service_available('phoenix'))
 # Run all E2E tests (skips unavailable services)
 JAX_PLATFORM_NAME=cpu timeout 600 uv run python -m pytest tests/agents/e2e/ -v
 
-# Run only Ollama tests
-JAX_PLATFORM_NAME=cpu timeout 300 uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestOllamaAvailability -v
+# Run only LLM availability tests
+JAX_PLATFORM_NAME=cpu timeout 300 uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability -v
 
 # Run with specific timeout
 JAX_PLATFORM_NAME=cpu timeout 900 uv run python -m pytest tests/agents/e2e/ -v --tb=short
@@ -395,7 +395,7 @@ E2E_TEST_TIMEOUT=600 uv run python -m pytest tests/agents/e2e/ -v
 #### 4. Memory Issues with Large Models
 ```bash
 # Use smaller models for testing
-OLLAMA_MODEL=smollm3:8b uv run python -m pytest tests/agents/e2e/ -v
+LLM_MODEL=smollm3:8b uv run python -m pytest tests/agents/e2e/ -v
 ```
 
 #### 5. DSPy Configuration Issues
@@ -416,7 +416,7 @@ logging.basicConfig(level=logging.DEBUG)
 "
 
 # Run single test with full output
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestOllamaAvailability::test_ollama_model_available -v -s --tb=long
+JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability::test_llm_model_available -v -s --tb=long
 ```
 
 ## Best Practices

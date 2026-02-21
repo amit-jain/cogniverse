@@ -480,8 +480,8 @@ class TestRealOllamaIntegration:
             except Exception as e:
                 print(f"⚠️  Real enhancement failed for '{test_case['query']}': {e}")
 
-    def test_ollama_model_availability(self):
-        """Test that Ollama has usable models available"""
+    def test_llm_model_availability(self):
+        """Test that the LLM server has usable models available"""
         try:
             result = subprocess.run(["ollama", "list"], capture_output=True, timeout=10)
             assert result.returncode == 0

@@ -110,13 +110,7 @@ mock_config = MockConfig(
     }
 )
 
-# Apply multiple config mocks to handle different access patterns
-config_patcher = patch(
-    "cogniverse_core.config.utils.get_config", return_value=mock_config
-)
-config_patcher.start()
-
-# Also mock the config import in the composing_agents_main module specifically
+# Mock the config import in the composing_agents_main module specifically
 composing_config_patcher = patch(
     "cogniverse_agents.composing_agents_main.get_config", return_value=mock_config
 )
@@ -832,11 +826,6 @@ def cleanup_module_patchers():
     yield  # Run all tests
 
     # Stop config patchers
-    try:
-        config_patcher.stop()
-    except RuntimeError:
-        pass  # Already stopped
-
     try:
         composing_config_patcher.stop()
     except RuntimeError:

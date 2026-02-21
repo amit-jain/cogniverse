@@ -1989,20 +1989,21 @@ response = provider.call_model(
 
 **Location:** `libs/agents/cogniverse_agents/optimizer/providers/local_provider.py`
 
-Uses Ollama for local model hosting.
+Uses LiteLLM for unified local model access (supports Ollama, vLLM, and other OpenAI-compatible servers).
 
 ```python
 from cogniverse_agents.optimizer.providers.local_provider import LocalModelProvider
 
 provider = LocalModelProvider({
-    "ollama_base_url": "http://localhost:11434"
+    "base_url": "http://localhost:11434/v1",  # Required - OpenAI-compatible endpoint
+    "api_key": "no-key",                      # Optional - for authenticated endpoints
 })
 
 # Check available models
 endpoints = provider.deploy_model_service(model_id="llama3:8b")
 # Returns: {"inference_endpoint": "...", "models_available": ["llama3:8b", ...]}
 
-# Call local model
+# Call local model via LiteLLM
 response = provider.call_model(
     model_id="llama3:8b",
     prompt="Route this query...",

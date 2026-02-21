@@ -64,6 +64,11 @@ def clear_singleton_state_between_tests():
             logger.debug("🧹 Cleared ConfigManager singleton before test")
         ConfigManager._instance = None
 
+    import cogniverse_vespa.search_backend as _sb
+
+    with _sb._CACHE_LOCK:
+        _sb._RANKING_STRATEGIES_CACHE = None
+
     yield
 
     # Clear after each test as well
@@ -72,6 +77,9 @@ def clear_singleton_state_between_tests():
         registry._backend_instances.clear()
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
+
+    with _sb._CACHE_LOCK:
+        _sb._RANKING_STRATEGIES_CACHE = None
 
 
 @pytest.fixture(scope="module")
@@ -112,6 +120,13 @@ def vespa_with_schema():
 
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
+
+    # Clear ranking strategies cache — unit tests may have poisoned it
+    # with empty results from Mock schema_loaders
+    import cogniverse_vespa.search_backend as _sb
+
+    with _sb._CACHE_LOCK:
+        _sb._RANKING_STRATEGIES_CACHE = None
 
     logger.info("✅ Singleton state cleared")
 
@@ -155,6 +170,9 @@ def vespa_with_schema():
 
             if hasattr(ConfigManager, "_instance"):
                 ConfigManager._instance = None
+
+            with _sb._CACHE_LOCK:
+                _sb._RANKING_STRATEGIES_CACHE = None
 
             logger.info("✅ Cleared singleton state after teardown")
         except Exception as e:

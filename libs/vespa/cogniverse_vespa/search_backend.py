@@ -702,13 +702,19 @@ class VespaSearchBackend(SearchBackend):
         global _RANKING_STRATEGIES_CACHE
         with _CACHE_LOCK:
             if _RANKING_STRATEGIES_CACHE is None:
-                _RANKING_STRATEGIES_CACHE = self._load_ranking_strategies()
+                loaded = self._load_ranking_strategies()
+                if loaded:
+                    # Only cache non-empty results — a backend with an invalid
+                    # schema_loader (e.g. Mock) returns {} which must NOT poison
+                    # the global cache for other backends with valid loaders.
+                    _RANKING_STRATEGIES_CACHE = loaded
 
-        available_strategies = _RANKING_STRATEGIES_CACHE.get(base_schema_name, {})
+        cache = _RANKING_STRATEGIES_CACHE or {}
+        available_strategies = cache.get(base_schema_name, {})
         if not available_strategies:
             raise ValueError(
                 f"No ranking strategies found for schema '{base_schema_name}'. "
-                f"Available schemas: {list(_RANKING_STRATEGIES_CACHE.keys())}"
+                f"Available schemas: {list(cache.keys())}"
             )
 
         # Phase 2: Strategy Resolution
@@ -1397,15 +1403,18 @@ class VespaSearchBackend(SearchBackend):
         # Load ranking strategies from schemas if not cached
         with _CACHE_LOCK:
             if _RANKING_STRATEGIES_CACHE is None:
-                _RANKING_STRATEGIES_CACHE = self._load_ranking_strategies()
+                loaded = self._load_ranking_strategies()
+                if loaded:
+                    _RANKING_STRATEGIES_CACHE = loaded
 
         # Get strategies for this schema
-        schema_strategies = _RANKING_STRATEGIES_CACHE.get(schema_name, {})
+        cache = _RANKING_STRATEGIES_CACHE or {}
+        schema_strategies = cache.get(schema_name, {})
 
         if not schema_strategies:
             logger.warning(
                 f"No ranking strategies found for schema '{schema_name}'. "
-                f"Available schemas: {list(_RANKING_STRATEGIES_CACHE.keys())}"
+                f"Available schemas: {list(cache.keys())}"
             )
             # Return defaults - assume float embeddings needed
             return {

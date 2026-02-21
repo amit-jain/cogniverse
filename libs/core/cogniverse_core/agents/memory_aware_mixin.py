@@ -55,25 +55,31 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
-        backend_host: str = "localhost",
-        backend_port: int = 8080,
+        backend_host: str,
+        backend_port: int,
+        llm_model: str,
+        embedding_model: str,
+        llm_base_url: str,
+        config_manager,
+        schema_loader,
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
-        config_manager=None,
-        schema_loader=None,
     ) -> bool:
         """
-        Initialize memory for this agent
+        Initialize memory for this agent.
 
         Args:
             agent_name: Name of the agent
-            tenant_id: Tenant identifier (REQUIRED - no default)
-            backend_host: Backend endpoint host
+            tenant_id: Tenant identifier
+            backend_host: Backend endpoint URL (e.g. "http://localhost")
             backend_port: Backend data endpoint port
+            llm_model: LLM model name for memory extraction
+            embedding_model: Embedding model name for memory search
+            llm_base_url: OpenAI-compatible LLM API endpoint
+            config_manager: ConfigManager instance
+            schema_loader: SchemaLoader instance
             backend_config_port: Backend config endpoint port (default: 19071)
             auto_create_schema: Auto-deploy tenant schema if not exists (default: True)
-            config_manager: ConfigManager instance (REQUIRED)
-            schema_loader: SchemaLoader instance (REQUIRED)
 
         Returns:
             Success status
@@ -96,11 +102,14 @@ class MemoryAwareMixin:
                 self.memory_manager.initialize(
                     backend_host=backend_host,
                     backend_port=backend_port,
+                    llm_model=llm_model,
+                    embedding_model=embedding_model,
+                    llm_base_url=llm_base_url,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
                     backend_config_port=backend_config_port,
                     base_schema_name="agent_memories",
                     auto_create_schema=auto_create_schema,
-                    config_manager=config_manager,
-                    schema_loader=schema_loader,
                 )
 
             self._memory_initialized = True
