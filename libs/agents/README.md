@@ -8,7 +8,7 @@ Agent implementations for routing, multi-modal search, and orchestration.
 
 ## Overview
 
-The Agents package sits in the **Implementation Layer**, providing concrete agent implementations that power the Cogniverse platform. It includes routing agents with DSPy optimization, multi-modal search agents (video, image, document), composing agents for orchestration, and A2A (Agent-to-Agent) protocol tools.
+The Agents package sits in the **Implementation Layer**, providing concrete agent implementations that power the Cogniverse platform. It includes routing agents with DSPy optimization, multi-modal search agents (video, image, document), OrchestratorAgent for A2A orchestration, and A2A (Agent-to-Agent) protocol tools.
 
 All agents build on the base classes from `cogniverse-core` and leverage multi-modal embeddings for video and image search.
 
@@ -21,7 +21,7 @@ cogniverse_agents/
 ├── video_search_agent.py    # Multi-modal video search
 ├── image_search_agent.py    # Image search with visual embeddings
 ├── document_agent.py        # Document retrieval agent
-├── composing_agent.py       # Multi-agent orchestration
+├── orchestrator_agent.py    # Central A2A orchestration entry point
 ├── summarizer_agent.py      # Content summarization
 ├── audio_analysis_agent.py  # Audio content analysis
 ├── text_analysis_agent.py   # Text analysis agent
@@ -139,16 +139,16 @@ Traditional document retrieval:
 - Document reranking
 - Snippet extraction
 
-### Composing Agent (`cogniverse_agents.composing_agent`)
+### OrchestratorAgent (`cogniverse_agents.orchestrator_agent`)
 
-Multi-agent orchestration and coordination:
+Central A2A entry point with DSPy-based multi-agent orchestration:
 
 **Features:**
-- Task decomposition
-- Agent selection and invocation
-- Dependency management
-- Result aggregation
-- Error handling and recovery
+- DSPy planning via `OrchestrationModule`
+- Agent discovery via `AgentRegistry`
+- Parallel execution groups
+- A2A calls to downstream agents
+- Graceful error handling and result aggregation
 
 **Use Cases:**
 - Complex multi-step workflows
@@ -275,28 +275,33 @@ pip install cogniverse-agents
 ### Video Search Agent
 
 ```python
-from cogniverse_agents import VideoSearchAgent
-from cogniverse_core.config import SystemConfig
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize video search agent
-config = SystemConfig(tenant_id="acme")
+# Initialize dependencies
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Create agent — profile-agnostic, tenant-agnostic at construction
 agent = VideoSearchAgent(
-    config=config,
-    profile="video_colpali_smol500_mv_frame"
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Search for videos
-results = await agent.search(
+# Search — profile and tenant_id are per-request (synchronous, not async)
+results = agent.search(
     query="machine learning tutorial for beginners",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="acme",
     top_k=10,
-    filters={"duration": {"$lt": 600}}  # Videos under 10 minutes
 )
 
-# Results include frame-level matches
+# Results are SearchResult objects
 for result in results:
-    print(f"Video: {result.title}")
+    print(f"Video: {result.document_id}")
     print(f"Score: {result.score:.3f}")
-    print(f"Matched frames: {result.matched_frames}")
     print(f"Timestamps: {result.timestamps}")
 ```
 
@@ -350,27 +355,22 @@ results = await image_agent.search_by_image(
 )
 ```
 
-### Multi-Agent Composition
+### Multi-Agent Orchestration
 
 ```python
-from cogniverse_agents import ComposingAgent, VideoSearchAgent, SummarizerAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Initialize agents
-video_agent = VideoSearchAgent(config=config)
-summarizer = SummarizerAgent(config=config)
-composing_agent = ComposingAgent(config=config)
+# Create orchestrator with agent registry
+registry = AgentRegistry(config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-# Compose multi-agent workflow
-result = await composing_agent.execute(
-    task="Find videos about neural networks and create a summary",
-    agents={
-        "video_search": video_agent,
-        "summarizer": summarizer
-    },
-    workflow=[
-        {"agent": "video_search", "params": {"query": "neural networks", "top_k": 5}},
-        {"agent": "summarizer", "params": {"input_from": "video_search"}}
-    ]
+# Execute multi-agent workflow — DSPy plans the pipeline automatically
+result = await orchestrator._process_impl(
+    OrchestratorInput(
+        query="Find videos about neural networks and create a summary",
+        tenant_id="default",
+    )
 )
 
 print(result["summary"])
@@ -405,12 +405,19 @@ result = await orchestrator.execute_workflow(
 
 ```python
 from cogniverse_agents import A2ARoutingAgent, A2AGateway
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Initialize A2A gateway
 gateway = A2AGateway(config=config)
 
 # Register agents
-gateway.register_agent("video_search", VideoSearchAgent(config))
+gateway.register_agent("video_search", VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader))
 gateway.register_agent("summarizer", SummarizerAgent(config))
 
 # Use A2A routing agent
@@ -486,7 +493,7 @@ BaseAgent (from cogniverse_core)
     ├── ImageSearchAgent (visual search)
     ├── DocumentAgent (document retrieval)
     ├── AudioAnalysisAgent (audio processing)
-    ├── ComposingAgent (multi-agent orchestration)
+    ├── OrchestratorAgent (A2A entry point, DSPy planning)
     ├── SummarizerAgent (content summarization)
     ├── DetailedReportAgent (report generation)
     ├── TextAnalysisAgent (text processing)
@@ -534,7 +541,7 @@ pytest tests/agents/ tests/routing/
 # Run specific agent tests
 pytest tests/agents/test_routing_agent.py
 pytest tests/agents/test_video_search_agent.py
-pytest tests/agents/test_composing_agent.py
+pytest tests/agents/unit/test_orchestrator_agent.py
 ```
 
 ## Testing

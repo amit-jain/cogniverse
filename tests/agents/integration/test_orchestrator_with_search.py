@@ -13,22 +13,10 @@ Tests use:
 import dspy
 import pytest
 
-from cogniverse_agents.entity_extraction_agent import (
-    EntityExtractionAgent,
-    EntityExtractionDeps,
-)
 from cogniverse_agents.orchestrator_agent import (
-    AgentType,
     OrchestratorAgent,
     OrchestratorDeps,
-)
-from cogniverse_agents.profile_selection_agent import (
-    ProfileSelectionAgent,
-    ProfileSelectionDeps,
-)
-from cogniverse_agents.query_enhancement_agent import (
-    QueryEnhancementAgent,
-    QueryEnhancementDeps,
+    OrchestratorInput,
 )
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from tests.agents.integration.conftest import skip_if_no_ollama
@@ -65,7 +53,6 @@ def search_agent_with_vespa(vespa_with_schema, real_dspy_lm):
 
     # Create SearchAgent with test Vespa parameters
     deps = SearchAgentDeps(
-        tenant_id="test_tenant",
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
@@ -85,27 +72,48 @@ def search_agent_with_vespa(vespa_with_schema, real_dspy_lm):
 def full_orchestrator_with_search(
     real_dspy_lm, vespa_with_schema, search_agent_with_vespa
 ):
-    """OrchestratorAgent with all agents including SearchAgent"""
-    # Create all autonomous agents
-    entity_deps = EntityExtractionDeps(tenant_id="test_tenant")
-    entity_agent = EntityExtractionAgent(deps=entity_deps, port=8010)
-    profile_deps = ProfileSelectionDeps(tenant_id="test_tenant")
-    profile_agent = ProfileSelectionAgent(deps=profile_deps, port=8011)
-    query_deps = QueryEnhancementDeps(tenant_id="test_tenant")
-    query_agent = QueryEnhancementAgent(deps=query_deps, port=8012)
+    """OrchestratorAgent with all agents including SearchAgent via mock AgentRegistry"""
+    from unittest.mock import Mock
 
-    # Create registry with all 4 agents
-    agent_registry = {
-        AgentType.ENTITY_EXTRACTION: entity_agent,
-        AgentType.PROFILE_SELECTION: profile_agent,
-        AgentType.QUERY_ENHANCEMENT: query_agent,
-        AgentType.SEARCH: search_agent_with_vespa,
+    from cogniverse_core.common.agent_models import AgentEndpoint
+
+    # Create mock AgentRegistry with endpoints for all agents
+    registry = Mock()
+    agent_endpoints = {
+        "entity_extraction": AgentEndpoint(
+            name="entity_extraction",
+            url="http://localhost:8010",
+            capabilities=["entity_extraction"],
+        ),
+        "profile_selection": AgentEndpoint(
+            name="profile_selection",
+            url="http://localhost:8011",
+            capabilities=["profile_selection"],
+        ),
+        "query_enhancement": AgentEndpoint(
+            name="query_enhancement",
+            url="http://localhost:8012",
+            capabilities=["query_enhancement"],
+        ),
+        "search": AgentEndpoint(
+            name="search",
+            url="http://localhost:8015",
+            capabilities=["search"],
+        ),
     }
-
-    orchestrator_deps = OrchestratorDeps(
-        tenant_id="test_tenant", agent_registry=agent_registry
+    registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
+    registry.find_agents_by_capability = Mock(
+        side_effect=lambda cap: [
+            ep for ep in agent_endpoints.values() if cap in ep.capabilities
+        ]
     )
-    orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
+    registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
+    registry.agents = agent_endpoints
+
+    orchestrator_deps = OrchestratorDeps()
+    orchestrator = OrchestratorAgent(
+        deps=orchestrator_deps, registry=registry, port=8013
+    )
     return orchestrator
 
 
@@ -139,7 +147,10 @@ class TestOrchestratorWithSearch:
         )
 
         result = await full_orchestrator_with_search._process_impl(
-            {"query": "Show me machine learning tutorial videos"}
+            OrchestratorInput(
+                query="Show me machine learning tutorial videos",
+                tenant_id="test_tenant",
+            )
         )
 
         # VALIDATE: 4-step plan created
@@ -203,7 +214,9 @@ class TestOrchestratorWithSearch:
         )
 
         result = await full_orchestrator_with_search._process_impl(
-            {"query": "Find Python programming videos"}
+            OrchestratorInput(
+                query="Find Python programming videos", tenant_id="test_tenant"
+            )
         )
 
         # VALIDATE: Sequential dependencies
@@ -238,7 +251,9 @@ class TestOrchestratorWithSearch:
         )
 
         result = await full_orchestrator_with_search._process_impl(
-            {"query": "Machine learning tutorials"}
+            OrchestratorInput(
+                query="Machine learning tutorials", tenant_id="test_tenant"
+            )
         )
 
         # VALIDATE: Parallel group structure

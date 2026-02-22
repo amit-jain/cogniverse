@@ -158,7 +158,7 @@ class TestDSPySystemIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
 
         # Test real routing decision logic
@@ -166,7 +166,9 @@ class TestDSPySystemIntegration:
 
         try:
             # This tests the actual routing logic
-            routing_decision = await agent.route_query(test_query)
+            routing_decision = await agent.route_query(
+                test_query, tenant_id="test_tenant"
+            )
 
             # Should return structured routing decision
             assert routing_decision is not None
@@ -216,8 +218,8 @@ class TestMultiAgentSystem:
     def test_core_agents_initialization(self):
         """Test that core agents can be initialized"""
         # Should initialize with proper config
-        summarizer = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
-        reporter = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+        summarizer = SummarizerAgent(deps=SummarizerDeps())
+        reporter = DetailedReportAgent(deps=DetailedReportDeps())
 
         assert summarizer is not None
         assert reporter is not None
@@ -234,7 +236,7 @@ class TestMultiAgentSystem:
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
         try:
-            agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"))
+            agent = SearchAgent(deps=SearchAgentDeps())
 
             # Should initialize with real config
             assert agent is not None

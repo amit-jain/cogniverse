@@ -102,7 +102,7 @@ Foundation Layer
 
 - `libs/agents/cogniverse_agents/routing_agent.py` — RoutingAgent
 - `libs/agents/cogniverse_agents/video_agent_refactored.py` — VideoSearchAgent
-- `libs/agents/cogniverse_agents/composing_agent.py` — Composing Agent (Google ADK orchestrator)
+- `libs/agents/cogniverse_agents/orchestrator_agent.py` — OrchestratorAgent (A2A entry point with DSPy planning)
 
 ---
 
@@ -155,10 +155,11 @@ Foundation Layer
 2. Follow: Document creation → Backend storage → Agent retrieval
 3. Layers: runtime → vespa → agents → sdk
 
-### Exercise 2: Trace an Agent Query
-1. Start: User query to `/search` endpoint
-2. Follow: Routing → Search → Result fusion
-3. Layers: runtime → agents (routing) → agents (search) → vespa
+### Exercise 2: Trace an Agent Query (A2A Pipeline)
+1. Start: User query to OrchestratorAgent `/tasks/send`
+2. Follow: DSPy planning → A2A dispatch (QueryEnhancement → ProfileSelection → Search) → Result aggregation
+3. Layers: dashboard → orchestrator → agents (via A2A HTTP) → SearchService → vespa
+4. Key: `tenant_id` and `session_id` flow per-request through every A2A call
 
 ### Exercise 3: Understand Config Overlay
 1. Start: `ConfigManager.get_system_config()`
@@ -181,9 +182,9 @@ Foundation Layer
 3. Layers: finetuning (orchestrator) → training → evaluation
 
 ### Exercise 6: Understand Ensemble Composition
-1. Start: Multi-profile query
-2. Follow: Parallel execution → Result fusion (RRF) → Final ranking
-3. Files: agents/search/ → agents/routing/
+1. Start: Multi-profile query via SearchService
+2. Follow: Profile-agnostic SearchService → QueryEncoderFactory (cached per model) → Parallel Vespa queries → Result fusion (RRF) → Final ranking
+3. Files: agents/search/service.py → core/query/encoders.py → vespa/
 
 ---
 

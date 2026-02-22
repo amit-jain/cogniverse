@@ -235,7 +235,7 @@ class TestSearchInputWithRLM:
         """SearchInput should have rlm=None by default."""
         from cogniverse_agents.search_agent import SearchInput
 
-        input_data = SearchInput(query="test query")
+        input_data = SearchInput(query="test query", tenant_id="test_tenant")
         assert input_data.rlm is None
 
     def test_search_input_with_rlm_options(self):
@@ -243,7 +243,9 @@ class TestSearchInputWithRLM:
         from cogniverse_agents.search_agent import SearchInput
 
         rlm_opts = RLMOptions(enabled=True, max_iterations=5)
-        input_data = SearchInput(query="test query", rlm=rlm_opts)
+        input_data = SearchInput(
+            query="test query", tenant_id="test_tenant", rlm=rlm_opts
+        )
 
         assert input_data.rlm is not None
         assert input_data.rlm.enabled is True
@@ -254,7 +256,7 @@ class TestSearchInputWithRLM:
         from cogniverse_agents.search_agent import SearchInput
 
         rlm_opts = RLMOptions(enabled=True)
-        input_data = SearchInput(query="test", rlm=rlm_opts)
+        input_data = SearchInput(query="test", tenant_id="test_tenant", rlm=rlm_opts)
 
         # Convert to dict
         data_dict = input_data.model_dump()

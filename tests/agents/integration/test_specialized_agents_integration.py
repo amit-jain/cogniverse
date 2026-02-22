@@ -113,7 +113,7 @@ class TestSummarizerAgentDSPyIntegration:
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
             # Create agent and set real LM
-            agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent = SummarizerAgent(deps=SummarizerDeps())
             agent.llm = real_dspy_lm
 
             # Create summary request
@@ -144,7 +144,7 @@ class TestSummarizerAgentDSPyIntegration:
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent = SummarizerAgent(deps=SummarizerDeps())
             agent.llm = real_dspy_lm
 
             # Create summarization request (direct API instead of A2A)
@@ -178,9 +178,7 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent with real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            agent = DetailedReportAgent(deps=DetailedReportDeps())
             agent.llm = real_dspy_lm
 
             from cogniverse_agents.detailed_report_agent import ReportRequest
@@ -228,9 +226,7 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            agent = DetailedReportAgent(deps=DetailedReportDeps())
             agent.llm = real_dspy_lm
 
             # Create report request using direct API
@@ -274,11 +270,9 @@ class TestCrossAgentDSPyIntegration:
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            summarizer = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            summarizer = SummarizerAgent(deps=SummarizerDeps())
             summarizer.llm = real_dspy_lm
-            report_agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            report_agent = DetailedReportAgent(deps=DetailedReportDeps())
             report_agent.llm = real_dspy_lm
 
             # Step 1: Generate summary with real DSPy.LM
@@ -357,9 +351,9 @@ class TestDSPyLMConfigurationIntegration:
         # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
             # Test with different model configurations (both using same LM for testing)
-            agent_small = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent_small = SummarizerAgent(deps=SummarizerDeps())
             agent_small.llm = real_dspy_lm
-            agent_medium = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent_medium = SummarizerAgent(deps=SummarizerDeps())
             agent_medium.llm = real_dspy_lm
 
             from cogniverse_agents.summarizer_agent import SummaryRequest
@@ -390,7 +384,7 @@ class TestDSPyLMConfigurationIntegration:
         # 1. Fail gracefully with clear error message, or
         # 2. Initialize but fail on first LLM call
         try:
-            agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent = SummarizerAgent(deps=SummarizerDeps())
 
             # If agent initializes, LLM calls should fail gracefully
             from cogniverse_agents.summarizer_agent import SummaryRequest

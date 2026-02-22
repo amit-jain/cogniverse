@@ -14,9 +14,17 @@ This guide covers verified, implemented deployment patterns:
 
 ### Core Services
 - **Vespa**: Multi-tenant vector database (ports 8080, 19071)
-- **Phoenix**: Telemetry dashboard (port 6006)
-- **OTEL Collector**: OTLP span collection (port 4317)
+- **Phoenix**: Telemetry dashboard + OTLP collector (ports 6006, 4317)
 - **Ollama**: Local LLM inference (port 11434)
+
+### A2A Agent Services
+- **OrchestratorAgent**: Entry point, DSPy planning + AgentRegistry discovery (port 8013)
+- **SearchAgent**: Hybrid search with profile-agnostic SearchService (port 8002)
+- **SummarizerAgent**: Result summarization (port 8003)
+- **DetailedReportAgent**: Long-form report generation (port 8004)
+- **EntityExtractionAgent**: GLiNER-based entity extraction (port 8010)
+- **ProfileSelectionAgent**: Dynamic profile selection (port 8011)
+- **QueryEnhancementAgent**: Query expansion and rewriting (port 8012)
 
 ---
 
@@ -24,25 +32,35 @@ This guide covers verified, implemented deployment patterns:
 
 ```mermaid
 flowchart TB
-    Client["<span style='color:#000'>Client Applications</span>"]
+    Client["<span style='color:#000'>Client / Dashboard</span>"]
 
-    Client --> API["<span style='color:#000'>Cogniverse API</span>"]
+    Client --> Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>Port 8013<br/>A2A Entry Point</span>"]
 
-    API --> Vespa["<span style='color:#000'>Vespa<br/>Port 8080, 19071<br/>Vector Database</span>"]
-    API --> Phoenix["<span style='color:#000'>Phoenix<br/>Port 6006<br/>Telemetry Dashboard</span>"]
-    API --> OTEL["<span style='color:#000'>OTEL Collector<br/>Port 4317<br/>Span Collection</span>"]
-    API --> Ollama["<span style='color:#000'>Ollama<br/>Port 11434<br/>Local LLM</span>"]
+    Orchestrator --> |A2A| Search["<span style='color:#000'>SearchAgent<br/>Port 8002</span>"]
+    Orchestrator --> |A2A| Summarizer["<span style='color:#000'>SummarizerAgent<br/>Port 8003</span>"]
+    Orchestrator --> |A2A| DetailedReport["<span style='color:#000'>DetailedReportAgent<br/>Port 8004</span>"]
+    Orchestrator --> |A2A| QueryEnh["<span style='color:#000'>QueryEnhancementAgent<br/>Port 8012</span>"]
+    Orchestrator --> |A2A| ProfileSel["<span style='color:#000'>ProfileSelectionAgent<br/>Port 8011</span>"]
+    Orchestrator --> |A2A| EntityExt["<span style='color:#000'>EntityExtractionAgent<br/>Port 8010</span>"]
+
+    Search --> Vespa["<span style='color:#000'>Vespa<br/>Port 8080, 19071<br/>Vector Database</span>"]
+    Orchestrator -.-> Phoenix["<span style='color:#000'>Phoenix<br/>Port 6006, 4317<br/>Telemetry</span>"]
+    Summarizer --> Ollama["<span style='color:#000'>Ollama<br/>Port 11434<br/>Local LLM</span>"]
 
     Vespa --> VespaData[("<span style='color:#000'>Video Embeddings</span>")]
     Phoenix --> PhoenixData[("<span style='color:#000'>Experiments</span>")]
-    OTEL --> Phoenix
     Ollama --> OllamaData[("<span style='color:#000'>Models</span>")]
 
     style Client fill:#90caf9,stroke:#1565c0,color:#000
-    style API fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Vespa fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style OTEL fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Orchestrator fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Search fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Summarizer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DetailedReport fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style QueryEnh fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ProfileSel fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EntityExt fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Vespa fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Phoenix fill:#a5d6a7,stroke:#388e3c,color:#000
     style Ollama fill:#a5d6a7,stroke:#388e3c,color:#000
     style VespaData fill:#b0bec5,stroke:#546e7a,color:#000
     style PhoenixData fill:#b0bec5,stroke:#546e7a,color:#000
@@ -100,35 +118,36 @@ curl http://localhost:11434/api/tags         # Ollama
 | **Vespa HTTP** | 8080 | HTTP | Document feed & search queries |
 | **Vespa Config** | 19071 | HTTP | Schema deployment |
 | **Phoenix** | 6006 | HTTP | Telemetry & experiments dashboard |
-| **OTEL Collector** | 4317 | gRPC | OTLP span collection |
+| **Phoenix OTLP** | 4317 | gRPC | OTLP span collection (served by Phoenix) |
 | **Ollama** | 11434 | HTTP | LLM inference API |
+| **OrchestratorAgent** | 8013 | HTTP | A2A entry point (DSPy planning) |
+| **SearchAgent** | 8002 | HTTP | Hybrid search (profile-agnostic) |
+| **SummarizerAgent** | 8003 | HTTP | Result summarization |
+| **DetailedReportAgent** | 8004 | HTTP | Long-form report generation |
+| **EntityExtractionAgent** | 8010 | HTTP | GLiNER entity extraction |
+| **ProfileSelectionAgent** | 8011 | HTTP | Dynamic profile selection |
+| **QueryEnhancementAgent** | 8012 | HTTP | Query expansion & rewriting |
 
 ### Environment Configuration
 
 Create a `.env` file in the workspace root:
 
 ```bash
-# Environment
+# Environment (read by evaluation storage)
 ENVIRONMENT=development
-LOG_LEVEL=DEBUG
 
-# Tenant Configuration
-DEFAULT_TENANT_ID=default
-
-# Telemetry (per-tenant Phoenix projects)
-PHOENIX_ENABLED=true
-PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
-
-# Backend (Vespa - multi-tenant with schema-per-tenant)
+# Backend (read by BootstrapConfig — REQUIRED)
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080
-BACKEND_CONFIG_PORT=19071
 
-# Ollama
-OLLAMA_BASE_URL=http://localhost:11434/v1
-
-# JAX (for VideoPrism)
+# JAX (for VideoPrism models)
 JAX_PLATFORM_NAME=cpu
+
+# Config file path (optional — defaults to configs/config.json)
+# COGNIVERSE_CONFIG=/path/to/config.json
+
+# Tenant ID is per-request (not an env var)
+# Agents receive tenant_id in each A2A task payload
 ```
 
 ---
@@ -246,12 +265,9 @@ services:
     environment:
       - BACKEND_URL=http://vespa
       - BACKEND_PORT=8080
-      - BACKEND_CONFIG_PORT=19071
-      - PHOENIX_COLLECTOR_ENDPOINT=phoenix:4317
-      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - OTLP_ENDPOINT=http://phoenix:4317
       - ENVIRONMENT=production
-      - PHOENIX_ENABLED=true
-      - DEFAULT_TENANT_ID=default
+      # tenant_id is per-request in A2A task payload, not an env var
     depends_on:
       - vespa
       - phoenix
@@ -524,7 +540,7 @@ done
 The `configs/schemas/` directory contains multiple schema types:
 - Video schemas: `video_*_schema.json` (for video search)
 - Metadata schemas: `organization_metadata_schema.json`, `tenant_metadata_schema.json`, `config_metadata_schema.json`, `adapter_registry_schema.json`
-- Other schemas: `agent_memories_schema.json`, `workflow_intelligence_schema.json`
+- Other schemas: `agent_memories_schema.json`, `workflow_intelligence_schema.json`, `ranking_strategies.json`
 
 The schema names inside the JSON files do not include the `_schema.json` suffix.
 
@@ -625,8 +641,8 @@ docker logs vespa
 # Check Phoenix is running
 docker ps | grep phoenix
 
-# Verify endpoint
-echo $PHOENIX_COLLECTOR_ENDPOINT
+# Verify OTLP endpoint is reachable (Phoenix serves OTLP on port 4317)
+curl -s http://localhost:4317 || echo "Phoenix OTLP not reachable"
 
 # Check Phoenix logs
 docker logs phoenix

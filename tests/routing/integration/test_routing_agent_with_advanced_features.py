@@ -34,7 +34,6 @@ class TestRoutingAgentWithAdvancedFeatures:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test-tenant",
             telemetry_config=telemetry_config,
             enable_query_enhancement=True,
             enable_contextual_analysis=True,

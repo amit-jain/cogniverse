@@ -598,8 +598,8 @@ class TestSummarizationAgent:
 
     @pytest.fixture
     def agent(self):
-        """Create agent instance with required tenant_id."""
-        deps = SummarizationDeps(tenant_id="test_tenant")
+        """Create agent instance (no tenant_id — it's per-request)."""
+        deps = SummarizationDeps()
         return SummarizationAgent(deps=deps)
 
     @pytest.fixture

@@ -40,7 +40,6 @@ class TestCompleteDSPySystem:
             ):
                 # Initialize routing agent
                 deps = RoutingDeps(
-                    tenant_id="test_tenant",
                     telemetry_config=telemetry_manager_without_phoenix.config,
                 )
                 routing_agent = RoutingAgent(deps=deps)
@@ -94,7 +93,7 @@ class TestCompleteDSPySystem:
                 )
 
                 # Test the routing
-                result = await routing_agent.route_query(query)
+                result = await routing_agent.route_query(query, tenant_id="test_tenant")
 
                 # Verify the system works
                 assert result is not None
@@ -174,7 +173,6 @@ class TestCompleteDSPySystem:
             "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
             deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=telemetry_manager_without_phoenix.config,
             )
             routing_agent = RoutingAgent(deps=deps)
@@ -478,7 +476,6 @@ class TestComposableModulePathSelection:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -488,6 +485,7 @@ class TestComposableModulePathSelection:
 
         result = await agent.analyze_and_route_with_relationships(
             query="robots playing soccer in a field",
+            tenant_id="test_tenant",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
         )
@@ -1677,7 +1675,9 @@ class TestVespaLearningPipelineIntegration:
         )
 
         # Execute search with enhanced query
-        search_results = search_agent.search_by_text(enhanced_query, top_k=5)
+        search_results = search_agent.search_by_text(
+            enhanced_query, tenant_id="test_tenant", top_k=5
+        )
         # Search may return 0 results for this query — that's OK for the test.
         # The point is that the pipeline doesn't crash.
         assert isinstance(search_results, list)
@@ -1766,7 +1766,9 @@ class TestVespaLearningPipelineIntegration:
 
         for variant in variants:
             assert "query" in variant
-            search_results = search_agent.search_by_text(variant["query"], top_k=5)
+            search_results = search_agent.search_by_text(
+                variant["query"], tenant_id="test_tenant", top_k=5
+            )
             assert isinstance(search_results, list)
 
 

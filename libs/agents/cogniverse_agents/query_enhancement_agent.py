@@ -13,6 +13,7 @@ from pydantic import Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,9 @@ class QueryEnhancementOutput(AgentOutput):
 
 
 class QueryEnhancementDeps(AgentDeps):
-    """Dependencies for query enhancement agent"""
+    """Dependencies for query enhancement agent (tenant-agnostic at startup)."""
 
-    pass  # Only needs tenant_id from base
-
-
-# Backward compatibility alias
-QueryEnhancementResult = QueryEnhancementOutput
+    pass
 
 
 class QueryEnhancementSignature(dspy.Signature):
@@ -118,7 +115,8 @@ class QueryEnhancementModule(dspy.Module):
 
 
 class QueryEnhancementAgent(
-    A2AAgent[QueryEnhancementInput, QueryEnhancementOutput, QueryEnhancementDeps]
+    MemoryAwareMixin,
+    A2AAgent[QueryEnhancementInput, QueryEnhancementOutput, QueryEnhancementDeps],
 ):
     """
     Type-safe A2A agent for query enhancement.
@@ -160,7 +158,7 @@ class QueryEnhancementAgent(
         # Initialize base class
         super().__init__(deps=deps, config=config, dspy_module=enhancement_module)
 
-        logger.info(f"QueryEnhancementAgent initialized for tenant: {deps.tenant_id}")
+        logger.info("QueryEnhancementAgent initialized (tenant-agnostic)")
 
     async def _process_impl(
         self, input: QueryEnhancementInput
@@ -177,7 +175,7 @@ class QueryEnhancementAgent(
         query = input.query
 
         if not query:
-            return QueryEnhancementResult(
+            return QueryEnhancementOutput(
                 original_query="",
                 enhanced_query="",
                 expansion_terms=[],
@@ -203,7 +201,7 @@ class QueryEnhancementAgent(
         except (ValueError, AttributeError):
             confidence = 0.7
 
-        return QueryEnhancementResult(
+        return QueryEnhancementOutput(
             original_query=query,
             enhanced_query=result.enhanced_query,
             expansion_terms=expansion_terms,
@@ -213,8 +211,8 @@ class QueryEnhancementAgent(
             reasoning=result.reasoning,
         )
 
-    def _dspy_to_a2a_output(self, result: QueryEnhancementResult) -> Dict[str, Any]:
-        """Convert QueryEnhancementResult to A2A output format."""
+    def _dspy_to_a2a_output(self, result: QueryEnhancementOutput) -> Dict[str, Any]:
+        """Convert QueryEnhancementOutput to A2A output format."""
         return {
             "status": "success",
             "agent": self.agent_name,
@@ -271,13 +269,10 @@ query_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup — tenant-agnostic, no env vars."""
     global query_agent
 
-    import os
-
-    tenant_id = os.getenv("TENANT_ID", "default")
-    deps = QueryEnhancementDeps(tenant_id=tenant_id)
+    deps = QueryEnhancementDeps()
     query_agent = QueryEnhancementAgent(deps=deps)
     logger.info("QueryEnhancementAgent started")
 
@@ -307,7 +302,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    deps = QueryEnhancementDeps(tenant_id="default")
+    deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps, port=8012)
     logger.info("Starting QueryEnhancementAgent on port 8012...")
     agent.start()

@@ -730,6 +730,12 @@ class VespaBackend(Backend):
             # Deploy package directly via Backend's own method
             self._deploy_package(app_package)
 
+            # Wait for content nodes to converge with the new schema
+            # Vespa config server accepts the package immediately but content/distributor
+            # nodes need time to pick up new document types.
+            schema_names = [s.name for s in schemas_to_deploy]
+            self._wait_for_schema_convergence(schema_names)
+
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
 
@@ -803,6 +809,56 @@ class VespaBackend(Backend):
         except Exception as e:
             logger.error(f"Failed to deploy package: {str(e)}")
             raise
+
+    def _wait_for_schema_convergence(
+        self, schema_names: List[str], timeout: int = 30
+    ) -> None:
+        """
+        Wait for Vespa content nodes to converge after schema deployment.
+
+        After deploying an application package, the config server accepts it
+        immediately but content/distributor nodes need time to recognize new
+        document types. This method polls until a PUT-based probe confirms
+        the document types are available, preventing 'Document type does not
+        exist' errors during immediate post-deploy ingestion.
+
+        Args:
+            schema_names: Names of schemas that were just deployed
+            timeout: Maximum seconds to wait for convergence
+        """
+        import re
+        import time
+
+        import requests
+
+        base_url = re.sub(r":\d+$", "", self._url)
+        probe_url = f"{base_url}:{self._port}/document/v1/{schema_names[0]}/{schema_names[0]}/docid/convergence_probe"
+
+        logger.info(
+            f"Waiting for content node convergence (schemas: {schema_names})..."
+        )
+        for i in range(timeout):
+            try:
+                # A GET on the document API returns 404 (doc not found) when the
+                # document type is recognized, but 400 with 'Document type does
+                # not exist' when the content node hasn't converged yet.
+                response = requests.get(probe_url, timeout=5)
+                if response.status_code in (200, 404):
+                    # 404 = document type recognized, doc just doesn't exist
+                    logger.info(
+                        f"Content nodes converged after {i + 1}s "
+                        f"(status: {response.status_code})"
+                    )
+                    return
+                # 400 typically means "Document type X does not exist" — keep waiting
+            except requests.exceptions.ConnectionError:
+                pass
+            time.sleep(1)
+
+        logger.warning(
+            f"Content node convergence not confirmed after {timeout}s — "
+            f"proceeding anyway (feed retries may compensate)"
+        )
 
     def delete_schema(
         self, schema_name: str, tenant_id: Optional[str] = None

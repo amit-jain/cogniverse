@@ -113,14 +113,13 @@ async def search(
         try:
             config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
-            # Create search service with required dependencies
+            # Create profile-agnostic search service
             search_service = SearchService(
                 config=config,
-                profile=request.profile or config.get("default_profile", "default"),
-                tenant_id=tenant_id,
                 config_manager=config_manager,
                 schema_loader=schema_loader,
             )
+            profile = request.profile or config.get("default_profile", "default")
 
             if request.stream:
                 # Streaming response
@@ -132,11 +131,11 @@ async def search(
                         # Execute search
                         results = search_service.search(
                             query=request.query,
+                            profile=profile,
+                            tenant_id=tenant_id,
                             top_k=request.top_k,
                             ranking_strategy=request.strategy,
                             filters=request.filters,
-                            tenant_id=request.tenant_id,
-                            org_id=request.org_id,
                         )
 
                         span.set_attribute("results_count", len(results))
@@ -169,11 +168,11 @@ async def search(
                 # Non-streaming response
                 results = search_service.search(
                     query=request.query,
+                    profile=profile,
+                    tenant_id=tenant_id,
                     top_k=request.top_k,
                     ranking_strategy=request.strategy,
                     filters=request.filters,
-                    tenant_id=request.tenant_id,
-                    org_id=request.org_id,
                 )
 
                 span.set_attribute("results_count", len(results))

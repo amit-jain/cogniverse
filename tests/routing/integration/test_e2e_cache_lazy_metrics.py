@@ -210,9 +210,7 @@ async def routing_agent(phoenix_container):
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
-    agent = RoutingAgent(
-        deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
-    )
+    agent = RoutingAgent(deps=RoutingDeps(telemetry_config=telemetry_config))
     yield agent
 
     # Cleanup: flush telemetry
@@ -430,7 +428,7 @@ class TestProductionRoutingRealInfrastructure:
             start = time.time()
 
             try:
-                result = await routing_agent.route_query(query)
+                result = await routing_agent.route_query(query, tenant_id="test-tenant")
                 latency_ms = (time.time() - start) * 1000
 
                 # Record successful execution

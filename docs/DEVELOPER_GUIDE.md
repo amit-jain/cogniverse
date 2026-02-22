@@ -668,7 +668,7 @@ class TestRoutingAgent:
         agent = RoutingAgent(deps=routing_deps)
 
         assert agent.deps is not None
-        assert agent.deps.tenant_id == "test_tenant"
+        # tenant_id is per-request, not in deps
         assert hasattr(agent, "routing_module")
         assert hasattr(agent, "logger")
 ```

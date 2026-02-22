@@ -62,6 +62,7 @@ class MemoryAwareMixin:
         llm_base_url: str,
         config_manager,
         schema_loader,
+        provider: str = "ollama",
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
     ) -> bool:
@@ -78,6 +79,7 @@ class MemoryAwareMixin:
             llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
+            provider: LLM/embedder provider for Mem0 (e.g. "ollama", "openai")
             backend_config_port: Backend config endpoint port (default: 19071)
             auto_create_schema: Auto-deploy tenant schema if not exists (default: True)
 
@@ -107,6 +109,7 @@ class MemoryAwareMixin:
                     llm_base_url=llm_base_url,
                     config_manager=config_manager,
                     schema_loader=schema_loader,
+                    provider=provider,
                     backend_config_port=backend_config_port,
                     base_schema_name="agent_memories",
                     auto_create_schema=auto_create_schema,
@@ -238,7 +241,7 @@ class MemoryAwareMixin:
             return None
 
     def get_memory_stats(self) -> Optional[Dict[str, Any]]:
-        """Alias for get_memory_state() for API compatibility"""
+        """Return memory stats — delegates to get_memory_state()."""
         return self.get_memory_state()
 
     def clear_memory(self) -> bool:

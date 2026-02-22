@@ -206,7 +206,7 @@ class ConfigUtils:
             "summarizer_agent_url": lambda: self._system_config.summarizer_agent_url,
             "text_analysis_agent_url": lambda: self._system_config.text_analysis_agent_url,
             "detailed_report_agent_url": lambda: self._system_config.summarizer_agent_url,  # Alias
-            "composing_agent_port": lambda: 8000,  # Hardcoded default
+            "orchestrator_agent_port": lambda: 8013,  # OrchestratorAgent default
             "routing_agent_port": lambda: 8001,  # Hardcoded default
             "text_analysis_port": lambda: 8005,  # Hardcoded default
             "search_backend": lambda: self._system_config.search_backend,
@@ -287,7 +287,7 @@ class ConfigUtils:
                 "summarizer_agent_url",
                 "text_analysis_agent_url",
                 "detailed_report_agent_url",
-                "composing_agent_port",
+                "orchestrator_agent_port",
                 "routing_agent_port",
                 "text_analysis_port",
                 "search_backend",

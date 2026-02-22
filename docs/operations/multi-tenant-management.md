@@ -661,12 +661,16 @@ All agents implement a factory function for tenant-aware instantiation:
 # Video Search Agent (implementation layer)
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# ONE agent serves ALL tenants — profile and tenant_id are per-request
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:production",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 # Routing Agent (implementation layer)
@@ -739,23 +743,25 @@ result = await pipeline.process_video_async(
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent  # Implementation layer
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Get tenant-specific agent
+# ONE agent serves ALL tenants — no profile or tenant_id at construction
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:production",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 # Search (automatically isolated to acme:production) - synchronous
+# profile and tenant_id are PER-REQUEST parameters on search()
 results = agent.search(
     query="machine learning tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="acme:production",
     top_k=10,
-    # Optional: Add date filters
-    # start_date="2024-01-01",
-    # end_date="2024-12-31"
 )
 
 # Results only from acme:production schema - no cross-tenant access

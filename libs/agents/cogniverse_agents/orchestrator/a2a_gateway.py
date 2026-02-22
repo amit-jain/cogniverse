@@ -193,7 +193,7 @@ class A2AGateway:
             version="1.0.0",
         )
 
-        # Standard A2A routing endpoint (backward compatible)
+        # Standard A2A routing endpoint
         @app.post("/route", response_model=A2AQueryResponse)
         async def route_query(request: A2AQueryRequest) -> A2AQueryResponse:
             return await self._handle_routing_request(request)

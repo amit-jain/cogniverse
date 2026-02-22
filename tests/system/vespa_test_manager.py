@@ -525,6 +525,17 @@ class VespaTestManager:
             print(f"❌ Error creating minimal test documents: {e}")
             return False
 
+    def get_deployed_profiles(self) -> Dict:
+        """Return profiles from the system test config."""
+        import json
+
+        system_test_config = self.test_configs_resource_dir / "system_test_config.json"
+        if not system_test_config.exists():
+            return {}
+        with open(system_test_config) as f:
+            test_config = json.load(f)
+        return test_config.get("backend", {}).get("profiles", {})
+
     def search_videos(
         self, query: str, hits: int = 10, ranking: str = "binary_binary"
     ) -> Optional[Dict]:

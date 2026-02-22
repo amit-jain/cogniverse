@@ -140,7 +140,7 @@ def vespa_with_schema():
         # Full setup: start container, deploy schema, ingest test data
         logger.info("Setting up Vespa with test schema and data...")
         if not manager.full_setup():
-            pytest.skip("Failed to setup Vespa test environment")
+            pytest.fail("Failed to setup Vespa test environment")
 
         logger.info(f"✅ Vespa ready at http://localhost:{agent_http_port}")
 
@@ -155,7 +155,7 @@ def vespa_with_schema():
 
     except Exception as e:
         logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
+        pytest.fail(f"Failed to start Vespa: {e}")
 
     finally:
         # Cleanup

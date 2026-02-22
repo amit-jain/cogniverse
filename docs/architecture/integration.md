@@ -112,6 +112,7 @@ class TestRealVespaIntegration:
         )
 
         # cogniverse-agents package - RoutingAgent requires RoutingDeps with all required fields
+        # Note: tenant_id is per-request, not at construction
         routing_deps = RoutingDeps(
             tenant_id="test",
             telemetry_config=TelemetryConfig(),
@@ -121,11 +122,10 @@ class TestRealVespaIntegration:
         routing_agent = RoutingAgent(deps=routing_deps)
 
         # SearchAgent requires SearchAgentDeps with backend connection details
+        # Note: profile and tenant_id are passed per-request at search() time, not at construction
         search_deps = SearchAgentDeps(
-            tenant_id="test",
             backend_url="http://localhost",
             backend_port=8080,
-            profile="video_colpali_smol500_mv_frame"
         )
         # schema_loader is REQUIRED (raises ValueError if None)
         # config_manager is optional (creates default if None)
@@ -165,21 +165,14 @@ class TestRealVespaIntegration:
 ### 2. Multi-Agent Orchestration
 
 ```python
-# Example: Get composing agent (Google ADK LlmAgent with tools)
-from cogniverse_agents.composing_agents_main import get_composing_agent
-composing_agent = get_composing_agent()
+# Example: Use OrchestratorAgent as the central A2A entry point
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Example: Use MultiAgentOrchestrator for complex workflows
-from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-user_query = "Find videos about cooking and summarize them"
-
-# MultiAgentOrchestrator requires both tenant_id and telemetry_config
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="test",
-    telemetry_config=TelemetryConfig()
-)
+# OrchestratorAgent discovers agents via AgentRegistry (from config.json > agents section)
+registry = AgentRegistry(config_manager=config_manager)
+deps = OrchestratorDeps()
+orchestrator = OrchestratorAgent(deps=deps, registry=registry)
 
 # Execute complex workflow
 result = await orchestrator.process_complex_query(
@@ -481,13 +474,11 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 config_manager = create_default_config_manager()
 
-# AgentDeps only requires tenant_id (base class for all agent dependencies)
-# This is the base class - concrete agents use extended Deps classes
-deps = AgentDeps(tenant_id="test")
-
-# For actual agents, use concrete Deps classes that extend AgentDeps:
+# AgentDeps carries infrastructure config (no tenant_id — it's per-request)
+# Concrete agents use extended Deps classes:
 # RoutingDeps(AgentDeps) adds: telemetry_config, model_name, base_url, etc.
-# SearchAgentDeps(AgentDeps) adds: backend_url, backend_port, profile, etc.
+# SearchAgentDeps(AgentDeps) adds: backend_url, backend_port, etc.
+deps = AgentDeps()  # No tenant_id at construction
 ```
 
 ### Testing Core Layer
@@ -544,11 +535,10 @@ tenant_schema = schema_mgr.get_tenant_schema_name("test", "video_colpali_smol500
 
 # Initialize agent with Vespa backend
 search_deps = SearchAgentDeps(
-    tenant_id="test",
     backend_url="http://localhost",
     backend_port=8080,
-    profile="video_colpali_smol500_mv_frame"
 )
+# tenant_id and profile are per-request, not at construction
 # schema_loader is REQUIRED (raises ValueError if None)
 from pathlib import Path
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader

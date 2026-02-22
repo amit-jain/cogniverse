@@ -122,7 +122,7 @@ class TestVLMInterface:
 class TestSummarizerAgent:
     """Test cases for SummarizerAgent class"""
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_summarizer_agent_initialization(self, mock_vlm_class, mock_get_config):
@@ -131,12 +131,17 @@ class TestSummarizerAgent:
             "llm": {
                 "model_name": "test-model",
                 "base_url": "http://localhost:11434",
-            }
+            },
+            "inference": {
+                "provider": "ollama",
+                "model": "test-model",
+                "local_endpoint": "http://localhost:11434",
+            },
         }
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+        agent = SummarizerAgent(deps=SummarizerDeps())
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -192,7 +197,7 @@ class TestSummarizerAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+        agent = SummarizerAgent(deps=SummarizerDeps())
 
         # Create summarization request
         request = SummaryRequest(
@@ -223,7 +228,6 @@ class TestSummarizerAgentCoreFunctionality:
             patch("cogniverse_agents.summarizer_agent.VLMInterface") as mock_vlm_class,
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):
-
             mock_config.return_value = {
                 "llm": {
                     "model_name": "ollama/llama3.2",
@@ -241,7 +245,7 @@ class TestSummarizerAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+            agent = SummarizerAgent(deps=SummarizerDeps())
             agent.vlm = mock_vlm
             return agent
 
@@ -480,9 +484,9 @@ class TestSummarizerAgentCoreFunctionality:
         """Test summarization with routing decision context"""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="AI overview",
             recommended_agent="summarizer",
             confidence=0.85,

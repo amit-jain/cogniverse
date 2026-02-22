@@ -3,7 +3,6 @@
 import gc
 import os
 import shutil
-import sys
 import tempfile
 import threading
 import time
@@ -96,37 +95,6 @@ def cleanup_dspy_state():
 
     # Clean up background threads from tqdm and posthog
     cleanup_background_threads()
-
-
-def pytest_collection_modifyitems(session, config, items):
-    """
-    Clean up sys.modules pollution from test_composing_agents_main.py immediately after collection.
-
-    This hook runs after all tests are collected but before any tests execute.
-    test_composing_agents_main.py pollutes sys.modules with mocks at import time,
-    which causes integration tests to fail when they try to import real modules.
-    """
-    # List of module names that test_composing_agents_main.py mocks
-    mocked_modules = [
-        "google",
-        "google.adk",
-        "google.adk.agents",
-        "google.adk.runners",
-        "google.adk.sessions",
-        "google.adk.tools",
-        "google.genai",
-        "google.genai.types",
-        "gliner",
-    ]
-
-    # Clean up mocked modules from sys.modules
-    for module_name in mocked_modules:
-        if module_name in sys.modules:
-            # Only remove if it's a MagicMock (from test_composing_agents_main.py)
-            from unittest.mock import MagicMock
-
-            if isinstance(sys.modules[module_name], MagicMock):
-                del sys.modules[module_name]
 
 
 @pytest.fixture(autouse=True, scope="function")

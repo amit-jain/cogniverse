@@ -352,7 +352,7 @@ cogniverse_agents/
 
 #### Key Responsibilities
 
-- **Agent Implementations**: Routing, video search, document, audio, image, text analysis, and composing agents
+- **Agent Implementations**: OrchestratorAgent (A2A entry point), routing, video search, document, audio, image, text analysis agents
 - **Query Processing**: Modality detection, entity extraction with GLiNER, query enhancement
 - **Search Enhancement**: Multi-modal, hybrid, and learned reranking with relevance scoring
 - **Optimization**: DSPy agent optimization with local and Modal GPU providers
@@ -1054,9 +1054,9 @@ from cogniverse_agents.document_agent import DocumentAgent
 from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
 from cogniverse_agents.image_search_agent import ImageSearchAgent
 
-# Composing Agent (requires google-adk)
-# get_composing_agent() returns a google.adk.agents.LlmAgent instance
-from cogniverse_agents.composing_agents_main import get_composing_agent
+# OrchestratorAgent (A2A entry point)
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
 # A2A Protocol
 from cogniverse_agents.a2a_gateway import A2AGateway

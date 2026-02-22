@@ -438,7 +438,6 @@ flowchart TB
     style DSPyProcessing fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ResponseSent fill:#ce93d8,stroke:#7b1fa2,color:#000
     style HealthCheck fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Unregistering fill:#b0bec5,stroke:#546e7a,color:#000
     style Shutdown fill:#b0bec5,stroke:#546e7a,color:#000
     style End fill:#b0bec5,stroke:#546e7a,color:#000
 ```
@@ -470,7 +469,7 @@ sequenceDiagram
         Agent--xOrch: Timeout (5s)
         Orch->>Registry: Mark agent unhealthy
         Orch->>Registry: GET /capabilities/search (retry)
-        Registry-->>Orch: [BackupSearchAgent @ http://localhost:8003]
+        Registry-->>Orch: [SearchAgent (alternate) @ http://localhost:8002]
         Orch->>Agent: POST /tasks/send {query} (retry)
     else Agent Error
         Agent-->>Orch: 500 Internal Server Error

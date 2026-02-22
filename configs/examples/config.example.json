@@ -3,7 +3,7 @@
   
   "text_agent_url": "http://localhost:8002",
   "video_agent_url": "http://localhost:8001",
-  "composing_agent_port": 8000,
+  "orchestrator_agent_port": 8013,
   
   "search_backend": "byaldi",
   

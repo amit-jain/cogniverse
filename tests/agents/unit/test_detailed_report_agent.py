@@ -168,7 +168,7 @@ class TestVLMInterface:
 class TestDetailedReportAgent:
     """Test cases for DetailedReportAgent class"""
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_detailed_report_agent_initialization(
@@ -179,12 +179,17 @@ class TestDetailedReportAgent:
             "llm": {
                 "model_name": "test-model",
                 "base_url": "http://localhost:11434",
-            }
+            },
+            "inference": {
+                "provider": "ollama",
+                "model": "test-model",
+                "local_endpoint": "http://localhost:11434",
+            },
         }
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
+        agent = DetailedReportAgent(deps=DetailedReportDeps())
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -193,7 +198,7 @@ class TestDetailedReportAgent:
         assert agent.visual_analysis_enabled is True
         assert agent.technical_analysis_enabled is True
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_custom_config(self, mock_vlm_class, mock_get_config):
         """Test DetailedReportAgent with custom configuration"""
@@ -201,13 +206,17 @@ class TestDetailedReportAgent:
             "llm": {
                 "model_name": "test-model",
                 "base_url": "http://localhost:11434",
-            }
+            },
+            "inference": {
+                "provider": "ollama",
+                "model": "test-model",
+                "local_endpoint": "http://localhost:11434",
+            },
         }
         mock_vlm_class.return_value = Mock()
 
         agent = DetailedReportAgent(
             deps=DetailedReportDeps(
-                tenant_id="test_tenant",
                 max_report_length=1500,
                 thinking_enabled=False,
                 visual_analysis_enabled=False,
@@ -293,9 +302,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            agent = DetailedReportAgent(deps=DetailedReportDeps())
 
         # Create report request
         request = ReportRequest(
@@ -328,9 +335,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            agent = DetailedReportAgent(deps=DetailedReportDeps())
 
         # Empty search results should still generate a report
         request = ReportRequest(
@@ -389,7 +394,6 @@ class TestDetailedReportAgentCoreFunctionality:
             ) as mock_vlm_class,
             patch.object(DetailedReportAgent, "_initialize_vlm_client"),
         ):
-
             mock_config.return_value = {
                 "llm": {
                     "model_name": "test-model",
@@ -408,9 +412,7 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent(
-                deps=DetailedReportDeps(tenant_id="test_tenant")
-            )
+            agent = DetailedReportAgent(deps=DetailedReportDeps())
             agent.vlm = mock_vlm
             return agent
 
@@ -653,9 +655,9 @@ class TestDetailedReportAgentCoreFunctionality:
         """Test enhanced report generation with routing decision"""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="test query",
             recommended_agent="detailed_report",
             confidence=0.9,
@@ -692,9 +694,9 @@ class TestDetailedReportAgentCoreFunctionality:
             )
 
             # Use generate_report_with_routing_decision method
-            from cogniverse_agents.routing_agent import RoutingDecision
+            from cogniverse_agents.routing_agent import RoutingOutput
 
-            routing_decision = RoutingDecision(
+            routing_decision = RoutingOutput(
                 query=enhanced_request.original_query,
                 enhanced_query=enhanced_request.enhanced_query,
                 recommended_agent="detailed_report_agent",

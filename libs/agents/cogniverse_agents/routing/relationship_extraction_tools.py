@@ -129,7 +129,6 @@ class GLiNERRelationshipExtractor:
         # Simple relationship inference based on proximity and common patterns
         for i, entity1 in enumerate(entities):
             for j, entity2 in enumerate(entities[i + 1 :], i + 1):
-
                 # Calculate distance between entities
                 distance = abs(entity1["start_pos"] - entity2["start_pos"])
 

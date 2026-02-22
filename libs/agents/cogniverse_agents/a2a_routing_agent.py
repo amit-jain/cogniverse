@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 import httpx
 
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingOutput
 from cogniverse_agents.tools.a2a_utils import (
     DataPart,
     Task,
@@ -180,24 +180,20 @@ class A2ARoutingAgent:
         return query, context
 
     async def _execute_agent_workflow(
-        self, routing_analysis: Dict[str, Any], task_id: str
+        self, routing_analysis: RoutingOutput, task_id: str
     ) -> Dict[str, Any]:
         """
         Execute the agent workflow based on routing analysis.
 
         Args:
-            routing_analysis: Analysis from routing agent
+            routing_analysis: RoutingOutput from routing agent
             task_id: Task identifier
 
         Returns:
             Dictionary of agent responses
         """
         agent_responses = {}
-        # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, "metadata"):
-            execution_plan = routing_analysis.metadata.get("execution_plan", [])
-        else:
-            execution_plan = routing_analysis.get("execution_plan", [])
+        execution_plan = routing_analysis.metadata.get("execution_plan", [])
 
         for step in execution_plan:
             agent_name = step["agent"]
@@ -279,25 +275,19 @@ class A2ARoutingAgent:
             raise Exception(f"Failed to communicate with {agent_endpoint.name}: {e}")
 
     def _aggregate_results(
-        self, routing_analysis: Dict[str, Any], agent_responses: Dict[str, Any]
+        self, routing_analysis: RoutingOutput, agent_responses: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Aggregate results from all agents based on workflow type.
 
         Args:
-            routing_analysis: Original routing analysis
+            routing_analysis: RoutingOutput from routing agent
             agent_responses: Responses from all agents
 
         Returns:
             Aggregated final result
         """
-        # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, "metadata"):
-            workflow_type = routing_analysis.metadata.get(
-                "workflow_type", "raw_results"
-            )
-        else:
-            workflow_type = routing_analysis.get("workflow_type", "raw_results")
+        workflow_type = routing_analysis.metadata.get("workflow_type", "raw_results")
 
         # Collect search results
         search_results = []
@@ -306,13 +296,8 @@ class A2ARoutingAgent:
                 search_results.extend(response["results"])
 
         # Base result structure
-        # Handle both RoutingDecision object and dict for backward compatibility
-        if hasattr(routing_analysis, "query"):
-            query = routing_analysis.query
-            routing_decision = routing_analysis.recommended_agent
-        else:
-            query = routing_analysis.get("query")
-            routing_decision = routing_analysis.get("routing_decision")
+        query = routing_analysis.query
+        routing_decision = routing_analysis.recommended_agent
 
         final_result = {
             "workflow_type": workflow_type,
@@ -372,7 +357,7 @@ class A2ARoutingAgent:
             source = result.get("source_id", "Unknown")
             content_type = result.get("content_type", "unknown")
 
-            report_parts.append(f"{i+1}. {source} ({content_type})")
+            report_parts.append(f"{i + 1}. {source} ({content_type})")
             report_parts.append(f"   Relevance Score: {score:.3f}")
 
             if "metadata" in result:

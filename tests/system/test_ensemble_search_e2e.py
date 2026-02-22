@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from cogniverse_agents.search_agent import SearchInput
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,7 @@ def ensemble_system_setup():
         # Setup Vespa
         logger.info("📦 Setting up Vespa container...")
         if not manager.full_setup():
-            pytest.skip("Failed to setup Vespa")
+            pytest.fail("Failed to setup Vespa")
 
         logger.info(f"✅ Vespa ready at http://localhost:{ensemble_http_port}")
 
@@ -163,9 +165,7 @@ def ensemble_search_agent(ensemble_system_setup):
         base_path=Path("tests/system/resources/schemas")
     )
 
-    # Create SearchAgent with same tenant_id as VespaTestManager uses
     search_deps = SearchAgentDeps(
-        tenant_id="test_tenant",
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
@@ -206,7 +206,7 @@ class TestEnsembleSearchEndToEnd:
 
         # Get actual schema name for Vespa queries
         schema_name = list(profiles.values())[0]["schema"]
-        original_search = agent.search_backend.search
+        original_search = agent._get_backend("test_tenant").search
 
         def mock_search_with_profile_mapping(query_dict):
             """Map friendly profile names to schema and simulate different results"""
@@ -236,7 +236,7 @@ class TestEnsembleSearchEndToEnd:
                 encoder.encode = Mock(return_value=np.random.rand(128))
             return encoder
 
-        agent.search_backend.search = mock_search_with_profile_mapping
+        agent._get_backend("test_tenant").search = mock_search_with_profile_mapping
 
         try:
             with patch(
@@ -246,23 +246,22 @@ class TestEnsembleSearchEndToEnd:
                 start_time = time.time()
 
                 result = await agent._process_impl(
-                    {
-                        "query": "machine learning tutorial videos",
-                        "profiles": list(profiles.keys()),
-                        "top_k": 5,
-                        "rrf_k": 60,
-                    }
+                    SearchInput(
+                        query="machine learning tutorial videos",
+                        tenant_id="test_tenant",
+                        profiles=list(profiles.keys()),
+                        top_k=5,
+                        rrf_k=60,
+                    )
                 )
 
                 elapsed_ms = (time.time() - start_time) * 1000
         finally:
-            agent.search_backend.search = original_search
+            agent._get_backend("test_tenant").search = original_search
 
         # VALIDATE: Ensemble mode (result is a SearchOutput pydantic model)
         assert result.search_mode == "ensemble", "Should use ensemble mode"
-        assert set(result.profiles) == set(
-            profiles.keys()
-        ), "Should query all profiles"
+        assert set(result.profiles) == set(profiles.keys()), "Should query all profiles"
 
         # VALIDATE: Results structure
         assert isinstance(result.results, list)
@@ -307,7 +306,7 @@ class TestEnsembleSearchEndToEnd:
 
         # Get actual schema name and mock profile mapping
         schema_name = list(profiles.values())[0]["schema"]
-        original_search = agent.search_backend.search
+        original_search = agent._get_backend("test_tenant").search
 
         def mock_search_with_profile_mapping(query_dict):
             """Map friendly profile names to schema"""
@@ -318,7 +317,7 @@ class TestEnsembleSearchEndToEnd:
             except Exception:
                 return []
 
-        agent.search_backend.search = mock_search_with_profile_mapping
+        agent._get_backend("test_tenant").search = mock_search_with_profile_mapping
 
         # Mock encoders with realistic timing
         def mock_create_encoder(profile_name, model_name, config=None):
@@ -346,19 +345,20 @@ class TestEnsembleSearchEndToEnd:
                     start_time = time.time()
 
                     _result = await agent._process_impl(
-                        {
-                            "query": f"test query {i}",
-                            "profiles": list(profiles.keys()),
-                            "top_k": 10,
-                            "rrf_k": 60,
-                        }
+                        SearchInput(
+                            query=f"test query {i}",
+                            tenant_id="test_tenant",
+                            profiles=list(profiles.keys()),
+                            top_k=10,
+                            rrf_k=60,
+                        )
                     )
                     assert _result is not None  # Verify execution completed
 
                     latency_ms = (time.time() - start_time) * 1000
                     latencies.append(latency_ms)
         finally:
-            agent.search_backend.search = original_search
+            agent._get_backend("test_tenant").search = original_search
 
         avg_latency = sum(latencies) / len(latencies)
         max_latency = max(latencies)
@@ -390,7 +390,7 @@ class TestEnsembleSearchEndToEnd:
         import numpy as np
 
         # Create mock that simulates realistic profile-specific results
-        original_search = agent.search_backend.search
+        original_search = agent._get_backend("test_tenant").search
 
         def realistic_profile_search(query_dict):
             """Simulate different profiles returning overlapping results"""
@@ -422,7 +422,7 @@ class TestEnsembleSearchEndToEnd:
                     ]
                 )
 
-        agent.search_backend.search = realistic_profile_search
+        agent._get_backend("test_tenant").search = realistic_profile_search
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
@@ -435,12 +435,13 @@ class TestEnsembleSearchEndToEnd:
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(
-                    {
-                        "query": "test query for quality",
-                        "profiles": list(profiles.keys()),
-                        "top_k": 10,
-                        "rrf_k": 60,
-                    }
+                    SearchInput(
+                        query="test query for quality",
+                        tenant_id="test_tenant",
+                        profiles=list(profiles.keys()),
+                        top_k=10,
+                        rrf_k=60,
+                    )
                 )
 
             results = result.results
@@ -478,7 +479,7 @@ class TestEnsembleSearchEndToEnd:
             )
 
         finally:
-            agent.search_backend.search = original_search
+            agent._get_backend("test_tenant").search = original_search
 
     @pytest.mark.asyncio
     async def test_e2e_ensemble_error_recovery(self, ensemble_search_agent):
@@ -493,7 +494,7 @@ class TestEnsembleSearchEndToEnd:
 
         import numpy as np
 
-        original_search = agent.search_backend.search
+        original_search = agent._get_backend("test_tenant").search
 
         def failing_profile_search(query_dict):
             """Simulate one profile failing"""
@@ -510,7 +511,7 @@ class TestEnsembleSearchEndToEnd:
                 ]
             )
 
-        agent.search_backend.search = failing_profile_search
+        agent._get_backend("test_tenant").search = failing_profile_search
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
@@ -523,12 +524,13 @@ class TestEnsembleSearchEndToEnd:
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(
-                    {
-                        "query": "test query with failure",
-                        "profiles": list(profiles.keys()),
-                        "top_k": 10,
-                        "rrf_k": 60,
-                    }
+                    SearchInput(
+                        query="test query with failure",
+                        tenant_id="test_tenant",
+                        profiles=list(profiles.keys()),
+                        top_k=10,
+                        rrf_k=60,
+                    )
                 )
 
             # VALIDATE: Ensemble still succeeded despite one failure
@@ -540,7 +542,7 @@ class TestEnsembleSearchEndToEnd:
             )
 
         finally:
-            agent.search_backend.search = original_search
+            agent._get_backend("test_tenant").search = original_search
 
 
 def _create_mock_search_results(doc_scores):

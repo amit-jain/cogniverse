@@ -4,7 +4,6 @@ Generates comprehensive detailed reports with visual and technical analysis.
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -14,10 +13,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 # Enhanced routing support
-from cogniverse_agents.routing_agent import RoutingDecision
+from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_agents.tools.a2a_utils import DataPart, Task
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class DetailedReportOutput(AgentOutput):
 
 
 class DetailedReportDeps(AgentDeps):
-    """Dependencies for detailed report agent"""
+    """Dependencies for detailed report agent (tenant-agnostic at startup)."""
 
     max_report_length: int = Field(2000, description="Maximum report length")
     thinking_enabled: bool = Field(True, description="Enable thinking phase")
@@ -193,33 +193,30 @@ class ReportResult:
     entity_analysis: Optional[Dict[str, Any]] = None
     enhancement_applied: bool = False
 
-    @property
-    def confidence_score(self) -> float:
-        """Return overall confidence score for backward compatibility"""
-        return self.confidence_assessment.get("overall", 0.0)
-
 
 class DetailedReportAgent(
-    A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps]
+    MemoryAwareMixin,
+    A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps],
 ):
     """
     Type-safe agent for generating comprehensive detailed reports with full A2A support.
     Provides visual analysis, technical insights, and actionable recommendations.
     """
 
-    def __init__(self, deps: DetailedReportDeps, port: int = 8004):
+    def __init__(self, deps: DetailedReportDeps, config_manager=None, port: int = 8004):
         """
         Initialize detailed report agent with typed dependencies.
 
         Args:
-            deps: Typed dependencies with tenant_id and configuration
+            deps: Typed dependencies with configuration
+            config_manager: ConfigManager instance (optional, will create default if None)
             port: A2A server port
 
         Raises:
             TypeError: If deps is not DetailedReportDeps
             ValidationError: If deps fails Pydantic validation
         """
-        logger.info(f"Initializing DetailedReportAgent for tenant: {deps.tenant_id}...")
+        logger.info("Initializing DetailedReportAgent (tenant-agnostic)...")
 
         # Create DSPy report generation module
         self.report_module = ReportGenerationModule()
@@ -242,17 +239,20 @@ class DetailedReportAgent(
         # Initialize A2A base
         super().__init__(deps=deps, config=config, dspy_module=self.report_module)
 
-        # Create config manager for VLM and other services
-        from cogniverse_foundation.config.utils import create_default_config_manager
+        # Config manager for VLM and other services
+        if config_manager is not None:
+            self._config_manager = config_manager
+        else:
+            from cogniverse_foundation.config.utils import create_default_config_manager
 
-        self._config_manager = create_default_config_manager()
+            self._config_manager = create_default_config_manager()
 
         # Initialize DSPy components
         self._initialize_vlm_client()
 
         # Initialize VLM for visual analysis
         self.vlm = VLMInterface(
-            config_manager=self._config_manager, tenant_id=self.deps.tenant_id
+            config_manager=self._config_manager, tenant_id="default"
         )
 
         # Configuration from deps
@@ -261,50 +261,43 @@ class DetailedReportAgent(
         self.visual_analysis_enabled = deps.visual_analysis_enabled
         self.technical_analysis_enabled = deps.technical_analysis_enabled
 
-        logger.info(f"DetailedReportAgent initialized for tenant: {deps.tenant_id}")
+        logger.info("DetailedReportAgent initialized (tenant-agnostic)")
 
     def _initialize_vlm_client(self):
-        """Initialize DSPy LM from configuration"""
-        import os
+        """Initialize DSPy LM from config.json inference section."""
+        from cogniverse_foundation.config.utils import get_config
 
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-            get_config,
-        )
-
-        # Get system config for LLM settings
-        config_manager = create_default_config_manager()
+        # Use the injected config_manager (set in __init__), not a new default one.
         system_config = get_config(
-            tenant_id=self.deps.tenant_id, config_manager=config_manager
+            tenant_id="default", config_manager=self._config_manager
         )
 
-        # Try to get LLM config from system config or environment
-        if (
-            system_config
-            and hasattr(system_config, "get")
-            and callable(system_config.get)
-        ):
-            llm_config = system_config.get("llm", {})
-        elif system_config and hasattr(system_config, "llm"):
-            llm_config = (
-                system_config.llm if isinstance(system_config.llm, dict) else {}
-            )
-        else:
-            llm_config = {}
-
-        # Fall back to environment variables if not in config
-        model_name = llm_config.get("model_name") or os.environ.get(
-            "LLM_MODEL_NAME", "gemma3:4b"
-        )
-        base_url = llm_config.get("base_url") or os.environ.get(
-            "LLM_BASE_URL", "http://localhost:11434"
-        )
-        api_key = llm_config.get("api_key") or os.environ.get("LLM_API_KEY")
-
-        if not all([model_name, base_url]):
+        # Read from config.json > inference section
+        inference_config = system_config.get("inference", {})
+        if not inference_config:
             raise ValueError(
-                "LLM configuration missing: model_name and base_url required"
+                "Missing 'inference' section in config.json. "
+                "Required fields: provider, model, local_endpoint or modal_endpoint"
             )
+
+        provider = inference_config.get("provider", "ollama")
+        model_name = inference_config.get("model")
+        if not model_name:
+            raise ValueError("Missing 'model' in config.json > inference section")
+
+        # Determine base_url from provider
+        if provider == "modal":
+            base_url = inference_config.get("modal_endpoint")
+        else:
+            base_url = inference_config.get("local_endpoint")
+
+        if not base_url:
+            raise ValueError(
+                f"Missing endpoint for provider '{provider}' in config.json > inference. "
+                f"Set 'modal_endpoint' (provider=modal) or 'local_endpoint' (provider=ollama)."
+            )
+
+        api_key = inference_config.get("api_key")
 
         # Ensure model name has provider prefix for litellm (Ollama models)
         if (
@@ -612,15 +605,15 @@ class DetailedReportAgent(
         reasoning = f"""
 Report Generation Strategy:
 - Query: "{request.query}"
-- Results: {content_analysis['total_results']} items analyzed
-- Average relevance: {content_analysis['avg_relevance']:.2f}
-- Visual content: {'Available' if visual_assessment['has_visual_content'] else 'Not available'}
+- Results: {content_analysis["total_results"]} items analyzed
+- Average relevance: {content_analysis["avg_relevance"]:.2f}
+- Visual content: {"Available" if visual_assessment["has_visual_content"] else "Not available"}
 - Technical findings: {len(technical_findings)} aspects identified
 - Patterns detected: {len(patterns)}
 - Limitations: {len(gaps)} gaps identified
 
 Approach: Will generate {request.report_type} report with focus on data quality,
-technical accuracy, and actionable insights. Visual analysis {'included' if request.include_visual_analysis else 'excluded'}.
+technical accuracy, and actionable insights. Visual analysis {"included" if request.include_visual_analysis else "excluded"}.
 """.strip()
 
         return reasoning
@@ -841,7 +834,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
 
     async def generate_report_with_routing_decision(
         self,
-        routing_decision: RoutingDecision,
+        routing_decision: RoutingOutput,
         search_results: List[Dict[str, Any]],
         **kwargs,
     ) -> ReportResult:
@@ -944,30 +937,16 @@ detailed_report_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup — tenant-agnostic, no env vars."""
     global detailed_report_agent
 
-    # Tenant ID is REQUIRED
-    tenant_id = os.getenv("TENANT_ID")
-    if not tenant_id:
-        error_msg = "TENANT_ID environment variable is required"
-        logger.error(error_msg)
-        if not os.getenv("PYTEST_CURRENT_TEST"):
-            raise ValueError(error_msg)
-        else:
-            logger.warning(
-                "PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id"
-            )
-            tenant_id = "test_tenant"
-
     try:
-        deps = DetailedReportDeps(tenant_id=tenant_id)
+        deps = DetailedReportDeps()
         detailed_report_agent = DetailedReportAgent(deps=deps)
-        logger.info(f"Detailed report agent initialized for tenant: {tenant_id}")
+        logger.info("Detailed report agent initialized (tenant-agnostic)")
     except Exception as e:
         logger.error(f"Failed to initialize detailed report agent: {e}")
-        if not os.getenv("PYTEST_CURRENT_TEST"):
-            raise
+        raise
 
 
 @app.get("/health")

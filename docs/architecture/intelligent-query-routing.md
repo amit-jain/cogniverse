@@ -254,39 +254,39 @@ Seven signals are evaluated. If **≥ 3 signals** fire, orchestration is trigger
 
 ```mermaid
 sequenceDiagram
-    participant R as Routing Agent
-    participant O as Orchestrator
-    participant WP as DSPy WorkflowPlanner
+    participant U as User / Dashboard
+    participant O as OrchestratorAgent
+    participant WP as DSPy OrchestrationModule
     participant TS as Topological Sort
     participant A1 as Agent 1 (Search)
     participant A2 as Agent 2 (Summarizer)
     participant A3 as Agent 3 (Report Gen)
     participant AGG as Result Aggregator
-    participant CP as Checkpoint Storage
 
-    R->>O: Complex query (≥3 signals)
+    U->>O: Complex query (≥3 orchestration signals)
+
+    Note over O: Planning Phase
     O->>WP: Plan workflow (query + available agents)
-    WP-->>O: Tasks with dependencies
+    WP-->>O: Tasks with dependencies + parallel_groups
 
     O->>TS: Resolve execution order
     TS-->>O: Execution phases
 
     Note over O: Phase 1: Independent tasks
     par Parallel Execution
-        O->>A1: Video search
-        O->>A2: Text search
+        O->>A1: POST /tasks/send {query, tenant_id}
+        O->>A2: POST /tasks/send {query, tenant_id}
     end
-    A1-->>O: Video results
-    A2-->>O: Text results
-    O->>CP: Checkpoint phase 1
+    A1-->>O: Search results
+    A2-->>O: Summary results
 
     Note over O: Phase 2: Dependent tasks
-    O->>A3: Generate report (depends on Phase 1)
+    O->>A3: POST /tasks/send {query, tenant_id}
     A3-->>O: Report
 
     O->>AGG: Aggregate all results
     AGG-->>O: Fused response
-    O->>CP: Checkpoint complete
+    O-->>U: Orchestrated response
 ```
 
 **Key architectural decisions:**

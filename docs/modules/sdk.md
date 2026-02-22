@@ -38,7 +38,7 @@ The **cogniverse-sdk** package is the **pure foundation** of the Cogniverse syst
 **Design Philosophy:**
 
 - **Zero Dependencies**: Only depends on standard library and numpy
-- **Pure Interfaces**: Abstract base classes with no implementation
+- **Pure Interfaces**: Primarily abstract base classes; `Backend` has minimal concrete scaffolding (idempotent `initialize()` and `__init__`) but all domain logic is abstract
 - **Content-Agnostic**: Generic models that work for video, audio, text, images
 - **Extensible**: Easy to add new backend implementations
 
@@ -128,36 +128,49 @@ Single `Document` class for all content types:
 Defines the contract for all backend implementations (Vespa, Qdrant, etc.):
 
 ```python
-from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.backend import Backend, SearchBackend, IngestionBackend
 
-class Backend(ABC):
+class Backend(IngestionBackend, SearchBackend):
     """Combined search and ingestion backend interface"""
 
-    @abstractmethod
+    def __init__(self, name: str):
+        """Initialize backend with a name for identification"""
+        self.name = name
+        self._initialized = False
+
     def initialize(self, config: Dict[str, Any]) -> None:
-        """Initialize backend with configuration"""
-        pass
+        """Concrete: initializes once and delegates to _initialize_backend()"""
+        if not self._initialized:
+            self._initialize_backend(config)
+            self._initialized = True
 
-    @abstractmethod
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Search for documents"""
-        pass
+    # Inherited from SearchBackend (abstract - must implement):
+    # search(query_embeddings, query_text, top_k, filters, ranking_strategy) -> List[Dict]
+    # get_document(document_id) -> Optional[Document]
+    # batch_get_documents(document_ids) -> List[Optional[Document]]
+    # get_statistics() -> Dict[str, Any]
+    # health_check() -> bool
+    # get_embedding_requirements(schema_name) -> Dict[str, Any]
 
-    @abstractmethod
-    def ingest_documents(
-        self,
-        documents: List[Document],
-        schema_name: str
-    ) -> Dict[str, Any]:
-        """Ingest documents into backend"""
-        pass
+    # Inherited from IngestionBackend (abstract - must implement):
+    # ingest_documents(documents, schema_name) -> Dict[str, Any]
+    # ingest_stream(documents) -> Iterator[Dict[str, Any]]
+    # update_document(document_id, document) -> bool
+    # delete_document(document_id) -> bool
+    # get_schema_info() -> Dict[str, Any]
+    # validate_schema(schema_name) -> bool
+
+    # Schema management (abstract - must implement):
+    # deploy_schemas(schema_definitions) -> bool
+    # delete_schema(schema_name, tenant_id) -> List[str]
+    # schema_exists(schema_name, tenant_id) -> bool
+    # get_tenant_schema_name(tenant_id, base_schema_name) -> str
+
+    # Metadata document operations (abstract - must implement):
+    # create_metadata_document(schema, doc_id, fields) -> bool
+    # get_metadata_document(schema, doc_id) -> Optional[Dict]
+    # query_metadata_documents(schema, query, yql, **kwargs) -> List[Dict]
+    # delete_metadata_document(schema, doc_id) -> bool
 ```
 
 **Benefits:**
@@ -627,17 +640,36 @@ cogniverse_sdk/
 - `SearchBackend`: Search-only operations
 - `IngestionBackend`: Ingestion-only operations
 
-**Methods:**
+**Methods (SearchBackend):**
 
-- `initialize(config)`: Initialize backend
+- `initialize(config)`: Initialize search backend
 - `search(query_embeddings, query_text, top_k, filters, ranking_strategy)`: Search documents
-- `ingest_documents(documents, schema_name)`: Ingest documents
-- `health_check()`: Check backend health
+- `get_document(document_id)`: Retrieve a document by ID
+- `batch_get_documents(document_ids)`: Retrieve multiple documents by ID
 - `get_statistics()`: Get search backend statistics
+- `health_check()`: Check backend health
+- `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
+
+**Methods (IngestionBackend):**
+
+- `initialize(config)`: Initialize ingestion backend
+- `ingest_documents(documents, schema_name)`: Ingest a batch of documents
+- `ingest_stream(documents)`: Stream documents for ingestion
+- `update_document(document_id, document)`: Update an existing document
+- `delete_document(document_id)`: Delete a document
+- `get_schema_info()`: Get backend schema information
+- `validate_schema(schema_name)`: Validate schema exists and is configured
+
+**Methods (Backend — schema management and metadata ops):**
+
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
-- `delete_schema(schema_name, tenant_id)`: Delete tenant schema
+- `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists
 - `get_tenant_schema_name(tenant_id, base_schema_name)`: Get tenant-specific schema name
+- `create_metadata_document(schema, doc_id, fields)`: Create or update metadata document
+- `get_metadata_document(schema, doc_id)`: Get metadata document by ID
+- `query_metadata_documents(schema, query, yql, **kwargs)`: Query metadata documents
+- `delete_metadata_document(schema, doc_id)`: Delete metadata document
 
 **Lines of Code**: ~494
 
@@ -1315,34 +1347,30 @@ dependencies = [
 
 ### Running Tests
 
-The SDK package contains only interface definitions and has no dedicated test suite. Interface implementations and their integration with the SDK are tested in their respective packages:
+The SDK package contains only interface definitions and has no dedicated test suite. Interface implementations and their integration with the SDK are tested in the project-level `tests/` directory:
 
 ```bash
 # Test Vespa backend implementation (implements Backend, ConfigStore, etc.)
-cd libs/vespa
-uv run pytest tests/ -v
+uv run pytest tests/backends/ -v
 
-# Test core functionality (implements SchemaLoader, etc.)
-cd libs/core
-uv run pytest tests/ -v
+# Test ingestion pipeline (exercises IngestionBackend interface)
+uv run pytest tests/ingestion/ -v
 
-# Test foundation functionality (Document usage, etc.)
-cd libs/foundation
-uv run pytest tests/ -v
+# Test all unit tests
+uv run pytest tests/ -v -m "unit"
 ```
 
 ### Test Structure
 
-Note: The SDK package currently does not have a dedicated test suite, as it only defines interfaces. Interface implementations are tested in their respective packages (e.g., cogniverse-vespa, cogniverse-core).
+Note: The SDK package currently does not have a dedicated test suite, as it only defines interfaces. Interface implementations are tested in the project-level `tests/` directory (e.g., `tests/backends/`, `tests/ingestion/`).
 
 ### Example Tests
 
-The SDK package defines interfaces only. Testing examples can be found in implementation packages:
+The SDK package defines interfaces only. Testing examples can be found in the project-level `tests/` directory:
 
-- **Document tests**: See `libs/foundation/tests/` for Document model tests
-- **Backend interface tests**: See `libs/vespa/tests/` for VespaBackend implementation tests
-- **ConfigStore tests**: See `libs/vespa/tests/` for VespaConfigStore tests
-- **SchemaLoader tests**: See `libs/core/tests/` for FilesystemSchemaLoader tests
+- **Backend interface tests**: See `tests/backends/` for VespaBackend implementation tests
+- **ConfigStore tests**: See `tests/backends/` for VespaConfigStore tests
+- **Ingestion tests**: See `tests/ingestion/` for backend ingestion tests
 
 ---
 

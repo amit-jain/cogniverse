@@ -33,7 +33,6 @@ class TestRoutingAgentCacheMetrics:
 
         # Create deps with test configuration
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             enable_caching=True,
             enable_metrics_tracking=True,
@@ -95,9 +94,9 @@ class TestRoutingAgentCacheMetrics:
         # Create a RoutingDecision to cache
         from datetime import datetime
 
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
-        cached_decision = RoutingDecision(
+        cached_decision = RoutingOutput(
             query=query,
             recommended_agent="video_search_agent",
             confidence=0.9,
@@ -117,7 +116,7 @@ class TestRoutingAgentCacheMetrics:
         # Mock the routing module to ensure it's not called on cache hit
         with patch.object(routing_agent.routing_module, "forward") as mock_forward:
             # Call route_query
-            result = await routing_agent.route_query(query)
+            result = await routing_agent.route_query(query, tenant_id="test_tenant")
 
             # Verify cached result was returned
             assert result.query == cached_decision.query
@@ -144,7 +143,7 @@ class TestRoutingAgentCacheMetrics:
             routing_agent.routing_module, "forward", return_value=mock_prediction
         ):
             # Call route_query
-            result = await routing_agent.route_query(query)
+            result = await routing_agent.route_query(query, tenant_id="test_tenant")
 
             # Verify routing was performed
             assert result.query == query
@@ -176,7 +175,7 @@ class TestRoutingAgentCacheMetrics:
             routing_agent.routing_module, "forward", return_value=mock_prediction
         ):
             # Call route_query
-            await routing_agent.route_query(query)
+            await routing_agent.route_query(query, tenant_id="test_tenant")
 
             # Verify metrics were recorded
             stats = routing_agent.metrics_tracker.get_summary_stats()
@@ -194,7 +193,7 @@ class TestRoutingAgentCacheMetrics:
             side_effect=Exception("Routing failed"),
         ):
             # Call route_query (should not raise, returns fallback decision)
-            result = await routing_agent.route_query(query)
+            result = await routing_agent.route_query(query, tenant_id="test_tenant")
 
             # Verify fallback decision was returned
             assert result is not None
@@ -227,7 +226,7 @@ class TestRoutingAgentCacheMetrics:
             routing_agent.routing_module, "forward", return_value=mock_prediction
         ):
             # Process query
-            result = await routing_agent.route_query(query)
+            result = await routing_agent.route_query(query, tenant_id="test_tenant")
 
             # Verify result was cached (video_search_agent maps to VIDEO modality)
             cached = routing_agent.cache_manager.get_cached_result(

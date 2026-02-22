@@ -1,4 +1,8 @@
-"""Unified search service that coordinates query encoding and backend search."""
+"""Unified search service that coordinates query encoding and backend search.
+
+Profile-agnostic: accepts profile and tenant_id at search() time, not at construction.
+Caches encoders by model_name and backends by tenant_id for efficiency.
+"""
 
 import logging
 from typing import Any, Dict, List, Optional
@@ -12,35 +16,33 @@ logger = logging.getLogger(__name__)
 
 
 class SearchService:
-    """Unified search service for video retrieval."""
+    """Unified search service for video retrieval.
+
+    Profile-agnostic: ONE instance serves all profiles and tenants.
+    Encoders are cached by model_name (via QueryEncoderFactory).
+    Backends are lazily created per tenant_id.
+    """
 
     def __init__(
         self,
         config: Dict[str, Any],
-        profile: str,
-        tenant_id: str = "default",
         config_manager=None,
         schema_loader=None,
     ):
         """
-        Initialize search service.
+        Initialize search service (profile-agnostic).
 
         Args:
-            config: Configuration dictionary
-            profile: Video processing profile to use
-            tenant_id: Tenant identifier (default: "default")
-            config_manager: ConfigManager instance for dependency injection
-            schema_loader: SchemaLoader instance for dependency injection
+            config: Configuration dictionary (full config.json content)
+            config_manager: ConfigManager instance for dependency injection (REQUIRED)
+            schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
         """
         self.config = config
-        self.profile = profile
-        self.tenant_id = tenant_id
 
-        # Require dependencies via dependency injection
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for SearchService. "
-                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
+                "Dependency injection is mandatory - pass create_default_config_manager() explicitly."
             )
         self.config_manager = config_manager
 
@@ -51,19 +53,15 @@ class SearchService:
             )
         self.schema_loader = schema_loader
 
-        # Initialize new telemetry system
+        # Lazy backend cache: tenant_id → search backend
+        self._backends: Dict[str, Any] = {}
+
+        # Initialize telemetry
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        get_telemetry_manager()  # Initialize singleton
+        get_telemetry_manager()
 
-        # Get profile configuration from backend config
-        self.profile_config = self._get_profile_config(profile)
-
-        # Initialize query encoder first
-        self._init_query_encoder()
-
-        # Initialize search backend with profile and query encoder
-        self._init_search_backend()
+        logger.info("SearchService initialized (profile-agnostic)")
 
     def _get_profile_config(self, profile: str) -> Dict[str, Any]:
         """Get profile configuration from backend config."""
@@ -79,41 +77,33 @@ class SearchService:
 
         return profile_config
 
-    def _init_query_encoder(self):
-        """Initialize query encoder based on profile config."""
-        model_name = self.profile_config.get("embedding_model")
+    def _get_encoder(self, profile: str, profile_config: Dict[str, Any]):
+        """Get or create cached encoder for the given profile."""
+        model_name = profile_config.get("embedding_model")
         if not model_name:
             raise ValueError(
-                f"Profile '{self.profile}' missing 'embedding_model' configuration"
+                f"Profile '{profile}' missing 'embedding_model' configuration"
             )
 
-        logger.info(f"Profile {self.profile} has embedding_model: {model_name}")
-
-        # Create query encoder using profile information
-        logger.info(
-            f"Creating query encoder for profile: {self.profile} with model: {model_name}"
-        )
-        self.query_encoder = QueryEncoderFactory.create_encoder(
-            self.profile, model_name, config=self.config
-        )
-        logger.info(
-            f"Initialized query encoder type: {type(self.query_encoder).__name__} for profile: {self.profile}"
+        return QueryEncoderFactory.create_encoder(
+            profile, model_name, config=self.config
         )
 
-    def _init_search_backend(self):
-        """Initialize search backend using backend registry."""
+    def _get_backend(self, tenant_id: str, profile: str, profile_config: Dict[str, Any], query_encoder):
+        """Get or create cached search backend for the given tenant."""
+        if tenant_id in self._backends:
+            return self._backends[tenant_id]
+
         backend_type = self.config.get("search_backend", "vespa")
-        schema_name = self.profile_config.get("schema_name")
+        schema_name = profile_config.get("schema_name")
 
         if not schema_name:
             raise ValueError(
-                f"Profile '{self.profile}' missing 'schema_name' configuration"
+                f"Profile '{profile}' missing 'schema_name' configuration"
             )
 
-        # Get backend from registry
         backend_registry = get_backend_registry()
 
-        # Prepare backend configuration with full profile data
         backend_section = self.config.get("backend", {})
         backend_config = {
             "vespa_url": self.config.get("vespa_url")
@@ -121,47 +111,49 @@ class SearchService:
             "vespa_port": self.config.get("vespa_port")
             or backend_section.get("port", 8080),
             "schema_name": schema_name,
-            "profile": self.profile,
-            "query_encoder": self.query_encoder,
+            "profile": profile,
+            "query_encoder": query_encoder,
             "profiles": backend_section.get("profiles", {}),
             "default_profiles": backend_section.get("default_profiles", {}),
         }
 
-        # Get backend instance from registry with dependency injection
-        self.search_backend = backend_registry.get_search_backend(
+        backend = backend_registry.get_search_backend(
             backend_type,
-            self.tenant_id,
+            tenant_id,
             backend_config,
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
+
+        self._backends[tenant_id] = backend
         logger.info(
-            f"Initialized {backend_type} search backend with schema: {schema_name} for tenant: {self.tenant_id}"
+            f"Created {backend_type} search backend for tenant: {tenant_id}"
         )
+        return backend
 
     def search(
         self,
         query: str,
+        profile: str,
+        tenant_id: str,
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        org_id: Optional[str] = None,
     ) -> List[SearchResult]:
         """
         Search for videos matching the query.
 
         Args:
             query: Text query
+            profile: Backend profile to use for this search
+            tenant_id: Tenant identifier
             top_k: Number of results to return
             filters: Optional filters (date range, etc.)
             ranking_strategy: Optional ranking strategy override
-            tenant_id: Optional tenant identifier for multi-tenant telemetry
 
         Returns:
             List of SearchResult objects
         """
-        # Use new multi-tenant telemetry system
         from cogniverse_foundation.telemetry.context import (
             add_embedding_details_to_span,
             add_search_results_to_span,
@@ -170,17 +162,19 @@ class SearchService:
             search_span,
         )
 
-        # Default tenant if not provided (for backwards compatibility)
-        effective_tenant_id = tenant_id or "default"
+        # Resolve profile config and encoder
+        profile_config = self._get_profile_config(profile)
+        query_encoder = self._get_encoder(profile, profile_config)
+        search_backend = self._get_backend(tenant_id, profile, profile_config, query_encoder)
 
-        logger.info(f"Searching with backend for tenant: {effective_tenant_id}")
+        logger.info(f"Searching profile={profile} tenant={tenant_id}")
 
         with search_span(
-            tenant_id=effective_tenant_id,
+            tenant_id=tenant_id,
             query=query,
             top_k=top_k,
             ranking_strategy=ranking_strategy or "default",
-            profile=self.profile,
+            profile=profile,
             backend=self.config.get("search_backend", "vespa"),
         ) as search_span_ctx:
 
@@ -189,24 +183,20 @@ class SearchService:
 
             # Generate embeddings with telemetry
             query_embeddings = None
-            if self.query_encoder:
+            if query_encoder:
                 encoder_type = (
-                    type(self.query_encoder)
+                    type(query_encoder)
                     .__name__.lower()
                     .replace("queryencoder", "")
                 )
-                logger.info(
-                    f"Generating embeddings with {type(self.query_encoder).__name__}"
-                )
 
                 with encode_span(
-                    tenant_id=effective_tenant_id,
+                    tenant_id=tenant_id,
                     encoder_type=encoder_type,
                     query_length=len(query),
                     query=query,
                 ) as encode_span_ctx:
-                    query_embeddings = self.query_encoder.encode(query)
-                    # Add embedding details to span
+                    query_embeddings = query_encoder.encode(query)
                     add_embedding_details_to_span(encode_span_ctx, query_embeddings)
 
             # Add embeddings info to search span
@@ -218,10 +208,10 @@ class SearchService:
             else:
                 search_span_ctx.set_attribute("has_embeddings", False)
 
-            # Call backend with embeddings and telemetry
-            schema_name = self.profile_config.get("schema_name")
+            # Call backend
+            schema_name = profile_config.get("schema_name")
             with backend_search_span(
-                tenant_id=effective_tenant_id,
+                tenant_id=tenant_id,
                 backend_type="vespa",
                 schema_name=schema_name,
                 ranking_strategy=ranking_strategy or "default",
@@ -229,7 +219,6 @@ class SearchService:
                 has_embeddings=query_embeddings is not None,
                 query_text=query,
             ) as backend_span_ctx:
-                # Add embeddings info to backend span
                 if query_embeddings is not None:
                     backend_span_ctx.set_attribute(
                         "embedding_shape", str(query_embeddings.shape)
@@ -238,39 +227,43 @@ class SearchService:
                 query_dict = {
                     "query": query,
                     "type": "video",
-                    "profile": self.profile,
-                    "strategy": ranking_strategy,
+                    "profile": profile,
+                    "strategy": ranking_strategy or "default",
                     "top_k": top_k,
                     "filters": filters,
                 }
                 if query_embeddings is not None:
                     query_dict["query_embeddings"] = query_embeddings
-                results = self.search_backend.search(query_dict)
+                results = search_backend.search(query_dict)
 
-                # Add result details to backend span
                 add_search_results_to_span(backend_span_ctx, results)
 
-            # Add result details to search span
             add_search_results_to_span(search_span_ctx, results)
 
             return results
 
-    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+    def get_document(self, document_id: str, tenant_id: str, profile: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve a specific document by ID.
 
         Args:
             document_id: Document ID
+            tenant_id: Tenant identifier
+            profile: Backend profile
 
         Returns:
             Document as dictionary or None if not found
         """
-        doc = self.search_backend.get_document(document_id)
+        profile_config = self._get_profile_config(profile)
+        query_encoder = self._get_encoder(profile, profile_config)
+        backend = self._get_backend(tenant_id, profile, profile_config, query_encoder)
+
+        doc = backend.get_document(document_id)
         if doc:
             return {
-                "document_id": doc.id,  # Use new Document structure
-                "source_id": doc.content_id,  # Use new Document structure
-                "content_type": doc.content_type.value,  # Use new Document structure
+                "document_id": doc.id,
+                "source_id": doc.content_id,
+                "content_type": doc.content_type.value,
                 "metadata": doc.metadata,
                 "temporal_info": (
                     {

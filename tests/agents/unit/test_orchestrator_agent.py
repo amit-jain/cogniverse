@@ -32,26 +32,31 @@ def mock_dspy_lm():
 
 @pytest.fixture
 def mock_agent_registry():
-    """Mock agent registry with test agents"""
-    registry = {}
+    """Mock AgentRegistry with test agents and A2A-compatible interface"""
+    registry = Mock()
 
-    # Create mock agents
-    for agent_type in [
-        AgentType.ENTITY_EXTRACTION,
-        AgentType.PROFILE_SELECTION,
-        AgentType.QUERY_ENHANCEMENT,
-        AgentType.SEARCH,
+    # Map agent names to mock endpoints
+    agent_endpoints = {}
+    for agent_name in [
+        "entity_extraction",
+        "profile_selection",
+        "query_enhancement",
+        "search",
     ]:
-        mock_agent = Mock()
-        # Orchestrator calls agent.process(), not agent._process()
-        mock_agent.process = AsyncMock(
-            return_value={
-                "status": "success",
-                "agent": agent_type.value,
-                "result": f"Mock result from {agent_type.value}",
-            }
-        )
-        registry[agent_type] = mock_agent
+        endpoint = Mock()
+        endpoint.name = agent_name
+        endpoint.url = f"http://localhost:800{len(agent_endpoints)}"
+        endpoint.capabilities = [agent_name]
+        agent_endpoints[agent_name] = endpoint
+
+    registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
+    registry.find_agents_by_capability = Mock(
+        side_effect=lambda cap: [
+            ep for ep in agent_endpoints.values() if cap in ep.capabilities
+        ]
+    )
+    registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
+    registry.agents = agent_endpoints
 
     return registry
 
@@ -60,10 +65,8 @@ def mock_agent_registry():
 def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        deps = OrchestratorDeps(tenant_id="test_tenant")
-        agent = OrchestratorAgent(
-            deps=deps, agent_registry=mock_agent_registry, port=8013
-        )
+        deps = OrchestratorDeps()
+        agent = OrchestratorAgent(deps=deps, registry=mock_agent_registry, port=8013)
         return agent
 
 
@@ -117,10 +120,9 @@ class TestOrchestratorAgent:
     def test_agent_initialization(self, orchestrator_agent):
         """Test agent initializes with correct configuration"""
         assert orchestrator_agent.agent_name == "orchestrator_agent"
-        assert orchestrator_agent.tenant_id == "test_tenant"
         assert "orchestration" in orchestrator_agent.capabilities
         assert "planning" in orchestrator_agent.capabilities
-        assert len(orchestrator_agent.agent_registry) == 4
+        assert len(orchestrator_agent.registry.agents) == 4
 
     @pytest.mark.asyncio
     async def test_create_plan(self, orchestrator_agent):
@@ -215,7 +217,15 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_execute_plan(self, orchestrator_agent):
-        """Test action phase execution"""
+        """Test action phase execution via A2A HTTP calls"""
+        # Mock the A2A client to simulate agent responses
+        orchestrator_agent.a2a_client.send_task = AsyncMock(
+            return_value={
+                "status": "success",
+                "result": "Mock A2A result",
+            }
+        )
+
         plan = OrchestrationPlan(
             query="test query",
             steps=[
@@ -269,9 +279,9 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_execute_plan_agent_error(self, orchestrator_agent):
-        """Test execution when agent raises exception"""
-        # Make one agent fail - orchestrator calls process(), not _process()
-        orchestrator_agent.agent_registry[AgentType.SEARCH].process = AsyncMock(
+        """Test execution when A2A call to agent raises exception"""
+        # Make A2A client raise on send_task
+        orchestrator_agent.a2a_client.send_task = AsyncMock(
             side_effect=Exception("Agent failed")
         )
 
@@ -304,6 +314,9 @@ class TestOrchestratorAgent:
                 parallel_steps="",
                 reasoning="Enhance then search",
             )
+        )
+        orchestrator_agent.a2a_client.send_task = AsyncMock(
+            return_value={"status": "success", "result": "Mock result"}
         )
 
         result = await orchestrator_agent._process_impl(

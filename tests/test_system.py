@@ -416,95 +416,47 @@ class SystemTester:
             return False
 
     async def test_end_to_end_system(self) -> bool:
-        """Test complete end-to-end multi-agent system with random queries."""
+        """Test complete end-to-end multi-agent system via OrchestratorAgent."""
         try:
-            # Import here to avoid loading issues
-            from cogniverse_agents.composing_agents_main import (
-                query_analyzer,
-                video_search_tool,
-            )
+            orchestrator_url = self.config.get("agents", {}).get(
+                "orchestrator", {}
+            ).get("url", "http://localhost:8013")
 
-            # Test with multiple random queries
             print("\n" + "=" * 60)
-            print("Testing with random queries from evaluation set")
+            print("Testing end-to-end via OrchestratorAgent A2A")
             print("=" * 60)
 
             successful_tests = 0
-            total_metrics = {"recall@5": [], "recall@10": [], "mrr": []}
 
             # Test up to 5 random queries
             for i, (query, expected_videos) in enumerate(self.test_queries[:5]):
                 print(f"\n[{i+1}/5] Testing query: '{query}'")
 
-                # Test query analysis
-                analysis_result = await query_analyzer.execute(query)
-                if not analysis_result.get("needs_video_search"):
-                    print("  ⚠️  Query analysis didn't detect video search need")
-                    continue
+                # Call OrchestratorAgent via A2A
+                result = await self.client.send_task(
+                    orchestrator_url,
+                    query=query,
+                    tenant_id="default",
+                    top_k=20,
+                )
 
-                # Test A2A communication
-                search_result = await video_search_tool.execute(query=query, top_k=20)
-
-                if not search_result.get("success"):
+                if not result or result.get("status") == "error":
                     print(
-                        f"  ❌ Search failed: {search_result.get('error', 'Unknown error')}"
+                        f"  Search failed: {result.get('message', 'Unknown error') if result else 'No response'}"
                     )
                     continue
 
-                # Calculate metrics if we have ground truth
-                if expected_videos and search_result.get("results"):
-                    retrieved_videos = [r["video_id"] for r in search_result["results"]]
-
-                    # Calculate recall@k
-                    recall_at_5 = len(
-                        set(retrieved_videos[:5]) & set(expected_videos)
-                    ) / len(expected_videos)
-                    recall_at_10 = len(
-                        set(retrieved_videos[:10]) & set(expected_videos)
-                    ) / len(expected_videos)
-
-                    # Calculate MRR
-                    mrr = 0
-                    for idx, vid in enumerate(retrieved_videos):
-                        if vid in expected_videos:
-                            mrr = 1.0 / (idx + 1)
-                            break
-
-                    print("  ✅ Search succeeded")
-                    print(
-                        f"  📊 Metrics: Recall@5={recall_at_5:.3f}, Recall@10={recall_at_10:.3f}, MRR={mrr:.3f}"
-                    )
-
-                    total_metrics["recall@5"].append(recall_at_5)
-                    total_metrics["recall@10"].append(recall_at_10)
-                    total_metrics["mrr"].append(mrr)
-                else:
-                    print("  ✅ Search succeeded (no ground truth for evaluation)")
-
+                print("  Search succeeded")
+                agent_results = result.get("agent_results", {})
+                print(f"  Agents executed: {list(agent_results.keys())}")
                 successful_tests += 1
 
-            # Print summary
-            if total_metrics["mrr"]:
-                print("\n" + "=" * 60)
-                print("SUMMARY - End-to-End System Performance")
-                print("=" * 60)
-                print(
-                    f"Successful queries: {successful_tests}/{min(5, len(self.test_queries))}"
-                )
-                print(
-                    f"Average Recall@5: {sum(total_metrics['recall@5'])/len(total_metrics['recall@5']):.3f}"
-                )
-                print(
-                    f"Average Recall@10: {sum(total_metrics['recall@10'])/len(total_metrics['recall@10']):.3f}"
-                )
-                print(
-                    f"Average MRR: {sum(total_metrics['mrr'])/len(total_metrics['mrr']):.3f}"
-                )
+            print(f"\nSuccessful queries: {successful_tests}/{min(5, len(self.test_queries))}")
 
             self.log_test(
                 "End-to-End System",
                 True,
-                f"Complete multi-agent flow working - found {search_result.get('result_count', 0)} results",
+                f"OrchestratorAgent pipeline working - {successful_tests} queries succeeded",
             )
             return True
 

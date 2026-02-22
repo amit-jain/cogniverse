@@ -12,19 +12,18 @@
 3. [Core Agents](#core-agents)
    - [RoutingAgent](#1-routingagent)
    - [VideoSearchAgent](#2-videosearchagent)
-   - [Composing Agent (Google ADK-based)](#3-composing-agent-google-adk-based)
+   - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
    - [ProfileSelectionAgent](#4-profileselectionagent)
    - [EntityExtractionAgent](#5-entityextractionagent)
-   - [OrchestratorAgent](#6-orchestratoragent)
-   - [SearchAgent (Ensemble Mode)](#7-searchagent-ensemble-mode)
-   - [DetailedReportAgent](#8-detailedreportagent)
-   - [DocumentAgent](#9-documentagent)
-   - [ImageSearchAgent](#10-imagesearchagent)
-   - [SummarizerAgent](#11-summarizeragent)
-   - [AudioAnalysisAgent](#12-audioanalysisagent)
-   - [TextAnalysisAgent](#13-textanalysisagent)
-   - [A2ARoutingAgent](#14-a2aroutingagent)
-   - [VideoSearchAgent (Refactored)](#15-videosearchagent-refactored)
+   - [SearchAgent (Ensemble Mode)](#6-searchagent-ensemble-mode)
+   - [DetailedReportAgent](#7-detailedreportagent)
+   - [DocumentAgent](#8-documentagent)
+   - [ImageSearchAgent](#9-imagesearchagent)
+   - [SummarizerAgent](#10-summarizeragent)
+   - [AudioAnalysisAgent](#11-audioanalysisagent)
+   - [TextAnalysisAgent](#12-textanalysisagent)
+   - [A2ARoutingAgent](#13-a2aroutingagent)
+   - [VideoSearchAgent (Refactored)](#14-videosearchagent-refactored)
 4. [Agent Architecture](#agent-architecture)
 5. [Multi-Tenant Integration](#multi-tenant-integration)
 6. [Usage Examples](#usage-examples)
@@ -54,23 +53,22 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 1. **RoutingAgent** - Query routing with DSPy optimization and relationship extraction
 2. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
-3. **Composing Agent** - Multi-agent orchestration via Google ADK LlmAgent
+3. **OrchestratorAgent** - Central A2A entry point with DSPy planning, parallel execution, and AgentRegistry discovery
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
-5. **EntityExtractionAgent** - Fast entity and relationship extraction using GLiNER and spaCy
-6. **OrchestratorAgent** - Two-phase workflow orchestration (planning → action) with parallel execution
-7. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
-8. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
-9. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
-10. **ImageSearchAgent** - Image similarity search using ColPali embeddings
-11. **SummarizerAgent** - Intelligent summarization with thinking phase
-12. **AudioAnalysisAgent** - Audio search with Whisper transcription
-13. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
-14. **A2ARoutingAgent** - A2A wrapper for standardized agent communication
-15. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
+5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
+6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
+7. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
+8. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
+9. **ImageSearchAgent** - Image similarity search using ColPali embeddings
+10. **SummarizerAgent** - Intelligent summarization with thinking phase
+11. **AudioAnalysisAgent** - Audio search with Whisper transcription
+12. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
+13. **A2ARoutingAgent** - A2A wrapper for standardized agent communication
+14. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
 
 ### Design Principles
 
-- **Tenant-Aware**: All agents require `tenant_id` parameter
+- **Tenant-Agnostic at Startup**: Agents boot without `tenant_id` — it arrives per-request in A2A task payload
 - **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
 - **Base Class Inheritance**: Extend A2AAgent[InputT, OutputT, DepsT] from cogniverse_core with type-safe generics
 - **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
@@ -113,7 +111,7 @@ graph TD
     Root --> Init["<span style='color:#000'>__init__.py</span>"]
     Root --> RoutingAgent["<span style='color:#000'><b>routing_agent.py</b><br/>1667 lines - TOP LEVEL</span>"]
     Root --> VideoAgent["<span style='color:#000'><b>video_agent_refactored.py</b><br/>180 lines - TOP LEVEL</span>"]
-    Root --> ComposingAgent["<span style='color:#000'><b>composing_agent.py</b><br/>619 lines - TOP LEVEL</span>"]
+    Root --> OrchestratorAgent["<span style='color:#000'><b>orchestrator_agent.py</b><br/>A2A Entry Point</span>"]
     Root --> AudioAgent["<span style='color:#000'>audio_analysis_agent.py</span>"]
     Root --> DocAgent["<span style='color:#000'>document_agent.py</span>"]
     Root --> ImageAgent["<span style='color:#000'>image_search_agent.py</span>"]
@@ -157,7 +155,7 @@ graph TD
     style Root fill:#ce93d8,stroke:#7b1fa2,color:#000
     style RoutingAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style VideoAgent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ComposingAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OrchestratorAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style RoutingDir fill:#81d4fa,stroke:#0288d1,color:#000
     style SearchDir fill:#81d4fa,stroke:#0288d1,color:#000
     style OrchDir fill:#81d4fa,stroke:#0288d1,color:#000
@@ -176,7 +174,7 @@ graph TD
 
 - `video_agent_refactored.py`: 180 lines
 
-- `composing_agent.py`: 620 lines
+- `orchestrator_agent.py`: A2A entry point with DSPy planning
 
 
 ## Core Agents
@@ -185,7 +183,7 @@ graph TD
 
 **Location**: `libs/agents/cogniverse_agents/routing_agent.py` (top level)
 **Purpose**: Intelligent query routing with relationship extraction and DSPy 3.0 optimization
-**Base Classes**: `A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]`, `MemoryAwareMixin`
+**Base Classes**: `A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin`
 
 #### Architecture
 
@@ -246,13 +244,35 @@ class RoutingOutput(AgentOutput):
     enhanced_query: str = Field("", description="Enhanced query with context")
     entities: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted entities")
     relationships: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted relationships")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    query_variants: List[Dict[str, str]] = Field(default_factory=list, description="Query variants for parallel fusion search")
+    timestamp: datetime = Field(default_factory=datetime.now, description="Decision timestamp")
+
+    # Convenience properties
+    @property
+    def extracted_entities(self) -> List[Dict[str, Any]]:
+        return self.entities
+
+    @property
+    def extracted_relationships(self) -> List[Dict[str, Any]]:
+        return self.relationships
+
+    @property
+    def routing_metadata(self) -> Dict[str, Any]:
+        return self.metadata
 
 class RoutingDeps(AgentDeps):
     """Dependencies for routing agent."""
+    tenant_id: str = Field("default", description="Tenant ID for multi-tenancy isolation")
     telemetry_config: Any = Field(..., description="Telemetry configuration")
-    enable_relationship_extraction: bool = False
-    enable_query_enhancement: bool = False
-    enable_caching: bool = True
+    model_name: str = Field("smollm3:3b", description="DSPy model name")
+    base_url: str = Field("http://localhost:11434/v1", description="Model API base URL")
+    confidence_threshold: float = Field(0.7, description="Min confidence threshold")
+    enable_relationship_extraction: bool = Field(True, description="Enable relationship extraction")
+    enable_query_enhancement: bool = Field(True, description="Enable query enhancement")
+    enable_caching: bool = Field(True, description="Enable result caching")
+    enable_advanced_optimization: bool = Field(True, description="Enable GRPO optimization")
+    enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
 
 class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin):
     """
@@ -264,10 +284,10 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
 
     def __init__(self, deps: RoutingDeps, port: int = 8001):
         """
-        Initialize routing agent for specific tenant.
+        Initialize routing agent (tenant-agnostic).
 
         Args:
-            deps: RoutingDeps with tenant_id and configuration
+            deps: RoutingDeps with infrastructure config (no tenant_id)
             port: A2A HTTP server port
         """
         config = A2AAgentConfig(
@@ -280,15 +300,13 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
 
         # Initialize telemetry (singleton, tenant-scoped via span calls)
         self.telemetry = TelemetryManager()
-        self.tenant_id = deps.tenant_id  # Used in span calls
+        # tenant_id arrives per-request in A2A task payload, not at construction
 
-        # Initialize memory (tenant-scoped, config-driven)
-        # Memory params (llm_model, embedding_model, llm_base_url) come from
-        # the "memory" section of SystemConfig
-        if deps.enable_memory:
-            self._init_memory(deps)
+        # Memory initialized lazily per-tenant on first request
+        # via _ensure_memory_for_tenant(tenant_id) in _process_impl
+        self._memory_initialized_tenants: set = set()
 
-        # DSPy modules (shared, but decisions per-tenant)
+        # DSPy modules (shared across all tenants)
         self._init_dspy_modules()
 
     async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
@@ -301,7 +319,9 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
 
 **`route_query(query: str, context: Optional[str] = None, tenant_id: Optional[str] = None, require_orchestration: Optional[bool] = None) -> RoutingOutput`**
 
-Main routing entry point. Note: `RoutingDecision` is an alias for `RoutingOutput`.
+Main routing entry point. Returns a `RoutingOutput` Pydantic model.
+
+**Note**: `RoutingDecision` is a SEPARATE dataclass in `cogniverse_agents/routing/base.py` used by the lower-level routing strategies. It has different fields (`search_modality`, `generation_type`, `confidence_score`, `primary_agent`). Do not confuse it with `RoutingOutput` which is the typed output of the `RoutingAgent` itself.
 
 ```python
 async def route_query(
@@ -389,7 +409,7 @@ routing_agent_config = {
 
 **Location**: `libs/agents/cogniverse_agents/video_agent_refactored.py` (top level)
 **Purpose**: Text-to-video search with ColPali and VideoPrism embeddings
-**Constructor**: `VideoSearchAgent(profile: Optional[str] = None, tenant_id: str = "default", config_manager: ConfigManager = None)`
+**Constructor**: `VideoSearchAgent(config_manager: ConfigManager = None, schema_loader=None)`
 
 #### Multi-Modal Support
 
@@ -436,86 +456,90 @@ flowchart LR
 
 from typing import Optional, List, Dict, Any
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_agents.search.service import SearchService
 
 class VideoSearchAgent:
     """
-    Multi-modal video search agent with tenant isolation.
+    Profile-agnostic video search agent.
 
-    Supports text-to-video search using ColPali or VideoPrism embeddings.
-    Automatically handles tenant-scoped schema management.
+    Single instance serves all profiles and tenants.
+    Profile and tenant_id arrive per-request via search() method.
     """
 
     def __init__(
         self,
-        profile: Optional[str] = None,
-        tenant_id: str = "default",
-        config_manager: "ConfigManager" = None  # REQUIRED - raises ValueError if None
+        config_manager: "ConfigManager" = None,  # REQUIRED
+        schema_loader=None,                       # REQUIRED
     ):
         """
-        Initialize video search agent.
+        Initialize video search agent (profile-agnostic, tenant-agnostic).
 
         Args:
-            profile: Profile name (e.g., "video_colpali_smol500_mv_frame")
-            tenant_id: Tenant ID for multi-tenant isolation
-            config_manager: ConfigManager instance (REQUIRED - raises ValueError if None)
+            config_manager: ConfigManager instance (REQUIRED)
+            schema_loader: SchemaLoader instance (REQUIRED)
 
         Raises:
-            ValueError: If config_manager is None
+            ValueError: If config_manager or schema_loader is None
         """
-        self.profile = profile
-        self.tenant_id = tenant_id
-        self.config_manager = config_manager
-
         if config_manager is None:
             raise ValueError("config_manager is required")
+        if schema_loader is None:
+            raise ValueError("schema_loader is required")
 
-        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
+        self.schema_loader = schema_loader
 
-        # Initialize search service with config and profile
-        self.search_service = SearchService(self.config, profile)
+        # Default profile from config (used when caller doesn't specify)
+        self.default_profile = (
+            self.config.get("active_video_profile") or "video_colpali_smol500_mv_frame"
+        )
+
+        # Single profile-agnostic search service
+        self.search_service = SearchService(
+            self.config,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 ```
 
 #### Key Methods
 
-**`search(query: str, top_k: int = 10, start_date: str = None, end_date: str = None) -> List[Dict]`**
+**`search(query, profile=None, tenant_id="default", top_k=10, start_date=None, end_date=None) -> List[SearchResult]`**
 
-Text-to-video search. **This method is synchronous** (not async).
+Text-to-video search. **This method is synchronous** (not async). Profile and tenant_id are per-request.
 
 ```python
 def search(
     self,
     query: str,
+    profile: Optional[str] = None,      # Per-request (defaults to config active_video_profile)
+    tenant_id: str = "default",          # Per-request
     top_k: int = 10,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    end_date: Optional[str] = None,
+) -> List[SearchResult]:
     """
     Search videos by text query.
 
     Args:
         query: Text query string
+        profile: Profile to use (defaults to config active_video_profile)
+        tenant_id: Tenant identifier for schema isolation
         top_k: Number of results to return
-        start_date: Optional filter - only videos after this date (YYYY-MM-DD)
-        end_date: Optional filter - only videos before this date (YYYY-MM-DD)
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
 
     Returns:
-        List of video results with scores:
-        [
-            {
-                "video_id": "abc123",
-                "title": "Video Title",
-                "score": 0.95,
-                "frame_ids": ["frame_001", "frame_002"],
-                "timestamp": "2024-01-15T10:30:00Z"
-            },
-            ...
-        ]
+        List of SearchResult objects with scores
     """
-    return self._search_service.search(
+    effective_profile = profile or self.default_profile
+    return self.search_service.search(
         query=query,
+        profile=effective_profile,
+        tenant_id=tenant_id,
         top_k=top_k,
-        start_date=start_date,
-        end_date=end_date
+        filters={"start_date": start_date, "end_date": end_date},
     )
 ```
 
@@ -524,26 +548,29 @@ def search(
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize config manager (required)
+# Initialize dependencies (required)
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Create agent with profile and tenant
+# Create agent — profile-agnostic, tenant-agnostic
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Search (synchronous, not async)
-results = agent.search("cooking tutorial", top_k=10)
+# Search (synchronous) — profile and tenant_id are per-request
+results = agent.search("cooking tutorial", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
 
-# With date filters
+# With date filters (profile defaults to config active_video_profile if omitted)
 recent_results = agent.search(
     query="machine learning",
+    tenant_id="acme",
     top_k=20,
     start_date="2024-01-01",
-    end_date="2024-12-31"
+    end_date="2024-12-31",
 )
 ```
 
@@ -559,7 +586,7 @@ from pathlib import Path
 # Note: schema_loader is REQUIRED, config_manager is optional (will create default if None)
 schema_loader = FilesystemSchemaLoader(Path("schemas"))
 config_manager = create_default_config_manager()
-deps = SearchAgentDeps(tenant_id="acme")
+deps = SearchAgentDeps()  # No tenant_id at construction
 search_agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=config_manager)
 
 # Video-to-video similarity search (internal method)
@@ -584,159 +611,86 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
 
-# Example: Two tenants searching independently
+# ONE agent serves ALL tenants — profile and tenant_id are per-request
+agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
 # Tenant A: acme
-agent_acme = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager
-)
-results_acme = agent_acme.search("cooking videos")  # synchronous
+results_acme = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="acme")
 # Searches schema: video_colpali_smol500_mv_frame_acme
 # Only acme's videos returned
 
-# Tenant B: startup
-agent_startup = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="startup",
-    config_manager=config_manager
-)
-results_startup = agent_startup.search("cooking videos")  # synchronous
+# Tenant B: startup (same agent instance)
+results_startup = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="startup")
 # Searches schema: video_colpali_smol500_mv_frame_startup
 # Only startup's videos returned
 
-# Physical isolation - no cross-tenant data access possible
+# Physical isolation via Vespa schema naming — no cross-tenant data access possible
 ```
 
 ---
 
-### 3. Composing Agent (Google ADK-based)
+### 3. OrchestratorAgent (A2A Entry Point)
 
-**Location**: `libs/agents/cogniverse_agents/composing_agent.py` (top level)
-**Purpose**: Multi-agent workflow orchestration using Google ADK
-**Base**: Google ADK `LlmAgent` with custom tools
+**Location**: `libs/agents/cogniverse_agents/orchestrator_agent.py`
+**Purpose**: Central orchestration entry point — plans and executes multi-agent pipelines via A2A
+**Base**: `MemoryAwareMixin, A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]`
+**Port**: 8013
 
 #### Architecture
 
 ```mermaid
 flowchart TB
-    UserQuery["<span style='color:#000'>User Query</span>"] --> ComposingAgent["<span style='color:#000'>composing_agent<br/>(LlmAgent)</span>"]
+    Dashboard["<span style='color:#000'>Dashboard / Client</span>"] -->|HTTP POST /tasks/send| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>(DSPy Planner)</span>"]
 
-    ComposingAgent --> QueryAnalysis["<span style='color:#000'>QueryAnalysisTool</span>"]
-    QueryAnalysis --> VideoSearch["<span style='color:#000'>EnhancedA2AClientTool<br/>(Video Search)</span>"]
+    Orchestrator -->|A2A| QE["<span style='color:#000'>QueryEnhancementAgent</span>"]
+    Orchestrator -->|A2A| EE["<span style='color:#000'>EntityExtractionAgent</span>"]
+    Orchestrator -->|A2A| PS["<span style='color:#000'>ProfileSelectionAgent</span>"]
+    Orchestrator -->|A2A| SA["<span style='color:#000'>SearchAgent</span>"]
+    Orchestrator -->|A2A| SU["<span style='color:#000'>SummarizerAgent</span>"]
 
-    VideoSearch --> Results["<span style='color:#000'>Formatted Results</span>"]
-    Results --> VideoPlayer["<span style='color:#000'>VideoPlayerTool</span>"]
-
-    style UserQuery fill:#90caf9,stroke:#1565c0,color:#000
-    style ComposingAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style QueryAnalysis fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VideoSearch fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Results fill:#a5d6a7,stroke:#388e3c,color:#000
-    style VideoPlayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style QE fill:#ffcc80,stroke:#ef6c00,color:#000
+    style EE fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PS fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SU fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 #### Implementation
 
-The composing agent uses Google ADK's `LlmAgent` with custom tools:
+The orchestrator uses DSPy for planning and AgentRegistry for discovery:
 
 ```python
-# libs/agents/cogniverse_agents/composing_agent.py
-
-from google.adk.agents import LlmAgent
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.tools import BaseTool
-from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
-from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-# Custom tool for A2A communication
-class EnhancedA2AClientTool(BaseTool):
-    """Enhanced A2A tool with better error handling and intelligent routing."""
-
-    def __init__(self, name: str, description: str, agent_url: str, result_type: str = "generic"):
-        super().__init__(name=name, description=description)
-        self.agent_url = agent_url
-        self.result_type = result_type
-        self.client = A2AClient(timeout=60.0)
-
-    async def execute(self, query: str, top_k: int = 10, start_date: str = None,
-                      end_date: str = None, preferred_agent: str = None) -> dict:
-        """Execute search with enhanced error handling."""
-        search_params = {"query": query, "top_k": top_k}
-        if start_date:
-            search_params["start_date"] = start_date
-        if end_date:
-            search_params["end_date"] = end_date
-
-        response = await self.client.send_task(self.agent_url, **search_params)
-        results = response.get("results", [])
-        return {
-            "success": True,
-            "results": results,
-            "formatted_results": format_search_results(results, self.result_type),
-            "result_count": len(results),
-        }
-
-# Query analysis tool
-class QueryAnalysisTool(BaseTool):
-    """Analyzes queries to determine routing."""
-    # Uses GLiNER or LLM for entity extraction and routing decisions
-
-# Create the composing agent (LlmAgent instance)
-composing_agent = LlmAgent(
-    name="CoordinatorAgent",
-    model=config.get("local_llm_model", "deepseek-r1:1.5b"),
-    description="Intelligent research coordinator for text and video content",
-    tools=[video_search_tool, text_search_tool, query_analysis_tool, video_player_tool],
+from cogniverse_agents.orchestrator_agent import (
+    OrchestratorAgent, OrchestratorDeps, OrchestratorInput, OrchestratorOutput,
 )
-```
+from cogniverse_agents.agent_registry import AgentRegistry
 
-#### Key Functions
+# Construction — tenant-agnostic, no env vars
+registry = AgentRegistry(config_manager=config_manager)
+deps = OrchestratorDeps()
+orchestrator = OrchestratorAgent(deps=deps, registry=registry, port=8013)
 
-**`run_query_programmatically(query: str) -> Dict`**
-
-Run a query programmatically and return structured results.
-
-```python
-async def run_query_programmatically(query: str) -> Dict[str, Any]:
-    """Run a query programmatically and return structured results."""
-    session_service = InMemorySessionService()
-    runner = Runner(
-        agent=composing_agent,
-        app_name="multi_agent_rag",
-        session_service=session_service,
+# Processing — tenant_id and session_id arrive per-request
+result = await orchestrator._process_impl(
+    OrchestratorInput(
+        query="Show me machine learning videos",
+        tenant_id="acme_corp",
+        session_id="sess-uuid",
     )
+)
 
-    user_id = "programmatic_user"
-    session_id = await session_service.create_session(
-        user_id=user_id, app_name="multi_agent_rag"
-    )
-
-    results = []
-    async for event in runner.run(session_id=session_id, user_input=query):
-        results.append(event)
-
-    return {
-        "query": query,
-        "session_id": session_id,
-        "events": results,
-        "final_response": results[-1] if results else None,
-    }
+# Result contains: plan_steps, parallel_groups, agent_results, final_output, execution_summary
 ```
 
-**`start_web_interface()`**
+#### Key Features
 
-Start the ADK web interface for interactive usage (launches `adk web` command).
-
-```python
-def start_web_interface():
-    """Start ADK web interface for interactive agent usage."""
-    import subprocess
-    subprocess.run(["adk", "web"], check=True)
-```
+- **DSPy Planning**: `OrchestrationModule` uses `dspy.ChainOfThought` to plan agent sequences
+- **Parallel Execution**: Steps can run in parallel groups (e.g., entity extraction + query enhancement)
+- **Agent Discovery**: Uses `AgentRegistry.find_agents_by_capability()` for dynamic agent lookup
+- **A2A Calls**: Executes agents via `A2AClient.send_task(url, query=..., tenant_id=..., session_id=...)`
+- **Graceful Degradation**: Captures agent failures without stopping the pipeline
 
 ---
 
@@ -846,23 +800,49 @@ class ProfileSelectionSignature(dspy.Signature):
 ```python
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import Field
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from pydantic import BaseModel, Field
+from typing import List
 import dspy
+
+class ProfileCandidate(BaseModel):
+    """Candidate profile with score"""
+    profile_name: str
+    score: float = Field(ge=0.0, le=1.0, description="Confidence score")
+    reasoning: str = Field(description="Why this profile was selected")
+
 class ProfileSelectionInput(AgentInput):
     """Input for profile selection."""
     query: str = Field(..., description="Query to analyze")
-    entities: list = Field(default_factory=list, description="Extracted entities")
-    available_profiles: list = Field(default_factory=list, description="Available profiles")
+    available_profiles: Optional[List[str]] = Field(None, description="Available profiles to choose from")
+
 class ProfileSelectionOutput(AgentOutput):
     """Output from profile selection."""
-    selected_profiles: list = Field(default_factory=list, description="Selected profile names")
-    use_ensemble: bool = Field(False, description="Whether to use ensemble mode")
+    query: str = Field(..., description="Original query")
+    selected_profile: str = Field(..., description="Selected profile")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
     reasoning: str = Field("", description="Selection reasoning")
-    confidence: float = Field(0.0, description="Selection confidence")
+    query_intent: str = Field("", description="Detected query intent")
+    modality: str = Field("video", description="Target modality")
+    complexity: str = Field("simple", description="Query complexity")
+    alternatives: List[ProfileCandidate] = Field(default_factory=list, description="Alternative profiles")
+
 class ProfileSelectionDeps(AgentDeps):
-    """Dependencies for profile selection agent."""
-    model: str = "ollama/smollm2:latest"
-class ProfileSelectionAgent(A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]):
+    """Dependencies for profile selection agent (tenant-agnostic at startup)."""
+    available_profiles: List[str] = Field(
+        default_factory=lambda: [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_videoprism_base_mv_chunk_30s",
+            "video_videoprism_large_mv_chunk_30s",
+        ],
+        description="Default available profiles (must match config.json backend.profiles)",
+    )
+
+class ProfileSelectionAgent(
+    MemoryAwareMixin,
+    A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps],
+):
     """
     Intelligent profile selection agent using DSPy and small LLMs.
 
@@ -872,43 +852,51 @@ class ProfileSelectionAgent(A2AAgent[ProfileSelectionInput, ProfileSelectionOutp
 
     def __init__(self, deps: ProfileSelectionDeps, port: int = 8011):
         """
-        Initialize profile selection agent.
+        Initialize profile selection agent (tenant-agnostic).
 
         Args:
-            deps: ProfileSelectionDeps with tenant_id and model config
+            deps: ProfileSelectionDeps with available_profiles config
             port: A2A HTTP server port
         """
-        # Configure DSPy with Ollama
-        lm = dspy.LM(
-            model=deps.model,
-            api_base="http://localhost:11434",
-            api_key="ollama"
-        )
-        dspy.configure(lm=lm)
-
         # Create DSPy module
-        self.profile_selector = dspy.ChainOfThought(ProfileSelectionSignature)
+        selection_module = ProfileSelectionModule()
 
         config = A2AAgentConfig(
             agent_name="profile_selection_agent",
-            agent_description="Intelligent backend profile selection for multi-modal search",
-            capabilities=["profile_selection", "ensemble_composition"],
+            agent_description="Type-safe profile selection with LLM-based reasoning",
+            capabilities=[
+                "profile_selection",
+                "query_analysis",
+                "modality_detection",
+                "intent_classification",
+                "profile_ranking",
+            ],
             port=port,
+            version="1.0.0",
         )
-        super().__init__(deps=deps, config=config, dspy_module=self.profile_selector)
+        super().__init__(deps=deps, config=config, dspy_module=selection_module)
 
     async def _process_impl(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
         """Type-safe profile selection."""
-        result = self.profile_selector(
-            query=input.query,
-            entities=input.entities,
-            available_profiles=input.available_profiles
-        )
+        query = input.query
+        profiles = input.available_profiles or self.deps.available_profiles
+        profiles_str = ", ".join(profiles) if isinstance(profiles, list) else profiles
+
+        result = self.dspy_module.forward(query=query, available_profiles=profiles_str)
+        try:
+            confidence = float(result.confidence)
+        except (ValueError, AttributeError):
+            confidence = 0.5
+
         return ProfileSelectionOutput(
-            selected_profiles=result.selected_profiles,
-            use_ensemble=result.use_ensemble,
+            query=query,
+            selected_profile=result.selected_profile,
+            confidence=confidence,
             reasoning=result.reasoning,
-            confidence=result.confidence
+            query_intent=result.query_intent,
+            modality=result.modality,
+            complexity=result.complexity,
+            alternatives=[],
         )
 ```
 
@@ -943,47 +931,42 @@ async def _process_impl(
 
     # Parse and return typed output
     return ProfileSelectionOutput(
-        selected_profiles=result.selected_profiles,
-        use_ensemble=result.use_ensemble,
+        query=query,
+        selected_profile=result.selected_profile,
+        confidence=confidence,
         reasoning=result.reasoning,
-        confidence=result.confidence
+        query_intent=result.query_intent,
+        modality=result.modality,
+        complexity=result.complexity,
+        alternatives=[],
     )
 ```
 
-
-
 #### Configuration
 
+The `ProfileSelectionDeps.available_profiles` field lists the profiles this agent will consider when none are specified in the request:
+
 ```python
-# Profile selection agent configuration
-{
-    "profile_selection_agent": {
-        "model": "ollama/smollm2:latest",  # or "ollama/qwen2.5:3b"
-        "port": 8011,
-        "confidence_threshold": 0.7,
-        "max_profiles_per_ensemble": 3,
-        "default_profile": "colpali",
-        "agent_registry_url": "http://localhost:8000"
-    }
-}
+# Default available profiles (matched to config.json backend.profiles)
+deps = ProfileSelectionDeps(
+    available_profiles=[
+        "video_colpali_smol500_mv_frame",
+        "video_colqwen_omni_mv_chunk_30s",
+        "video_videoprism_base_mv_chunk_30s",
+        "video_videoprism_large_mv_chunk_30s",
+    ]
+)
 ```
 
 #### Decision Criteria
 
-**Ensemble Mode Triggers**:
+**Profile Output Fields**:
 
-- Query has >3 entities
-- Query has >2 relationships
-- Query contains both visual AND temporal keywords
-- LLM confidence > 0.7 for multiple profiles
-- Complex multi-aspect queries
-
-**Single Profile Selection**:
-
-- Simple queries (<2 entities)
-- Single dominant modality
-- Low query complexity
-- High confidence for one specific profile
+- `selected_profile` — single best-matching profile name
+- `query_intent` — intent classification: `text_search`, `video_search`, `image_search`, etc.
+- `modality` — target modality: `video`, `image`, `text`, `audio`
+- `complexity` — query complexity: `simple`, `medium`, `complex`
+- `alternatives` — top 3 alternative profiles with scores and reasoning
 
 #### API Usage
 
@@ -1003,14 +986,6 @@ async def _process_impl(
         {
           "type": "data",
           "data": {
-            "entities": [
-              {"text": "robots", "type": "CONCEPT"},
-              {"text": "soccer", "type": "SPORT"},
-              {"text": "tournaments", "type": "EVENT"}
-            ],
-            "relationships": [
-              {"subject": "robots", "relation": "playing", "object": "soccer"}
-            ],
             "available_profiles": ["colpali", "videoprism", "qwen"]
           }
         }
@@ -1032,10 +1007,18 @@ async def _process_impl(
         {
           "type": "data",
           "data": {
-            "selected_profiles": ["colpali", "videoprism"],
-            "use_ensemble": true,
-            "reasoning": "Query has multiple entities (robots, soccer, tournaments) and visual+action components. ColPali for visual understanding of robots, VideoPrism for action recognition (playing soccer).",
-            "confidence": 0.85
+            "status": "success",
+            "agent": "profile_selection_agent",
+            "query": "show me robots playing soccer in tournaments",
+            "selected_profile": "video_colpali_smol500_mv_frame",
+            "confidence": 0.85,
+            "reasoning": "Query involves visual content (robots, soccer) requiring visual embedding model. ColPali excels at frame-based visual understanding.",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "medium",
+            "alternatives": [
+              {"profile_name": "video_colqwen_omni_mv_chunk_30s", "score": 0.7, "reasoning": "Alternative for video modality"}
+            ]
           }
         }
       ]
@@ -1055,14 +1038,15 @@ async def _process_impl(
 
 #### Overview
 
-EntityExtractionAgent provides fast Named Entity Recognition (NER) and relationship extraction using GLiNER and spaCy. Unlike ProfileSelectionAgent which uses LLMs, this agent uses lightweight models optimized for speed.
+EntityExtractionAgent extracts named entities from user queries using DSPy's `ChainOfThought` for intelligent entity recognition. It classifies entities by type (PERSON, PLACE, ORG, CONCEPT, DATE, etc.) and provides confidence scores for each entity.
 
 **Key Capabilities**:
 
-- Named entity recognition (GLiNER)
-- Relationship extraction (spaCy + patterns)
-- Multi-entity type support (person, organization, location, concept, date)
-- Sub-100ms latency for typical queries
+- Named entity recognition via DSPy ChainOfThought
+- Entity type classification (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
+- Confidence scoring per entity
+- Dominant entity type detection
+- Fallback to heuristic extraction on LLM failure
 
 #### Architecture
 
@@ -1070,25 +1054,19 @@ EntityExtractionAgent provides fast Named Entity Recognition (NER) and relations
 flowchart LR
     Query["<span style='color:#000'>User Query</span>"] --> EntityAgent["<span style='color:#000'>EntityExtractionAgent</span>"]
 
-    EntityAgent --> GLiNER["<span style='color:#000'>GLiNER Model</span>"]
-    GLiNER --> Entities["<span style='color:#000'>Entities List</span>"]
-
-    EntityAgent --> SpaCy["<span style='color:#000'>spaCy NLP</span>"]
-    SpaCy --> Patterns["<span style='color:#000'>Pattern Matching</span>"]
-    Patterns --> Relationships["<span style='color:#000'>Relationships List</span>"]
+    EntityAgent --> DSPy["<span style='color:#000'>DSPy ChainOfThought</span>"]
+    DSPy --> ParseEntities["<span style='color:#000'>_parse_entities()</span>"]
+    ParseEntities --> Entities["<span style='color:#000'>List[Entity]</span>"]
 
     Entities --> Output["<span style='color:#000'>EntityExtractionOutput</span>"]
-    Relationships --> Output
 
     Output --> Orchestrator["<span style='color:#000'>OrchestratorAgent</span>"]
 
     style Query fill:#90caf9,stroke:#1565c0,color:#000
     style EntityAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style GLiNER fill:#81d4fa,stroke:#0288d1,color:#000
-    style SpaCy fill:#81d4fa,stroke:#0288d1,color:#000
+    style DSPy fill:#81d4fa,stroke:#0288d1,color:#000
+    style ParseEntities fill:#ffcc80,stroke:#ef6c00,color:#000
     style Entities fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Patterns fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Relationships fill:#a5d6a7,stroke:#388e3c,color:#000
     style Output fill:#a5d6a7,stroke:#388e3c,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
@@ -1096,63 +1074,74 @@ flowchart LR
 #### Class Definition
 
 ```python
+import dspy
+from pydantic import BaseModel, Field
+from typing import Any, Dict, List
+
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from pydantic import Field
-from gliner import GLiNER
-import spacy
-class EntityExtractionInput(AgentInput):
-    """Input for entity extraction."""
-    query: str = Field(..., description="Query to extract entities from")
-class EntityExtractionOutput(AgentOutput):
-    """Output from entity extraction."""
-    entities: list = Field(default_factory=list, description="Extracted entities")
-    relationships: list = Field(default_factory=list, description="Extracted relationships")
-    entity_count: int = Field(0, description="Number of entities found")
-    relationship_count: int = Field(0, description="Number of relationships found")
-class EntityExtractionDeps(AgentDeps):
-    """Dependencies for entity extraction agent."""
-    gliner_model: str = "urchade/gliner_multi-v2.1"
-    spacy_model: str = "en_core_web_sm"
-class EntityExtractionAgent(A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]):
-    """
-    Fast entity and relationship extraction agent.
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
-    Uses GLiNER for NER and spaCy for relationship extraction.
-    Optimized for low latency (<100ms typical).
+class Entity(BaseModel):
+    """Extracted entity with type and metadata."""
+    text: str = Field(description="Entity text as it appears in query")
+    type: str = Field(description="Entity type: PERSON, PLACE, ORG, CONCEPT, DATE, etc.")
+    confidence: float = Field(description="Confidence score 0-1")
+    context: str = Field(default="", description="Surrounding context")
+
+class EntityExtractionInput(AgentInput):
+    """Type-safe input for entity extraction."""
+    query: str = Field(..., description="Query to extract entities from")
+
+class EntityExtractionOutput(AgentOutput):
+    """Type-safe output from entity extraction."""
+    query: str = Field(..., description="Original query")
+    entities: List[Entity] = Field(default_factory=list, description="Extracted entities")
+    entity_count: int = Field(0, description="Number of entities found")
+    has_entities: bool = Field(False, description="Whether entities were found")
+    dominant_types: List[str] = Field(default_factory=list, description="Most common entity types")
+
+class EntityExtractionDeps(AgentDeps):
+    """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
+    pass
+
+class EntityExtractionAgent(
+    MemoryAwareMixin,
+    A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps],
+):
+    """
+    Type-safe A2A agent for entity extraction.
+
+    Capabilities:
+    - Extract named entities from queries
+    - Classify entity types (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
+    - Provide confidence scores
+    - Support multi-entity queries
     """
 
     def __init__(self, deps: EntityExtractionDeps, port: int = 8010):
         """
-        Initialize entity extraction agent.
+        Initialize EntityExtractionAgent with typed dependencies.
 
         Args:
-            deps: EntityExtractionDeps with tenant_id and model config
-            port: A2A HTTP server port
+            deps: Typed dependencies (tenant-agnostic)
+            port: Port for A2A server
         """
-        # Load GLiNER (lazy loading on first use)
-        self._gliner_model = None
-        self._gliner_model_name = deps.gliner_model
-
-        # Load spaCy
-        self._nlp = spacy.load(deps.spacy_model)
+        extraction_module = EntityExtractionModule()
 
         config = A2AAgentConfig(
             agent_name="entity_extraction_agent",
-            agent_description="Fast entity and relationship extraction for query enhancement",
-            capabilities=["entity_extraction", "relationship_extraction"],
+            agent_description="Type-safe entity extraction from user queries",
+            capabilities=[
+                "entity_extraction",
+                "named_entity_recognition",
+                "entity_classification",
+                "query_understanding",
+            ],
             port=port,
+            version="1.0.0",
         )
-        super().__init__(deps=deps, config=config, dspy_module=None)
-
-    async def _process_impl(self, input: EntityExtractionInput) -> EntityExtractionOutput:
-        """Type-safe entity extraction using DSPy module."""
-        result = self.dspy_module.forward(query=input.query)
-        entities = self._parse_entities(result.entities, input.query)
-        return EntityExtractionOutput(
-            entities=entities,
-            entity_count=len(entities),
-        )
+        super().__init__(deps=deps, config=config, dspy_module=extraction_module)
 ```
 
 
@@ -1252,17 +1241,12 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
 
 #### Configuration
 
+EntityExtractionDeps has no configuration fields — the agent is fully tenant-agnostic at startup. The DSPy LLM backend is configured globally via the DSPy settings (e.g., `dspy.settings.configure(lm=...)`).
+
 ```python
-# Entity extraction agent configuration
-{
-    "entity_extraction_agent": {
-        "gliner_model": "urchade/gliner_multi-v2.1",
-        "spacy_model": "en_core_web_sm",
-        "port": 8010,
-        "entity_types": ["person", "organization", "location", "concept", "date", "event"],
-        "agent_registry_url": "http://localhost:8000"
-    }
-}
+# EntityExtractionAgent requires no agent-specific config — instantiate with empty deps:
+deps = EntityExtractionDeps()
+agent = EntityExtractionAgent(deps=deps, port=8010)
 ```
 
 #### API Usage
@@ -1298,16 +1282,17 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
         {
           "type": "data",
           "data": {
+            "status": "success",
+            "agent": "entity_extraction_agent",
+            "query": "show me robots playing soccer in tournaments",
             "entities": [
-              {"text": "robots", "type": "CONCEPT", "score": 0.95},
-              {"text": "soccer", "type": "EVENT", "score": 0.89},
-              {"text": "tournaments", "type": "EVENT", "score": 0.92}
-            ],
-            "relationships": [
-              {"subject": "robots", "relation": "playing", "object": "soccer"}
+              {"text": "robots", "type": "CONCEPT", "confidence": 0.95, "context": "show me robots playing"},
+              {"text": "soccer", "type": "CONCEPT", "confidence": 0.89, "context": "robots playing soccer in"},
+              {"text": "tournaments", "type": "CONCEPT", "confidence": 0.92, "context": "soccer in tournaments"}
             ],
             "entity_count": 3,
-            "relationship_count": 1
+            "has_entities": true,
+            "dominant_types": ["CONCEPT"]
           }
         }
       ]
@@ -1322,8 +1307,8 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
 
 **Location**: `libs/agents/cogniverse_agents/orchestrator_agent.py`
 **Purpose**: Multi-agent workflow coordination with planning and action phases
-**Base Classes**: `A2AAgent[OrchestrationInput, OrchestrationOutput, OrchestratorDeps]`
-**Port**: 8001
+**Base Classes**: `MemoryAwareMixin, A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]`
+**Port**: 8013
 
 #### Overview
 
@@ -1358,12 +1343,12 @@ sequenceDiagram
         Orch->>Registry: GET /agents/by-capability/profile_selection
         Registry-->>Orch: [ProfileSelectionAgent @ :8011]
         Orch->>Prof: POST /tasks/send
-        Prof-->>Orch: {selected_profiles, use_ensemble, confidence}
+        Prof-->>Orch: {selected_profile, query_intent, modality, confidence}
     and Entity Extraction
         Orch->>Registry: GET /agents/by-capability/entity_extraction
         Registry-->>Orch: [EntityExtractionAgent @ :8010]
         Orch->>Entity: POST /tasks/send
-        Entity-->>Orch: {entities, relationships}
+        Entity-->>Orch: {entities, entity_count, has_entities, dominant_types}
     end
 
     Note over Orch: Planning Complete (~150-200ms)
@@ -1372,7 +1357,7 @@ sequenceDiagram
     Orch->>Registry: GET /agents/by-capability/search
     Registry-->>Orch: [SearchAgent @ :8002]
 
-    Orch->>Search: POST /tasks/send<br/>{query, profiles, use_ensemble}
+    Orch->>Search: POST /tasks/send<br/>{query, profile, modality}
     Search-->>Orch: {results, metadata}
 
     Orch->>Orch: Aggregate results + metadata
@@ -1388,62 +1373,78 @@ from pydantic import Field
 from typing import Any, Dict, Optional
 import asyncio
 
-class OrchestrationInput(AgentInput):
-    """Input for orchestration."""
+class OrchestratorInput(AgentInput):
+    """Type-safe input for orchestration."""
     query: str = Field(..., description="Query to orchestrate")
+    tenant_id: str = Field(default="default", description="Tenant identifier (per-request)")
+    session_id: Optional[str] = Field(default=None, description="Session identifier (per-request)")
 
-class OrchestrationOutput(AgentOutput):
-    """Output from orchestration."""
+class OrchestratorOutput(AgentOutput):
+    """Type-safe output from orchestration."""
     query: str = Field(..., description="Original query")
     plan_steps: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestration plan steps")
     parallel_groups: List[List[int]] = Field(default_factory=list, description="Parallel execution groups")
+    plan_reasoning: str = Field("", description="Plan reasoning")
     agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
     final_output: Dict[str, Any] = Field(default_factory=dict, description="Aggregated final output")
+    execution_summary: str = Field("", description="Summary of execution")
 
 class OrchestratorDeps(AgentDeps):
-    """Dependencies for orchestrator agent."""
-    agent_registry: Dict[Any, Any] = Field(default_factory=dict, description="Registry of available agents")
+    """Dependencies for orchestrator agent (tenant-agnostic at startup)."""
+    pass
 
-class OrchestratorAgent(A2AAgent[OrchestrationInput, OrchestrationOutput, OrchestratorDeps]):
+class OrchestratorAgent(
+    MemoryAwareMixin,
+    A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps],
+):
     """
     Multi-agent workflow orchestrator with planning and action phases.
 
-    Coordinates ProfileSelectionAgent, EntityExtractionAgent, and SearchAgent
-    to execute complex multi-modal queries.
+    Coordinates agents via AgentRegistry discovery and A2A protocol.
+    tenant_id and session_id arrive per-request in task payload.
     """
 
-    def __init__(self, deps: OrchestratorDeps, agent_registry: Optional[Dict[AgentType, Any]] = None, port: int = 8013):
+    def __init__(self, deps: OrchestratorDeps, registry: "AgentRegistry", port: int = 8013):
         """
         Initialize orchestrator agent.
 
         Args:
-            deps: OrchestratorDeps with tenant_id
-            agent_registry: Registry of available agents
+            deps: OrchestratorDeps (infrastructure only, no tenant_id)
+            registry: AgentRegistry for dynamic agent discovery (REQUIRED)
             port: A2A HTTP server port
         """
-        # Use agent_registry from constructor or fall back to deps
-        self.agent_registry = agent_registry if agent_registry is not None else deps.agent_registry
+        self.registry = registry
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
 
         config = A2AAgentConfig(
             agent_name="orchestrator_agent",
-            agent_description="Multi-agent workflow orchestration with planning and action phases",
-            capabilities=["orchestration", "workflow_management"],
+            agent_description="Type-safe orchestration with planning and action phases",
+            capabilities=["orchestration", "planning", "multi_agent_coordination",
+                          "parallel_execution", "result_aggregation"],
             port=port,
         )
         super().__init__(deps=deps, config=config, dspy_module=orchestration_module)
 
-    async def _process_impl(self, input: OrchestrationInput) -> OrchestrationOutput:
-        """Type-safe orchestration processing."""
+        # Memory initialized lazily per-tenant on first request
+        self._memory_initialized_tenants: set = set()
+
+    async def _process_impl(self, input: OrchestratorInput) -> OrchestratorOutput:
+        """Type-safe orchestration — tenant_id/session_id from input."""
+        # Lazily initialize memory for this tenant
+        if hasattr(input, "tenant_id") and input.tenant_id:
+            self._ensure_memory_for_tenant(input.tenant_id)
+
         result = await self.orchestrate(input.query)
-        return OrchestrationOutput(
+        return OrchestratorOutput(
             query=result.query,
             plan_steps=result.plan_steps,
             parallel_groups=result.parallel_groups,
+            plan_reasoning=result.plan_reasoning,
             agent_results=result.agent_results,
-            final_output=result.final_output
+            final_output=result.final_output,
+            execution_summary=result.execution_summary,
         )
 ```
 
@@ -1578,7 +1579,7 @@ async def _execute_plan(self, plan: OrchestrationPlan) -> Dict[str, Any]:
 
         # Execute all ready steps in parallel using asyncio.gather
         async def execute_step(step_index: int, step: AgentStep):
-            agent = self.agent_registry.get(step.agent_type)
+            agent = self.registry.find_agents_by_capability(step.agent_type.value)
             if not agent:
                 return step.agent_type.value, {
                     "status": "error",
@@ -1745,10 +1746,9 @@ User Query → Planning Phase → Action Phase → Post-processing → Results
               "planning_time_ms": 185,
               "action_time_ms": 620,
               "total_time_ms": 805,
-              "profiles_used": ["colpali", "videoprism"],
-              "use_ensemble": true,
+              "selected_profile": "video_colpali_smol500_mv_frame",
               "entities": [...],
-              "relationships": [...],
+              "dominant_types": ["CONCEPT"],
               "confidence": 0.85
             }
           }
@@ -1775,7 +1775,7 @@ SearchAgent was enhanced to support ensemble mode, allowing it to query multiple
 - Parallel profile execution (2-3 profiles)
 - RRF score calculation and fusion
 - Ensemble metadata tracking
-- Backward compatible with single-profile mode
+- Supports both single-profile and multi-profile (ensemble) mode
 
 #### Ensemble Architecture
 
@@ -1999,10 +1999,10 @@ def _fuse_results_rrf(
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
 # Note: schema_loader is REQUIRED, config_manager is optional
-deps = SearchAgentDeps(tenant_id="acme")
+deps = SearchAgentDeps()  # tenant_id is per-request, not in deps
 search_agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=config_manager)
 
-# Use search_by_text for text queries
+# Use search_by_text for text queries (tenant_id passed at search time)
 results = search_agent.search_by_text(
     query="robots playing soccer",
     modality="video",
@@ -2058,7 +2058,10 @@ flowchart TD
 
 **Type Signature:**
 ```python
-class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps])
+class DetailedReportAgent(
+    MemoryAwareMixin,
+    A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps],
+)
 ```
 
 **Input Fields:**
@@ -2080,20 +2083,29 @@ class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, De
 | `visual_analysis` | List[Dict] | VLM visual insights |
 | `technical_details` | List[Dict] | Technical breakdown |
 | `recommendations` | List[str] | Actionable recommendations |
+| `confidence_assessment` | Dict[str, float] | Per-dimension confidence scores (keys: overall, data_quality, completeness, visual_analysis, technical_analysis) |
 | `thinking_process` | Dict | Thinking phase details |
+| `metadata` | Dict | Additional metadata |
 
 **Usage:**
 ```python
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent, DetailedReportInput
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+    DetailedReportInput,
+)
 
-agent = DetailedReportAgent(config)
-result = await agent.run(DetailedReportInput(
+deps = DetailedReportDeps()
+agent = DetailedReportAgent(deps=deps, port=8004)
+result = await agent.process(DetailedReportInput(
     query="Analyze video content about machine learning",
     search_results=search_results,
     report_type="comprehensive",
-    include_visual_analysis=True
+    include_visual_analysis=True,
 ))
 print(result.executive_summary)
+# Access overall confidence:
+print(result.confidence_assessment.get("overall", 0.0))
 ```
 
 ---
@@ -2258,7 +2270,10 @@ flowchart TD
 **Type Signature:**
 
 ```python
-class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps])
+class SummarizerAgent(
+    MemoryAwareMixin,
+    A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps],
+)
 ```
 
 **Summary Types:**
@@ -2286,6 +2301,7 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
 | `visual_insights` | List[str] | VLM visual insights |
 | `confidence_score` | float | Summary confidence |
 | `thinking_process` | Dict | Thinking phase details |
+| `metadata` | Dict | Additional metadata |
 
 ---
 
@@ -2462,9 +2478,8 @@ Refactored video search agent using the unified search service architecture. Pro
 **Constructor:**
 ```python
 VideoSearchAgent(
-    profile: Optional[str] = None,  # Profile name (auto-detected if not provided)
-    tenant_id: str = "default",
-    config_manager: ConfigManager = None  # Required
+    config_manager: ConfigManager = None,  # REQUIRED
+    schema_loader=None,                    # REQUIRED
 )
 ```
 
@@ -2472,27 +2487,28 @@ VideoSearchAgent(
 ```python
 def search(
     query: str,
+    profile: Optional[str] = None,      # Per-request (defaults to config active_video_profile)
+    tenant_id: str = "default",          # Per-request
     top_k: int = 10,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> List[Dict[str, Any]]
+    end_date: Optional[str] = None,
+) -> List[SearchResult]
 ```
 
 **Usage:**
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager
-)
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
-results = agent.search("cooking tutorial", top_k=10)
+results = agent.search("cooking tutorial", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
 for result in results:
-    print(f"{result['title']} - Score: {result['score']}")
+    print(f"{result.document_id} - Score: {result.score}")
 ```
 
 ---
@@ -2534,7 +2550,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
     - Type-safe process(input: InputT) -> OutputT method
     - Standard A2A endpoints (/agent.json, /tasks/send, /health)
     - IDE autocomplete and type checking support
-    - Multi-tenant support via DepsT.tenant_id
+    - Multi-tenant support via tenant_id arriving per-request in A2A task payload
     - Multi-modal support (text, images, video, audio)
     """
 
@@ -2548,7 +2564,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
         Initialize type-safe A2A agent.
 
         Args:
-            deps: Agent dependencies including tenant_id
+            deps: Agent dependencies (tenant-agnostic at startup)
             config: A2AAgentConfig with name, description, etc.
             dspy_module: Optional DSPy 3.0 module
         """
@@ -2583,8 +2599,8 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 
 - **Generic Types**: `A2AAgent[InputT, OutputT, DepsT]` enables IDE autocomplete
 - **Pydantic Validation**: Input/output automatically validated at runtime
-- **Deps Pattern**: `deps.tenant_id` replaces individual constructor parameters
-- **Abstract process()**: Clear contract with type-safe signature
+- **Tenant-Agnostic Startup**: `AgentDeps` has no `tenant_id` — agents start without tenant context; `tenant_id` arrives per-request in the A2A task payload
+- **Abstract _process_impl()**: Clear contract with type-safe signature
 - **A2A Protocol**: Built-in FastAPI server with standard endpoints
 
 ### MemoryAwareMixin
@@ -2851,55 +2867,34 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 class RoutingDeps(AgentDeps):
-    """Dependencies include tenant_id from base + custom config"""
+    """Infrastructure dependencies — no tenant_id (it's per-request)"""
     enable_caching: bool = True
 class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin):
     """Routing agent with type-safe deps and memory support"""
 
     def __init__(self, deps: RoutingDeps, port: int = 8001):
-        # Initialize A2AAgent with deps (tenant_id via deps.tenant_id)
+        # Initialize A2AAgent with deps (infrastructure only)
         config = A2AAgentConfig(agent_name="routing_agent", ...)
         super().__init__(deps=deps, config=config, dspy_module=None)
 
-        # Initialize memory support (config-driven via deps)
-        if deps.enable_memory:
-            self._init_memory(deps)  # Reads memory config from SystemConfig
-
-        # Now deps.tenant_id is available for agent logic
-        logger.info(f"RoutingAgent initialized for tenant: {deps.tenant_id}")
-```
-
-**Legacy Mixin Pattern (For Backward Compatibility)**:
-
-```python
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-
-class LegacyAgent(TenantAwareAgentMixin, MemoryAwareMixin):
-    """Legacy agent using mixin pattern"""
-
-    def __init__(self, tenant_id: str, **kwargs):
-        # Using super() with MRO chain
-        super().__init__(tenant_id=tenant_id, **kwargs)
-
-        # Tenant validation already complete
-        logger.info(f"Agent initialized for tenant: {self.tenant_id}")
+        # Memory initialized per-request when tenant_id is known
+        logger.info("RoutingAgent initialized (tenant-agnostic)")
 ```
 
 #### Key Methods
 
-**Note**: All examples below assume agent is initialized with deps:
+**Note**: All examples below assume agent is initialized with deps (tenant-agnostic):
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 deps = RoutingDeps(
-    tenant_id="acme",
     telemetry_config=TelemetryConfig(),
     model_name="smollm3:3b",
     base_url="http://localhost:11434/v1"
 )
 agent = RoutingAgent(deps=deps)
+# tenant_id arrives per-request in A2A task payload
 ```
 
 **`get_tenant_context() -> Dict[str, Any]`**
@@ -2970,7 +2965,7 @@ sequenceDiagram
     SchemaManager-->>Middleware: "video_frames_acme"
     Middleware->>API: request.state.tenant_id = "acme"
 
-    API->>Agent: RoutingAgent(deps=RoutingDeps(tenant_id="acme", ...))
+    API->>Agent: A2A task with tenant_id="acme" in payload
     Agent->>Memory: initialize_memory("routing_agent", "acme", ...config)
     Memory-->>Agent: Memory ready (agent_memories_acme)
 
@@ -2998,43 +2993,19 @@ sequenceDiagram
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
 
-# Two tenants using same agent class
+# ONE agent serves ALL tenants — tenant_id arrives per-request
 
-# Tenant A - memory initialization happens inside __init__ when enable_memory=True
-deps_a = RoutingDeps(
-    tenant_id="acme",
+deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     model_name="smollm3:3b",
     base_url="http://localhost:11434/v1",
-    enable_memory=True,
-    memory_backend_host="http://localhost",
-    memory_backend_port=8080,
-    memory_llm_model="ollama/llama3.2",
-    memory_embedding_model="nomic-embed-text",
-    memory_llm_base_url="http://localhost:11434/v1",
-    memory_config_manager=config_manager,
-    memory_schema_loader=schema_loader,
 )
-agent_a = RoutingAgent(deps=deps_a)
-# Uses: agent_memories_acme schema
+agent = RoutingAgent(deps=deps)
 
-# Tenant B
-deps_b = RoutingDeps(
-    tenant_id="startup",
-    telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1",
-    enable_memory=True,
-    memory_backend_host="http://localhost",
-    memory_backend_port=8080,
-    memory_llm_model="ollama/llama3.2",
-    memory_embedding_model="nomic-embed-text",
-    memory_llm_base_url="http://localhost:11434/v1",
-    memory_config_manager=config_manager,
-    memory_schema_loader=schema_loader,
-)
-agent_b = RoutingAgent(deps=deps_b)
-# Uses: agent_memories_startup schema
+# Memory is initialized lazily per-tenant on first request via MemoryAwareMixin:
+# - Tenant "acme" → agent_memories_acme schema (first request initializes)
+# - Tenant "startup" → agent_memories_startup schema (first request initializes)
+# Memory namespaced by (tenant_id, agent_name) — no cross-tenant leakage
 
 # Completely isolated - no shared memory or data
 assert agent_a.memory_manager is not agent_b.memory_manager
@@ -3051,7 +3022,7 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 # Initialize agent for tenant using deps
 # telemetry_config is required (can be empty dict for defaults)
-deps = RoutingDeps(tenant_id="acme", telemetry_config={}, enable_caching=True)
+deps = RoutingDeps(telemetry_config={}, enable_caching=True)  # No tenant_id
 agent = RoutingAgent(deps=deps)
 
 # Route query
@@ -3071,17 +3042,15 @@ print(f"Confidence: {decision.confidence}")
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize agent with required config_manager
+# Initialize agent (profile-agnostic, tenant-agnostic)
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager,  # REQUIRED
-)
+agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
-# Search (synchronous method)
+# Search (synchronous) — profile and tenant_id per-request
 results = agent.search(
     query="Python programming tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="acme",
     top_k=5
 )
 
@@ -3093,24 +3062,27 @@ for result in results:
 ### Example 3: Multi-Agent Orchestration
 
 ```python
-from cogniverse_agents.composing_agent import (
-    composing_agent,  # Google ADK LlmAgent instance
-    run_query_programmatically,
-    EnhancedA2AClientTool,
+from cogniverse_agents.orchestrator_agent import (
+    OrchestratorAgent, OrchestratorDeps, OrchestratorInput,
+)
+from cogniverse_agents.agent_registry import AgentRegistry
+
+# Create orchestrator with agent registry (discovers agents from config.json)
+registry = AgentRegistry(config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+
+# Execute orchestration — tenant_id and session_id per-request
+result = await orchestrator._process_impl(
+    OrchestratorInput(
+        query="Find and summarize AI research videos from 2024",
+        tenant_id="acme_corp",
+        session_id="sess-uuid-123",
+    )
 )
 
-# Run query programmatically (uses Google ADK Runner)
-response = await run_query_programmatically(
-    query="Find and summarize AI research videos from 2024"
-)
-
-print(f"Session ID: {response['session_id']}")
-print(f"Events: {len(response['events'])} events")
-print(f"Final Response: {response['final_response']}")
-
-# Or access the composing_agent directly for custom workflows
-# composing_agent is an LlmAgent configured with search tools
-print(f"Agent name: {composing_agent.name}")  # "CoordinatorAgent"
+print(f"Plan steps: {len(result.plan_steps)}")
+print(f"Agents executed: {list(result.agent_results.keys())}")
+print(f"Summary: {result.execution_summary}")
 ```
 
 ### Example 4: Memory-Aware Search
@@ -3120,13 +3092,9 @@ from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize agent
+# Initialize agent (profile-agnostic)
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager,
-)
+agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
 # Initialize memory manager separately
 memory = Mem0MemoryManager(tenant_id="acme")
@@ -3162,16 +3130,14 @@ from pathlib import Path
 
 # Initialize agent (schema_loader is REQUIRED)
 deps = SearchAgentDeps(
-    tenant_id="acme",
     backend_url="http://localhost",
     backend_port=8080,
-    profile="video_colpali_smol500_mv_frame"
 )
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = SearchAgent(deps=deps, schema_loader=schema_loader)
 
-# Non-streaming call (returns SearchOutput)
-result = await agent.process({"query": "machine learning", "top_k": 10})
+# Non-streaming call — tenant_id per-request in task payload
+result = await agent.process({"query": "machine learning", "top_k": 10, "tenant_id": "acme"})
 print(f"Found {result.total_results} results")
 
 # Streaming call (returns AsyncGenerator)
@@ -3520,36 +3486,33 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 class TestRoutingAgent:
     def test_initialization(self):
-        """Test agent initialization with deps"""
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config={})
+        """Test agent initialization with deps (no tenant_id)"""
+        deps = RoutingDeps(telemetry_config={})
         agent = RoutingAgent(deps=deps)
 
-        assert agent.deps.tenant_id == "test_tenant"
         assert agent.telemetry is not None
 
     async def test_route_query(self):
-        """Test query routing"""
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config={})
+        """Test query routing — tenant_id in request"""
+        deps = RoutingDeps(telemetry_config={})
         agent = RoutingAgent(deps=deps)
 
         decision = await agent.route_query(
-            query="machine learning videos"
+            query="machine learning videos",
+            tenant_id="test_tenant",  # Per-request
         )
 
         assert decision.recommended_agent
         assert decision.enhanced_query
         assert 0.0 <= decision.confidence <= 1.0
 
-    def test_tenant_isolation(self):
-        """Verify tenant isolation"""
-        deps_a = RoutingDeps(tenant_id="tenant_a", telemetry_config={})
-        deps_b = RoutingDeps(tenant_id="tenant_b", telemetry_config={})
-        agent_a = RoutingAgent(deps=deps_a)
-        agent_b = RoutingAgent(deps=deps_b)
+    def test_tenant_agnostic_construction(self):
+        """Agent serves all tenants — one instance, per-request tenant_id"""
+        deps = RoutingDeps(telemetry_config={})
+        agent = RoutingAgent(deps=deps)
 
-        assert agent_a.deps.tenant_id != agent_b.deps.tenant_id
-        # Memory managers should be different per-tenant instances
-        assert agent_a.memory_manager is not agent_b.memory_manager
+        # Same agent handles different tenants at search time
+        # Memory is namespaced by (tenant_id, agent_name) at request time
 ```
 
 ### Integration Tests
@@ -3575,16 +3538,15 @@ class TestVideoSearchAgentIntegration:
 
         config_manager = create_default_config_manager()
 
-        # Create agent with required parameters
+        # Create agent (profile-agnostic, tenant-agnostic)
         agent = VideoSearchAgent(
-            profile="video_colpali_smol500_mv_frame",
-            tenant_id=tenant_id,
-            config_manager=config_manager
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
         return agent
 
     def test_search_end_to_end(self, agent):
-        """Test complete search flow"""
+        """Test complete search flow — profile and tenant_id per-request"""
         results = agent.search(  # synchronous
             query="test query",
             top_k=5
@@ -3650,26 +3612,22 @@ agent = RoutingAgent()  # TypeError: missing deps
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# VideoSearchAgent requires config_manager
+# VideoSearchAgent requires config_manager + schema_loader
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager
-)
+agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
-# Search is synchronous
-results = agent.search("query", top_k=10)
+# Search is synchronous — profile and tenant_id per-request
+results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
 ```
 
 ### 3. Use Telemetry for Observability
 
 ```python
 # Telemetry automatically initialized (telemetry_config required)
-deps = RoutingDeps(tenant_id="acme", telemetry_config={})
+deps = RoutingDeps(telemetry_config={})  # No tenant_id at construction
 agent = RoutingAgent(deps=deps)
 
-# All operations traced to Phoenix project: acme_routing_agent
+# Operations traced per-request with tenant_id from A2A payload
 decision = await agent.route_query("query")
 ```
 
@@ -3678,13 +3636,12 @@ decision = await agent.route_query("query")
 ```python
 # Always verify tenants are isolated
 def test_tenant_isolation():
-    deps_a = RoutingDeps(tenant_id="tenant_a", telemetry_config={})
-    deps_b = RoutingDeps(tenant_id="tenant_b", telemetry_config={})
-    agent_a = RoutingAgent(deps=deps_a)
-    agent_b = RoutingAgent(deps=deps_b)
+    # ONE agent serves all tenants — tenant_id is per-request
+    deps = RoutingDeps(telemetry_config={})
+    agent = RoutingAgent(deps=deps)
 
-    assert agent_a.deps.tenant_id != agent_b.deps.tenant_id
-    assert agent_a.telemetry.project_name != agent_b.telemetry.project_name
+    # Tenant isolation verified at request time, not construction
+    # Telemetry projects isolated: cogniverse-{tenant_id}-routing
 ```
 
 ---

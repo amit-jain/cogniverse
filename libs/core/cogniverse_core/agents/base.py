@@ -81,10 +81,8 @@ class AgentDeps(BaseModel):
     Base class for agent dependencies.
 
     Contains configuration, clients, and services the agent needs.
-    tenant_id is required for multi-tenancy isolation.
+    Agents are tenant-agnostic at startup — tenant_id arrives per-request.
     """
-
-    tenant_id: str
 
     model_config = ConfigDict(extra="allow")  # Dependencies can have additional fields
 
@@ -187,14 +185,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self._process_count = 0
         self._error_count = 0
 
-        logger.debug(
-            f"Initialized {self.__class__.__name__} for tenant {deps.tenant_id}"
-        )
-
-    @property
-    def tenant_id(self) -> str:
-        """Get tenant ID from dependencies."""
-        return self.deps.tenant_id
+        logger.debug(f"Initialized {self.__class__.__name__}")
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
@@ -385,7 +376,6 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """Get agent processing statistics."""
         return {
             "agent": self.__class__.__name__,
-            "tenant_id": self.tenant_id,
             "process_count": self._process_count,
             "error_count": self._error_count,
             "success_rate": (

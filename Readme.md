@@ -239,7 +239,10 @@ Application Layer:
 ### Multi-Tenant Setup
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.agents import VideoSearchAgent
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # Configure tenant with complete isolation
 config = SystemConfig(
@@ -250,13 +253,22 @@ config = SystemConfig(
     phoenix_url="http://localhost:6006",
 )
 
-# Create tenant-specific agent
+# Create agent — profile-agnostic, tenant-agnostic at construction
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = VideoSearchAgent(
-    config,
-    profile="video_colpali_smol500_mv_frame"
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
+# Search with per-request profile and tenant_id
 # Agent automatically targets schema: video_colpali_smol500_mv_frame_acme_corp
+results = agent.search(
+    query="machine learning tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="acme_corp",
+    top_k=10,
+)
 ```
 
 ### DSPy Optimization

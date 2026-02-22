@@ -16,7 +16,7 @@ def setup_logging(
     Setup logging configuration for a component
 
     Args:
-        name: Logger name (e.g., "VideoAgent", "ComposingAgent")
+        name: Logger name (e.g., "VideoAgent", "OrchestratorAgent")
         log_level: Logging level (default: INFO)
         log_to_file: Whether to log to file (default: True)
         log_to_console: Whether to log to console (default: True)

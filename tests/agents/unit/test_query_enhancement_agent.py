@@ -10,7 +10,7 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
     QueryEnhancementInput,
     QueryEnhancementModule,
-    QueryEnhancementResult,
+    QueryEnhancementOutput,
 )
 
 
@@ -33,7 +33,7 @@ def mock_dspy_lm():
 def query_agent():
     """Create QueryEnhancementAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        deps = QueryEnhancementDeps(tenant_id="test_tenant")
+        deps = QueryEnhancementDeps()
         agent = QueryEnhancementAgent(deps=deps, port=8012)
         return agent
 
@@ -102,7 +102,6 @@ class TestQueryEnhancementAgent:
     def test_agent_initialization(self, query_agent):
         """Test agent initializes with correct configuration"""
         assert query_agent.agent_name == "query_enhancement_agent"
-        assert query_agent.tenant_id == "test_tenant"
         assert "query_enhancement" in query_agent.capabilities
 
     @pytest.mark.asyncio
@@ -123,7 +122,7 @@ class TestQueryEnhancementAgent:
             QueryEnhancementInput(query="ML tutorials")
         )
 
-        assert isinstance(result, QueryEnhancementResult)
+        assert isinstance(result, QueryEnhancementOutput)
         assert result.original_query == "ML tutorials"
         assert result.enhanced_query == "machine learning tutorials and guides"
         assert len(result.expansion_terms) == 3
@@ -214,7 +213,7 @@ class TestQueryEnhancementAgent:
 
     def test_dspy_to_a2a_output(self, query_agent):
         """Test conversion to A2A output format"""
-        result = QueryEnhancementResult(
+        result = QueryEnhancementOutput(
             original_query="ML videos",
             enhanced_query="machine learning video tutorials",
             expansion_terms=["deep learning", "neural networks"],

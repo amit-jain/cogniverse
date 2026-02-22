@@ -172,7 +172,6 @@ class TestQueryProcessingPipeline:
                 # Create a mock routing agent manually
                 agent = object.__new__(RoutingAgent)
                 agent.deps = RoutingDeps(
-                    tenant_id="test_tenant",
                     telemetry_config=TelemetryConfig(enabled=False),
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=False,
@@ -184,7 +183,7 @@ class TestQueryProcessingPipeline:
                 agent.logger = logging.getLogger(__name__)
 
                 # Mock the route_query method
-                async def mock_route_query(query_text):
+                async def mock_route_query(query_text, tenant_id=None):
                     return {
                         "query": query_text,
                         "recommended_agent": "video_search_agent",
@@ -202,7 +201,9 @@ class TestQueryProcessingPipeline:
 
             for query in test_queries:
                 try:
-                    routing_result = asyncio.run(agent.route_query(query))
+                    routing_result = asyncio.run(
+                        agent.route_query(query, tenant_id="test_tenant")
+                    )
 
                     # Should return some routing decision
                     assert routing_result is not None
@@ -383,7 +384,7 @@ class TestAgentWorkflowIntegration:
 
     def test_summarizer_agent_functionality(self):
         """Test summarizer agent with real data structures"""
-        deps = SummarizerDeps(tenant_id="test_tenant")
+        deps = SummarizerDeps()
         summarizer = SummarizerAgent(deps=deps)
 
         # Test agent exists and has required interface
@@ -398,7 +399,7 @@ class TestAgentWorkflowIntegration:
 
     def test_detailed_report_agent_functionality(self):
         """Test detailed report agent with real data structures"""
-        deps = DetailedReportDeps(tenant_id="test_tenant")
+        deps = DetailedReportDeps()
         reporter = DetailedReportAgent(deps=deps)
 
         # Test agent exists and has required interface
@@ -443,9 +444,9 @@ class TestAgentWorkflowIntegration:
     def test_multi_agent_coordination_readiness(self):
         """Test that agents can coordinate in a multi-agent workflow"""
         # Test that we can create multiple agents without conflicts
-        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer_deps = SummarizerDeps()
         summarizer = SummarizerAgent(deps=summarizer_deps)
-        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter_deps = DetailedReportDeps()
         reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Both should coexist without issues
@@ -474,9 +475,9 @@ class TestSystemIntegrationReadiness:
             components["enhancer"] = QueryEnhancementPipeline()
 
             # Agents
-            summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+            summarizer_deps = SummarizerDeps()
             components["summarizer"] = SummarizerAgent(deps=summarizer_deps)
-            reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+            reporter_deps = DetailedReportDeps()
             components["reporter"] = DetailedReportAgent(deps=reporter_deps)
 
             # All should initialize successfully

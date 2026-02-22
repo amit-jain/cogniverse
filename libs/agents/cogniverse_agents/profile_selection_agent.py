@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 logger = logging.getLogger(__name__)
 
@@ -55,22 +56,17 @@ class ProfileSelectionOutput(AgentOutput):
 
 
 class ProfileSelectionDeps(AgentDeps):
-    """Dependencies for profile selection agent"""
+    """Dependencies for profile selection agent (tenant-agnostic at startup)."""
 
     available_profiles: List[str] = Field(
         default_factory=lambda: [
-            "video_colpali_base",
-            "video_colpali_large",
-            "video_videoprism_base",
-            "image_colpali_base",
-            "text_bge_base",
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_videoprism_base_mv_chunk_30s",
+            "video_videoprism_large_mv_chunk_30s",
         ],
-        description="Default available profiles",
+        description="Default available profiles (must match config.json backend.profiles)",
     )
-
-
-# Backward compatibility alias
-ProfileSelectionResult = ProfileSelectionOutput
 
 
 class ProfileSelectionSignature(dspy.Signature):
@@ -151,7 +147,8 @@ class ProfileSelectionModule(dspy.Module):
 
 
 class ProfileSelectionAgent(
-    A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]
+    MemoryAwareMixin,
+    A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps],
 ):
     """
     Type-safe A2A agent for backend profile selection.
@@ -200,7 +197,7 @@ class ProfileSelectionAgent(
         super().__init__(deps=deps, config=config, dspy_module=selection_module)
 
         logger.info(
-            f"ProfileSelectionAgent initialized for tenant: {deps.tenant_id}, "
+            f"ProfileSelectionAgent initialized (tenant-agnostic), "
             f"profiles: {len(deps.available_profiles)}"
         )
 
@@ -225,7 +222,7 @@ class ProfileSelectionAgent(
         profiles = input.available_profiles or self.deps.available_profiles
 
         if not query:
-            return ProfileSelectionResult(
+            return ProfileSelectionOutput(
                 query="",
                 selected_profile=(
                     self.deps.available_profiles[0]
@@ -257,7 +254,7 @@ class ProfileSelectionAgent(
             query, profiles, result.selected_profile, result.modality
         )
 
-        return ProfileSelectionResult(
+        return ProfileSelectionOutput(
             query=query,
             selected_profile=result.selected_profile,
             confidence=confidence,
@@ -300,8 +297,8 @@ class ProfileSelectionAgent(
         alternatives.sort(key=lambda x: x.score, reverse=True)
         return alternatives[:3]
 
-    def _dspy_to_a2a_output(self, result: ProfileSelectionResult) -> Dict[str, Any]:
-        """Convert ProfileSelectionResult to A2A output format."""
+    def _dspy_to_a2a_output(self, result: ProfileSelectionOutput) -> Dict[str, Any]:
+        """Convert ProfileSelectionOutput to A2A output format."""
         return {
             "status": "success",
             "agent": self.agent_name,
@@ -365,13 +362,10 @@ profile_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup — tenant-agnostic, no env vars."""
     global profile_agent
 
-    import os
-
-    tenant_id = os.getenv("TENANT_ID", "default")
-    deps = ProfileSelectionDeps(tenant_id=tenant_id)
+    deps = ProfileSelectionDeps()
     profile_agent = ProfileSelectionAgent(deps=deps)
     logger.info("ProfileSelectionAgent started")
 
@@ -401,7 +395,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    deps = ProfileSelectionDeps(tenant_id="default")
+    deps = ProfileSelectionDeps()
     agent = ProfileSelectionAgent(deps=deps, port=8011)
     logger.info("Starting ProfileSelectionAgent on port 8011...")
     agent.start()

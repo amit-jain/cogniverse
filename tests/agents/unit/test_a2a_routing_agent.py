@@ -10,6 +10,7 @@ from cogniverse_agents.a2a_routing_agent import (
     A2ARoutingAgent,
     AgentEndpoint,
 )
+from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -284,11 +285,13 @@ class TestA2ARoutingAgent:
             mock_routing_agent, config_manager=create_default_config_manager()
         )
 
-        routing_analysis = {
-            "query": "test query",
-            "workflow_type": "raw_results",
-            "routing_decision": {"search_modality": "video"},
-        }
+        routing_analysis = RoutingOutput(
+            query="test query",
+            recommended_agent="search_agent",
+            confidence=0.8,
+            reasoning="test",
+            metadata={"workflow_type": "raw_results"},
+        )
 
         agent_responses = {
             "video_search": {
@@ -321,11 +324,13 @@ class TestA2ARoutingAgent:
             mock_routing_agent, config_manager=create_default_config_manager()
         )
 
-        routing_analysis = {
-            "query": "summarize videos",
-            "workflow_type": "summary",
-            "routing_decision": {"search_modality": "video"},
-        }
+        routing_analysis = RoutingOutput(
+            query="summarize videos",
+            recommended_agent="search_agent",
+            confidence=0.8,
+            reasoning="test",
+            metadata={"workflow_type": "summary"},
+        )
 
         agent_responses = {
             "video_search": {"results": [{"id": "1", "title": "Video 1"}]},
@@ -351,11 +356,13 @@ class TestA2ARoutingAgent:
             mock_routing_agent, config_manager=create_default_config_manager()
         )
 
-        routing_analysis = {
-            "query": "summarize videos",
-            "workflow_type": "summary",
-            "routing_decision": {"search_modality": "video"},
-        }
+        routing_analysis = RoutingOutput(
+            query="summarize videos",
+            recommended_agent="search_agent",
+            confidence=0.8,
+            reasoning="test",
+            metadata={"workflow_type": "summary"},
+        )
 
         agent_responses = {
             "video_search": {
@@ -481,10 +488,10 @@ class TestA2ARoutingAgentIntegration:
         mock_registry_class.return_value = mock_registry
 
         # Mock routing agent
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
         mock_routing_agent = Mock()
-        mock_routing_decision = RoutingDecision(
+        mock_routing_decision = RoutingOutput(
             query="find AI videos",
             recommended_agent="video_search_agent",
             confidence=0.9,

@@ -2,11 +2,12 @@
 """
 Interactive Search Tab
 
-Live search testing and evaluation with multiple ranking strategies
-and real-time results, routed through the Video Search Agent.
+Live search testing and evaluation routed through the OrchestratorAgent.
+Session-aware with cross-session conversational memory.
 """
 
 import time
+import uuid
 
 import httpx
 import streamlit as st
@@ -14,11 +15,15 @@ import streamlit as st
 
 def render_interactive_search_tab(agent_status: dict):
     """Render the interactive search tab interface."""
-    st.header("🔍 Interactive Search Interface")
-    st.markdown("Live search testing and evaluation with multiple ranking strategies and real-time results.")
+    st.header("Interactive Search Interface")
+    st.markdown("Search routed through OrchestratorAgent with session memory.")
+
+    # Generate session_id for conversational memory (persists per browser session)
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = str(uuid.uuid4())
 
     # Search Interface
-    st.subheader("🔎 Search Interface")
+    st.subheader("Search Interface")
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -29,61 +34,72 @@ def render_interactive_search_tab(agent_status: dict):
         )
 
     with col2:
-        # Check if video search agent is available
+        # Check if orchestrator or video search agent is available
+        orchestrator_available = (
+            "error" not in agent_status
+            and agent_status.get("Orchestrator Agent", {}).get("status") == "online"
+        )
         video_search_agent_available = (
             "error" not in agent_status
             and agent_status.get("Video Search Agent", {}).get("status") == "online"
         )
-        search_button_disabled = not search_query or not video_search_agent_available
+        any_agent_available = orchestrator_available or video_search_agent_available
+        search_button_disabled = not search_query or not any_agent_available
 
-        if not video_search_agent_available:
-            st.warning("🔧 Video Search Agent is offline")
+        if orchestrator_available:
+            st.success("Orchestrator connected")
+        elif video_search_agent_available:
+            st.info("Direct search (orchestrator offline)")
         else:
-            st.success("Agent connected")
+            st.warning("No agents available")
 
-        search_button = st.button("🔍 Search", type="primary", disabled=search_button_disabled)
+        search_button = st.button("Search", type="primary", disabled=search_button_disabled)
 
     # Search Configuration
-    st.subheader("⚙️ Search Configuration")
+    st.subheader("Search Configuration")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        selected_profile = st.selectbox(
-            "Processing Profile",
-            ["video_colpali_smol500_mv_frame", "video_colqwen_omni_mv_chunk_30s",
-             "video_videoprism_base_mv_chunk_30s", "video_videoprism_lvt_base_sv_chunk_6s"],
-            help="Select the video processing profile for search",
-        )
+        top_k = st.slider("Number of Results", 1, 20, 5)
 
     with col2:
-        ranking_strategies = st.multiselect(
-            "Ranking Strategies",
-            ["binary_binary", "float_float", "binary_float", "float_binary"],
-            default=["binary_binary", "float_float"],
-            help="Compare different ranking strategies",
-        )
-
-    with col3:
-        top_k = st.slider("Number of Results", 1, 20, 5)
-        _confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.5)
+        st.text(f"Session: {st.session_state['session_id'][:8]}...")
+        if st.button("New Session"):
+            st.session_state["session_id"] = str(uuid.uuid4())
+            st.rerun()
 
     # Search Results
     if search_button and search_query:
-        st.subheader("🎯 Search Results")
+        st.subheader("Search Results")
 
-        # Get agent URL
-        video_search_url = agent_status.get("Video Search Agent", {}).get("url", "")
+        # Get tenant_id from session state (set via sidebar Active Tenant)
+        current_tenant = st.session_state.get("current_tenant", "default")
+        session_id = st.session_state["session_id"]
 
-        with st.spinner(f"Searching for '{search_query}' via Video Search Agent..."):
-            start_time = time.time()
-            results = _call_agent_search(
-                agent_url=video_search_url,
-                query=search_query,
-                profile=selected_profile,
-                strategies=ranking_strategies,
-                top_k=top_k,
-            )
-            elapsed_ms = (time.time() - start_time) * 1000
+        if orchestrator_available:
+            orchestrator_url = agent_status.get("Orchestrator Agent", {}).get("url", "")
+            with st.spinner(f"Searching for '{search_query}' via OrchestratorAgent..."):
+                start_time = time.time()
+                results = _call_orchestrator(
+                    agent_url=orchestrator_url,
+                    query=search_query,
+                    top_k=top_k,
+                    tenant_id=current_tenant,
+                    session_id=session_id,
+                )
+                elapsed_ms = (time.time() - start_time) * 1000
+        else:
+            # Fallback: direct search via Video Search Agent
+            video_search_url = agent_status.get("Video Search Agent", {}).get("url", "")
+            with st.spinner(f"Searching for '{search_query}' via Video Search Agent..."):
+                start_time = time.time()
+                results = _call_agent_search(
+                    agent_url=video_search_url,
+                    query=search_query,
+                    top_k=top_k,
+                    tenant_id=current_tenant,
+                )
+                elapsed_ms = (time.time() - start_time) * 1000
 
         if results is None or results.get("status") == "error":
             error_msg = results.get("message", "Unknown error") if results else "Request failed"
@@ -99,7 +115,7 @@ def render_interactive_search_tab(agent_status: dict):
             with m2:
                 st.metric("Latency", f"{elapsed_ms:.0f}ms")
             with m3:
-                st.metric("Profile", results.get("profile", selected_profile))
+                st.metric("Profile", results.get("profile", "auto"))
 
             if not result_list:
                 st.info("No results found for this query.")
@@ -121,7 +137,7 @@ def render_interactive_search_tab(agent_status: dict):
                             st.markdown(f"**Time:** {start_t:.2f}s — {end_t:.2f}s")
                         with col_b:
                             st.markdown(f"**Score:** {score:.6f}")
-                            st.markdown(f"**Profile:** {selected_profile}")
+                            st.markdown(f"**Profile:** {result.get('profile', 'auto')}")
                             st.markdown(f"**Schema:** {metadata.get('sddocname', 'N/A')}")
 
                             # Relevance annotation
@@ -141,7 +157,7 @@ def render_interactive_search_tab(agent_status: dict):
                 "query": search_query,
                 "results_count": result_count,
                 "latency_ms": elapsed_ms,
-                "profile": selected_profile,
+                "profile": results.get("profile", "auto"),
             })
     else:
         st.info("👆 Enter a query and click Search to see results")
@@ -167,40 +183,68 @@ def render_interactive_search_tab(agent_status: dict):
     with st.expander("ℹ️ About Interactive Search"):
         st.markdown("""
         This tab provides an interactive interface for testing video search
-        via the Video Search Agent.
+        routed through the OrchestratorAgent with session-aware conversational memory.
 
         **Features:**
         - Real-time search with natural language queries
-        - Multiple ranking strategies comparison
+        - Automatic profile selection via ProfileSelectionAgent
+        - Cross-session conversational memory via MemoryAwareMixin
         - Relevance annotation for search results
         - Performance metrics and statistics
 
-        **Ranking Strategies:**
-        - `binary_binary`: Binary query, binary document embeddings
-        - `float_float`: Float query, float document embeddings
-        - `binary_float`: Binary query, float document embeddings
-        - `float_binary`: Float query, binary document embeddings
+        **Search Flow:**
+        1. Query sent to OrchestratorAgent (or direct to Video Search Agent as fallback)
+        2. OrchestratorAgent plans execution: query enhancement, entity extraction, profile selection, search
+        3. Results aggregated and returned with profile and latency metadata
         """)
+
+
+def _call_orchestrator(
+    agent_url: str,
+    query: str,
+    top_k: int,
+    tenant_id: str = "default",
+    session_id: str | None = None,
+) -> dict:
+    """Call OrchestratorAgent's /tasks/send A2A endpoint."""
+    try:
+        task_payload = {
+            "messages": [
+                {"role": "user", "parts": [{"type": "text", "text": query}]}
+            ],
+            "tenant_id": tenant_id,
+            "session_id": session_id,
+            "top_k": top_k,
+        }
+        response = httpx.post(
+            f"{agent_url}/tasks/send",
+            json=task_payload,
+            timeout=120.0,
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def _call_agent_search(
     agent_url: str,
     query: str,
-    profile: str,
-    strategies: list,
     top_k: int,
+    tenant_id: str = "default",
 ) -> dict:
-    """Call Video Search Agent's /search endpoint."""
+    """Call Video Search Agent's /search endpoint (fallback when orchestrator is offline)."""
     try:
         response = httpx.post(
             f"{agent_url}/search",
             json={
                 "query": query,
-                "profile": profile,
-                "strategies": strategies,
                 "top_k": top_k,
+                "tenant_id": tenant_id,
             },
-            timeout=60.0,
+            timeout=120.0,
         )
         if response.status_code == 200:
             return response.json()

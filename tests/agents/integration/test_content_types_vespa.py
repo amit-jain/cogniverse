@@ -124,7 +124,7 @@ def test_vespa_manager():
                 f"{test_vespa['base_url']}/ApplicationStatus", timeout=5
             )
             if response.status_code == 200:
-                print(f"✅ Application ready (took {i*2}s)")
+                print(f"✅ Application ready (took {i * 2}s)")
                 break
         except Exception:
             pass

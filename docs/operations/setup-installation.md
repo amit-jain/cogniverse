@@ -291,8 +291,7 @@ cat > .env <<EOF
 ENVIRONMENT=development
 LOG_LEVEL=DEBUG
 
-# Tenant Configuration
-DEFAULT_TENANT_ID=default
+# Tenant ID is per-request (in A2A task payload), not an env var
 
 # Backend (Vespa)
 BACKEND_URL=http://localhost
@@ -579,9 +578,8 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 # Agents - Routing and Search
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
-from cogniverse_agents.composing_agent import EnhancedA2AClientTool  # Requires google-adk
-# Note: composing_agent runs create_default_config_manager() at module level,
-# so BACKEND_URL and BACKEND_PORT env vars must be set before importing.
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
 # Vespa - Backend and Schema Management
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager

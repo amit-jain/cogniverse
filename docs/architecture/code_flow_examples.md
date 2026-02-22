@@ -101,8 +101,11 @@ from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # 2. Extract tenant from header
 # request is the incoming HTTP request object (e.g., FastAPI Request)
@@ -125,12 +128,13 @@ routing_decision = await routing_agent.route_query(
 
 # 5. Video Search Agent executes search (synchronous)
 video_agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id=tenant_id,
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 results = video_agent.search(
     query="machine learning tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id=tenant_id,
     top_k=10
 )
 
@@ -306,9 +310,12 @@ self.metrics = OptimizationMetrics(
 ```python
 # Full routing optimization workflow
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # 1. Initialize routing agent with optimizer
 deps = RoutingDeps(
@@ -325,12 +332,12 @@ decision = await agent.route_query(query="cooking videos")
 
 # 3. Execute search with chosen agent (synchronous)
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 video_agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="customer_a",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
-results = video_agent.search(query="cooking videos", top_k=10)
+results = video_agent.search(query="cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="customer_a", top_k=10)
 
 # 4. Record experience with outcome
 # compute_search_quality() is application-defined evaluation function
@@ -377,14 +384,16 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # Initialize agent
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 tenant_id = "customer_a"
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id=tenant_id,
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
 # Initialize memory manager separately (memory is typically initialized via MemoryAwareMixin)
@@ -472,11 +481,13 @@ for query in queries:
 ```python
 import logging
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # 1. Primary search fails
-# video_agent, tenant_id, config_manager are defined in calling context
+# video_agent, tenant_id, config_manager, schema_loader are defined in calling context
 try:
     results = video_agent.search(
         query="tutorial",
@@ -488,11 +499,10 @@ except Exception as e:
     # 2. Try alternate agent with different profile
     try:
         fallback_agent = VideoSearchAgent(
-            profile="frame_based_colpali",  # Different profile as fallback
-            tenant_id=tenant_id,
-            config_manager=config_manager
+            config_manager=config_manager,
+            schema_loader=schema_loader
         )
-        results = fallback_agent.search(query="tutorial", top_k=10)
+        results = fallback_agent.search(query="tutorial", profile="frame_based_colpali", tenant_id=tenant_id, top_k=10)
     except Exception as fallback_error:
         # 3. Return cached results if available (requires cache manager setup)
         # Note: In production, cache_mgr would be initialized at application startup

@@ -762,21 +762,25 @@ for name in OPTIMIZER_REGISTRY.keys():
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# config_manager is REQUIRED for VideoSearchAgent
+# config_manager and schema_loader are REQUIRED for VideoSearchAgent
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Initialize agent (inherits from core layer base classes)
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    config_manager=config_manager  # REQUIRED - raises ValueError if None
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Run search (synchronous)
+# Run search (synchronous) — profile and tenant_id are per-request
 result = agent.search(
     query="machine learning tutorials",
-    top_k=10
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
+    top_k=10,
 )
 
 print(f"Agent result:")
@@ -1420,6 +1424,8 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # 1. Route the query (async method)
 deps = RoutingDeps(
@@ -1436,12 +1442,12 @@ print(f"Routing: {decision.recommended_agent}")
 # 2. If video_search_agent, execute search
 if decision.recommended_agent == "video_search_agent":
     config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     agent = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="default",
-        config_manager=config_manager  # REQUIRED parameter
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
-    results = agent.search(query="machine learning", top_k=5)
+    results = agent.search(query="machine learning", profile="video_colpali_smol500_mv_frame", tenant_id="default", top_k=5)
     print(f"Found {len(results)} results")
 ```
 

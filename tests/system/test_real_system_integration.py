@@ -221,7 +221,6 @@ class TestRealVespaIntegration:
             config_manager = shared_system_vespa["manager"].config_manager
 
             search_deps = SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url=vespa_url,
                 backend_port=vespa_port,
                 backend_config_port=shared_system_vespa["config_port"],
@@ -273,13 +272,15 @@ class TestRealVespaIntegration:
                 print(f"\n🔍 Testing agentic search for: '{query}'")
 
                 # Use the actual agent's search method
-                search_results = video_agent.search_by_text(query, top_k=10)
+                search_results = video_agent.search_by_text(
+                    query, tenant_id="test_tenant", top_k=10
+                )
 
                 # DEBUG: Log what the agent is doing
                 print(
                     f"   Agent returned {len(search_results) if search_results else 0} results"
                 )
-                print(f"   Agent schema: {video_agent.search_backend.schema_name}")
+                print(f"   Agent profile: {video_agent.active_profile}")
 
                 assert (
                     search_results is not None
@@ -333,7 +334,6 @@ class TestRealVespaIntegration:
             # SearchAgent is imported at top of file
             print("Initializing SearchAgent...")
             search_deps = SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url=vespa_url,
                 backend_port=vespa_port,
                 backend_config_port=shared_system_vespa["config_port"],
@@ -343,7 +343,7 @@ class TestRealVespaIntegration:
 
             # Verify agent is properly configured
             assert video_agent is not None
-            assert hasattr(video_agent, "search_backend")
+            assert hasattr(video_agent, "_tenant_backends")
             print("✅ Enhanced video search agent initialized successfully")
 
             # Test simple search functionality
@@ -525,9 +525,7 @@ class TestRealPipelineIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_deps = RoutingDeps(
-            tenant_id="test_tenant", telemetry_config=telemetry_config
-        )
+        routing_deps = RoutingDeps(telemetry_config=telemetry_config)
         routing_agent = RoutingAgent(deps=routing_deps)
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
@@ -539,7 +537,9 @@ class TestRealPipelineIntegration:
         try:
             # Step 1: Routing decision (with real config)
             print("Step 1: Making routing decision...")
-            routing_result = asyncio.run(routing_agent.route_query(test_query))
+            routing_result = asyncio.run(
+                routing_agent.route_query(test_query, tenant_id="test_tenant")
+            )
             assert routing_result is not None
             print(f"✅ Routing decision: {routing_result}")
 
@@ -626,10 +626,15 @@ class TestRealPipelineIntegration:
         _vespa_url = shared_system_vespa["vespa_url"]
         _vespa_port = shared_system_vespa["http_port"]
 
-        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
-        summarizer = SummarizerAgent(deps=summarizer_deps)
-        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
-        reporter = DetailedReportAgent(deps=reporter_deps)
+        config_manager = shared_system_vespa["manager"].config_manager
+        summarizer_deps = SummarizerDeps()
+        summarizer = SummarizerAgent(
+            deps=summarizer_deps, config_manager=config_manager
+        )
+        reporter_deps = DetailedReportDeps()
+        reporter = DetailedReportAgent(
+            deps=reporter_deps, config_manager=config_manager
+        )
 
         # Simulate a workflow where:
         # 1. Video search finds content (with real Vespa)
@@ -711,12 +716,12 @@ class TestRealEndToEndIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_deps = RoutingDeps(
-            tenant_id="test_tenant", telemetry_config=telemetry_config
-        )
+        routing_deps = RoutingDeps(telemetry_config=telemetry_config)
         routing_agent = RoutingAgent(deps=routing_deps)
-        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
-        summarizer_agent = SummarizerAgent(deps=summarizer_deps)
+        summarizer_deps = SummarizerDeps()
+        summarizer_agent = SummarizerAgent(
+            deps=summarizer_deps, config_manager=vespa_test_manager.config_manager
+        )
 
         # Initialize relationship extractor properly
         from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -736,7 +741,9 @@ class TestRealEndToEndIntegration:
         print("1. Testing Enhanced Routing Agent with entity validation...")
         routing_result = None
         try:
-            routing_result = await routing_agent.route_query(test_query)
+            routing_result = await routing_agent.route_query(
+                test_query, tenant_id="test_tenant"
+            )
             print(f"   ✅ Routing result: {routing_result}")
 
             # STRICT ASSERTION 1: Must recommend a search agent
@@ -861,7 +868,6 @@ class TestRealEndToEndIntegration:
             config_manager = vespa_test_manager.config_manager
 
             search_deps = SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=vespa_test_manager.http_port,
                 backend_config_port=vespa_test_manager.config_port,
@@ -874,7 +880,7 @@ class TestRealEndToEndIntegration:
             )
 
             search_results = video_search_agent.search_by_text(
-                test_query, ranking="binary_binary"
+                test_query, tenant_id="test_tenant", ranking="binary_binary"
             )
             print(f"   Search results: {len(search_results)} videos found")
 

@@ -1,7 +1,8 @@
 """
 Modality Example Data Structure
 
-Legacy wrapper for ModalityExampleSchema to maintain backward compatibility.
+Runtime representation of modality training examples with QueryModality enum typing.
+ModalityExampleSchema (Pydantic) handles serialization; this class handles runtime usage.
 """
 
 from typing import Any, Dict, Optional
@@ -11,7 +12,7 @@ from cogniverse_synthetic import ModalityExampleSchema
 
 
 class ModalityExample:
-    """Legacy wrapper for ModalityExampleSchema"""
+    """Runtime modality training example with QueryModality enum typing."""
 
     def __init__(
         self,

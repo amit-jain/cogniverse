@@ -79,7 +79,7 @@ cogniverse/
 │   │   └── cogniverse_agents/
 │   │       ├── __init__.py
 │   │       ├── routing_agent.py       # Routing agent
-│   │       ├── composing_agent.py     # Composing agent
+│   │       ├── orchestrator_agent.py  # A2A orchestration entry point
 │   │       ├── video_agent_refactored.py  # Video search agent
 │   │       ├── approval/       # Approval workflow
 │   │       ├── inference/      # Inference logic

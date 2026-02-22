@@ -77,11 +77,17 @@ class TestAgentRegistry:
 
     @pytest.fixture
     def mock_config(self):
-        """Mock configuration"""
+        """Mock configuration with structured agents section"""
         return {
-            "video_agent_url": "http://localhost:8002",
-            "text_agent_url": "http://localhost:8003",
-            "routing_agent_port": 8001,
+            "agents": {
+                "orchestrator": {"url": "http://localhost:8013", "enabled": True},
+                "entity_extraction": {"url": "http://localhost:8010", "enabled": True},
+                "profile_selection": {"url": "http://localhost:8011", "enabled": True},
+                "query_enhancement": {"url": "http://localhost:8012", "enabled": True},
+                "search": {"url": "http://localhost:8002", "enabled": True},
+                "summarizer": {"url": "http://localhost:8003", "enabled": True},
+                "detailed_report": {"url": "http://localhost:8004", "enabled": True},
+            },
         }
 
     @pytest.fixture
@@ -93,43 +99,48 @@ class TestAgentRegistry:
             capabilities=["search", "analyze"],
         )
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_registry_initialization(self, mock_get_config, mock_config):
-        """Test AgentRegistry initialization"""
+        """Test AgentRegistry initialization with structured agents config"""
         mock_get_config.return_value = mock_config
 
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
-        # Should have initialized agents from config
-        assert "video_search" in registry.agents
-        assert "text_search" in registry.agents
-        assert "routing_agent" in registry.agents
+        # Should have initialized agents from structured config
+        assert "orchestrator" in registry.agents
+        assert "search" in registry.agents
+        assert "summarizer" in registry.agents
+        assert "detailed_report" in registry.agents
 
-        # Check video search agent
-        video_agent = registry.get_agent("video_search")
-        assert video_agent.url == "http://localhost:8002"
-        assert "video_search" in video_agent.capabilities
+        # Check search agent
+        search_agent = registry.get_agent("search")
+        assert search_agent.url == "http://localhost:8002"
+        assert "search" in search_agent.capabilities
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_registry_initialization_minimal_config(self, mock_get_config):
-        """Test initialization with minimal config"""
-        # When only video_agent_url is provided, text_agent_url gets default value from config
-        # So both agents will be registered
-        mock_get_config.return_value = {"video_agent_url": "http://localhost:8002"}
+        """Test initialization with minimal structured config"""
+        mock_get_config.return_value = {
+            "agents": {
+                "search": {"url": "http://localhost:8002", "enabled": True},
+            }
+        }
 
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
-        assert "video_search" in registry.agents
-        # text_search may be registered from default config values
-        assert "routing_agent" in registry.agents
+        assert "search" in registry.agents
+        # Default agents should also be registered
+        assert "orchestrator" in registry.agents
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_register_agent(self, mock_get_config, sample_agent):
         """Test agent registration"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         result = registry.register_agent(sample_agent)
@@ -142,10 +153,12 @@ class TestAgentRegistry:
         assert "search" in registry.capabilities
         assert "test_agent" in registry.capabilities["search"]
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_register_agent_invalid(self, mock_get_config):
         """Test registration with invalid agent"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Agent with no name
@@ -156,10 +169,12 @@ class TestAgentRegistry:
         result = registry.register_agent(invalid_agent)
         assert result is False
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_unregister_agent(self, mock_get_config, sample_agent):
         """Test agent unregistration"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register first
@@ -176,20 +191,24 @@ class TestAgentRegistry:
         if "search" in registry.capabilities:
             assert "test_agent" not in registry.capabilities["search"]
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_unregister_nonexistent_agent(self, mock_get_config):
         """Test unregistering non-existent agent"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         result = registry.unregister_agent("nonexistent")
         assert result is False
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_list_agents(self, mock_get_config, sample_agent):
         """Test listing agents"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         registry.register_agent(sample_agent)
@@ -198,10 +217,12 @@ class TestAgentRegistry:
         assert "test_agent" in agent_names
         assert isinstance(agent_names, list)
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_find_agents_by_capability(self, mock_get_config):
         """Test finding agents by capability"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agents with different capabilities
@@ -213,9 +234,10 @@ class TestAgentRegistry:
         registry.register_agent(agent2)
         registry.register_agent(agent3)
 
-        # Find by capability
+        # Find by capability (3 = config-registered "search" + agent1 + agent2)
         search_agents = registry.find_agents_by_capability("search")
-        assert len(search_agents) == 2
+        assert len(search_agents) == 3
+        assert any(agent.name == "search" for agent in search_agents)
         assert any(agent.name == "agent1" for agent in search_agents)
         assert any(agent.name == "agent2" for agent in search_agents)
 
@@ -226,10 +248,12 @@ class TestAgentRegistry:
         nonexistent_agents = registry.find_agents_by_capability("nonexistent")
         assert len(nonexistent_agents) == 0
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_healthy_agents(self, mock_get_config):
         """Test getting healthy agents"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agents with different health statuses
@@ -254,10 +278,12 @@ class TestAgentRegistry:
         assert "agent3" in healthy_names
         assert "agent2" not in healthy_names
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_agents_for_workflow(self, mock_get_config):
         """Test getting agents for specific workflows"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register different types of agents
@@ -300,11 +326,13 @@ class TestAgentRegistry:
         assert "text_agent" in report_names
         assert "analysis_agent" in report_names
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_success(self, mock_get_config):
         """Test successful agent health check"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agent
@@ -322,11 +350,13 @@ class TestAgentRegistry:
         assert agent.health_status == "healthy"
         assert agent.last_health_check is not None
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_failure(self, mock_get_config):
         """Test failed agent health check"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agent
@@ -344,11 +374,13 @@ class TestAgentRegistry:
         assert agent.health_status == "unhealthy"
         assert agent.last_health_check is not None
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_timeout(self, mock_get_config):
         """Test agent health check timeout"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agent
@@ -366,20 +398,24 @@ class TestAgentRegistry:
         assert agent.health_status == "unreachable"
         assert agent.last_health_check is not None
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_nonexistent_agent(self, mock_get_config):
         """Test health check for non-existent agent"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         result = await registry.health_check_agent("nonexistent")
         assert result is False
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_load_balanced_agent(self, mock_get_config):
         """Test load-balanced agent selection"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Register agents with same capability
@@ -405,10 +441,12 @@ class TestAgentRegistry:
         selected = registry.get_load_balanced_agent("nonexistent")
         assert selected is None
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_registry_stats(self, mock_get_config):
         """Test registry statistics"""
-        mock_get_config.return_value = {}
+        mock_get_config.return_value = {
+            "agents": {"search": {"url": "http://localhost:8002", "enabled": True}}
+        }
         registry = AgentRegistry(config_manager=create_default_config_manager())
 
         # Clear auto-registered agents for clean test
@@ -553,29 +591,15 @@ class TestAgentRegistryStructuredConfig:
 
     @pytest.mark.ci_fast
     @patch("cogniverse_agents.agent_registry.get_config")
-    def test_backward_compatibility_legacy_config(self, mock_get_config):
-        """Test backward compatibility with legacy individual URL config"""
-        # Legacy config (no agents dict)
-        legacy_config_data = {
+    def test_missing_agents_section_raises_error(self, mock_get_config):
+        """Test that config without 'agents' section raises ValueError"""
+        mock_get_config.return_value = {
             "video_agent_url": "http://localhost:8002",
-            "text_agent_url": "http://localhost:8003",
-            "routing_agent_port": 8001,
         }
 
-        mock_config = MagicMock()
-        mock_config.get.side_effect = lambda key, default=None: legacy_config_data.get(
-            key, default
-        )
-        mock_get_config.return_value = mock_config
-
         config_manager = create_default_config_manager()
-        registry = AgentRegistry(tenant_id="test", config_manager=config_manager)
-
-        # Should register 3 legacy agents
-        assert len(registry.agents) == 3
-        assert "video_search" in registry.agents
-        assert "text_search" in registry.agents
-        assert "routing_agent" in registry.agents
+        with pytest.raises(ValueError, match="Missing 'agents' section"):
+            AgentRegistry(config_manager=config_manager)
 
     @pytest.mark.ci_fast
     @patch("cogniverse_agents.agent_registry.get_config")

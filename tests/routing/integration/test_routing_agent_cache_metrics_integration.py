@@ -30,9 +30,7 @@ class TestRoutingAgentCacheMetricsIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(
-            deps=RoutingDeps(tenant_id="test-tenant", telemetry_config=telemetry_config)
-        )
+        agent = RoutingAgent(deps=RoutingDeps(telemetry_config=telemetry_config))
         if not agent.cache_manager or not agent.metrics_tracker:
             pytest.skip(
                 "Cache/metrics components require real telemetry infrastructure"

@@ -376,19 +376,18 @@ config = get_config(tenant_id="acme", config_manager=config_manager)
 # Create service - config_manager and schema_loader are REQUIRED
 search_service = SearchService(
     config=config,
-    profile="video_colpali_mv_frame",
-    tenant_id="acme",
-    config_manager=config_manager,  # Required
-    schema_loader=schema_loader,    # Required
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Execute search
+# Execute search — profile and tenant_id are per-request
 results = search_service.search(
     query="find videos about machine learning",
+    profile="video_colpali_mv_frame",
+    tenant_id="acme",
     top_k=10,
-    ranking_strategy="hybrid",  # SearchService method parameter
-    filters={"modality": "video"},
-    tenant_id="acme"
+    ranking_strategy="hybrid",
+    filters={"modality": "video"}
 )
 
 # Note: The API endpoint uses "strategy" field in SearchRequest,

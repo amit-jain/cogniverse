@@ -154,19 +154,24 @@ class VideoPrismQueryEncoder(QueryEncoder):
 
 
 class QueryEncoderFactory:
-    """Factory to create appropriate query encoder based on profile"""
+    """Factory to create appropriate query encoder based on profile.
 
-    _encoder_cache = {}  # Cache for config-based encoder mappings
+    Caches encoders by model_name so each model is loaded exactly once.
+    """
 
-    @staticmethod
+    _encoder_cache: dict = {}  # model_name → QueryEncoder instance
+
+    @classmethod
     def create_encoder(
+        cls,
         profile: str,
         model_name: Optional[str] = None,
         config: Optional["SystemConfig"] = None,
     ) -> QueryEncoder:
-        """Create query encoder for the given profile
+        """Create or retrieve cached query encoder for the given profile.
 
-        Dynamically determines the encoder based on config.json backend.profiles
+        Dynamically determines the encoder based on config.json backend.profiles.
+        Returns cached encoder if model_name was already loaded.
 
         Args:
             profile: Profile name to use
@@ -196,7 +201,20 @@ class QueryEncoderFactory:
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
 
-        # Determine encoder type based on model name
+        # Check cache first — models are expensive to load
+        if model_name in cls._encoder_cache:
+            logger.info(f"Reusing cached encoder for model: {model_name}")
+            return cls._encoder_cache[model_name]
+
+        # Create new encoder
+        encoder = cls._create_encoder_instance(model_name, profile)
+        cls._encoder_cache[model_name] = encoder
+        logger.info(f"Cached new encoder for model: {model_name} ({type(encoder).__name__})")
+        return encoder
+
+    @staticmethod
+    def _create_encoder_instance(model_name: str, profile: str) -> QueryEncoder:
+        """Create a new encoder instance based on model name."""
         if "colpali" in model_name.lower() or "colsmol" in model_name.lower():
             return ColPaliQueryEncoder(model_name)
         elif "colqwen" in model_name.lower():

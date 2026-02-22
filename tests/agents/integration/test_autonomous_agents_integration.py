@@ -17,7 +17,6 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionInput,
 )
 from cogniverse_agents.orchestrator_agent import (
-    AgentType,
     OrchestratorAgent,
     OrchestratorDeps,
     OrchestratorInput,
@@ -74,7 +73,7 @@ def real_dspy_lm():
 @pytest.fixture
 def entity_agent_with_real_lm(real_dspy_lm):
     """EntityExtractionAgent with real LLM"""
-    deps = EntityExtractionDeps(tenant_id="test_tenant")
+    deps = EntityExtractionDeps()
     agent = EntityExtractionAgent(deps=deps, port=8010)
     return agent
 
@@ -83,7 +82,6 @@ def entity_agent_with_real_lm(real_dspy_lm):
 def profile_agent_with_real_lm(real_dspy_lm):
     """ProfileSelectionAgent with real LLM"""
     deps = ProfileSelectionDeps(
-        tenant_id="test_tenant",
         available_profiles=[
             "video_colpali_base",
             "video_colpali_large",
@@ -99,33 +97,50 @@ def profile_agent_with_real_lm(real_dspy_lm):
 @pytest.fixture
 def query_agent_with_real_lm(real_dspy_lm):
     """QueryEnhancementAgent with real LLM"""
-    deps = QueryEnhancementDeps(tenant_id="test_tenant")
+    deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps, port=8012)
     return agent
 
 
 @pytest.fixture
 def orchestrator_with_real_agents(real_dspy_lm):
-    """OrchestratorAgent with real agent instances"""
-    # Create real agent instances
-    entity_deps = EntityExtractionDeps(tenant_id="test_tenant")
-    entity_agent = EntityExtractionAgent(deps=entity_deps, port=8010)
-    profile_deps = ProfileSelectionDeps(tenant_id="test_tenant")
-    profile_agent = ProfileSelectionAgent(deps=profile_deps, port=8011)
-    query_deps = QueryEnhancementDeps(tenant_id="test_tenant")
-    query_agent = QueryEnhancementAgent(deps=query_deps, port=8012)
+    """OrchestratorAgent with real agent instances via mock AgentRegistry"""
+    from unittest.mock import Mock
 
-    # Create registry
-    agent_registry = {
-        AgentType.ENTITY_EXTRACTION: entity_agent,
-        AgentType.PROFILE_SELECTION: profile_agent,
-        AgentType.QUERY_ENHANCEMENT: query_agent,
+    from cogniverse_core.common.agent_models import AgentEndpoint
+
+    # Create mock AgentRegistry with endpoints matching the real agents
+    registry = Mock()
+    agent_endpoints = {
+        "entity_extraction": AgentEndpoint(
+            name="entity_extraction",
+            url="http://localhost:8010",
+            capabilities=["entity_extraction"],
+        ),
+        "profile_selection": AgentEndpoint(
+            name="profile_selection",
+            url="http://localhost:8011",
+            capabilities=["profile_selection"],
+        ),
+        "query_enhancement": AgentEndpoint(
+            name="query_enhancement",
+            url="http://localhost:8012",
+            capabilities=["query_enhancement"],
+        ),
     }
-
-    orchestrator_deps = OrchestratorDeps(
-        tenant_id="test_tenant", agent_registry=agent_registry
+    registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
+    registry.find_agents_by_capability = Mock(
+        side_effect=lambda cap: [
+            ep for ep in agent_endpoints.values() if cap in ep.capabilities
+        ]
     )
-    orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
+    registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
+    registry.agents = agent_endpoints
+
+    orchestrator_deps = OrchestratorDeps()
+    orchestrator = OrchestratorAgent(
+        deps=orchestrator_deps, registry=registry, port=8013
+    )
     return orchestrator
 
 
@@ -666,11 +681,14 @@ class TestOrchestratorAgentIntegration:
 
         import dspy
 
-        # Make profile_selection agent fail
-        orchestrator_with_real_agents.agent_registry[
-            AgentType.PROFILE_SELECTION
-        ]._process_impl = AsyncMock(
-            side_effect=Exception("Profile selection service unavailable")
+        # Make profile_selection agent fail via A2A client
+        async def fail_profile_selection(url, **kwargs):
+            if "8011" in url:
+                raise Exception("Profile selection service unavailable")
+            return {"status": "success", "result": "mock"}
+
+        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
+            side_effect=fail_profile_selection
         )
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
@@ -907,14 +925,17 @@ class TestOrchestratorComplexPatterns:
 
         import dspy
 
-        # Make both agents in parallel group fail
-        orchestrator_with_real_agents.agent_registry[
-            AgentType.ENTITY_EXTRACTION
-        ]._process_impl = AsyncMock(side_effect=Exception("Extraction service down"))
+        # Make both agents in parallel group fail via A2A client
+        async def fail_parallel_group(url, **kwargs):
+            if "8010" in url:
+                raise Exception("Extraction service down")
+            if "8012" in url:
+                raise Exception("Enhancement service down")
+            return {"status": "success", "result": "mock"}
 
-        orchestrator_with_real_agents.agent_registry[
-            AgentType.QUERY_ENHANCEMENT
-        ]._process_impl = AsyncMock(side_effect=Exception("Enhancement service down"))
+        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
+            side_effect=fail_parallel_group
+        )
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -953,10 +974,13 @@ class TestOrchestratorComplexPatterns:
         import dspy
 
         # Make first agent fail → second agent receives error context → third agent proceeds
-        orchestrator_with_real_agents.agent_registry[
-            AgentType.ENTITY_EXTRACTION
-        ]._process_impl = AsyncMock(
-            side_effect=Exception("Entity extraction database unavailable")
+        async def fail_entity_extraction(url, **kwargs):
+            if "8010" in url:
+                raise Exception("Entity extraction database unavailable")
+            return {"status": "success", "result": "mock"}
+
+        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
+            side_effect=fail_entity_extraction
         )
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(

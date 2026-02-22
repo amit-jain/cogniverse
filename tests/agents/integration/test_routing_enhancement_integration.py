@@ -18,7 +18,7 @@ from cogniverse_agents.result_enhancement_engine import (
 )
 
 # Phase 4 imports
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision, RoutingDeps
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps, RoutingOutput
 
 # Phase 5 imports
 
@@ -49,7 +49,6 @@ class TestRoutingToEnhancedSearchIntegration:
                     with patch(
                         "cogniverse_agents.routing_agent.QueryEnhancementPipeline"
                     ) as mock_pipeline_class:
-
                         # Mock query enhancement pipeline
                         mock_pipeline = Mock()
                         mock_pipeline.enhance_query_with_relationships = AsyncMock(
@@ -86,7 +85,6 @@ class TestRoutingToEnhancedSearchIntegration:
                         from cogniverse_agents.routing_agent import RoutingDeps
 
                         deps = RoutingDeps(
-                            tenant_id="test_tenant",
                             telemetry_config=telemetry_manager_without_phoenix.config,
                             enable_mlflow_tracking=False,
                             enable_relationship_extraction=True,
@@ -135,7 +133,6 @@ class TestRoutingToEnhancedSearchIntegration:
 
         # Create components
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         routing_agent = RoutingAgent(deps=deps)
@@ -146,7 +143,7 @@ class TestRoutingToEnhancedSearchIntegration:
         )
 
         # Test complex query that should trigger orchestration
-        complex_routing_decision = RoutingDecision(
+        complex_routing_decision = RoutingOutput(
             query="find videos of robots playing soccer then analyze techniques and create detailed report with summary",
             enhanced_query="locate footage of autonomous robots demonstrating soccer skills then perform technical analysis and generate comprehensive documentation with executive summary",
             recommended_agent="video_search_agent",
@@ -263,7 +260,7 @@ class TestEnhancedAgentComponentIntegration:
         ]
 
         # Step 2: Create enhancement context from routing decision
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="robots playing soccer using AI techniques",
             enhanced_query="autonomous robots demonstrating soccer skills with artificial intelligence techniques",
             recommended_agent="video_search_agent",
@@ -506,7 +503,7 @@ class TestEnhancedAgentComponentIntegration:
         assert stats["avg_relationship_matches_per_result"] == 0.33  # 1/3 rounded
 
         # Test aggregation with these statistics
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="test",
             enhanced_query="test",
             recommended_agent="test",
@@ -561,7 +558,6 @@ class TestRoutingEnhancementErrorHandlingIntegration:
             from cogniverse_agents.routing_agent import RoutingDeps
 
             deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=telemetry_manager_without_phoenix.config,
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=True,
@@ -577,7 +573,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
                     )
                 else:
                     # Create a fallback decision manually for testing
-                    fallback_decision = RoutingDecision(
+                    fallback_decision = RoutingOutput(
                         query="test query",
                         enhanced_query="test query",
                         recommended_agent="unknown",
@@ -646,7 +642,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
 
             aggregator._simulate_agent_invocation = failing_agent_invocation
 
-            routing_decision = RoutingDecision(
+            routing_decision = RoutingOutput(
                 query="test",
                 enhanced_query="test",
                 recommended_agent="test",
@@ -689,7 +685,6 @@ class TestRoutingEnhancementErrorHandlingIntegration:
                     "get_enhancement_statistics",
                     return_value={},
                 ):
-
                     result = await aggregator.aggregate_and_enhance(request)
 
                     # Should complete despite agent failure
@@ -841,7 +836,7 @@ class TestRoutingEnhancementPerformanceIntegration:
                 {
                     "subject": f"entity_{i}",
                     "relation": "relates_to",
-                    "object": f"entity_{(i+1) % 50}",
+                    "object": f"entity_{(i + 1) % 50}",
                 }
             )
 

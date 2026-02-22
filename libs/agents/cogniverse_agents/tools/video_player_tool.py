@@ -269,7 +269,7 @@ class VideoPlayerTool(BaseTool):
             markers_summary = f"""
             <div class="markers-section">
                 <h4>🎯 Search Result Markers ({len(frame_markers)} frames)</h4>
-                {''.join(markers_list)}
+                {"".join(markers_list)}
             </div>
             """
 
@@ -452,7 +452,9 @@ class VideoPlayerTool(BaseTool):
                     <h3>🎬 {video_path.name}</h3>
                     
                     <div class="server-info">
-                        <strong>📡 Video Server:</strong> localhost:{video_server_port}<br>
+                        <strong>📡 Video Server:</strong> localhost:{
+            video_server_port
+        }<br>
                         <small class="text-muted">Interactive video player with search result markers</small>
                     </div>
                     
@@ -484,12 +486,16 @@ class VideoPlayerTool(BaseTool):
                         </div>
                     </div>
                     
-                    {f'''
+                    {
+            f'''
                     <div class="timeline-markers">
                         <h5>🎯 Search Result Markers ({len(frame_markers)} frames)</h5>
                         {markers_html}
                     </div>
-                    ''' if frame_markers else '<div class="alert alert-info mt-3">No search result markers to display</div>'}
+                    '''
+            if frame_markers
+            else '<div class="alert alert-info mt-3">No search result markers to display</div>'
+        }
                 </div>
             </div>
             
@@ -710,12 +716,16 @@ class VideoPlayerTool(BaseTool):
                         </div>
                     </div>
                     
-                    {f'''
+                    {
+            f'''
                     <div class="timeline-markers">
                         <h5>🎯 Search Result Markers ({len(frame_markers)} frames)</h5>
                         {markers_html}
                     </div>
-                    ''' if frame_markers else '<div class="alert alert-info mt-3">No search result markers to display</div>'}
+                    '''
+            if frame_markers
+            else '<div class="alert alert-info mt-3">No search result markers to display</div>'
+        }
                 </div>
             </div>
             

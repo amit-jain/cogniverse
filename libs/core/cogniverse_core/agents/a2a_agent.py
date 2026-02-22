@@ -138,7 +138,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
         self._setup_a2a_endpoints()
 
         logger.info(
-            f"Initialized {self.agent_name} for tenant {self.tenant_id} "
+            f"Initialized {self.agent_name} "
             f"with types: Input={self._input_type.__name__}, "
             f"Output={self._output_type.__name__}"
         )
@@ -208,8 +208,12 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                     # Non-streaming: process and return JSON
                     typed_output = await self.process(typed_input, stream=False)
 
-                    # Convert to A2A response
-                    a2a_response = self._create_a2a_response(typed_output)
+                    # Convert to A2A response, passing through per-request context
+                    a2a_response = self._create_a2a_response(
+                        typed_output,
+                        tenant_id=raw_input.get("tenant_id"),
+                        session_id=raw_input.get("session_id"),
+                    )
 
                     # Track performance
                     processing_time = time.time() - start_time
@@ -254,7 +258,6 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
             return {
                 "status": "healthy",
                 "agent": self.agent_name,
-                "tenant_id": self.tenant_id,
                 "version": self.version,
                 "metrics": {
                     "requests_processed": self.request_count,
@@ -282,7 +285,6 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
             """Detailed metrics endpoint."""
             return {
                 "agent_name": self.agent_name,
-                "tenant_id": self.tenant_id,
                 "performance": {
                     "total_requests": self.request_count,
                     "successful_requests": self.request_count - self.error_count,
@@ -342,6 +344,12 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
             "task_id": task.get("id", str(uuid.uuid4())),
         }
 
+        # Extract per-request context (tenant_id, session_id) from task root
+        if "tenant_id" in task:
+            extracted["tenant_id"] = task["tenant_id"]
+        if "session_id" in task:
+            extracted["session_id"] = task["session_id"]
+
         # Extract from A2A message parts
         for message in task.get("messages", []):
             for part in message.get("parts", []):
@@ -369,14 +377,20 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
 
         return extracted
 
-    def _create_a2a_response(self, output: OutputT) -> Dict[str, Any]:
+    def _create_a2a_response(
+        self, output: OutputT, tenant_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Convert typed output to A2A response format."""
-        return {
+        response = {
             "status": "success",
             "agent": self.agent_name,
-            "tenant_id": self.tenant_id,
             **output.model_dump(),
         }
+        if tenant_id:
+            response["tenant_id"] = tenant_id
+        if session_id:
+            response["session_id"] = session_id
+        return response
 
     def _get_skills(self) -> List[Dict[str, Any]]:
         """Generate A2A skills from typed schemas."""
@@ -425,7 +439,6 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
         """Get performance summary."""
         return {
             "agent": self.agent_name,
-            "tenant_id": self.tenant_id,
             "requests_processed": self.request_count,
             "error_count": self.error_count,
             "success_rate": (

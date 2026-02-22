@@ -11,7 +11,7 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionDeps,
     EntityExtractionInput,
     EntityExtractionModule,
-    EntityExtractionResult,
+    EntityExtractionOutput,
 )
 
 
@@ -30,7 +30,7 @@ def mock_dspy_lm():
 def entity_agent():
     """Create EntityExtractionAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        deps = EntityExtractionDeps(tenant_id="test_tenant")
+        deps = EntityExtractionDeps()
         agent = EntityExtractionAgent(deps=deps, port=8010)
         return agent
 
@@ -73,7 +73,6 @@ class TestEntityExtractionAgent:
     def test_agent_initialization(self, entity_agent):
         """Test agent initializes with correct configuration"""
         assert entity_agent.agent_name == "entity_extraction_agent"
-        assert entity_agent.tenant_id == "test_tenant"
         assert "entity_extraction" in entity_agent.capabilities
 
     @pytest.mark.asyncio
@@ -91,7 +90,7 @@ class TestEntityExtractionAgent:
             EntityExtractionInput(query="Show me Barack Obama in Chicago")
         )
 
-        assert isinstance(result, EntityExtractionResult)
+        assert isinstance(result, EntityExtractionOutput)
         assert result.query == "Show me Barack Obama in Chicago"
         assert result.entity_count == 2
         assert result.has_entities is True
@@ -203,7 +202,7 @@ class TestEntityExtractionAgent:
 
     def test_dspy_to_a2a_output(self, entity_agent):
         """Test conversion to A2A output format"""
-        result = EntityExtractionResult(
+        result = EntityExtractionOutput(
             query="test query",
             entities=[
                 Entity(

@@ -107,9 +107,7 @@ class LazyModalityExecutor:
             modalities, key=lambda m: self.MODALITY_COST.get(m, 100)
         )
 
-        logger.info(
-            f"🚀 Lazy execution order: " f"{[m.value for m in sorted_modalities]}"
-        )
+        logger.info(f"🚀 Lazy execution order: {[m.value for m in sorted_modalities]}")
 
         results = {}
         executed_modalities = []

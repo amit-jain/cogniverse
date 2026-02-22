@@ -59,7 +59,7 @@ flowchart TD
 ## Key Features
 
 - **Multi-Modal Processing** — Video, audio, images, documents with unified embeddings
-- **Agent Orchestration** — A2A protocol with routing, search, and composing agents
+- **Agent Orchestration** — A2A protocol with OrchestratorAgent entry point, agent discovery via AgentRegistry
 - **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data
 - **LLM Fine-Tuning** — End-to-end pipeline from telemetry to LoRA adapters
 - **Memory** — Context persistence across conversations

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,9 @@ class EntityExtractionOutput(AgentOutput):
 
 
 class EntityExtractionDeps(AgentDeps):
-    """Dependencies for entity extraction agent"""
+    """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
 
-    pass  # Only needs tenant_id from base
-
-
-# Backward compatibility alias
-EntityExtractionResult = EntityExtractionOutput
+    pass
 
 
 class EntityExtractionSignature(dspy.Signature):
@@ -103,7 +100,8 @@ class EntityExtractionModule(dspy.Module):
 
 
 class EntityExtractionAgent(
-    A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]
+    MemoryAwareMixin,
+    A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps],
 ):
     """
     Type-safe A2A agent for entity extraction.
@@ -143,7 +141,7 @@ class EntityExtractionAgent(
         # Initialize base class
         super().__init__(deps=deps, config=config, dspy_module=extraction_module)
 
-        logger.info(f"EntityExtractionAgent initialized for tenant: {deps.tenant_id}")
+        logger.info("EntityExtractionAgent initialized (tenant-agnostic)")
 
     async def _process_impl(
         self, input: EntityExtractionInput
@@ -160,7 +158,7 @@ class EntityExtractionAgent(
         query = input.query
 
         if not query:
-            return EntityExtractionResult(
+            return EntityExtractionOutput(
                 query="",
                 entities=[],
                 entity_count=0,
@@ -186,7 +184,7 @@ class EntityExtractionAgent(
             type_counts.keys(), key=lambda k: type_counts[k], reverse=True
         )
 
-        return EntityExtractionResult(
+        return EntityExtractionOutput(
             query=query,
             entities=entities,
             entity_count=len(entities),
@@ -259,8 +257,8 @@ class EntityExtractionAgent(
         except Exception:
             return query[:50]
 
-    def _dspy_to_a2a_output(self, result: EntityExtractionResult) -> Dict[str, Any]:
-        """Convert EntityExtractionResult to A2A output format."""
+    def _dspy_to_a2a_output(self, result: EntityExtractionOutput) -> Dict[str, Any]:
+        """Convert EntityExtractionOutput to A2A output format."""
         return {
             "status": "success",
             "agent": self.agent_name,
@@ -318,13 +316,10 @@ entity_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup — tenant-agnostic, no env vars."""
     global entity_agent
 
-    import os
-
-    tenant_id = os.getenv("TENANT_ID", "default")
-    deps = EntityExtractionDeps(tenant_id=tenant_id)
+    deps = EntityExtractionDeps()
     entity_agent = EntityExtractionAgent(deps=deps)
     logger.info("EntityExtractionAgent started")
 
@@ -356,7 +351,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    deps = EntityExtractionDeps(tenant_id="default")
+    deps = EntityExtractionDeps()
     agent = EntityExtractionAgent(deps=deps, port=8010)
     logger.info("Starting EntityExtractionAgent on port 8010...")
     agent.start()

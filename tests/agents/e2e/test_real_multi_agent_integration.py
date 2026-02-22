@@ -173,9 +173,7 @@ class TestRealAgentRoutingIntegration:
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
             telemetry_config = TelemetryConfig(enabled=False)
-            deps = RoutingDeps(
-                tenant_id="test_tenant", telemetry_config=telemetry_config
-            )
+            deps = RoutingDeps(telemetry_config=telemetry_config)
             routing_agent = RoutingAgent(deps=deps, port=8001)
 
         # Test routing decisions for different query types
@@ -195,7 +193,9 @@ class TestRealAgentRoutingIntegration:
         for test_case in test_cases:
             logger.info(f"Testing routing for: {test_case['query']}")
 
-            routing_decision = await routing_agent.route_query(test_case["query"])
+            routing_decision = await routing_agent.route_query(
+                test_case["query"], tenant_id="test_tenant"
+            )
 
             # Verify routing decision structure (RoutingDecision object)
             assert hasattr(routing_decision, "recommended_agent")
@@ -249,7 +249,7 @@ class TestRealAgentSpecializationIntegration:
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
-            deps = SummarizerDeps(tenant_id="test_tenant")
+            deps = SummarizerDeps()
             summarizer = SummarizerAgent(deps=deps)
 
             # Test content summarization - use SummaryRequest with search_results
@@ -309,7 +309,7 @@ class TestRealAgentSpecializationIntegration:
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
-            deps = DetailedReportDeps(tenant_id="test_tenant")
+            deps = DetailedReportDeps()
             report_agent = DetailedReportAgent(deps=deps)
 
             # Mock search results for testing
@@ -341,7 +341,7 @@ class TestRealAgentSpecializationIntegration:
             assert hasattr(report_result, "executive_summary")
             assert hasattr(report_result, "detailed_findings")
             assert hasattr(report_result, "recommendations")
-            assert hasattr(report_result, "confidence_score")
+            assert hasattr(report_result, "confidence_assessment")
 
             # Verify report quality
             assert (
@@ -355,7 +355,7 @@ class TestRealAgentSpecializationIntegration:
             ), "Recommendations should be present"
 
             # Verify confidence
-            confidence = float(report_result.confidence_score)
+            confidence = float(report_result.confidence_assessment.get("overall", 0.0))
             assert 0.0 <= confidence <= 1.0
 
             logger.info(
@@ -489,11 +489,9 @@ class TestRealEndToEndWorkflow:
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
             telemetry_config = TelemetryConfig(enabled=False)
-            routing_deps = RoutingDeps(
-                tenant_id="test_tenant", telemetry_config=telemetry_config
-            )
+            routing_deps = RoutingDeps(telemetry_config=telemetry_config)
             routing_agent = RoutingAgent(deps=routing_deps, port=8001)
-            summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+            summarizer_deps = SummarizerDeps()
             summarizer = SummarizerAgent(deps=summarizer_deps)
 
             # Test complete workflow
@@ -508,7 +506,9 @@ class TestRealEndToEndWorkflow:
 
             # Step 2: Agent routing
             logger.info("Step 2: Routing query to appropriate agent")
-            routing_decision = await routing_agent.route_query(test_query)
+            routing_decision = await routing_agent.route_query(
+                test_query, tenant_id="test_tenant"
+            )
             logger.info(f"Routing decision: {routing_decision.recommended_agent}")
 
             # Step 3: Execute with appropriate agent

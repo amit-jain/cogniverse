@@ -174,7 +174,6 @@ class TestDSPyOptimizerIntegration:
 
         with patch("dspy.LM") as mock_lm_class:
             with patch("dspy.teleprompt.BootstrapFewShot") as mock_teleprompter:
-
                 # Mock DSPy components
                 mock_lm = Mock()
                 mock_lm_class.return_value = mock_lm
@@ -242,7 +241,6 @@ class TestDSPyOptimizerIntegration:
         with patch.object(
             DSPyAgentOptimizerPipeline, "optimize_module"
         ) as mock_optimize:
-
             # Setup mock return
             mock_compiled_module = Mock()
             mock_optimize.return_value = mock_compiled_module
@@ -341,17 +339,13 @@ class TestDSPyAgentIntegration:
         }
 
         with patch.object(Path, "exists") as mock_exists:
-
             # Mock path exists to find optimized prompts
             mock_exists.return_value = True
 
             # Mock file loading directly
             with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
-
                 telemetry_config = TelemetryConfig(enabled=False)
-                deps = RoutingDeps(
-                    tenant_id="test_tenant", telemetry_config=telemetry_config
-                )
+                deps = RoutingDeps(telemetry_config=telemetry_config)
                 agent = RoutingAgent(deps=deps)
 
                 # Should have DSPy module from parent class
@@ -382,7 +376,6 @@ class TestDSPyAgentIntegration:
 
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             with patch.object(Path, "exists") as mock_exists:
-
                 # Mock path exists to find optimized prompts
                 mock_exists.return_value = True
 
@@ -390,7 +383,6 @@ class TestDSPyAgentIntegration:
                 with patch(
                     "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
                 ):
-
                     tool = QueryAnalysisToolV3(
                         config_manager=config_manager, enable_agent_integration=False
                     )
@@ -420,7 +412,6 @@ class TestDSPyEndToEndOptimization:
 
         with patch("dspy.LM") as mock_lm_class:
             with patch("dspy.teleprompt.BootstrapFewShot") as mock_teleprompter:
-
                 # Setup DSPy mocks
                 mock_lm = Mock()
                 mock_lm_class.return_value = mock_lm

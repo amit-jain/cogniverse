@@ -210,7 +210,7 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
         return RoutingOutput(recommended_agent="search", confidence=0.5)
 
 # Create and run agent
-deps = RoutingDeps(tenant_id="acme", model_name="smollm3:3b")
+deps = RoutingDeps(model_name="smollm3:3b")  # No tenant_id at construction
 config = A2AAgentConfig(
     agent_name="routing_agent",
     agent_description="Routes queries to appropriate agents",
@@ -269,22 +269,26 @@ from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 class MyAgent(AgentBase[...], MemoryAwareMixin):
     def __init__(self, deps, config_manager, schema_loader):
         super().__init__(deps)
+        self._config_manager = config_manager
+        self._schema_loader = schema_loader
+        # Memory is initialized per-request with tenant_id (not at construction)
+
+    async def _process_impl(self, input: MyInput) -> MyOutput:
+        # Initialize memory for this tenant (idempotent — only initializes once per tenant)
         memory_config = self.search_config.get("memory", {})
-        # Initialize memory with required parameters
         self.initialize_memory(
             agent_name="my_agent",
-            tenant_id=deps.tenant_id,
+            tenant_id=input.tenant_id,  # Per-request, not from deps
             backend_host=system_config.get("backend_url"),
             backend_port=system_config.get("backend_port"),
             llm_model=memory_config.get("llm_model"),
             embedding_model=memory_config.get("embedding_model"),
             llm_base_url=memory_config.get("llm_base_url"),
-            config_manager=config_manager,
-            schema_loader=schema_loader,
+            config_manager=self._config_manager,
+            schema_loader=self._schema_loader,
             backend_config_port=system_config.get("backend_config_port"),
         )
 
-    async def _process_impl(self, input: MyInput) -> MyOutput:
         # Search memories using mixin methods
         context = self.get_relevant_context(query=input.query, top_k=5)
 
@@ -309,10 +313,12 @@ from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 class MyAgent(AgentBase[...], TenantAwareAgentMixin):
     def __init__(self, deps, ...):
         super().__init__(deps)
-        TenantAwareAgentMixin.__init__(self, tenant_id=deps.tenant_id)
+        # tenant_id is NOT set at construction — it arrives per-request
 
     async def _process_impl(self, input: MyInput) -> MyOutput:
-        # Access tenant context (includes tenant_id, agent_type)
+        # tenant_id comes from the A2A task payload
+        tenant_id = input.tenant_id
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
         tenant_context = self.get_tenant_context()
 ```
 
@@ -596,7 +602,7 @@ class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps
 
 # 3. Run agent
 if __name__ == "__main__":
-    deps = SummarizerDeps(tenant_id="acme")
+    deps = SummarizerDeps()  # No tenant_id — it's per-request
     config = A2AAgentConfig(
         agent_name="summarizer_agent",
         agent_description="Summarizes text content",

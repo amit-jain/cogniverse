@@ -113,6 +113,7 @@ class Mem0MemoryManager:
         llm_base_url: str,
         config_manager,
         schema_loader,
+        provider: str = "ollama",
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         auto_create_schema: bool = True,
@@ -128,6 +129,7 @@ class Mem0MemoryManager:
             llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
+            provider: LLM/embedder provider for Mem0 (e.g. "ollama", "openai")
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             auto_create_schema: Auto-deploy tenant schema if not exists
@@ -209,22 +211,32 @@ class Mem0MemoryManager:
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
-        # Configure Mem0 with Ollama provider and backend-agnostic storage
+        # Configure Mem0 with provider from config (provider-agnostic)
+        llm_provider_config = {
+            "model": llm_model,
+            "temperature": 0.1,
+        }
+        embedder_provider_config = {
+            "model": embedding_model,
+        }
+
+        # Provider-specific endpoint key
+        if provider == "ollama":
+            llm_provider_config["ollama_base_url"] = llm_base_url
+            embedder_provider_config["ollama_base_url"] = llm_base_url
+        else:
+            # OpenAI-compatible providers (modal, openai, etc.)
+            llm_provider_config["api_base"] = llm_base_url
+            embedder_provider_config["api_base"] = llm_base_url
+
         self.config = {
             "llm": {
-                "provider": "ollama",
-                "config": {
-                    "model": llm_model,
-                    "temperature": 0.1,
-                    "ollama_base_url": llm_base_url,
-                },
+                "provider": provider,
+                "config": llm_provider_config,
             },
             "embedder": {
-                "provider": "ollama",
-                "config": {
-                    "model": embedding_model,
-                    "ollama_base_url": llm_base_url,
-                },
+                "provider": provider,
+                "config": embedder_provider_config,
             },
             "vector_store": {
                 "provider": "backend",  # Backend-agnostic (not vespa-specific)

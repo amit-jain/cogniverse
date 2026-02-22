@@ -66,12 +66,12 @@ class AgentRegistry:
         # Try structured agents config first
         agents_config = self.config.get("agents", {})
 
-        if agents_config:
-            # Use structured config with explicit agent definitions
-            self._register_from_structured_config(agents_config)
-        else:
-            # Fall back to legacy individual URL-based config for backward compatibility
-            self._register_from_legacy_config()
+        if not agents_config:
+            raise ValueError(
+                "Missing 'agents' section in config.json. "
+                "Each agent must be defined with url, enabled, and capabilities."
+            )
+        self._register_from_structured_config(agents_config)
 
         logger.info(f"Initialized {len(self.agents)} agents from configuration")
 
@@ -156,48 +156,6 @@ class AgentRegistry:
                     ),
                 )
             )
-
-    def _register_from_legacy_config(self):
-        """Register agents from legacy individual URL config for backward compatibility"""
-        # Video search agent
-        video_agent_url = self.config.get("video_agent_url")
-        if video_agent_url:
-            self.register_agent(
-                AgentEndpoint(
-                    name="video_search",
-                    url=video_agent_url,
-                    capabilities=[
-                        "video_search",
-                        "multimodal_search",
-                        "temporal_search",
-                    ],
-                )
-            )
-
-        # Text search agent
-        text_agent_url = self.config.get("text_agent_url")
-        if text_agent_url:
-            self.register_agent(
-                AgentEndpoint(
-                    name="text_search",
-                    url=text_agent_url,
-                    capabilities=["text_search", "document_search", "hybrid_search"],
-                )
-            )
-
-        # Routing agent (self-registration)
-        routing_agent_port = self.config.get("routing_agent_port", 8001)
-        self.register_agent(
-            AgentEndpoint(
-                name="routing_agent",
-                url=f"http://localhost:{routing_agent_port}",
-                capabilities=[
-                    "query_routing",
-                    "workflow_coordination",
-                    "agent_orchestration",
-                ],
-            )
-        )
 
     def register_agent(self, agent: AgentEndpoint) -> bool:
         """

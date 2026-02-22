@@ -11,7 +11,7 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionDeps,
     ProfileSelectionInput,
     ProfileSelectionModule,
-    ProfileSelectionResult,
+    ProfileSelectionOutput,
 )
 
 
@@ -128,7 +128,6 @@ class TestProfileSelectionAgent:
     def test_agent_initialization(self, profile_agent):
         """Test agent initializes with correct configuration"""
         assert profile_agent.agent_name == "profile_selection_agent"
-        assert profile_agent.tenant_id == "test_tenant"
         assert "profile_selection" in profile_agent.capabilities
         assert len(profile_agent.deps.available_profiles) == 3
 
@@ -150,7 +149,7 @@ class TestProfileSelectionAgent:
             ProfileSelectionInput(query="Show me machine learning videos")
         )
 
-        assert isinstance(result, ProfileSelectionResult)
+        assert isinstance(result, ProfileSelectionOutput)
         assert result.query == "Show me machine learning videos"
         assert result.selected_profile == "video_colpali_base"
         assert result.confidence == 0.9
@@ -257,7 +256,7 @@ class TestProfileSelectionAgent:
 
     def test_dspy_to_a2a_output(self, profile_agent):
         """Test conversion to A2A output format"""
-        result = ProfileSelectionResult(
+        result = ProfileSelectionOutput(
             query="test query",
             selected_profile="video_colpali_base",
             confidence=0.9,

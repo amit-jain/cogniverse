@@ -477,7 +477,7 @@ Additional routing config fields control the composable module's path selection:
 
 ### Mutual Exclusivity
 
-Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingDecision` does not trigger ensemble. They cannot overlap in a single request.
+Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingOutput` (from RoutingAgent) does not trigger ensemble. They cannot overlap in a single request.
 
 ---
 

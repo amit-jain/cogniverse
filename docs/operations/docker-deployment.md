@@ -479,7 +479,7 @@ uv run python scripts/deploy_all_schemas.py
 # Runtime configuration for tenant isolation
 runtime:
   environment:
-    - DEFAULT_TENANT_ID=default
+    # tenant_id is per-request in A2A task payload, not an env var
     - TENANT_MAX_STORAGE_GB=100
     - TENANT_MAX_VIDEOS=10000
     - TENANT_MAX_QPS=100

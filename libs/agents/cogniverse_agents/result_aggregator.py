@@ -10,7 +10,7 @@ from cogniverse_agents.result_enhancement_engine import (
     EnhancementContext,
     ResultEnhancementEngine,
 )
-from cogniverse_agents.routing_agent import RoutingDecision
+from cogniverse_agents.routing_agent import RoutingOutput
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class AggregationRequest:
     """Request for result aggregation and enhancement"""
 
-    routing_decision: RoutingDecision
+    routing_decision: RoutingOutput
     search_results: List[Dict[str, Any]]
     agents_to_invoke: Optional[List[str]] = None
     include_summaries: bool = True
@@ -43,7 +43,7 @@ class AgentResult:
 class AggregatedResult:
     """Aggregated and enhanced result from multiple agents"""
 
-    routing_decision: RoutingDecision
+    routing_decision: RoutingOutput
     enhanced_search_results: List[EnhancedResult]
     agent_results: Dict[str, AgentResult]
     summaries: Optional[Dict[str, Any]] = None

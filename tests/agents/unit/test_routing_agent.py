@@ -43,7 +43,6 @@ class TestRoutingAgentLegacy:
         """Create RoutingDeps for testing"""
         telemetry_config = TelemetryConfig(enabled=False)
         return RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
         )
 
@@ -54,7 +53,6 @@ class TestRoutingAgentLegacy:
 
         # deps is now the config
         assert agent.deps is not None
-        assert agent.deps.tenant_id == "test_tenant"
         assert hasattr(agent, "routing_module")
         assert hasattr(agent, "logger")
 
@@ -178,7 +176,6 @@ class TestEnhancementFailureFallback:
         """
         telemetry_config = TelemetryConfig(enabled=False)
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             query_fusion_config={
                 "include_original": True,
@@ -192,10 +189,13 @@ class TestEnhancementFailureFallback:
             side_effect=RuntimeError("Enhancement exploded")
         )
 
-        entities, relationships, enhanced_query, metadata = (
-            await agent._analyze_and_enhance_query(
-                query="robots playing soccer",
-            )
+        (
+            entities,
+            relationships,
+            enhanced_query,
+            metadata,
+        ) = await agent._analyze_and_enhance_query(
+            query="robots playing soccer",
         )
 
         # Fallback: original query returned, empty metadata, no entities/relationships

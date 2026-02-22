@@ -409,18 +409,24 @@ def test_tenant_config_isolation():
 def test_tenant_schema_naming():
     """Verify tenant schemas use correct naming convention"""
     from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from pathlib import Path
 
     config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     agent = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="acme_corp",
-        config_manager=config_manager
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
 
     # Agent's search service should target tenant-specific schema
-    # Schema name is stored in the profile configuration
-    assert agent.tenant_id == "acme_corp"
-    assert agent.profile == "video_colpali_smol500_mv_frame"
+    # profile and tenant_id are per-request on search()
+    results = agent.search(
+        query="test",
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="acme_corp",
+        top_k=5,
+    )
 
 def test_tenant_phoenix_project_isolation():
     """Verify Phoenix projects can be registered per-tenant"""

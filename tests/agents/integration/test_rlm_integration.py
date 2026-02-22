@@ -206,6 +206,7 @@ class TestSearchInputRLMIntegration:
         # Simulate API request body
         api_request = {
             "query": "machine learning video tutorials",
+            "tenant_id": "test_tenant",
             "modality": "video",
             "top_k": 20,
             "rlm": {
@@ -240,6 +241,7 @@ class TestSearchInputRLMIntegration:
         # Old-style API request (no RLM)
         api_request = {
             "query": "video editing software",
+            "tenant_id": "test_tenant",
             "modality": "video",
             "top_k": 10,
         }
@@ -268,6 +270,7 @@ class TestSearchInputRLMIntegration:
 
         api_request = {
             "query": "complex multi-document analysis",
+            "tenant_id": "test_tenant",
             "top_k": 50,
             "rlm": {
                 "enabled": False,
@@ -330,6 +333,7 @@ class TestRLMSearchAgentIntegration:
         # Verify SearchInput supports RLM options
         search_input = SearchInput(
             query="test",
+            tenant_id="test_tenant",
             rlm=RLMOptions(enabled=True, max_iterations=3),
         )
 
@@ -357,6 +361,7 @@ class TestRLMSearchAgentIntegration:
         # Create input with RLM enabled
         search_input = SearchInput(
             query="complex analysis query",
+            tenant_id="test_tenant",
             top_k=10,
             rlm=RLMOptions(enabled=True, max_iterations=3, backend="anthropic"),
         )
@@ -458,7 +463,9 @@ class TestRLMABTestingIntegration:
         from cogniverse_agents.search_agent import SearchInput
 
         # Group A: No RLM
-        input_a = SearchInput(query="test query", top_k=10, rlm=None)
+        input_a = SearchInput(
+            query="test query", tenant_id="test_tenant", top_k=10, rlm=None
+        )
 
         mixin = RLMAwareMixin()
         context = "x" * 100_000
@@ -486,6 +493,7 @@ class TestRLMABTestingIntegration:
         # Group B: RLM enabled
         input_b = SearchInput(
             query="test query",
+            tenant_id="test_tenant",
             top_k=10,
             rlm=RLMOptions(enabled=True, max_iterations=3),
         )
@@ -587,6 +595,7 @@ class TestRLMVespaIntegration:
         # Create search input with RLM options
         search_input = SearchInput(
             query="machine learning video tutorials",
+            tenant_id="test_tenant",
             top_k=5,
             rlm=RLMOptions(enabled=True, max_iterations=2),
         )
@@ -910,7 +919,7 @@ class TestSearchAgentRLMIntegration:
             model="claude-3-sonnet",
         )
 
-        input_data = SearchInput(query="test", rlm=rlm_opts)
+        input_data = SearchInput(query="test", tenant_id="test_tenant", rlm=rlm_opts)
 
         assert input_data.rlm.enabled is True
         assert input_data.rlm.max_iterations == 5

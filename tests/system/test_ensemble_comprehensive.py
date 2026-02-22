@@ -71,7 +71,7 @@ def comprehensive_ensemble_setup():
         # Setup Vespa
         logger.info("📦 Setting up Vespa container...")
         if not manager.full_setup():
-            pytest.skip("Failed to setup Vespa")
+            pytest.fail("Failed to setup Vespa")
 
         logger.info(f"✅ Vespa ready at http://localhost:{http_port}")
 
@@ -149,7 +149,11 @@ class TestComprehensiveEnsembleSearch:
         - RRF fusion works across heterogeneous profiles
         """
 
-        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+        from cogniverse_agents.search_agent import (
+            SearchAgent,
+            SearchAgentDeps,
+            SearchInput,
+        )
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.unified_config import (
             BackendConfig,
@@ -186,7 +190,6 @@ class TestComprehensiveEnsembleSearch:
 
         # Create SearchAgent
         search_deps = SearchAgentDeps(
-            tenant_id="test_tenant",
             backend_url=vespa_url,
             backend_port=vespa_http_port,
             backend_config_port=vespa_config_port,
@@ -204,12 +207,13 @@ class TestComprehensiveEnsembleSearch:
 
         try:
             result = await agent._process_impl(
-                {
-                    "query": "robot playing soccer",  # Real query matching test videos
-                    "profiles": list(profiles.keys()),
-                    "top_k": 5,
-                    "rrf_k": 60,
-                }
+                SearchInput(
+                    query="robot playing soccer",
+                    tenant_id="test_tenant",
+                    profiles=list(profiles.keys()),
+                    top_k=5,
+                    rrf_k=60,
+                )
             )
 
             logger.info(f"Result from REAL Vespa with REAL encoders: {result}")
@@ -259,7 +263,11 @@ class TestComprehensiveEnsembleSearch:
         - Production-realistic latency
         """
 
-        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+        from cogniverse_agents.search_agent import (
+            SearchAgent,
+            SearchAgentDeps,
+            SearchInput,
+        )
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.unified_config import (
             BackendConfig,
@@ -295,7 +303,6 @@ class TestComprehensiveEnsembleSearch:
         config_manager.set_backend_config(backend_config)
 
         search_deps = SearchAgentDeps(
-            tenant_id="test_tenant",
             backend_url=vespa_url,
             backend_port=vespa_http_port,
             backend_config_port=vespa_config_port,
@@ -315,12 +322,13 @@ class TestComprehensiveEnsembleSearch:
             start_time = time.time()
 
             _result = await agent._process_impl(
-                {
-                    "query": "robot playing soccer",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 10,
-                    "rrf_k": 60,
-                }
+                SearchInput(
+                    query="robot playing soccer",
+                    tenant_id="test_tenant",
+                    profiles=list(profiles.keys()),
+                    top_k=10,
+                    rrf_k=60,
+                )
             )
             assert _result is not None  # Verify execution completed
 

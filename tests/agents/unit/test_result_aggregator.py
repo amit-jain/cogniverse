@@ -13,7 +13,7 @@ from cogniverse_agents.result_aggregator import (
     ResultAggregator,
 )
 from cogniverse_agents.result_enhancement_engine import EnhancedResult
-from cogniverse_agents.routing_agent import RoutingDecision
+from cogniverse_agents.routing_agent import RoutingOutput
 
 
 @pytest.mark.unit
@@ -23,7 +23,7 @@ class TestAggregationRequest:
     @pytest.mark.ci_fast
     def test_aggregation_request_creation_minimal(self):
         """Test creating AggregationRequest with minimal required fields"""
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="test query",
             recommended_agent="video_search",
             confidence=0.8,
@@ -48,7 +48,7 @@ class TestAggregationRequest:
 
     def test_aggregation_request_creation_full(self):
         """Test creating AggregationRequest with all fields"""
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="find AI videos",
             recommended_agent="enhanced_video_search",
             confidence=0.9,
@@ -115,7 +115,7 @@ class TestAggregatedResult:
     @pytest.mark.ci_fast
     def test_aggregated_result_creation(self):
         """Test creating AggregatedResult"""
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="test",
             recommended_agent="test_agent",
             confidence=0.8,
@@ -165,7 +165,7 @@ class TestResultAggregator:
     @pytest.fixture
     def sample_routing_decision(self):
         """Sample routing decision for testing"""
-        return RoutingDecision(
+        return RoutingOutput(
             query="find videos about AI",
             recommended_agent="enhanced_video_search",
             confidence=0.9,
@@ -334,7 +334,7 @@ class TestResultAggregatorEdgeCases:
     @pytest.fixture
     def minimal_routing_decision(self):
         """Minimal routing decision for edge case testing"""
-        return RoutingDecision(
+        return RoutingOutput(
             query="test",
             recommended_agent="test_agent",
             confidence=0.5,

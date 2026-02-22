@@ -731,7 +731,6 @@ class AdaptiveThresholdLearner:
         """Update threshold using evolutionary approach"""
         # Simplified evolutionary approach - could be expanded
         try:
-
             # Generate candidate values (mutations)
             candidates = []
             for _ in range(5):

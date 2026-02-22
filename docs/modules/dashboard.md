@@ -42,7 +42,7 @@ The Dashboard module provides a **Streamlit-based UI** for:
 - **HITL Workflows**: Human approval queues and orchestration annotation
 - **System Monitoring**: Configuration, memory, and ingestion management
 
-The dashboard integrates with agents via the **A2A protocol** for real-time interaction.
+The dashboard routes all queries through the **OrchestratorAgent** via A2A protocol (`POST /tasks/send`). The orchestrator plans the pipeline (entity extraction, profile selection, query enhancement, search) and executes agents via AgentRegistry discovery. The dashboard never calls downstream agents directly.
 
 **Main Entry Point:** The primary dashboard application is `scripts/phoenix_dashboard_standalone.py`, which aggregates all dashboard tabs and provides the complete UI. The `libs/dashboard/cogniverse_dashboard/` package contains utility modules (PhoenixDataManager, PhoenixLauncher) that support dashboard operations.
 

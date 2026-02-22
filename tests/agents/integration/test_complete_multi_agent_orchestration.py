@@ -51,7 +51,7 @@ class TestCompleteMultiAgentOrchestration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         routing_agent = RoutingAgent(deps=deps)
 
         # Test video search query
@@ -59,7 +59,9 @@ class TestCompleteMultiAgentOrchestration:
 
         try:
             # Step 1: Route the query
-            routing_result = asyncio.run(routing_agent.route_query(video_query))
+            routing_result = asyncio.run(
+                routing_agent.route_query(video_query, tenant_id="test_tenant")
+            )
 
             # Should return routing decision
             assert routing_result is not None
@@ -87,7 +89,7 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
-        deps = SummarizerDeps(tenant_id="test_tenant")
+        deps = SummarizerDeps()
         summarizer = SummarizerAgent(deps=deps)
 
         # Test with sample search results
@@ -101,7 +103,7 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
-        deps = DetailedReportDeps(tenant_id="test_tenant")
+        deps = DetailedReportDeps()
         reporter = DetailedReportAgent(deps=deps)
 
         # Test with comprehensive data structure
@@ -196,7 +198,6 @@ class TestCompleteMultiAgentOrchestration:
             # Create a mock routing agent manually
             routing_agent = object.__new__(RoutingAgent)
             routing_agent.deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
@@ -207,9 +208,9 @@ class TestCompleteMultiAgentOrchestration:
             routing_agent.enable_telemetry = False
             routing_agent.logger = logging.getLogger(__name__)
 
-        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer_deps = SummarizerDeps()
         summarizer = SummarizerAgent(deps=summarizer_deps)
-        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter_deps = DetailedReportDeps()
         reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Verify agents have expected coordination interfaces
@@ -262,7 +263,6 @@ class TestCompleteMultiAgentOrchestration:
             # Create a mock routing agent manually
             routing_agent = object.__new__(RoutingAgent)
             routing_agent.deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
@@ -284,7 +284,9 @@ class TestCompleteMultiAgentOrchestration:
         for query in problematic_queries:
             try:
                 if query is not None:
-                    result = asyncio.run(routing_agent.route_query(str(query)))
+                    result = asyncio.run(
+                        routing_agent.route_query(str(query), tenant_id="test_tenant")
+                    )
                     # Should handle gracefully
                     assert (
                         result is not None or True
@@ -335,7 +337,6 @@ class TestCompleteMultiAgentOrchestration:
                 # Create a mock routing agent manually
                 routing_agent = object.__new__(RoutingAgent)
                 routing_agent.deps = RoutingDeps(
-                    tenant_id="test_tenant",
                     telemetry_config=TelemetryConfig(enabled=False),
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=False,
@@ -346,9 +347,9 @@ class TestCompleteMultiAgentOrchestration:
                 routing_agent.enable_telemetry = False
                 routing_agent.logger = logging.getLogger(__name__)
                 agents.append(routing_agent)
-                summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+                summarizer_deps = SummarizerDeps()
                 agents.append(SummarizerAgent(deps=summarizer_deps))
-                reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+                reporter_deps = DetailedReportDeps()
                 agents.append(DetailedReportAgent(deps=reporter_deps))
 
             # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
@@ -414,7 +415,6 @@ class TestSystemScalability:
             # Create a mock routing agent manually
             routing_agent = object.__new__(RoutingAgent)
             routing_agent.deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
@@ -434,7 +434,10 @@ class TestSystemScalability:
         ]
 
         async def process_concurrent_queries():
-            tasks = [routing_agent.route_query(query) for query in queries]
+            tasks = [
+                routing_agent.route_query(query, tenant_id="test_tenant")
+                for query in queries
+            ]
             try:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 return results
@@ -454,9 +457,9 @@ class TestSystemScalability:
 
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
-        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer_deps = SummarizerDeps()
         summarizer = SummarizerAgent(deps=summarizer_deps)
-        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter_deps = DetailedReportDeps()
         reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Simulate repeated operations

@@ -397,7 +397,7 @@ class OptimizationOrchestrator:
                         conversation_history = ""
                         user_query = query_data
 
-                    print(f"\n   [{i+1}/{len(queries)}] Query: {user_query[:50]}...")
+                    print(f"\n   [{i + 1}/{len(queries)}] Query: {user_query[:50]}...")
 
                     # Get routing decision from teacher
                     print("   🤔 Calling teacher model...")
@@ -414,7 +414,7 @@ class OptimizationOrchestrator:
                     )
 
                 except Exception as e:
-                    print(f"   ❌ Error generating example {i+1}: {e}")
+                    print(f"   ❌ Error generating example {i + 1}: {e}")
                     continue
 
         print(f"✅ Generated {len(examples)} training examples")

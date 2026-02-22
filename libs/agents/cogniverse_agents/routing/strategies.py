@@ -215,7 +215,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
             search_modality = SearchModality.BOTH
         elif len(non_zero_scores) > 1:
             # Multiple modalities detected
-            # For backward compatibility with existing system, map to VIDEO/TEXT/BOTH
+            # Map multi-modality scores to VIDEO/TEXT/BOTH
             if video_score > 0 and text_score > 0:
                 search_modality = SearchModality.BOTH
             elif video_score > 0:

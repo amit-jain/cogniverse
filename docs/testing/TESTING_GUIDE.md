@@ -287,26 +287,32 @@ class TestVideoSearchAgent:
         return ConfigManager(store=mock_config_store)
 
     @pytest.fixture
-    def agent(self, config_manager):
-        """Create VideoSearchAgent with config manager."""
+    def schema_loader(self):
+        """Create schema loader for agent."""
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from pathlib import Path
+        return FilesystemSchemaLoader(Path("configs/schemas"))
+
+    @pytest.fixture
+    def agent(self, config_manager, schema_loader):
+        """Create VideoSearchAgent with config manager and schema loader."""
         return VideoSearchAgent(
-            profile="video_colpali_smol500_mv_frame",
-            tenant_id="test",
-            config_manager=config_manager
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
     def test_search(self, agent):
         """Test search operation (synchronous)."""
-        result = agent.search("test query", top_k=5)
+        result = agent.search("test query", profile="video_colpali_smol500_mv_frame", tenant_id="test", top_k=5)
         assert result is not None
 
     def test_concurrent_searches(self, agent):
         """Test concurrent search operations using threads."""
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = [
-                executor.submit(agent.search, "query1", 5),
-                executor.submit(agent.search, "query2", 5),
-                executor.submit(agent.search, "query3", 5)
+                executor.submit(agent.search, "query1", "video_colpali_smol500_mv_frame", "test", 5),
+                executor.submit(agent.search, "query2", "video_colpali_smol500_mv_frame", "test", 5),
+                executor.submit(agent.search, "query3", "video_colpali_smol500_mv_frame", "test", 5),
             ]
             results = [f.result() for f in futures]
 

@@ -63,16 +63,17 @@ vespa_client.query(
 )
 ```
 
-### 2. Tenant ID Required Everywhere
+### 2. Tenant ID Per-Request
 
-**Principle**: No default tenant - tenant_id is required for all operations.
+**Principle**: No default tenant - tenant_id is required for all operations, but arrives **per-request**, not at agent construction.
 
 **Implementation**:
 
-- All agent constructors require `tenant_id` parameter
-- All API endpoints extract `tenant_id` from request
+- Agents are **tenant-agnostic at startup** — constructed once, serve all tenants
+- All A2A task requests include `tenant_id` in the payload
 - All storage operations use tenant-specific paths
-- All memory operations use tenant-specific managers
+- All memory operations use tenant-specific managers (per-tenant singletons)
+- `BootstrapConfig.from_environment()` reads only infrastructure env vars (BACKEND_URL, BACKEND_PORT) at startup
 
 **Example**:
 
@@ -80,20 +81,23 @@ vespa_client.query(
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
 
-# All agents require deps with tenant_id
+# Agent constructed WITHOUT tenant_id — serves all tenants
 deps = RoutingDeps(
-    tenant_id="acme",
+    tenant_id="default",  # RoutingAgent still needs it for routing state
     telemetry_config=TelemetryConfig(),
     model_name="smollm3:3b",
     base_url="http://localhost:11434/v1"
 )
 routing_agent = RoutingAgent(deps=deps)
 
-# All storage uses tenant paths
+# tenant_id flows per-request via A2A tasks:
+# POST /tasks/send { "tenant_id": "acme", "query": "..." }
+
+# Storage uses tenant paths
 storage_path = get_tenant_storage_path("data/optimization", "acme")
 # Returns: Path("data/optimization/acme")
 
-# All memory uses tenant managers
+# Memory uses per-tenant singleton managers
 memory_mgr = Mem0MemoryManager(tenant_id="acme")
 ```
 
@@ -1387,27 +1391,18 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 def test_tenant_isolation():
     """Verify tenants don't interfere with each other"""
 
-    # Create agents for two tenants
-    deps_acme = RoutingDeps(
-        tenant_id="acme",
+    # ONE agent serves all tenants (tenant-agnostic at construction)
+    deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         model_name="smollm3:3b",
         base_url="http://localhost:11434/v1"
     )
-    deps_startup = RoutingDeps(
-        tenant_id="startup",
-        telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
-    )
-    agent_acme = RoutingAgent(deps=deps_acme)
-    agent_startup = RoutingAgent(deps=deps_startup)
+    agent = RoutingAgent(deps=deps)
 
-    # Each should use different resources
-    assert agent_acme.deps.tenant_id == "acme"
-    assert agent_startup.deps.tenant_id == "startup"
-
-    # Memory managers should be different instances
+    # Tenant isolation happens at request time:
+    # - Each A2A task carries tenant_id in payload
+    # - Memory namespaced by (tenant_id, agent_name) via MemoryAwareMixin
+    # - Search schemas isolated by tenant_id suffix
     memory_acme = Mem0MemoryManager(tenant_id="acme")
     memory_startup = Mem0MemoryManager(tenant_id="startup")
     assert memory_acme is not memory_startup

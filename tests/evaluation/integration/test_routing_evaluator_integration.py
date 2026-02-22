@@ -33,7 +33,6 @@ async def generate_routing_spans(env_config: dict):
 
     # Create routing deps
     deps = RoutingDeps(
-        tenant_id=env_config["tenant_id"],
         telemetry_config=env_config["telemetry_config"],
         model_name="ollama/gemma3:4b",
         base_url="http://localhost:11434",

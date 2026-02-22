@@ -294,14 +294,14 @@ for i in {1..10}; do
     fi
 done
 
-# Get composing agent port from config
-COMPOSING_PORT=$(jq -r '.composing_agent_port // 8000' "$CONFIG_FILE")
+# Get orchestrator agent port from config
+ORCHESTRATOR_PORT=$(jq -r '.orchestrator_agent_port // 8013' "$CONFIG_FILE")
 
 echo ""
 echo "🌐 Starting Multi-Agent Web Interface..."
 echo "📖 Instructions:"
-echo "   1. Navigate to: http://localhost:$COMPOSING_PORT"
-echo "   2. Select 'CoordinatorAgent' from the dropdown"
+echo "   1. Navigate to: http://localhost:$ORCHESTRATOR_PORT"
+echo "   2. OrchestratorAgent is the entry point"
 echo "   3. Try queries like:"
 echo "      - 'Show me videos about doctors'"
 echo "      - 'Find clips about snow shoveling safety'"
@@ -312,7 +312,7 @@ echo "   - Search Backend: $SEARCH_BACKEND"
 echo "   - Inference Provider: $INFERENCE_PROVIDER"
 echo "   - Video Agent: http://localhost:$VIDEO_PORT"
 echo "   - Static Server: http://localhost:$STATIC_PORT"
-echo "   - Composing Agent: http://localhost:$COMPOSING_PORT"
+echo "   - Orchestrator Agent: http://localhost:$ORCHESTRATOR_PORT"
 echo "=" | head -c 60
 echo ""
 

@@ -96,7 +96,7 @@ class TestPerformanceBenchmarks:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         routing_agent = RoutingAgent(
-            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+            deps=RoutingDeps(telemetry_config=telemetry_config)
         )
 
         test_queries = [
@@ -112,7 +112,7 @@ class TestPerformanceBenchmarks:
         for query in test_queries:
             start_time = time.time()
             try:
-                asyncio.run(routing_agent.route_query(query))
+                asyncio.run(routing_agent.route_query(query, tenant_id="test_tenant"))
                 end_time = time.time()
                 response_time = end_time - start_time
                 response_times.append(response_time)
@@ -268,13 +268,15 @@ class TestPerformanceBenchmarks:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         routing_agent = RoutingAgent(
-            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+            deps=RoutingDeps(telemetry_config=telemetry_config)
         )
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
         try:
-            asyncio.run(routing_agent.route_query("warmup query"))
+            asyncio.run(
+                routing_agent.route_query("warmup query", tenant_id="test_tenant")
+            )
             asyncio.run(extractor.extract_comprehensive_relationships("warmup query"))
         except Exception:
             pass
@@ -292,7 +294,7 @@ class TestPerformanceBenchmarks:
             try:
                 query = f"Test query {i} for memory leak detection"
 
-                asyncio.run(routing_agent.route_query(query))
+                asyncio.run(routing_agent.route_query(query, tenant_id="test_tenant"))
                 asyncio.run(extractor.extract_comprehensive_relationships(query))
 
                 # Sample memory usage
@@ -349,7 +351,7 @@ class TestPerformanceBenchmarks:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         routing_agent = RoutingAgent(
-            deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+            deps=RoutingDeps(telemetry_config=telemetry_config)
         )
 
         # Generate concurrent queries
@@ -361,7 +363,7 @@ class TestPerformanceBenchmarks:
             start_time = time.time()
 
             for query in queries:
-                task = routing_agent.route_query(query)
+                task = routing_agent.route_query(query, tenant_id="test_tenant")
                 tasks.append(task)
 
             try:

@@ -76,7 +76,7 @@ class TestRoutingAgentIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
 
         # Verify agent initialized properly
@@ -97,7 +97,7 @@ class TestRoutingAgentIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
 
         # Test different query types
@@ -109,7 +109,7 @@ class TestRoutingAgentIntegration:
         ]
 
         for query in test_queries:
-            result = await agent.route_query(query)
+            result = await agent.route_query(query, tenant_id="test_tenant")
 
             # Verify result structure (RoutingDecision dataclass)
             assert result.query == query
@@ -131,7 +131,7 @@ class TestRoutingAgentIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
 
         context = {
@@ -140,7 +140,9 @@ class TestRoutingAgentIntegration:
             "preferences": {"language": "en", "max_results": 5},
         }
 
-        result = await agent.route_query("find videos", context)
+        result = await agent.route_query(
+            "find videos", context, tenant_id="test_tenant"
+        )
 
         # Context should be preserved and potentially enhanced
         assert result.query == "find videos"
@@ -158,15 +160,13 @@ class TestRoutingAgentIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
         assert agent.config is not None
         assert hasattr(agent, "logger")
 
         # Test with another tenant
-        deps2 = RoutingDeps(
-            tenant_id="test_tenant_2", telemetry_config=telemetry_config
-        )
+        deps2 = RoutingDeps(telemetry_config=telemetry_config)
         agent2 = RoutingAgent(deps=deps2)
         assert agent2.config is not None
         assert hasattr(agent2, "routing_module")
@@ -183,14 +183,14 @@ class TestRoutingAgentIntegration:
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(telemetry_config=telemetry_config)
         agent = RoutingAgent(deps=deps)
         query = "Show me training videos"
 
         # Run same query multiple times
         results = []
         for _ in range(3):
-            result = await agent.route_query(query)
+            result = await agent.route_query(query, tenant_id="test_tenant")
             results.append(result)
 
         # Results should be consistent in structure

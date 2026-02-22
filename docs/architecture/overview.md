@@ -129,7 +129,6 @@ cogniverse/
     ├── system/                   # System integration tests
     ├── telemetry/                # Telemetry provider tests
     ├── ui/                       # UI component tests
-    ├── unit/                     # Unit tests
     └── utils/                    # Utility tests
 ```
 
@@ -292,7 +291,9 @@ sequenceDiagram
     User->>FastAPI: Request with tenant_id (query param/body)
 
     FastAPI->>FastAPI: Extract tenant_id from request
-    FastAPI->>Agent: Initialize with tenant_id
+    FastAPI->>Agent: POST /tasks/send {query, tenant_id} (per-request)
+
+    Note over Agent: tenant_id passed per-request<br/>Agents are tenant-agnostic at startup
 
     Agent->>SchemaManager: get_tenant_schema_name(tenant_id, "video")
     SchemaManager-->>Agent: "video_frames_acme"
@@ -480,51 +481,48 @@ flowchart TB
 flowchart TB
     User["<span style='color:#000'><b>USER REQUEST</b></span>"] --> Runtime["<span style='color:#000'><b>cogniverse_runtime</b><br/>FastAPI + Tenant Middleware</span>"]
 
-    Runtime --> Orchestrator["<span style='color:#000'><b>Multi-Agent Orchestrator</b><br/>cogniverse_agents</span>"]
+    Runtime --> Orchestrator["<span style='color:#000'><b>OrchestratorAgent</b><br/>cogniverse_agents (port 8013)</span>"]
 
-    Orchestrator --> Routing["<span style='color:#000'><b>Routing Agent</b><br/>• DSPy 3.0 Modules<br/>• Entity Extraction<br/>• Query Enhancement</span>"]
+    Orchestrator --> Agents["<span style='color:#000'><b>Specialized Agents (A2A)</b><br/>• QueryEnhancementAgent (8012)<br/>• EntityExtractionAgent (8010)<br/>• ProfileSelectionAgent (8011)<br/>• SearchAgent (8002)<br/>• SummarizerAgent (8003)<br/>• DetailedReportAgent (8004)</span>"]
 
-    Routing --> VideoAgent["<span style='color:#000'><b>Video Search Agent</b><br/>• ColPali/VideoPrism<br/>• Hybrid Ranking<br/>• Memory-Aware</span>"]
+    Agents --> Backend["<span style='color:#000'><b>Search Backend</b><br/>• Tenant Schema Manager<br/>• Search Clients<br/>• Embedding Processing</span>"]
 
-    VideoAgent --> Backend["<span style='color:#000'><b>Search Backend</b><br/>• Tenant Schema Manager<br/>• Search Clients<br/>• Embedding Processing</span>"]
+    Orchestrator --> Memory["<span style='color:#000'><b>Memory Manager</b><br/>cogniverse_core<br/>• Mem0 Integration<br/>• Tenant Scoped</span>"]
 
-    Routing --> Memory["<span style='color:#000'><b>Memory Manager</b><br/>cogniverse_core<br/>• Mem0 Integration<br/>• Tenant Scoped</span>"]
-
-    VideoAgent --> Telemetry["<span style='color:#000'><b>Telemetry</b><br/>cogniverse_core<br/>• OpenTelemetry<br/>• Span Collection<br/>• Metrics Tracking</span>"]
+    Agents --> Telemetry["<span style='color:#000'><b>Telemetry</b><br/>cogniverse_core<br/>• OpenTelemetry<br/>• Span Collection<br/>• Metrics Tracking</span>"]
 
     Telemetry --> Evaluation["<span style='color:#000'><b>Evaluation Module</b><br/>cogniverse_core<br/>• Experiment Tracking<br/>• Quality Metrics<br/>• Optimization</span>"]
 
     style User fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Routing fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style VideoAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Agents fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Backend fill:#90caf9,stroke:#1565c0,color:#000
     style Memory fill:#90caf9,stroke:#1565c0,color:#000
     style Telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
     style Evaluation fill:#a5d6a7,stroke:#388e3c,color:#000
 
     linkStyle 0 stroke:#1565c0,stroke-width:2px
-    linkStyle 1,2,3,4,5 stroke:#7b1fa2,stroke-width:2px
-    linkStyle 6 stroke:#388e3c,stroke-width:2px
+    linkStyle 1,2,3,4 stroke:#7b1fa2,stroke-width:2px
+    linkStyle 5 stroke:#388e3c,stroke-width:2px
 ```
 
 ### Agent Communication (A2A Protocol)
 
 ```mermaid
 sequenceDiagram
-    participant Routing as Routing Agent<br/>cogniverse_agents
-    participant Video as Video Agent<br/>cogniverse_agents
-    participant Summ as Summarizer Agent<br/>cogniverse_agents
+    participant Orch as OrchestratorAgent<br/>cogniverse_agents
+    participant Search as SearchAgent<br/>cogniverse_agents
+    participant Summ as SummarizerAgent<br/>cogniverse_agents
 
-    Routing->>Video: A2A Task Message
-    Note over Routing,Video: {<br/> type: "task",<br/> text: "enhanced query",<br/> data: {entities, relationships}<br/>}
-    Video-->>Routing: A2A Response
+    Orch->>Search: A2A Task Message
+    Note over Orch,Search: {<br/> type: "task",<br/> text: "user query",<br/> data: {tenant_id, session_id}<br/>}
+    Search-->>Orch: A2A Response
 
-    Routing->>Summ: A2A Task Message
-    Summ-->>Routing: Summary Result
+    Orch->>Summ: A2A Task Message
+    Summ-->>Orch: Summary Result
 
-    Note over Routing,Summ: Supports text, data,<br/>video, image parts
+    Note over Orch,Summ: Supports text, data,<br/>video, image parts
 ```
 
 ---

@@ -104,11 +104,12 @@ class TestMemoryAwareMixin:
             llm_model="test-llm",
             embedding_model="test-embed",
             llm_base_url="http://localhost:11434/v1",
+            config_manager=mock_cm,
+            schema_loader=mock_sl,
+            provider="ollama",
             backend_config_port=None,
             base_schema_name="agent_memories",
             auto_create_schema=True,
-            config_manager=mock_cm,
-            schema_loader=mock_sl,
         )
 
     def test_get_relevant_context_without_initialization(self, agent):

@@ -120,7 +120,7 @@ class ModalityMetricsTracker:
         self.last_request_time[modality] = now
 
         logger.debug(
-            f"📝 Recorded {modality.value}: {latency_ms:.0f}ms, " f"success={success}"
+            f"📝 Recorded {modality.value}: {latency_ms:.0f}ms, success={success}"
         )
 
     def get_modality_stats(self, modality: QueryModality) -> Dict[str, Any]:

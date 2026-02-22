@@ -16,7 +16,6 @@ Enhanced with:
 """
 
 import logging
-import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +30,7 @@ from pydantic import BaseModel, Field
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
 # Enhanced query support from DSPy routing system
-from cogniverse_agents.routing_agent import RoutingDecision
+from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -63,6 +62,7 @@ class SearchInput(AgentInput):
     """
 
     query: str = Field(..., description="Search query")
+    tenant_id: str = Field(..., description="Tenant identifier (per-request)")
     modality: str = Field(
         "video", description="Content modality (video/image/text/audio/document)"
     )
@@ -190,6 +190,7 @@ class RelationshipAwareSearchParams(BaseModel):
     """Enhanced search parameters with relationship context"""
 
     query: str = Field(..., description="Search query (may be enhanced)")
+    tenant_id: str = Field(..., description="Tenant identifier (per-request)")
     modality: str = Field(
         "video", description="Content modality (video/image/text/audio/document)"
     )
@@ -438,26 +439,11 @@ class SearchAgent(
         # in super().__init__() call later. Memory will be initialized after
         # calling initialize_memory() explicitly.
 
-        logger.info(f"Initializing SearchAgent for tenant: {deps.tenant_id}...")
+        logger.info("Initializing SearchAgent (tenant-agnostic)...")
 
-        # Use deps values, with environment variable fallbacks
-        backend_url = deps.backend_url or os.getenv("BACKEND_URL", "http://localhost")
-
-        # Handle port from env var or deps
-        env_port = os.getenv("BACKEND_PORT")
-        if deps.backend_port != 8080:  # Non-default means explicitly set
-            backend_port = deps.backend_port
-        elif env_port:
-            backend_port = int(env_port)
-            if ":" in backend_url and backend_url.count(":") >= 2:
-                backend_url = ":".join(backend_url.split(":")[:-1])
-        elif ":" in backend_url and backend_url.count(":") >= 2:
-            backend_port = int(backend_url.split(":")[-1])
-            backend_url = ":".join(backend_url.split(":")[:-1])
-        else:
-            backend_port = 8080
-
-        backend_host = backend_url
+        # Use deps values — all env var resolution happens at the startup boundary
+        backend_url = deps.backend_url
+        backend_port = deps.backend_port
 
         # Get config port for schema deployment
         backend_config_port = deps.backend_config_port
@@ -495,38 +481,21 @@ class SearchAgent(
         # Override config_manager with the injected one
         self.config_manager = config_manager
 
-        # Load tenant-specific configuration (separate from A2AAgentConfig in self.config)
+        # Load system-level infrastructure config (profiles, models, backend URLs).
+        # This is NOT tenant-scoped data — "default" is the config manager's system scope.
+        # Tenant-scoped operations (backend creation, schema routing) happen per-request.
         from cogniverse_foundation.config.utils import get_config
 
         self.search_config = get_config(
-            tenant_id=deps.tenant_id, config_manager=config_manager
+            tenant_id="default", config_manager=config_manager
         )
 
-        memory_config = self.search_config.get("memory", {})
-        memory_initialized = self.initialize_memory(
-            agent_name="search_agent",
-            tenant_id=deps.tenant_id,
-            backend_host=backend_host,
-            backend_port=backend_port,
-            llm_model=memory_config.get("llm_model", ""),
-            embedding_model=memory_config.get("embedding_model", ""),
-            llm_base_url=memory_config.get("llm_base_url", ""),
-            backend_config_port=backend_config_port,
-            auto_create_schema=deps.auto_create_memory_schema,
-            config_manager=self.config_manager,
-            schema_loader=self.schema_loader,
-        )
-        if memory_initialized:
-            logger.info(
-                f"✅ Memory initialized for search_agent (tenant: {deps.tenant_id})"
-            )
-        else:
-            logger.info("ℹ️  Memory disabled or not configured for search_agent")
+        # Memory is initialized per-request via MemoryAwareMixin.initialize_memory()
+        # when tenant_id is known. Not at startup.
 
-        # Get model from active profile
+        # Get model from active profile: explicit param > config lookup > default
         active_profile_raw = (
-            os.getenv("BACKEND_PROFILE")
-            or deps.profile
+            deps.profile
             or self.search_config.get("active_video_profile")
             or "video_colpali_smol500_mv_frame"
         )
@@ -576,42 +545,29 @@ class SearchAgent(
             "backend_type", "vespa"
         )
 
-        # Initialize search backend via backend registry
-        try:
-            logger.info("Generic Search Agent configuration:")
-            logger.info(f"  - Tenant ID: {deps.tenant_id}")
-            logger.info(f"  - Backend Type: {backend_type}")
-            logger.info(f"  - Backend URL: {backend_url}")
-            logger.info(f"  - Backend Port: {backend_port}")
-            logger.info(f"  - Active Profile: {active_profile}")
-            logger.info(f"  - Model Name: {model_name}")
+        # Store backend config for lazy per-tenant creation
+        logger.info("Generic Search Agent configuration:")
+        logger.info(f"  - Backend Type: {backend_type}")
+        logger.info(f"  - Backend URL: {backend_url}")
+        logger.info(f"  - Backend Port: {backend_port}")
+        logger.info(f"  - Active Profile: {active_profile}")
+        logger.info(f"  - Model Name: {model_name}")
 
-            backend_config = {
-                "url": backend_url,
-                "port": backend_port,
-                "config_port": backend_config_port,
-                "schema_name": active_profile,
-                "tenant_id": deps.tenant_id,
-                "profile": active_profile,
-                "backend": backend_config_data,
-            }
+        self._backend_type = backend_type
+        self._backend_config = {
+            "url": backend_url,
+            "port": backend_port,
+            "config_port": backend_config_port,
+            "schema_name": active_profile,
+            "profile": active_profile,
+            "backend": backend_config_data,
+        }
+        self._tenant_backends: Dict[str, Any] = {}
 
-            registry = get_backend_registry()
-            self.search_backend = registry.get_search_backend(
-                backend_type,
-                deps.tenant_id,
-                backend_config,
-                config_manager=self.config_manager,
-                schema_loader=self.schema_loader,
-            )
-
-            logger.info(
-                f"Search backend initialized at {backend_url}:{backend_port} "
-                f"for tenant {deps.tenant_id} with profile {active_profile}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize search backend: {e}")
-            raise
+        logger.info(
+            f"Search backend configured at {backend_url}:{backend_port} "
+            f"with profile {active_profile} (lazy per-tenant init)"
+        )
 
         # Initialize query encoder
         try:
@@ -626,7 +582,21 @@ class SearchAgent(
         # Initialize content processor
         self.content_processor = ContentProcessor(self.query_encoder)
 
-        logger.info(f"SearchAgent initialized for tenant: {deps.tenant_id}")
+        logger.info("SearchAgent initialized (tenant-agnostic)")
+
+    def _get_backend(self, tenant_id: str):
+        """Get or create per-tenant search backend (lazy initialization)."""
+        if tenant_id not in self._tenant_backends:
+            registry = get_backend_registry()
+            self._tenant_backends[tenant_id] = registry.get_search_backend(
+                self._backend_type,
+                tenant_id,
+                self._backend_config,
+                config_manager=self.config_manager,
+                schema_loader=self.schema_loader,
+            )
+            logger.info(f"Search backend initialized for tenant: {tenant_id}")
+        return self._tenant_backends[tenant_id]
 
     def _fuse_results_rrf(
         self,
@@ -696,6 +666,8 @@ class SearchAgent(
     async def _search_ensemble(
         self,
         query: str,
+        *,
+        tenant_id: str,
         profiles: List[str],
         modality: str = "video",
         top_k: int = 10,
@@ -796,8 +768,9 @@ class SearchAgent(
                 }
 
                 # Execute synchronous search in shared thread pool
+                backend = self._get_backend(tenant_id)
                 search_results = await loop.run_in_executor(
-                    executor, self.search_backend.search, query_dict
+                    executor, backend.search, query_dict
                 )
 
                 # Convert SearchResult objects to dict
@@ -861,7 +834,13 @@ class SearchAgent(
         return fused_results
 
     def _search_by_text(
-        self, query: str, modality: str = "video", top_k: int = 10, **kwargs
+        self,
+        query: str,
+        *,
+        tenant_id: str,
+        modality: str = "video",
+        top_k: int = 10,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Internal: Search content using text query.
@@ -903,7 +882,7 @@ class SearchAgent(
                 "profile": self.active_profile,
             }
 
-            search_results = self.search_backend.search(query_dict)
+            search_results = self._get_backend(tenant_id).search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -955,13 +934,20 @@ class SearchAgent(
             raise
 
     def search_by_text(
-        self, query: str, modality: str = "video", top_k: int = 10, **kwargs
+        self,
+        query: str,
+        *,
+        tenant_id: str,
+        modality: str = "video",
+        top_k: int = 10,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Search content using text query.
 
         Args:
             query: Text search query
+            tenant_id: Tenant identifier (required)
             modality: Content modality to search (video/image/text/audio/document)
             top_k: Number of results to return
             **kwargs: Additional search parameters (ranking, etc.)
@@ -969,12 +955,16 @@ class SearchAgent(
         Returns:
             List of search results
         """
-        return self._search_by_text(query, modality=modality, top_k=top_k, **kwargs)
+        return self._search_by_text(
+            query, tenant_id=tenant_id, modality=modality, top_k=top_k, **kwargs
+        )
 
     def _search_by_video(
         self,
         video_data: bytes,
         filename: str,
+        *,
+        tenant_id: str,
         modality: str = "video",
         top_k: int = 10,
         **kwargs,
@@ -1018,7 +1008,7 @@ class SearchAgent(
                 "profile": self.active_profile,
             }
 
-            search_results = self.search_backend.search(query_dict)
+            search_results = self._get_backend(tenant_id).search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1075,6 +1065,8 @@ class SearchAgent(
         self,
         image_data: bytes,
         filename: str,
+        *,
+        tenant_id: str,
         modality: str = "video",
         top_k: int = 10,
         **kwargs,
@@ -1118,7 +1110,7 @@ class SearchAgent(
                 "profile": self.active_profile,
             }
 
-            search_results = self.search_backend.search(query_dict)
+            search_results = self._get_backend(tenant_id).search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1184,6 +1176,14 @@ class SearchAgent(
         if not task.messages:
             raise ValueError("Task contains no messages")
 
+        tenant_id = (
+            task.get("tenant_id")
+            if isinstance(task, dict)
+            else getattr(task, "tenant_id", None)
+        )
+        if not tenant_id:
+            raise ValueError("Task must include tenant_id for search operations")
+
         last_message = task.messages[-1]
         results = []
         search_type = "unknown"
@@ -1200,6 +1200,7 @@ class SearchAgent(
                     search_type = "text"
                     text_results = self._search_by_text(
                         query=query,
+                        tenant_id=tenant_id,
                         modality=modality,
                         top_k=query_data.get("top_k", 10),
                         start_date=query_data.get("start_date"),
@@ -1214,6 +1215,7 @@ class SearchAgent(
                 video_results = self._search_by_video(
                     video_data=part.video_data,
                     filename=part.filename or "uploaded_video.mp4",
+                    tenant_id=tenant_id,
                     modality="video",
                     top_k=10,
                 )
@@ -1225,6 +1227,7 @@ class SearchAgent(
                 image_results = self._search_by_image(
                     image_data=part.image_data,
                     filename=part.filename or "uploaded_image.jpg",
+                    tenant_id=tenant_id,
                     modality=modality,
                     top_k=10,
                 )
@@ -1234,7 +1237,7 @@ class SearchAgent(
                 # Simple text search
                 search_type = "text"
                 text_results = self._search_by_text(
-                    query=part.text, modality="video", top_k=10
+                    query=part.text, tenant_id=tenant_id, modality="video", top_k=10
                 )
                 results.extend(text_results)
 
@@ -1251,7 +1254,12 @@ class SearchAgent(
         }
 
     def search_with_routing_decision(
-        self, routing_decision: RoutingDecision, top_k: int = 10, **kwargs
+        self,
+        routing_decision: RoutingOutput,
+        *,
+        tenant_id: str,
+        top_k: int = 10,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Search with enhanced query and relationship context from DSPy routing.
@@ -1270,7 +1278,9 @@ class SearchAgent(
 
         # Create enhanced search context
         search_context = SearchContext(
-            original_query=routing_decision.routing_metadata.get("original_query", ""),
+            original_query=routing_decision.routing_metadata.get(
+                "original_query", routing_decision.query
+            ),
             enhanced_query=routing_decision.enhanced_query,
             entities=routing_decision.extracted_entities,
             relationships=routing_decision.extracted_relationships,
@@ -1281,11 +1291,11 @@ class SearchAgent(
 
         # Perform relationship-aware search
         return self.search_with_relationship_context(
-            search_context, top_k=top_k, **kwargs
+            search_context, tenant_id=tenant_id, top_k=top_k, **kwargs
         )
 
     def search_with_relationship_context(
-        self, context: SearchContext, top_k: int = 10, **kwargs
+        self, context: SearchContext, *, tenant_id: str, top_k: int = 10, **kwargs
     ) -> Dict[str, Any]:
         """
         Perform relationship-aware content search with enhanced context.
@@ -1311,13 +1321,16 @@ class SearchAgent(
             )
 
             # Build relationship-aware search parameters
-            search_params = self._build_enhanced_search_params(context, top_k, **kwargs)
+            search_params = self._build_enhanced_search_params(
+                context, tenant_id=tenant_id, top_k=top_k, **kwargs
+            )
 
             # Multi-query fusion path: search each variant in parallel, fuse with RRF
             if context.query_variants and len(context.query_variants) > 1:
                 rrf_k = context.routing_metadata.get("rrf_k", 60)
                 raw_results = self._search_multi_query_fusion(
                     query_variants=context.query_variants,
+                    tenant_id=tenant_id,
                     modality=search_params.modality,
                     top_k=top_k,
                     rrf_k=rrf_k,
@@ -1348,7 +1361,7 @@ class SearchAgent(
                     "profile": self.active_profile,
                 }
 
-                search_results = self.search_backend.search(query_dict)
+                search_results = self._get_backend(tenant_id).search(query_dict)
 
                 # Convert SearchResult objects to dict format
                 raw_results = []
@@ -1392,11 +1405,15 @@ class SearchAgent(
 
         except Exception as e:
             logger.error(f"Relationship-aware search failed: {e}")
-            return self._fallback_search(context.original_query, top_k, **kwargs)
+            return self._fallback_search(
+                context.original_query, tenant_id=tenant_id, top_k=top_k, **kwargs
+            )
 
     def _search_multi_query_fusion(
         self,
         query_variants: List[Dict[str, str]],
+        *,
+        tenant_id: str,
         modality: str,
         top_k: int,
         rrf_k: int,
@@ -1432,7 +1449,7 @@ class SearchAgent(
                     "strategy": ranking_strategy,
                     "profile": self.active_profile,
                 }
-                search_results = self.search_backend.search(query_dict)
+                search_results = self._get_backend(tenant_id).search(query_dict)
                 results = []
                 for sr in search_results:
                     result_dict = {
@@ -1468,12 +1485,13 @@ class SearchAgent(
         return self._fuse_results_rrf(variant_results, k=rrf_k, top_k=top_k)
 
     def _build_enhanced_search_params(
-        self, context: SearchContext, top_k: int, **kwargs
+        self, context: SearchContext, *, tenant_id: str, top_k: int, **kwargs
     ) -> RelationshipAwareSearchParams:
         """Build enhanced search parameters from relationship context"""
 
         return RelationshipAwareSearchParams(
             query=context.enhanced_query or context.original_query,
+            tenant_id=tenant_id,
             modality=kwargs.get("modality", "video"),
             original_query=context.original_query,
             enhanced_query=context.enhanced_query,
@@ -1636,13 +1654,17 @@ class SearchAgent(
 
         return matches
 
-    def _fallback_search(self, query: str, top_k: int, **kwargs) -> Dict[str, Any]:
+    def _fallback_search(
+        self, query: str, *, tenant_id: str, top_k: int, **kwargs
+    ) -> Dict[str, Any]:
         """Fallback to basic search when enhanced search fails"""
 
         logger.warning("Falling back to basic text search")
 
         try:
-            results = self._search_by_text(query, top_k=top_k, **kwargs)
+            results = self._search_by_text(
+                query, tenant_id=tenant_id, top_k=top_k, **kwargs
+            )
             return {
                 "status": "completed_with_fallback",
                 "search_type": "basic_text",
@@ -1660,20 +1682,23 @@ class SearchAgent(
             }
 
     def process_routing_decision_task(
-        self, routing_decision: RoutingDecision, task_id: str = None
+        self, routing_decision: RoutingOutput, *, tenant_id: str, task_id: str = None
     ) -> Dict[str, Any]:
         """
         Process a routing decision as a task for A2A compatibility.
 
         Args:
             routing_decision: Enhanced routing decision from DSPy system
+            tenant_id: Tenant identifier (required, per-request)
             task_id: Optional task ID
 
         Returns:
             A2A-compatible task result
         """
 
-        result = self.search_with_routing_decision(routing_decision)
+        result = self.search_with_routing_decision(
+            routing_decision, tenant_id=tenant_id
+        )
 
         # Add A2A task compatibility
         result["task_id"] = task_id or "routing_decision_search"
@@ -1703,11 +1728,8 @@ class SearchAgent(
         Returns:
             SearchOutput with results and metadata
         """
-        # Handle dict input for backward compatibility with tests
-        if isinstance(input, dict):
-            input = self.validate_input(input)
-
         query = input.query
+        tenant_id = input.tenant_id
         modality = input.modality
         top_k = input.top_k
 
@@ -1728,6 +1750,7 @@ class SearchAgent(
 
             results = await self._search_ensemble(
                 query=query,
+                tenant_id=tenant_id,
                 profiles=input.profiles,
                 modality=modality,
                 top_k=top_k,
@@ -1740,6 +1763,7 @@ class SearchAgent(
             results = self._search_by_video(
                 video_data=input.video_data,
                 filename=input.video_filename or "video.mp4",
+                tenant_id=tenant_id,
                 modality=modality,
                 top_k=top_k,
             )
@@ -1748,6 +1772,7 @@ class SearchAgent(
             results = self._search_by_image(
                 image_data=input.image_data,
                 filename=input.image_filename or "image.jpg",
+                tenant_id=tenant_id,
                 modality=modality,
                 top_k=top_k,
             )
@@ -1771,6 +1796,7 @@ class SearchAgent(
 
             results = self._search_by_text(
                 query=search_query,
+                tenant_id=tenant_id,
                 modality=modality,
                 top_k=top_k,
                 start_date=input.start_date,
@@ -1784,7 +1810,7 @@ class SearchAgent(
         # Build context from results for RLM decision
         results_context = "\n".join(
             [
-                f"Result {i+1}: {r.get('summary', r.get('title', str(r)))}"
+                f"Result {i + 1}: {r.get('summary', r.get('title', str(r)))}"
                 for i, r in enumerate(results[:20])
             ]
         )
@@ -1841,41 +1867,32 @@ search_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup.
+
+    Agents are tenant-agnostic: no TENANT_ID or PROFILE env vars.
+    Only infrastructure config (BACKEND_URL, BACKEND_PORT) from BootstrapConfig.
+    """
     global search_agent
 
-    tenant_id = os.getenv("TENANT_ID")
-    if not tenant_id:
-        error_msg = "TENANT_ID environment variable is required"
-        logger.error(error_msg)
-        if not os.getenv("PYTEST_CURRENT_TEST"):
-            raise ValueError(error_msg)
-        else:
-            logger.warning(
-                "PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id"
-            )
-            tenant_id = "test_tenant"
+    from cogniverse_foundation.config.bootstrap import BootstrapConfig
+
+    bootstrap = BootstrapConfig.from_environment()
 
     try:
-        # Create deps with configuration from environment
         deps = SearchAgentDeps(
-            tenant_id=tenant_id,
-            backend_url=os.getenv("BACKEND_URL", "http://localhost"),
-            backend_port=int(os.getenv("BACKEND_PORT", 8080)),
+            backend_url=bootstrap.backend_url,
+            backend_port=bootstrap.backend_port,
         )
 
-        # Note: schema_loader is required for SearchAgent
-        # In production, inject via proper dependency container
         from cogniverse_core.schemas.schema_loader import SchemaLoader
 
         schema_loader = SchemaLoader()
 
         search_agent = SearchAgent(deps=deps, schema_loader=schema_loader)
-        logger.info(f"Generic search agent initialized for tenant: {tenant_id}")
+        logger.info("Generic search agent initialized (tenant-agnostic)")
     except Exception as e:
         logger.error(f"Failed to initialize search agent: {e}")
-        if not os.getenv("PYTEST_CURRENT_TEST"):
-            raise
+        raise
 
 
 @app.get("/health")
@@ -1937,17 +1954,25 @@ async def process_task(task: Dict[str, Any]):
 
 @app.post("/upload/video")
 async def upload_video_search(
-    file: UploadFile = File(...), top_k: int = 10, modality: str = "video"
+    file: UploadFile = File(...),
+    tenant_id: str = "",
+    top_k: int = 10,
+    modality: str = "video",
 ):
     """Upload video file and search for similar content"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
+    if not tenant_id:
+        raise HTTPException(
+            status_code=400, detail="tenant_id query parameter is required"
+        )
 
     try:
         video_data = await file.read()
-        results = search_agent.search_by_video(
+        results = search_agent._search_by_video(
             video_data=video_data,
             filename=file.filename or "uploaded_video.mp4",
+            tenant_id=tenant_id,
             modality=modality,
             top_k=top_k,
         )
@@ -1968,17 +1993,25 @@ async def upload_video_search(
 
 @app.post("/upload/image")
 async def upload_image_search(
-    file: UploadFile = File(...), top_k: int = 10, modality: str = "video"
+    file: UploadFile = File(...),
+    tenant_id: str = "",
+    top_k: int = 10,
+    modality: str = "video",
 ):
     """Upload image file and search for similar content"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
+    if not tenant_id:
+        raise HTTPException(
+            status_code=400, detail="tenant_id query parameter is required"
+        )
 
     try:
         image_data = await file.read()
-        results = search_agent.search_by_image(
+        results = search_agent._search_by_image(
             image_data=image_data,
             filename=file.filename or "uploaded_image.jpg",
+            tenant_id=tenant_id,
             modality=modality,
             top_k=top_k,
         )
@@ -2017,6 +2050,7 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
         # Perform relationship-aware search
         result = search_agent.search_with_relationship_context(
             search_context,
+            tenant_id=params.tenant_id,
             top_k=params.top_k,
             modality=params.modality,
             ranking_strategy=params.ranking_strategy,
@@ -2040,9 +2074,15 @@ async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
-        decision = RoutingDecision(
+        tenant_id = routing_decision.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(
+                status_code=400, detail="tenant_id is required in routing_decision"
+            )
+
+        decision = RoutingOutput(
             recommended_agent=routing_decision.get("recommended_agent", "search_agent"),
             confidence=routing_decision.get("confidence", 0.0),
             reasoning=routing_decision.get("reasoning", ""),
@@ -2053,7 +2093,9 @@ async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
             routing_metadata=routing_decision.get("routing_metadata", {}),
         )
 
-        result = search_agent.process_routing_decision_task(decision)
+        result = search_agent.process_routing_decision_task(
+            decision, tenant_id=tenant_id
+        )
 
         return result
 
@@ -2072,11 +2114,17 @@ async def handle_enhanced_a2a_task(task: dict):
     try:
         # Check if this is a routing decision task
         if "routing_decision" in task:
+            tenant_id = task.get("tenant_id")
+            if not tenant_id:
+                raise HTTPException(
+                    status_code=400, detail="tenant_id is required in task"
+                )
+
             routing_data = task["routing_decision"]
 
-            from cogniverse_agents.routing_agent import RoutingDecision
+            from cogniverse_agents.routing_agent import RoutingOutput
 
-            routing_decision = RoutingDecision(
+            routing_decision = RoutingOutput(
                 recommended_agent=routing_data.get("recommended_agent", "search_agent"),
                 confidence=routing_data.get("confidence", 0.0),
                 reasoning=routing_data.get("reasoning", ""),
@@ -2088,11 +2136,18 @@ async def handle_enhanced_a2a_task(task: dict):
             )
 
             return search_agent.process_routing_decision_task(
-                routing_decision, task_id=task.get("id", "enhanced_a2a_task")
+                routing_decision,
+                tenant_id=tenant_id,
+                task_id=task.get("id", "enhanced_a2a_task"),
             )
 
         # Handle standard enhanced A2A task
         else:
+            tenant_id = task.get("tenant_id")
+            if not tenant_id:
+                raise HTTPException(
+                    status_code=400, detail="tenant_id is required in task"
+                )
             return search_agent.process_enhanced_task(task)
 
     except Exception as e:
@@ -2115,8 +2170,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.profile:
-        os.environ["BACKEND_PROFILE"] = args.profile
-
+    # Profile is passed via config.json active_video_profile, not env vars
     logger.info(f"Starting Generic Multi-Modal Search Agent on {args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)

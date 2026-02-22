@@ -29,7 +29,6 @@ class TestOrchestrationEndToEnd:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test-tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -176,7 +175,6 @@ class TestRoutingDecisions:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test-tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -185,7 +183,7 @@ class TestRoutingDecisions:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
-            "Find videos and documents about AI", {"tenant_id": "test"}
+            "Find videos and documents about AI", tenant_id="test"
         )
 
         assert result is not None
@@ -202,7 +200,6 @@ class TestRoutingDecisions:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test-tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -210,9 +207,7 @@ class TestRoutingDecisions:
         )
         agent = RoutingAgent(deps=deps)
 
-        result = await agent.route_query(
-            "Summarize this content", {"tenant_id": "test"}
-        )
+        result = await agent.route_query("Summarize this content", tenant_id="test")
 
         assert result is not None
         assert hasattr(result, "recommended_agent")
@@ -228,7 +223,6 @@ class TestRoutingDecisions:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test-tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -237,7 +231,7 @@ class TestRoutingDecisions:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
-            "Provide detailed analysis of this topic", {"tenant_id": "test"}
+            "Provide detailed analysis of this topic", tenant_id="test"
         )
 
         assert result is not None

@@ -131,18 +131,23 @@ Search videos using different modalities:
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize agent with config manager (required)
+# Initialize agent with config manager and schema loader (both required)
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
 # Search with text (synchronous, not async)
+# profile and tenant_id are per-request parameters on search()
 results = agent.search(
     query="machine learning tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=10
 )
 
@@ -157,24 +162,33 @@ for result in results:
 # Search across different embedding profiles
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+# Single agent instance handles all profiles (profile is per-request)
+agent = VideoSearchAgent(
+    config_manager=config_manager,
+    schema_loader=schema_loader
+)
 
 # ColPali profile for semantic understanding
-colpali_agent = VideoSearchAgent(
+colpali_results = agent.search(
+    query="cooking tutorial",
     profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
-    config_manager=config_manager
+    top_k=10
 )
-colpali_results = colpali_agent.search(query="cooking tutorial", top_k=10)
 
 # VideoPrism profile for visual similarity
-videoprism_agent = VideoSearchAgent(
+videoprism_results = agent.search(
+    query="cooking tutorial",
     profile="video_videoprism_base_mv_chunk_30s",
     tenant_id="default",
-    config_manager=config_manager
+    top_k=10
 )
-videoprism_results = videoprism_agent.search(query="cooking tutorial", top_k=10)
 ```
 
 #### Date-Filtered Search
@@ -182,6 +196,8 @@ videoprism_results = videoprism_agent.search(query="cooking tutorial", top_k=10)
 # Search with date filters
 results = agent.search(
     query="machine learning tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=10,
     start_date="2024-01-01",
     end_date="2024-12-31"
@@ -265,6 +281,8 @@ strategies = [
 # Use hybrid search (synchronous call)
 results = agent.search(
     query="tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=20
 )
 ```
@@ -441,18 +459,23 @@ Use the Python SDK for scripting:
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize with config manager (required)
+# Initialize with config manager and schema loader (both required)
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
 # Search (synchronous - no await needed)
+# profile and tenant_id are per-request parameters
 results = agent.search(
     query="cooking pasta",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=10
 )
 
@@ -468,6 +491,8 @@ for result in results:
 # Search with date filters
 results = agent.search(
     query="tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=10,
     start_date="2024-01-01",  # Filter by upload date
     end_date="2024-12-31"
@@ -476,6 +501,8 @@ results = agent.search(
 # Search with more results
 results = agent.search(
     query="Python tutorial",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=50  # Get more candidates for client-side filtering
 )
 ```
@@ -851,17 +878,21 @@ GET /health
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader
 )
 
-# Search method
+# Search method (profile and tenant_id are per-request parameters)
 results = agent.search(
     query="machine learning",
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="default",
     top_k=10,
     start_date="2024-01-01",  # Optional
     end_date="2024-12-31"     # Optional

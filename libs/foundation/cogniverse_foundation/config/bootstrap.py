@@ -13,7 +13,14 @@ from typing import Optional
 
 @dataclass
 class BootstrapConfig:
-    """Minimal config loaded from environment and config file."""
+    """Minimal config loaded from environment and config file.
+
+    Solves the chicken-and-egg problem: backend connection info must come
+    from env vars + config.json because the ConfigStore (which stores all
+    other config) needs this info to connect in the first place.
+
+    Only contains backend connection parameters — nothing else.
+    """
 
     backend_type: str  # "vespa", "elasticsearch", etc.
     backend_url: str

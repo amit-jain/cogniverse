@@ -280,7 +280,6 @@ class TestMultiAgentOrchestratorWorkflowExecution:
                 "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
-
             orchestrator = MultiAgentOrchestrator(
                 tenant_id="test_tenant",
                 telemetry_config=telemetry_manager_without_phoenix.config,

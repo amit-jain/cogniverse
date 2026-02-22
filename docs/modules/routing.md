@@ -158,7 +158,7 @@ class RoutingConfig:
     gliner_config: dict = {
         "model": "urchade/gliner_large-v2.1",
         "threshold": 0.3,
-        "labels": [...],  # 17 entity types
+        "labels": [...],  # 16 entity types
         "device": "cpu",
     }
 
@@ -276,7 +276,7 @@ video_entities = ["video_content", "visual_content", "media_content"]
 text_entities = ["document_content", "text_information", "written_content"]
 
 # Summary indicators
-summary_entities = ["summary_request", "overview_request"]
+summary_entities = ["summary_request"]
 
 # Report indicators
 report_entities = ["detailed_analysis", "report_request"]
@@ -1320,7 +1320,7 @@ flowchart TB
 
     Fusion["<span style='color:#000'>CROSS-MODAL FUSION CHECK<br/><br/>• Detect multiple modalities<br/>• Predict fusion benefit (XGBoost)<br/>• Decide: fusion or single</span>"]
 
-    Decision["<span style='color:#000'>ROUTING DECISION<br/><br/>primary_agent<br/>search_modality<br/>confidence_score<br/>enhanced_query</span>"]
+    Decision["<span style='color:#000'>ROUTING DECISION<br/><br/>recommended_agent<br/>search_modality<br/>confidence<br/>enhanced_query</span>"]
 
     Execution["<span style='color:#000'>AGENT EXECUTION<br/><br/>• Route to selected agent<br/>• Execute with enhanced query<br/>• Collect results + metrics</span>"]
 
@@ -1354,15 +1354,11 @@ flowchart TB
 ### Example 1: Basic Tiered Routing
 
 ```python
-from cogniverse_agents.routing.config import RoutingConfig
 from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
 
-# Initialize config
-config = RoutingConfig(routing_mode="tiered")
-
-# Initialize strategies
-gliner = GLiNERRoutingStrategy(config)
-llm = LLMRoutingStrategy(config)
+# Initialize strategies with optional dict config (or None for defaults)
+gliner = GLiNERRoutingStrategy()
+llm = LLMRoutingStrategy()
 
 # Route a query
 query = "Show me videos of robots playing soccer"
@@ -1677,9 +1673,11 @@ llm_config["max_tokens"] = 100  # Limit output length
 ```python
 import time
 from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 
-telemetry = TelemetryManager()
+telemetry_config = TelemetryConfig()
+telemetry = TelemetryManager(config=telemetry_config)
 metrics_tracker = ModalityMetricsTracker()
 
 with telemetry.span(

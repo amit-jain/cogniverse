@@ -20,6 +20,8 @@ from pathlib import Path
 import dspy
 import pytest
 
+from cogniverse_agents.search_agent import SearchInput
+
 from .conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
@@ -228,12 +230,13 @@ class TestSearchAgentEnsemble:
         )
 
         result = await agent._process_impl(
-            {
-                "query": "robot playing soccer",
-                "profiles": profiles,  # List of 3 different profile names
-                "top_k": 5,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="robot playing soccer",
+                tenant_id="test_tenant",
+                profiles=profiles,
+                top_k=5,
+                rrf_k=60,
+            )
         )
 
         # VALIDATE: Ensemble mode detected
@@ -262,12 +265,13 @@ class TestSearchAgentEnsemble:
         start_time = time.time()
 
         _result = await agent._process_impl(
-            {
-                "query": "test query for latency",
-                "profiles": profiles,
-                "top_k": 10,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="test query for latency",
+                tenant_id="test_tenant",
+                profiles=profiles,
+                top_k=10,
+                rrf_k=60,
+            )
         )
         assert _result is not None  # Verify execution completed
 
@@ -299,12 +303,13 @@ class TestSearchAgentEnsemble:
         ]
 
         result = await agent._process_impl(
-            {
-                "query": "test query with failure",
-                "profiles": profiles_with_invalid,
-                "top_k": 10,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="test query with failure",
+                tenant_id="test_tenant",
+                profiles=profiles_with_invalid,
+                top_k=10,
+                rrf_k=60,
+            )
         )
 
         # VALIDATE: Ensemble still returned results (graceful degradation)
@@ -329,12 +334,13 @@ class TestSearchAgentEnsemble:
         start_time = time.time()
 
         _result = await agent._process_impl(
-            {
-                "query": "test parallel execution",
-                "profiles": profiles,
-                "top_k": 10,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="test parallel execution",
+                tenant_id="test_tenant",
+                profiles=profiles,
+                top_k=10,
+                rrf_k=60,
+            )
         )
         assert _result is not None  # Verify execution completed
 
@@ -368,12 +374,13 @@ class TestSearchAgentEnsemble:
         agent, profiles = search_agent_ensemble
 
         result = await agent._process_impl(
-            {
-                "query": "robot playing soccer",
-                "profiles": profiles,
-                "top_k": 10,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="robot playing soccer",
+                tenant_id="test_tenant",
+                profiles=profiles,
+                top_k=10,
+                rrf_k=60,
+            )
         )
 
         # VALIDATE: RRF fusion metadata on REAL search results
@@ -409,12 +416,13 @@ class TestSearchAgentEnsemble:
 
         # Use nonsensical query that likely returns no results
         result = await agent._process_impl(
-            {
-                "query": "xyzabc123nonexistent query that returns nothing",
-                "profiles": profiles,
-                "top_k": 10,
-                "rrf_k": 60,
-            }
+            SearchInput(
+                query="xyzabc123nonexistent query that returns nothing",
+                tenant_id="test_tenant",
+                profiles=profiles,
+                top_k=10,
+                rrf_k=60,
+            )
         )
 
         # VALIDATE: Ensemble executes without error even with sparse/empty results
@@ -469,7 +477,9 @@ class TestMultiQueryFusionIntegration:
             ],
         )
 
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         # VALIDATE: Multi-query fusion executed
         assert result["status"] == "completed"
@@ -525,7 +535,9 @@ class TestMultiQueryFusionIntegration:
         )
 
         start_time = time.time()
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
         elapsed_ms = (time.time() - start_time) * 1000
 
         assert result["status"] == "completed"
@@ -567,7 +579,9 @@ class TestMultiQueryFusionIntegration:
             ],
         )
 
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert result["status"] == "completed"
         assert isinstance(result["results"], list)
@@ -602,7 +616,9 @@ class TestMultiQueryFusionIntegration:
             query_variants=[],  # Empty — should use single-query path
         )
 
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert result["status"] == "completed"
         assert "query_variants_used" not in result  # Single-query path doesn't set this
@@ -627,7 +643,7 @@ class TestSingleProfileSearchIntegration:
         agent = search_agent_single_profile
 
         result = await agent._process_impl(
-            {"query": "robot playing soccer", "top_k": 10}
+            SearchInput(query="robot playing soccer", tenant_id="test_tenant", top_k=10)
         )
 
         assert result.search_mode == "single_profile"
@@ -675,7 +691,9 @@ class TestSingleProfileSearchIntegration:
             query_variants=[],
         )
 
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert result["status"] == "completed"
         assert isinstance(result["results"], list)
@@ -718,7 +736,9 @@ class TestSingleProfileSearchIntegration:
             query_variants=[],
         )
 
-        result = agent.search_with_relationship_context(context, top_k=10)
+        result = agent.search_with_relationship_context(
+            context, tenant_id="test_tenant", top_k=10
+        )
 
         assert result["status"] == "completed"
         assert isinstance(result["results"], list)
@@ -736,7 +756,11 @@ class TestSingleProfileSearchIntegration:
         agent = search_agent_single_profile
 
         result = await agent._process_impl(
-            {"query": "xyzabc123nonexistent gibberish", "top_k": 10}
+            SearchInput(
+                query="xyzabc123nonexistent gibberish",
+                tenant_id="test_tenant",
+                top_k=10,
+            )
         )
 
         assert result.search_mode == "single_profile"
@@ -753,7 +777,12 @@ class TestSingleProfileSearchIntegration:
         agent = search_agent_single_profile
 
         result = await agent._process_impl(
-            {"query": "robot soccer", "profiles": [agent.active_profile], "top_k": 10}
+            SearchInput(
+                query="robot soccer",
+                tenant_id="test_tenant",
+                profiles=[agent.active_profile],
+                top_k=10,
+            )
         )
 
         assert result.search_mode == "single_profile"
@@ -806,7 +835,6 @@ class TestEndToEndQueryFusionPipeline:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -835,7 +863,6 @@ class TestEndToEndQueryFusionPipeline:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             enable_query_enhancement=False,
         )
@@ -853,6 +880,7 @@ class TestEndToEndQueryFusionPipeline:
         agent = routing_agent_parallel
 
         result = await agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer in a field",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
@@ -899,6 +927,7 @@ class TestEndToEndQueryFusionPipeline:
         agent = routing_agent_no_enhancement
 
         result = await agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer",
             enable_relationship_extraction=True,
             enable_query_enhancement=False,
@@ -930,6 +959,7 @@ class TestEndToEndQueryFusionPipeline:
 
         # Step 1: Route with parallel fusion
         routing_result = await routing_agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer in a field",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
@@ -943,7 +973,7 @@ class TestEndToEndQueryFusionPipeline:
         # Step 2: Pass to SearchAgent
         search_agent = search_agent_single_profile
         search_result = search_agent.search_with_routing_decision(
-            routing_result, top_k=10
+            routing_result, tenant_id="test_tenant", top_k=10
         )
 
         # VALIDATE: Multi-query fusion was used
@@ -989,6 +1019,7 @@ class TestEndToEndQueryFusionPipeline:
 
         # Route with enhancement disabled (no variants expected)
         routing_result = await routing_agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer",
             enable_relationship_extraction=True,
             enable_query_enhancement=False,
@@ -999,7 +1030,7 @@ class TestEndToEndQueryFusionPipeline:
         # Pass to SearchAgent
         search_agent = search_agent_single_profile
         search_result = search_agent.search_with_routing_decision(
-            routing_result, top_k=10
+            routing_result, tenant_id="test_tenant", top_k=10
         )
 
         # VALIDATE: Single-query path was used (no query_variants_used key)
@@ -1040,7 +1071,6 @@ class TestEndToEndQueryFusionPipeline:
         )
         custom_rrf_k = 30  # Non-default (default is 60)
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -1052,6 +1082,7 @@ class TestEndToEndQueryFusionPipeline:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer in a field",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
@@ -1093,7 +1124,6 @@ class TestEndToEndQueryFusionPipeline:
             batch_config=BatchExportConfig(use_sync_export=True),
         )
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -1105,6 +1135,7 @@ class TestEndToEndQueryFusionPipeline:
         agent = RoutingAgent(deps=deps)
 
         result = await agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="robots playing soccer in a field",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
@@ -1156,7 +1187,6 @@ class TestEndToEndQueryFusionPipeline:
         # include_original=False, so if entity extraction produces nothing,
         # we get empty variants → single-query fallback
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_config,
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
@@ -1169,6 +1199,7 @@ class TestEndToEndQueryFusionPipeline:
 
         # Use a query with no extractable entities → strategies produce no diversity
         result = await agent.analyze_and_route_with_relationships(
+            tenant_id="test_tenant",
             query="hello",
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
@@ -1179,7 +1210,9 @@ class TestEndToEndQueryFusionPipeline:
         if len(result.query_variants) <= 1:
             # Feed to SearchAgent — should use single-query path
             search_agent = search_agent_single_profile
-            search_result = search_agent.search_with_routing_decision(result, top_k=10)
+            search_result = search_agent.search_with_routing_decision(
+                result, tenant_id="test_tenant", top_k=10
+            )
 
             assert search_result["status"] == "completed"
             assert "query_variants_used" not in search_result, (
@@ -1193,7 +1226,9 @@ class TestEndToEndQueryFusionPipeline:
         else:
             # If the query somehow produced diversity, just validate fusion works
             search_agent = search_agent_single_profile
-            search_result = search_agent.search_with_routing_decision(result, top_k=10)
+            search_result = search_agent.search_with_routing_decision(
+                result, tenant_id="test_tenant", top_k=10
+            )
             assert search_result["status"] == "completed"
             logger.info(
                 f"Note: 'hello' produced {len(result.query_variants)} variants "

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 import dspy
 from dspy import LM
 
-# Phase 6: Advanced optimization
+# Advanced optimization
 from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
@@ -48,7 +48,7 @@ from cogniverse_agents.routing.dspy_routing_signatures import (
 )
 from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
 
-# Phase 6.4: MLflow integration
+# MLflow integration
 from cogniverse_agents.routing.mlflow_integration import (
     ExperimentConfig,
     MLflowIntegration,
@@ -91,6 +91,7 @@ class RoutingInput(AgentInput):
     """
 
     query: str = Field(..., description="User query to route")
+    tenant_id: str = Field(..., description="Tenant identifier (per-request)")
     context: Optional[str] = Field(None, description="Optional context information")
     require_orchestration: Optional[bool] = Field(
         None, description="Force orchestration decision"
@@ -101,7 +102,7 @@ class RoutingOutput(AgentOutput):
     """
     Type-safe output from routing agent.
 
-    Replaces the RoutingDecision dataclass with Pydantic validation.
+    Pydantic model for routing output with validation.
     """
 
     query: str = Field(..., description="Original query")
@@ -130,7 +131,7 @@ class RoutingOutput(AgentOutput):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Compatibility properties for existing code
+    # Convenience properties mapping internal field names to external API names
     @property
     def extracted_entities(self) -> List[Dict[str, Any]]:
         return self.entities
@@ -149,7 +150,7 @@ class RoutingDeps(AgentDeps):
     Type-safe dependencies for routing agent.
 
     Contains configuration and services the agent needs.
-    tenant_id is inherited from AgentDeps (required for multi-tenancy).
+    Tenant-agnostic at startup — tenant_id arrives per-request via RoutingInput.
     """
 
     telemetry_config: Any = Field(..., description="Telemetry configuration")
@@ -273,10 +274,6 @@ class RoutingDeps(AgentDeps):
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
 
-# Backward compatibility alias
-RoutingDecision = RoutingOutput
-
-
 class RoutingAgent(
     A2AAgent[RoutingInput, RoutingOutput, RoutingDeps],
     MemoryAwareMixin,
@@ -308,17 +305,13 @@ class RoutingAgent(
         Initialize Routing Agent with typed dependencies.
 
         Args:
-            deps: Typed dependencies including tenant_id, telemetry_config, and all settings
+            deps: Typed dependencies with telemetry_config and routing settings
             port: A2A server port
 
         Raises:
             TypeError: If deps is not RoutingDeps
             ValidationError: If deps fails Pydantic validation
         """
-        # Note: tenant_id is now provided via AgentBase.deps.tenant_id (property)
-        # TenantAwareAgentMixin is still inherited for config loading utilities
-        # but we skip its __init__ since AgentBase handles tenant_id validation
-
         # Store telemetry config for production components
         self.telemetry_config = deps.telemetry_config
         self.logger = logging.getLogger(__name__)
@@ -326,16 +319,16 @@ class RoutingAgent(
         # Initialize DSPy 3.0 with local SmolLM
         self._configure_dspy(deps)
 
-        # Initialize Phase 2 & 3 components
+        # Initialize query analysis and enhancement pipeline
         self._initialize_enhancement_pipeline(deps)
 
         # Initialize DSPy routing module
         self._initialize_routing_module()
 
-        # Initialize Phase 6: Advanced optimization
+        # Initialize advanced optimization (lazy per-tenant)
         self._initialize_advanced_optimizer(deps)
 
-        # Initialize Phase 6.4: MLflow integration
+        # Initialize MLflow tracking
         self._initialize_mlflow_tracking(deps)
 
         # Initialize production features
@@ -405,7 +398,7 @@ class RoutingAgent(
             self.logger.warning("Falling back to mock LM for development")
 
     def _initialize_enhancement_pipeline(self, deps: RoutingDeps) -> None:
-        """Initialize Phase 2 & 3 components using ComposableQueryAnalysisModule"""
+        """Initialize query analysis and enhancement using ComposableQueryAnalysisModule."""
         try:
             # Create the composable analysis module (used by both pipeline and routing)
             if deps.enable_relationship_extraction or deps.enable_query_enhancement:
@@ -477,28 +470,77 @@ class RoutingAgent(
         self.logger.warning("Using fallback routing module")
 
     def _initialize_advanced_optimizer(self, deps: RoutingDeps) -> None:
-        """Initialize Phase 6: Advanced optimization"""
-        try:
-            if deps.enable_advanced_optimization:
-                optimizer_config = deps.optimizer_config or AdvancedOptimizerConfig()
-                self.grpo_optimizer = AdvancedRoutingOptimizer(
-                    tenant_id=deps.tenant_id,
-                    config=optimizer_config,
-                    base_storage_dir=deps.optimization_storage_dir,
+        """Configure advanced optimization (lazy per-tenant init)."""
+        self._optimizer_config = deps.optimizer_config or AdvancedOptimizerConfig()
+        self._optimization_storage_dir = deps.optimization_storage_dir
+        self._enable_advanced_optimization = deps.enable_advanced_optimization
+        # Per-tenant optimizers created lazily in _get_optimizer(tenant_id)
+        self._tenant_optimizers: Dict[str, AdvancedRoutingOptimizer] = {}
+        self.grpo_optimizer = None  # Kept for attribute access; use _get_optimizer()
+
+    def _get_optimizer(self, tenant_id: str) -> Optional["AdvancedRoutingOptimizer"]:
+        """Get or create per-tenant optimizer (lazy initialization)."""
+        if not self._enable_advanced_optimization:
+            return None
+        if tenant_id not in self._tenant_optimizers:
+            try:
+                self._tenant_optimizers[tenant_id] = AdvancedRoutingOptimizer(
+                    tenant_id=tenant_id,
+                    config=self._optimizer_config,
+                    base_storage_dir=self._optimization_storage_dir,
                 )
                 self.logger.info(
-                    f"Advanced routing optimizer initialized for tenant: {deps.tenant_id}"
+                    f"Advanced routing optimizer initialized for tenant: {tenant_id}"
                 )
-            else:
-                self.grpo_optimizer = None
-                self.logger.info("Advanced optimization disabled")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize advanced optimizer: {e}")
+                return None
+        return self._tenant_optimizers[tenant_id]
 
+    def _get_cross_modal_optimizer(
+        self, tenant_id: str
+    ) -> Optional[CrossModalOptimizer]:
+        """Get or create per-tenant cross-modal optimizer (lazy initialization)."""
+        if not self._enable_cross_modal_optimization:
+            return None
+        if tenant_id not in self._tenant_cross_modal_optimizers:
+            try:
+                self._tenant_cross_modal_optimizers[tenant_id] = CrossModalOptimizer()
+                self.logger.info(
+                    f"Cross-modal optimizer initialized for tenant: {tenant_id}"
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to initialize cross-modal optimizer: {e}")
+                return None
+        return self._tenant_cross_modal_optimizers[tenant_id]
+
+    def _ensure_memory_for_tenant(self, tenant_id: str) -> None:
+        """Initialize memory for a tenant if not already done."""
+        if not self.deps.enable_memory:
+            return
+        if tenant_id in self._memory_initialized_tenants:
+            return
+        try:
+            self.initialize_memory(
+                agent_name="routing_agent",
+                tenant_id=tenant_id,
+                backend_host=self._memory_config["backend_host"],
+                backend_port=self._memory_config["backend_port"],
+                llm_model=self._memory_config["llm_model"],
+                embedding_model=self._memory_config["embedding_model"],
+                llm_base_url=self._memory_config["llm_base_url"],
+                config_manager=self._memory_config["config_manager"],
+                schema_loader=self._memory_config["schema_loader"],
+            )
+            self._memory_initialized_tenants.add(tenant_id)
+            self.logger.info(f"Memory initialized for tenant: {tenant_id}")
         except Exception as e:
-            self.logger.error(f"Failed to initialize advanced optimizer: {e}")
-            self.grpo_optimizer = None
+            self.logger.error(
+                f"Failed to initialize memory for tenant {tenant_id}: {e}"
+            )
 
     def _initialize_mlflow_tracking(self, deps: RoutingDeps) -> None:
-        """Initialize Phase 6.4: MLflow tracking integration"""
+        """Initialize MLflow tracking integration."""
         try:
             if deps.enable_mlflow_tracking:
                 mlflow_config = ExperimentConfig(
@@ -576,20 +618,19 @@ class RoutingAgent(
                             f"enable_memory=True but {field} is None — "
                             "all memory_* fields are required when memory is enabled"
                         )
-                self.initialize_memory(
-                    agent_name="routing_agent",
-                    tenant_id=deps.tenant_id,
-                    backend_host=deps.memory_backend_host,
-                    backend_port=deps.memory_backend_port,
-                    llm_model=deps.memory_llm_model,
-                    embedding_model=deps.memory_embedding_model,
-                    llm_base_url=deps.memory_llm_base_url,
-                    config_manager=deps.memory_config_manager,
-                    schema_loader=deps.memory_schema_loader,
-                )
-                self.logger.info(
-                    f"Memory system initialized for tenant: {deps.tenant_id}"
-                )
+                # Memory is initialized lazily per-tenant on first request
+                # via _ensure_memory_for_tenant(tenant_id)
+                self._memory_config = {
+                    "backend_host": deps.memory_backend_host,
+                    "backend_port": deps.memory_backend_port,
+                    "llm_model": deps.memory_llm_model,
+                    "embedding_model": deps.memory_embedding_model,
+                    "llm_base_url": deps.memory_llm_base_url,
+                    "config_manager": deps.memory_config_manager,
+                    "schema_loader": deps.memory_schema_loader,
+                }
+                self._memory_initialized_tenants: set = set()
+                self.logger.info("Memory system configured (lazy per-tenant init)")
 
             # Initialize contextual analysis
             if deps.enable_contextual_analysis:
@@ -616,14 +657,10 @@ class RoutingAgent(
             else:
                 self.multi_modal_reranker = None
 
-            # Initialize cross-modal optimization
-            if deps.enable_cross_modal_optimization:
-                self.cross_modal_optimizer = CrossModalOptimizer(
-                    tenant_id=deps.tenant_id
-                )
-                self.logger.info("Cross-modal optimizer initialized")
-            else:
-                self.cross_modal_optimizer = None
+            # Cross-modal optimization (lazy per-tenant)
+            self._enable_cross_modal_optimization = deps.enable_cross_modal_optimization
+            self._tenant_cross_modal_optimizers: Dict[str, CrossModalOptimizer] = {}
+            self.cross_modal_optimizer = None  # Use _get_cross_modal_optimizer()
 
             # Initialize lazy executor (always on for efficiency)
             self.lazy_executor = LazyModalityExecutor()
@@ -718,14 +755,10 @@ class RoutingAgent(
         """
         Enhanced query routing with relationship extraction and query enhancement
 
-        This is the main routing method that combines all Phase 1-3 components
+        This is the main routing method that combines all routing components
         """
         self._routing_stats["total_queries"] += 1
         start_time = datetime.now()
-
-        # Default to self.tenant_id if not provided
-        if not tenant_id:
-            tenant_id = self.tenant_id
 
         # Enforce mandatory tenant_id for telemetry isolation
         if not tenant_id:
@@ -772,12 +805,15 @@ class RoutingAgent(
                     )
                     self.logger.info(f"Contextual insights: {contextual_insights}")
 
-                # Phase 2+3: Extract entities/relationships and enhance query
-                entities, relationships, enhanced_query, enhancement_metadata = (
-                    await self._analyze_and_enhance_query(query)
-                )
+                # Extract entities/relationships and enhance query
+                (
+                    entities,
+                    relationships,
+                    enhanced_query,
+                    enhancement_metadata,
+                ) = await self._analyze_and_enhance_query(query)
 
-                # Phase 1: DSPy-powered routing decision (baseline)
+                # DSPy-powered routing decision (baseline)
                 baseline_routing_result = await self._make_routing_decision(
                     original_query=query,
                     enhanced_query=enhanced_query,
@@ -786,13 +822,14 @@ class RoutingAgent(
                     context=context,
                 )
 
-                # Phase 6: Apply GRPO optimization if available
+                # Apply GRPO optimization if available
                 optimized_routing_result = await self._apply_grpo_optimization(
                     query=query,
                     entities=entities,
                     relationships=relationships,
                     enhanced_query=enhanced_query,
                     baseline_prediction=baseline_routing_result,
+                    tenant_id=tenant_id,
                 )
 
                 # Use optimized result if available, otherwise baseline
@@ -810,7 +847,7 @@ class RoutingAgent(
                 )
 
                 # Create structured routing decision
-                decision = RoutingDecision(
+                decision = RoutingOutput(
                     query=query,
                     recommended_agent=final_routing_result.get(
                         "recommended_agent", "search_agent"
@@ -915,7 +952,7 @@ class RoutingAgent(
     async def _analyze_and_enhance_query(
         self, query: str
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str, Dict[str, Any]]:
-        """Phase 2+3: Extract entities/relationships and enhance query in one pass.
+        """Extract entities/relationships and enhance query in one pass.
 
         Returns:
             Tuple of (entities, relationships, enhanced_query, enhancement_metadata)
@@ -971,13 +1008,15 @@ class RoutingAgent(
         relationships: List[Dict[str, Any]],
         enhanced_query: str,
         baseline_prediction: Dict[str, Any],
+        tenant_id: str,
     ) -> Optional[Dict[str, Any]]:
-        """Phase 6: Apply GRPO optimization to routing decision"""
-        if not self.grpo_optimizer:
+        """Apply GRPO optimization to routing decision."""
+        optimizer = self._get_optimizer(tenant_id)
+        if not optimizer:
             return None
 
         try:
-            optimized_result = await self.grpo_optimizer.optimize_routing_decision(
+            optimized_result = await optimizer.optimize_routing_decision(
                 query=query,
                 entities=entities,
                 relationships=relationships,
@@ -1004,7 +1043,7 @@ class RoutingAgent(
         relationships: List[Dict[str, Any]],
         context: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Phase 1: Make DSPy-powered routing decision"""
+        """Make DSPy-powered routing decision."""
         try:
             # Use enhanced query for routing if available, fallback to original
             routing_query = (
@@ -1252,7 +1291,7 @@ class RoutingAgent(
 
     def _create_fallback_decision(self, query: str, error: str) -> RoutingOutput:
         """Create fallback routing decision when processing fails"""
-        return RoutingDecision(
+        return RoutingOutput(
             query=query,
             recommended_agent="search_agent",  # Default fallback
             confidence=0.2,
@@ -1264,7 +1303,7 @@ class RoutingAgent(
             metadata={"error": error, "fallback": True},
         )
 
-    def _update_routing_stats(self, decision: RoutingDecision) -> None:
+    def _update_routing_stats(self, decision: RoutingOutput) -> None:
         """Update routing statistics for telemetry"""
         if decision.confidence >= self.deps.confidence_threshold:
             self._routing_stats["successful_routes"] += 1
@@ -1332,20 +1371,22 @@ class RoutingAgent(
         return await self.route_query(
             query=input.query,
             context=input.context,
-            tenant_id=self.deps.tenant_id,
+            tenant_id=input.tenant_id,
             require_orchestration=input.require_orchestration,
         )
 
     async def record_routing_outcome(
         self,
-        decision: RoutingDecision,
+        decision: RoutingOutput,
         search_quality: float,
         agent_success: bool,
         processing_time: float = 0.0,
         user_satisfaction: Optional[float] = None,
+        *,
+        tenant_id: str,
     ) -> Optional[float]:
         """
-        Record routing outcome for GRPO learning
+        Record routing outcome for GRPO learning.
 
         Args:
             decision: The routing decision that was made
@@ -1353,15 +1394,17 @@ class RoutingAgent(
             agent_success: Whether the chosen agent completed successfully
             processing_time: Total processing time in seconds
             user_satisfaction: Optional explicit user feedback (0-1)
+            tenant_id: Tenant identifier (REQUIRED per-request)
 
         Returns:
             Computed reward if GRPO is enabled, None otherwise
         """
-        if not self.grpo_optimizer:
+        optimizer = self._get_optimizer(tenant_id)
+        if not optimizer:
             return None
 
         try:
-            reward = await self.grpo_optimizer.record_routing_experience(
+            reward = await optimizer.record_routing_experience(
                 query=decision.query,
                 entities=decision.entities,
                 relationships=decision.relationships,
@@ -1416,10 +1459,11 @@ class RoutingAgent(
     async def analyze_and_route_with_relationships(
         self,
         query: str,
+        *,
+        tenant_id: str,
         enable_relationship_extraction: bool = True,
         enable_query_enhancement: bool = True,
         context: Optional[str] = None,
-        tenant_id: Optional[str] = None,
     ) -> RoutingOutput:
         """
         Analyze query and route with relationship extraction and enhancement
@@ -1456,27 +1500,29 @@ class RoutingAgent(
             self.deps.enable_relationship_extraction = original_rel_setting
             self.deps.enable_query_enhancement = original_enh_setting
 
-    def get_grpo_status(self) -> Dict[str, Any]:
-        """Get GRPO optimization status and metrics"""
-        if not self.grpo_optimizer:
+    def get_grpo_status(self, tenant_id: str) -> Dict[str, Any]:
+        """Get GRPO optimization status and metrics for a tenant."""
+        optimizer = self._get_optimizer(tenant_id)
+        if not optimizer:
             return {"grpo_enabled": False, "reason": "GRPO optimizer not initialized"}
 
         try:
-            status = self.grpo_optimizer.get_optimization_status()
+            status = optimizer.get_optimization_status()
             status["grpo_enabled"] = True
             return status
 
         except Exception as e:
             return {"grpo_enabled": True, "error": str(e), "status": "error"}
 
-    async def reset_grpo_optimization(self) -> bool:
-        """Reset GRPO optimization state (useful for testing)"""
-        if not self.grpo_optimizer:
+    async def reset_grpo_optimization(self, tenant_id: str) -> bool:
+        """Reset GRPO optimization state for a tenant."""
+        optimizer = self._get_optimizer(tenant_id)
+        if not optimizer:
             return False
 
         try:
-            await self.grpo_optimizer.reset_optimization()
-            self.logger.info("GRPO optimization state reset")
+            await optimizer.reset_optimization()
+            self.logger.info(f"GRPO optimization state reset for tenant: {tenant_id}")
             return True
 
         except Exception as e:
@@ -1522,16 +1568,17 @@ class RoutingAgent(
             run_name=run_name, tags=additional_tags
         )
 
-    async def log_optimization_metrics(self):
-        """Log optimization metrics from GRPO, SIMBA, and adaptive thresholds"""
+    async def log_optimization_metrics(self, tenant_id: str) -> None:
+        """Log optimization metrics from GRPO, SIMBA, and adaptive thresholds."""
         if not self.mlflow_integration or not self.mlflow_integration.current_run:
             return
 
         try:
-            # Get GRPO metrics
+            # Get GRPO metrics for this tenant
             grpo_metrics = None
-            if self.grpo_optimizer:
-                grpo_metrics = self.grpo_optimizer.get_optimization_status()
+            optimizer = self._get_optimizer(tenant_id)
+            if optimizer:
+                grpo_metrics = optimizer.get_optimization_status()
 
             # Get SIMBA metrics (would need to access query enhancer)
             simba_metrics = None

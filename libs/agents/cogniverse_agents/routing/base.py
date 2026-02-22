@@ -33,12 +33,7 @@ class GenerationType(Enum):
 
 @dataclass
 class RoutingDecision:
-    """
-    Represents a routing decision with full context and metadata.
-
-    Phase 6: Added detected_modalities for multi-modal query classification
-    Phase 7: Added orchestration fields for multi-agent coordination
-    """
+    """Represents a routing decision with full context and metadata."""
 
     search_modality: SearchModality
     generation_type: GenerationType
@@ -81,18 +76,6 @@ class RoutingDecision:
             "needs_text_search": self.search_modality
             in [SearchModality.TEXT, SearchModality.BOTH],
         }
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Dict-like get method for backward compatibility."""
-        return self.to_dict().get(key, default)
-
-    def __getitem__(self, key: str) -> Any:
-        """Dict-like subscription access for backward compatibility."""
-        return self.to_dict()[key]
-
-    def __contains__(self, key: str) -> bool:
-        """Dict-like 'in' operator support for backward compatibility."""
-        return key in self.to_dict()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RoutingDecision":

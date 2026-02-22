@@ -189,7 +189,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -198,7 +197,9 @@ class TestSearchAgent:
 
         # Verify agent initialized with correct dependencies
         assert agent.config is not None
-        assert agent.search_backend == mock_search_backend
+        assert agent._tenant_backends == {}  # No backends created yet (lazy)
+        assert agent._backend_type is not None
+        assert agent._backend_config is not None
         assert agent.query_encoder == mock_query_encoder
         assert agent.embedding_type == "frame_based"
         assert isinstance(agent.content_processor, ContentProcessor)
@@ -226,14 +227,15 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
         )
 
-        results = agent._search_by_text("find cats", top_k=5, ranking="binary_binary")
+        results = agent._search_by_text(
+            "find cats", tenant_id="test_tenant", top_k=5, ranking="binary_binary"
+        )
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -263,7 +265,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -277,7 +278,11 @@ class TestSearchAgent:
 
         video_data = b"fake_video_data"
         results = agent._search_by_video(
-            video_data, "test.mp4", top_k=5, ranking="binary_binary"
+            video_data,
+            "test.mp4",
+            tenant_id="test_tenant",
+            top_k=5,
+            ranking="binary_binary",
         )
 
         assert len(results) == 2
@@ -309,7 +314,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -323,7 +327,11 @@ class TestSearchAgent:
 
         image_data = b"fake_image_data"
         results = agent._search_by_image(
-            image_data, "test.jpg", top_k=5, ranking="binary_binary"
+            image_data,
+            "test.jpg",
+            tenant_id="test_tenant",
+            top_k=5,
+            ranking="binary_binary",
         )
 
         assert len(results) == 2
@@ -355,7 +363,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -366,7 +373,10 @@ class TestSearchAgent:
         message = A2AMessage(
             role="user", parts=[DataPart(data={"query": "find dogs", "top_k": 5})]
         )
-        task = Task(id="test_task", messages=[message])
+        task = Mock()
+        task.id = "test_task"
+        task.tenant_id = "test_tenant"
+        task.messages = [message]
 
         result = agent.process_enhanced_task(task)
 
@@ -398,7 +408,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -447,7 +456,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -496,7 +504,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -551,7 +558,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -585,7 +591,6 @@ class TestSearchAgent:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -596,7 +601,10 @@ class TestSearchAgent:
         message = A2AMessage(
             role="user", parts=[DataPart(data={"no_query": "invalid"})]
         )
-        task = Task(id="test_task", messages=[message])
+        task = Mock()
+        task.id = "test_task"
+        task.tenant_id = "test_tenant"
+        task.messages = [message]
 
         result = agent.process_enhanced_task(task)
 
@@ -610,27 +618,37 @@ class TestSearchAgent:
 class TestSearchAgentEdgeCases:
     """Test edge cases and error conditions for SearchAgent"""
 
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
-    def test_vespa_client_initialization_failure(self, mock_get_config, mock_registry):
-        """Test handling of Vespa client initialization failure"""
+    def test_vespa_client_initialization_failure(
+        self, mock_get_config, mock_registry, mock_encoder_factory
+    ):
+        """Test handling of Vespa client initialization failure on first use"""
         mock_config = Mock()
         mock_config.get_active_profile.return_value = "frame_based_colpali"
-        mock_config.get.return_value = {}  # Return empty dict instead of Mock
+        mock_config.get.return_value = {}
         mock_get_config.return_value = mock_config
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        # Backend creation succeeds at init (lazy, no backend created)
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
+
+        # Now make the registry fail for the next backend creation
         mock_registry.return_value.get_search_backend.side_effect = Exception(
             "Vespa connection failed"
         )
 
         with pytest.raises(Exception, match="Vespa connection failed"):
-            SearchAgent(
-                deps=SearchAgentDeps(
-                    tenant_id="test_tenant",
-                    backend_url="http://localhost",
-                    backend_port=8080,
-                ),
-                schema_loader=mock_schema_loader,
-            )
+            agent._get_backend("failing_tenant")
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
@@ -680,7 +698,6 @@ class TestSearchAgentEdgeCases:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
-                tenant_id="test_tenant",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -688,7 +705,9 @@ class TestSearchAgentEdgeCases:
         )
 
         with pytest.raises(Exception, match="Search failed"):
-            agent._search_by_text("test query", ranking="binary_binary")
+            agent._search_by_text(
+                "test query", tenant_id="test_tenant", ranking="binary_binary"
+            )
 
 
 @pytest.mark.unit
@@ -774,6 +793,7 @@ class TestSearchAgentAdvancedFeatures:
                 ),
                 schema_loader=mock_schema_loader,
             )
+            agent._tenant_backends["test_tenant"] = mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -781,7 +801,10 @@ class TestSearchAgentAdvancedFeatures:
         """Test handling of empty search results"""
         # Vespa client is already configured to return empty results
         results = configured_agent._search_by_text(
-            "non-existent content", top_k=5, ranking="binary_binary"
+            "non-existent content",
+            tenant_id="test_tenant",
+            top_k=5,
+            ranking="binary_binary",
         )
 
         assert isinstance(results, list)
@@ -792,18 +815,21 @@ class TestSearchAgentAdvancedFeatures:
         """Test search with different ranking strategies"""
         # Test with float_binary ranking
         results = configured_agent._search_by_text(
-            "find cats", top_k=5, ranking="float_binary"
+            "find cats", tenant_id="test_tenant", top_k=5, ranking="float_binary"
         )
         assert isinstance(results, list)
 
         # Test with default ranking (when not specified)
-        results = configured_agent._search_by_text("find cats", top_k=5)
+        results = configured_agent._search_by_text(
+            "find cats", tenant_id="test_tenant", top_k=5
+        )
         assert isinstance(results, list)
 
     def test_search_with_temporal_parameters(self, configured_agent):
         """Test search with date range filters (currently logs warning as not yet supported)"""
         results = configured_agent._search_by_text(
             "find recent videos",
+            tenant_id="test_tenant",
             top_k=5,
             ranking="binary_binary",
             start_date="2024-01-01",
@@ -812,7 +838,7 @@ class TestSearchAgentAdvancedFeatures:
 
         assert isinstance(results, list)
         # Search backend should be called
-        configured_agent.search_backend.search.assert_called()
+        configured_agent._tenant_backends["test_tenant"].search.assert_called()
         # Note: Date parameters are not currently passed to backend (feature not implemented yet)
         # The method logs a warning instead
 
@@ -828,7 +854,7 @@ class TestSearchAgentAdvancedFeatures:
 
         with pytest.raises(Exception, match="Processing failed"):
             configured_agent._search_by_video(
-                video_data, "test.mp4", ranking="binary_binary"
+                video_data, "test.mp4", tenant_id="test_tenant", ranking="binary_binary"
             )
 
     def test_image_processor_with_different_formats(self, configured_agent):
@@ -842,7 +868,10 @@ class TestSearchAgentAdvancedFeatures:
         for format_ext in ["jpg", "png", "jpeg", "webp"]:
             image_data = b"fake_image_data"
             results = configured_agent._search_by_image(
-                image_data, f"test.{format_ext}", ranking="binary_binary"
+                image_data,
+                f"test.{format_ext}",
+                tenant_id="test_tenant",
+                ranking="binary_binary",
             )
             assert isinstance(results, list)
             configured_agent.content_processor.process_image_file.assert_called_with(
@@ -857,14 +886,18 @@ class TestSearchAgentAdvancedFeatures:
         )
 
         # Test with minimal parameters
-        params = RelationshipAwareSearchParams(query="test query")
+        params = RelationshipAwareSearchParams(
+            query="test query", tenant_id="test_tenant"
+        )
         assert params.query == "test query"
+        assert params.tenant_id == "test_tenant"
         assert params.top_k == 10  # default
         assert params.use_relationship_boost is True  # default
 
         # Test with full parameters
         params_full = RelationshipAwareSearchParams(
             query="enhanced query",
+            tenant_id="test_tenant",
             original_query="original query",
             enhanced_query="enhanced version",
             entities=[{"text": "test", "label": "TEST"}],
@@ -891,7 +924,7 @@ class TestSearchAgentAdvancedFeatures:
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
         """Test that RoutingDecision structure is compatible with SearchAgent"""
-        from cogniverse_agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingOutput
 
         # Mock config and dependencies
         mock_config = {
@@ -910,12 +943,12 @@ class TestSearchAgentAdvancedFeatures:
 
         # Create search agent (just testing structure compatibility)
         search_agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
         # Mock routing decision with relationships
-        routing_decision = RoutingDecision(
+        routing_decision = RoutingOutput(
             query="robots playing soccer in competitions",
             enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
             recommended_agent="search_agent",
@@ -1007,7 +1040,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1055,7 +1088,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1107,7 +1140,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1153,7 +1186,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1166,6 +1199,7 @@ class TestSearchAgentEnsembleSearch:
         result = await agent._process_impl(
             SearchInput(
                 query="test query",
+                tenant_id="test_tenant",
                 profiles=["profile1", "profile2"],
                 top_k=10,
             )
@@ -1197,7 +1231,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1205,6 +1239,7 @@ class TestSearchAgentEnsembleSearch:
         result = await agent._process_impl(
             SearchInput(
                 query="test query",
+                tenant_id="test_tenant",
                 top_k=10,
             )
         )
@@ -1231,7 +1266,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1241,7 +1276,7 @@ class TestSearchAgentEnsembleSearch:
                 {"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(20)
             ],
             "profile2": [
-                {"id": f"doc{i+10}", "score": 1.0 - (i * 0.01)} for i in range(20)
+                {"id": f"doc{i + 10}", "score": 1.0 - (i * 0.01)} for i in range(20)
             ],
         }
 
@@ -1269,7 +1304,7 @@ class TestSearchAgentEnsembleSearch:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         agent = SearchAgent(
-            deps=SearchAgentDeps(tenant_id="test_tenant"),
+            deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
         )
 
@@ -1330,6 +1365,7 @@ class TestMultiQueryFusion:
                 ),
                 schema_loader=mock_schema_loader,
             )
+            agent._tenant_backends["test_tenant"] = mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -1351,7 +1387,9 @@ class TestMultiQueryFusion:
             sr_shared.document.metadata = {"title": "Shared result"}
             return [sr, sr_shared]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         variants = [
             {"name": "original", "query": "robots playing soccer"},
@@ -1367,6 +1405,7 @@ class TestMultiQueryFusion:
 
         results = agent._search_multi_query_fusion(
             query_variants=variants,
+            tenant_id="test_tenant",
             modality="video",
             top_k=10,
             rrf_k=60,
@@ -1388,13 +1427,16 @@ class TestMultiQueryFusion:
     def test_multi_query_fusion_empty_results(self, agent_with_mock_backend):
         """Test _search_multi_query_fusion with variants that return no results."""
         agent = agent_with_mock_backend
-        agent.search_backend.search = lambda q: []
+        mock_backend = Mock()
+        mock_backend.search = lambda q: []
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         results = agent._search_multi_query_fusion(
             query_variants=[
                 {"name": "original", "query": "nonexistent topic xyz"},
                 {"name": "expansion", "query": "nonexistent topic xyz expanded"},
             ],
+            tenant_id="test_tenant",
             modality="video",
             top_k=10,
             rrf_k=60,
@@ -1428,7 +1470,9 @@ class TestMultiQueryFusion:
             sr.document.metadata = {"title": f"Result for {query_dict['query'][:30]}"}
             return [sr]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         variants = [
             {"name": "original", "query": "robots playing soccer"},
@@ -1438,6 +1482,7 @@ class TestMultiQueryFusion:
 
         results = agent._search_multi_query_fusion(
             query_variants=variants,
+            tenant_id="test_tenant",
             modality="video",
             top_k=10,
             rrf_k=60,
@@ -1466,7 +1511,9 @@ class TestMultiQueryFusion:
             sr.document.metadata = {"title": "Test"}
             return [sr]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         # With variants → multi-query fusion path
         context_with_variants = SearchContext(
@@ -1483,7 +1530,7 @@ class TestMultiQueryFusion:
         )
 
         result_multi = agent.search_with_relationship_context(
-            context_with_variants, top_k=10
+            context_with_variants, tenant_id="test_tenant", top_k=10
         )
         assert result_multi["status"] == "completed"
         assert "query_variants_used" in result_multi
@@ -1501,7 +1548,7 @@ class TestMultiQueryFusion:
         )
 
         result_single = agent.search_with_relationship_context(
-            context_without_variants, top_k=10
+            context_without_variants, tenant_id="test_tenant", top_k=10
         )
         assert result_single["status"] == "completed"
         assert "query_variants_used" not in result_single
@@ -1526,7 +1573,9 @@ class TestMultiQueryFusion:
             sr_shared.document.metadata = {"title": "Shared"}
             return [sr, sr_shared]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         routing_decision = RoutingOutput(
             query="robots playing soccer",
@@ -1553,7 +1602,9 @@ class TestMultiQueryFusion:
             ],
         )
 
-        result = agent.search_with_routing_decision(routing_decision, top_k=10)
+        result = agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert result["status"] == "completed"
         assert result["total_results"] > 0
@@ -1575,7 +1626,9 @@ class TestMultiQueryFusion:
             sr.document.metadata = {"title": "Test result"}
             return [sr]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         # Capture the k parameter passed to _fuse_results_rrf
         captured_k = []
@@ -1603,7 +1656,9 @@ class TestMultiQueryFusion:
             ],
         )
 
-        agent.search_with_routing_decision(routing_decision, top_k=10)
+        agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert (
             len(captured_k) == 1
@@ -1667,6 +1722,7 @@ class TestEnsembleVsFusionPaths:
                 ),
                 schema_loader=mock_schema_loader,
             )
+            agent._tenant_backends["test_tenant"] = mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -1707,7 +1763,7 @@ class TestEnsembleVsFusionPaths:
             query_variants=[],  # Empty → single-query path
         )
 
-        agent.search_with_relationship_context(ctx, top_k=5)
+        agent.search_with_relationship_context(ctx, tenant_id="test_tenant", top_k=5)
 
         assert (
             len(fusion_called) == 0
@@ -1736,7 +1792,9 @@ class TestEnsembleVsFusionPaths:
             sr.document.metadata = {"title": "Test"}
             return [sr]
 
-        agent.search_backend.search = mock_search
+        mock_backend = Mock()
+        mock_backend.search = mock_search
+        agent._tenant_backends["test_tenant"] = mock_backend
 
         routing_decision = RoutingOutput(
             query="robots playing soccer",
@@ -1753,7 +1811,9 @@ class TestEnsembleVsFusionPaths:
             ],
         )
 
-        agent.search_with_routing_decision(routing_decision, top_k=10)
+        agent.search_with_routing_decision(
+            routing_decision, tenant_id="test_tenant", top_k=10
+        )
 
         assert len(ensemble_called) == 0, (
             "Expected _search_ensemble NOT called when using search_with_routing_decision "

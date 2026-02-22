@@ -261,7 +261,6 @@ class TestMLflowIntegration:
             patch("mlflow.set_experiment"),
             patch("mlflow.create_experiment"),
         ):
-
             config = ExperimentConfig(
                 experiment_name="test_experiment", tracking_uri="file:///tmp/test"
             )

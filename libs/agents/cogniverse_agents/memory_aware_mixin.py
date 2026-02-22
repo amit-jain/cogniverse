@@ -228,7 +228,7 @@ class MemoryAwareMixin:
             return None
 
     def get_memory_stats(self) -> Optional[Dict[str, Any]]:
-        """Alias for get_memory_state() for API compatibility"""
+        """Return memory stats — delegates to get_memory_state()."""
         return self.get_memory_state()
 
     def clear_memory(self) -> bool:

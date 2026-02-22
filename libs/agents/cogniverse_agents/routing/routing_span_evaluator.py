@@ -108,8 +108,7 @@ class RoutingSpanEvaluator:
 
         if routing_spans_df.empty:
             logger.info(
-                f"📭 No cogniverse.routing spans found "
-                f"(total spans: {len(spans_df)})"
+                f"📭 No cogniverse.routing spans found (total spans: {len(spans_df)})"
             )
             return {"spans_processed": 0, "experiences_created": 0}
 

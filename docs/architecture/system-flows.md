@@ -24,10 +24,10 @@ flowchart LR
     end
 
     subgraph AgentsPkg[<span style='color:#000'>cogniverse_agents</span>]
-        ORC[<span style='color:#000'>Orchestrator</span>]
-        RT[<span style='color:#000'>Routing Agent</span>]
-        VA[<span style='color:#000'>Video Agent</span>]
-        SUM[<span style='color:#000'>Summarizer</span>]
+        ORC[<span style='color:#000'>OrchestratorAgent</span>]
+        RT[<span style='color:#000'>RoutingAgent</span>]
+        SA[<span style='color:#000'>SearchAgent</span>]
+        SUM[<span style='color:#000'>SummarizerAgent</span>]
     end
 
     subgraph CorePkg[<span style='color:#000'>cogniverse_core</span>]
@@ -46,16 +46,15 @@ flowchart LR
     end
 
     API --> ORC
-    ORC --> RT
-    ORC --> VA
+    ORC --> SA
     ORC --> SUM
+    ORC --> Memory
 
     RT --> DSPy
-    RT --> Memory
     RT --> Phoenix
 
-    VA --> VespaBackend
-    VA --> Phoenix
+    SA --> VespaBackend
+    SA --> Phoenix
 
     VespaBackend --> SchemaMgr
     Memory --> VespaBackend
@@ -65,7 +64,7 @@ flowchart LR
     style AgentsPkg fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ORC fill:#ba68c8,stroke:#7b1fa2,color:#000
     style RT fill:#ba68c8,stroke:#7b1fa2,color:#000
-    style VA fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style SA fill:#ba68c8,stroke:#7b1fa2,color:#000
     style SUM fill:#ba68c8,stroke:#7b1fa2,color:#000
     style CorePkg fill:#ffcc80,stroke:#ef6c00,color:#000
     style DSPy fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -88,8 +87,8 @@ flowchart LR
 sequenceDiagram
     participant User
     participant Runtime as cogniverse_runtime<br/>FastAPI
-    participant Routing as Routing Agent<br/>cogniverse_agents
-    participant VideoAgent as Video Search Agent<br/>cogniverse_agents
+    participant Orchestrator as OrchestratorAgent<br/>cogniverse_agents (port 8013)
+    participant SearchAgent as SearchAgent<br/>cogniverse_agents (port 8002)
     participant Vespa as Vespa Backend<br/>cogniverse_vespa
     participant Phoenix as Phoenix Telemetry<br/>cogniverse_telemetry_phoenix
 
@@ -97,30 +96,28 @@ sequenceDiagram
 
     Note over Runtime: Tenant ID extracted from<br/>request parameters or config
 
-    Runtime->>Routing: process(input=RoutingInput(query, ...))<br/>tenant_id="acme"
+    Runtime->>Orchestrator: POST /tasks/send<br/>{query, tenant_id="acme"}
 
-    activate Routing
-    Routing->>Routing: Extract relationships<br/>(DSPyAdvancedRoutingModule)
-    Note over Routing: Entities and relationships<br/>extracted from query
-    Routing->>Routing: Determine modality
-    Note over Routing: Modality: VIDEO
-    Routing->>Phoenix: Record routing span
-    Routing-->>Runtime: {modality: VIDEO, agent: video_search}
-    deactivate Routing
+    activate Orchestrator
+    Note over Orchestrator: Planning Phase:<br/>DSPy OrchestrationModule<br/>creates execution plan
+    Note over Orchestrator: Plan: [search]<br/>recommended_agent: search_agent
+    Orchestrator->>Phoenix: Record orchestration span
 
-    Runtime->>VideoAgent: search(query=..., top_k=10)<br/>tenant_id="acme"
+    Orchestrator->>SearchAgent: POST /tasks/send<br/>{query, tenant_id="acme"}
+    deactivate Orchestrator
 
-    activate VideoAgent
-    Note over VideoAgent: VespaSchemaManager.get_tenant_schema_name()<br/>called internally
-    VideoAgent->>VideoAgent: Encode query<br/>(ColPali/VideoPrism/ColQwen)
-    VideoAgent->>Vespa: query with tenant schema<br/>(tenant_id="acme")
+    activate SearchAgent
+    Note over SearchAgent: VespaSchemaManager.get_tenant_schema_name()<br/>called internally
+    SearchAgent->>SearchAgent: Encode query<br/>(ColPali/VideoPrism/ColQwen)
+    SearchAgent->>Vespa: query with tenant schema<br/>(tenant_id="acme")
     Note over Vespa: Searches tenant-specific schema<br/>(e.g., video_frames_acme)
-    Vespa-->>VideoAgent: Top results (tenant-isolated)
-    VideoAgent->>VideoAgent: Rerank results
-    VideoAgent->>Phoenix: Record search span
-    VideoAgent-->>Runtime: [ranked_results]
-    deactivate VideoAgent
+    Vespa-->>SearchAgent: Top results (tenant-isolated)
+    SearchAgent->>SearchAgent: Rerank results
+    SearchAgent->>Phoenix: Record search span
+    SearchAgent-->>Orchestrator: {results: [...], recommended_agent: "search_agent",<br/>confidence: 0.9}
+    deactivate SearchAgent
 
+    Orchestrator-->>Runtime: Combined results
     Runtime-->>User: Display video results
 ```
 
@@ -130,73 +127,63 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant Runtime as cogniverse_runtime
-    participant Orchestrator as Orchestrator<br/>cogniverse_agents
-    participant Routing as Routing Agent<br/>cogniverse_agents
-    participant VideoAgent as Video Agent<br/>cogniverse_agents
-    participant DocumentAgent as Document Agent<br/>cogniverse_agents
-    participant Fusion as CrossModalOptimizer<br/>cogniverse_agents
+    participant Orchestrator as OrchestratorAgent<br/>cogniverse_agents
+    participant SearchAgent as SearchAgent<br/>cogniverse_agents
+    participant Summarizer as SummarizerAgent<br/>cogniverse_agents
     participant Phoenix as Phoenix<br/>cogniverse_telemetry_phoenix
 
     User->>Runtime: "How does photosynthesis work?"<br/>tenant_id="startup"
 
-    Runtime->>Orchestrator: process_complex_query(input, tenant_id="startup")
-    Orchestrator->>Routing: process(input, tenant_id="startup")
-    Routing-->>Orchestrator: {modalities: [VIDEO, TEXT]}
+    Runtime->>Orchestrator: POST /tasks/send<br/>{query, tenant_id="startup"}
 
-    par Parallel Execution
-        Orchestrator->>VideoAgent: search(query, tenant_id="startup")
+    Note over Orchestrator: Planning Phase: DSPy planner<br/>analyzes query and creates<br/>execution plan (no separate RoutingAgent call)
+
+    par Parallel Execution (A2A HTTP)
+        Orchestrator->>SearchAgent: POST /tasks/send<br/>{query, tenant_id="startup"}
         and
-        Orchestrator->>DocumentAgent: search(query, tenant_id="startup")
+        Orchestrator->>Summarizer: POST /tasks/send<br/>{query, tenant_id="startup"}
     end
 
-    VideoAgent-->>Orchestrator: video_results
-    DocumentAgent-->>Orchestrator: document_results
+    SearchAgent-->>Orchestrator: search_results
+    Summarizer-->>Orchestrator: summary_results
 
-    Note over Orchestrator,Fusion: Cross-modal fusion
-    Orchestrator->>Fusion: Merge and rerank results
-    activate Fusion
-    Fusion->>Fusion: Analyze cross-modal patterns
-    Fusion->>Fusion: Apply optimization strategy
-    Fusion-->>Orchestrator: optimized_results
-    deactivate Fusion
-
+    Orchestrator->>Orchestrator: Aggregate results
     Orchestrator->>Phoenix: Record orchestration span
     Orchestrator-->>Runtime: Combined results
     Runtime-->>User: Results with metadata
 ```
 
-### Scenario 3: Memory-Enhanced Routing
+### Scenario 3: Memory-Enhanced Query Processing
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Routing as Routing Agent<br/>cogniverse_agents
+    participant Orchestrator as OrchestratorAgent<br/>cogniverse_agents
     participant Memory as Mem0MemoryManager<br/>cogniverse_core
     participant Vespa as Vespa Memory<br/>agent_memories_acme
-    participant VideoAgent as Video Agent<br/>cogniverse_agents
+    participant SearchAgent as SearchAgent<br/>cogniverse_agents
     participant Phoenix as Phoenix<br/>cogniverse_telemetry_phoenix
 
-    User->>Routing: "Show me more like the last one"<br/>tenant_id="acme"
+    User->>Orchestrator: "Show me more like the last one"<br/>tenant_id="acme"
 
-    Routing->>Memory: search_memory(query, tenant_id="acme", agent_name="routing")
+    Orchestrator->>Memory: search_memory(query, tenant_id="acme", agent_name="orchestrator_agent")
     activate Memory
     Memory->>Vespa: Vector search in agent_memories_acme
     Vespa-->>Memory: [relevant_memories]
-    Memory-->>Routing: Context: "previous pasta search"
+    Memory-->>Orchestrator: Context: "previous pasta search"
     deactivate Memory
 
-    Note over Routing: Memory context retrieved<br/>from tenant-isolated schema
+    Note over Orchestrator: Memory context retrieved<br/>from tenant-isolated schema
 
-    Routing->>Routing: Enhance query with memory context
-    Note over Routing: Query enhancement pipeline<br/>applies context
+    Orchestrator->>Orchestrator: Plan with memory context<br/>(DSPy OrchestrationModule)
 
-    Routing->>VideoAgent: search(query, tenant_id="acme")
-    VideoAgent-->>Routing: results
+    Orchestrator->>SearchAgent: POST /tasks/send<br/>{query, tenant_id="acme"}
+    SearchAgent-->>Orchestrator: results
 
-    Routing->>Memory: add_memory(interaction_summary,<br/>tenant_id="acme", agent_name="routing")
-    Routing->>Phoenix: Record memory-enhanced span
+    Orchestrator->>Memory: add_memory(interaction_summary,<br/>tenant_id="acme", agent_name="orchestrator_agent")
+    Orchestrator->>Phoenix: Record memory-enhanced span
 
-    Routing-->>User: Contextual results
+    Orchestrator-->>User: Contextual results
 ```
 
 ---
@@ -209,30 +196,28 @@ sequenceDiagram
 flowchart TB
     Start[<span style='color:#000'>User Query<br/>tenant_id=acme</span>] --> Runtime[<span style='color:#000'>cogniverse_runtime<br/>FastAPI + Routers</span>]
 
-    Runtime --> Orchestrator[<span style='color:#000'>Orchestrator<br/>cogniverse_agents</span>]
+    Runtime --> Orchestrator[<span style='color:#000'>OrchestratorAgent<br/>cogniverse_agents</span>]
 
-    Orchestrator --> T1[<span style='color:#000'>Task 1: Route Query</span>]
-    Orchestrator --> T2[<span style='color:#000'>Task 2: Parallel Search</span>]
-    Orchestrator --> T3[<span style='color:#000'>Task 3: Summarize</span>]
-    Orchestrator --> T4[<span style='color:#000'>Task 4: Generate Report</span>]
+    Orchestrator --> T1[<span style='color:#000'>Planning Phase<br/>DSPy planner</span>]
 
-    T1 --> Routing[<span style='color:#000'>Routing Agent<br/>cogniverse_agents</span>]
-    Routing --> T2
-
+    T1 --> T2[<span style='color:#000'>Step 1: Parallel Query Analysis</span>]
     T2 --> ParallelBlock{<span style='color:#000'>Parallel Execution</span>}
-    ParallelBlock --> Video[<span style='color:#000'>Video Search<br/>cogniverse_agents</span>]
-    ParallelBlock --> Document[<span style='color:#000'>Document Search<br/>cogniverse_agents</span>]
+    ParallelBlock --> QEnh[<span style='color:#000'>QueryEnhancementAgent<br/>cogniverse_agents</span>]
+    ParallelBlock --> Entity[<span style='color:#000'>EntityExtractionAgent<br/>cogniverse_agents</span>]
+    ParallelBlock --> Profile[<span style='color:#000'>ProfileSelectionAgent<br/>cogniverse_agents</span>]
 
-    Video --> VespaV[<span style='color:#000'>video_frames_acme<br/>cogniverse_vespa</span>]
-    Document --> VespaT[<span style='color:#000'>document_content_acme<br/>cogniverse_vespa</span>]
+    QEnh --> T3[<span style='color:#000'>Step 2: Search</span>]
+    Entity --> T3
+    Profile --> T3
 
-    VespaV --> T3
-    VespaT --> T3
+    T3 --> Search[<span style='color:#000'>SearchAgent<br/>cogniverse_agents</span>]
+    Search --> VespaV[<span style='color:#000'>video_frames_acme<br/>cogniverse_vespa</span>]
 
-    T3 --> Summarizer[<span style='color:#000'>Summarizer Agent<br/>cogniverse_agents</span>]
-    Summarizer --> T4
+    VespaV --> T4[<span style='color:#000'>Step 3: Summarize</span>]
+    T4 --> Summarizer[<span style='color:#000'>SummarizerAgent<br/>cogniverse_agents</span>]
+    Summarizer --> T5[<span style='color:#000'>Step 4: Generate Report</span>]
 
-    T4 --> Reporter[<span style='color:#000'>DetailedReportAgent<br/>cogniverse_agents</span>]
+    T5 --> Reporter[<span style='color:#000'>DetailedReportAgent<br/>cogniverse_agents</span>]
     Reporter --> Result[<span style='color:#000'>Final Report</span>]
 
     style Start fill:#90caf9,stroke:#1565c0,color:#000
@@ -242,12 +227,13 @@ flowchart TB
     style T2 fill:#b0bec5,stroke:#546e7a,color:#000
     style T3 fill:#b0bec5,stroke:#546e7a,color:#000
     style T4 fill:#b0bec5,stroke:#546e7a,color:#000
-    style Routing fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style T5 fill:#b0bec5,stroke:#546e7a,color:#000
     style ParallelBlock fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Video fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Document fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style QEnh fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Entity fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Profile fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Search fill:#ce93d8,stroke:#7b1fa2,color:#000
     style VespaV fill:#a5d6a7,stroke:#388e3c,color:#000
-    style VespaT fill:#a5d6a7,stroke:#388e3c,color:#000
     style Summarizer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Reporter fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Result fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -258,26 +244,22 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant User
-    participant Orchestrator as MultiAgentOrchestrator<br/>cogniverse_agents
-    participant Routing as Routing Agent
-    participant VideoAgent as Video Agent
-    participant Summarizer as Summarizer Agent
+    participant Orchestrator as OrchestratorAgent<br/>cogniverse_agents
+    participant SearchAgent as SearchAgent<br/>cogniverse_agents
+    participant Summarizer as SummarizerAgent<br/>cogniverse_agents
 
     User->>Orchestrator: Complex query<br/>tenant_id="acme"
 
-    Orchestrator->>Orchestrator: Analyze query requirements
+    Orchestrator->>Orchestrator: Planning Phase
     activate Orchestrator
-    Orchestrator->>Orchestrator: Determine agent sequence
-    Note over Orchestrator: Execution Plan:<br/>1. Route query<br/>2. Search based on routing<br/>3. Summarize results
+    Note over Orchestrator: DSPy OrchestrationModule<br/>analyzes query and creates<br/>execution plan
+    Note over Orchestrator: Execution Plan:<br/>1. Enhancement + Entity extraction (parallel)<br/>2. Profile selection<br/>3. Search<br/>4. Summarize results
     deactivate Orchestrator
 
-    Orchestrator->>Routing: process(input, tenant_id="acme")
-    Routing-->>Orchestrator: routing_decision
+    Orchestrator->>SearchAgent: POST /tasks/send<br/>{query, tenant_id="acme"}
+    SearchAgent-->>Orchestrator: search_results
 
-    Orchestrator->>VideoAgent: search(query, tenant_id="acme")
-    VideoAgent-->>Orchestrator: search_results
-
-    Orchestrator->>Summarizer: process(input, tenant_id="acme")
+    Orchestrator->>Summarizer: POST /tasks/send<br/>{query, tenant_id="acme"}
     Summarizer-->>Orchestrator: summary
 
     Orchestrator-->>User: Orchestrated result with summary
@@ -287,13 +269,13 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant VideoAgent as Video Agent<br/>cogniverse_agents
-    participant Gateway as A2A Gateway<br/>cogniverse_agents
-    participant Summarizer as Summarizer<br/>cogniverse_agents
+    participant VideoAgent as VideoSearchAgent<br/>cogniverse_agents
+    participant Gateway as A2ARoutingAgent<br/>cogniverse_agents
+    participant Summarizer as SummarizerAgent<br/>cogniverse_agents
     participant ReportAgent as DetailedReportAgent<br/>cogniverse_agents
 
     VideoAgent->>Gateway: Send A2A Message
-    Note over Gateway: Message Format:<br/>{type: "task",<br/>sender: "video_agent",<br/>target: "summarizer",<br/>tenant_id: "acme",<br/>data: results}
+    Note over Gateway: Message Format:<br/>{type: "task",<br/>sender: "video_search_agent",<br/>target: "summarizer",<br/>tenant_id: "acme",<br/>data: results}
 
     Gateway->>Gateway: Validate message format
     Gateway->>Gateway: Route to target agent

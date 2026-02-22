@@ -261,38 +261,41 @@ asyncio.run(ingest_tenant_videos("globex_inc", Path("data/videos/globex_inc")))
 
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
+# Initialize once — ONE agent serves ALL tenants
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+agent = VideoSearchAgent(
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
 
 def search_tenant_videos(
     tenant_id: str,
     query: str,
-    config_manager,
     top_k: int = 10
 ):
     """Search videos within tenant isolation"""
 
-    # Agent automatically uses tenant-specific schema
-    agent = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id=tenant_id,
-        config_manager=config_manager
-    )
-
-    # search() is synchronous
+    # profile and tenant_id are PER-REQUEST parameters on search()
     results = agent.search(
         query=query,
-        top_k=top_k
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id=tenant_id,
+        top_k=top_k,
     )
 
     return results
 
-# Initialize config manager once
-config_manager = create_default_config_manager()
-
 # Search for acme_corp
-acme_results = search_tenant_videos("acme_corp", "machine learning", config_manager)
+acme_results = search_tenant_videos("acme_corp", "machine learning")
 
 # Search for globex_inc (completely isolated)
-globex_results = search_tenant_videos("globex_inc", "machine learning", config_manager)
+globex_results = search_tenant_videos("globex_inc", "machine learning")
 ```
 
 ---
@@ -543,6 +546,10 @@ rollback_tenant_config("acme_corp", version=5)
 ### Tenant Isolation Verification
 
 ```python
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
 async def verify_tenant_isolation(tenant_a: str, tenant_b: str):
     """Verify complete isolation between two tenants"""
 
@@ -554,12 +561,12 @@ async def verify_tenant_isolation(tenant_a: str, tenant_b: str):
     checks.append(("Schema Isolation", True))  # Enforced by design
 
     # 2. Data isolation (search)
-    agent_a = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id=tenant_a,
-        config_manager=config_manager
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    agent = VideoSearchAgent(
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
-    results_a = agent_a.search("test query", top_k=100)  # synchronous
+    results_a = agent.search("test query", profile="video_colpali_smol500_mv_frame", tenant_id=tenant_a, top_k=100)  # synchronous
     # Verify tenant isolation by checking results are from correct tenant's schema
     checks.append(("Data Isolation", len(results_a) >= 0))  # Verify search works
 
@@ -595,6 +602,10 @@ assert isolation_verified, "Tenant isolation verification failed!"
 ### Access Control
 
 ```python
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
 # Tenant access control decorator
 def require_tenant_access(tenant_id: str):
     """Decorator to enforce tenant access control"""
@@ -614,12 +625,12 @@ def require_tenant_access(tenant_id: str):
 @require_tenant_access("acme_corp")
 def search_acme_videos(query: str, caller_tenant_id: str, config_manager):
     """Search restricted to acme_corp tenant"""
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     agent = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="acme_corp",
-        config_manager=config_manager
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
-    return agent.search(query)  # synchronous (not async)
+    return agent.search(query, profile="video_colpali_smol500_mv_frame", tenant_id="acme_corp")  # synchronous (not async)
 ```
 
 ---
@@ -810,48 +821,62 @@ diagnose_tenant_config("acme_corp")
 ```python
 from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# ✅ Good: Explicit tenant ID with config_manager
+# ✅ Good: Profile-agnostic agent, tenant_id at search time
 agent = VideoSearchAgent(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme_corp",
-    config_manager=config_manager
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
-results = agent.search(query)  # synchronous
+results = agent.search(
+    query="machine learning",
+    profiles=["video_colpali_smol500_mv_frame"],
+    tenant_id="acme_corp",
+    top_k=10,
+)
 
-# ❌ Bad: Missing config_manager or tenant_id
-agent = VideoSearchAgent(profile="video_colpali_smol500_mv_frame")
+# ❌ Bad: Passing profile or tenant_id at construction
+# agent = VideoSearchAgent(profile="...", tenant_id="...")  # These are per-request
 ```
 
 ### 2. Verify Tenant Isolation
 
 ```python
+from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Always verify isolation in tests
-def test_tenant_isolation():
-    config_manager = create_default_config_manager()
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # Create test data for tenant A
-    agent_a = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="tenant_a",
-        config_manager=config_manager
-    )
-    # ... ingest test data
+# One agent instance serves ALL tenants
+agent = VideoSearchAgent(
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
 
-    # Search from tenant B
-    agent_b = VideoSearchAgent(
-        profile="video_colpali_smol500_mv_frame",
-        tenant_id="tenant_b",
-        config_manager=config_manager
-    )
-    results = agent_b.search("test query")  # synchronous
+# Search as tenant A
+results_a = agent.search(
+    query="test query",
+    profiles=["video_colpali_smol500_mv_frame"],
+    tenant_id="tenant_a",
+    top_k=10,
+)
 
-    # Verify no cross-tenant leakage
-    assert len(results) == 0, "Tenant isolation violated!"
+# Search as tenant B — completely isolated schemas
+results_b = agent.search(
+    query="test query",
+    profiles=["video_colpali_smol500_mv_frame"],
+    tenant_id="tenant_b",
+    top_k=10,
+)
+
+# No cross-tenant leakage — each tenant has its own Vespa schemas
 ```
 
 ### 3. Monitor Tenant Health

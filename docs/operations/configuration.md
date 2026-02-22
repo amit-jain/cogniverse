@@ -79,9 +79,32 @@ system_config = SystemConfig(
 
 - Phoenix telemetry endpoints
 
-- Agent service URLs
+- Agent service URLs (via `agents` section)
 
 - Environment settings
+
+### 1b. Agent Registry Configuration
+
+The `agents` section in `config.json` defines agent URLs for A2A discovery via `AgentRegistry`:
+
+```json
+{
+  "agents": {
+    "orchestrator": {"url": "http://localhost:8013", "enabled": true},
+    "entity_extraction": {"url": "http://localhost:8010", "enabled": true},
+    "profile_selection": {"url": "http://localhost:8011", "enabled": true},
+    "query_enhancement": {"url": "http://localhost:8012", "enabled": true},
+    "search": {"url": "http://localhost:8002", "enabled": true},
+    "summarizer": {"url": "http://localhost:8003", "enabled": true},
+    "detailed_report": {"url": "http://localhost:8004", "enabled": true}
+  }
+}
+```
+
+**Key Points:**
+- `OrchestratorAgent` uses `AgentRegistry.find_agents_by_capability()` to discover agents at runtime
+- Set `"enabled": false` to disable an agent without removing its config
+- Agent URLs are the only infrastructure config agents need at startup — `tenant_id`, `profile`, and `session_id` arrive per-request in the A2A task payload
 
 ### 2. Agent Configuration
 Per-agent DSPy module and optimizer settings (per tenant):

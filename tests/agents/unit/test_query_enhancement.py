@@ -41,7 +41,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
     SpaCyDependencyAnalyzer,
 )
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingOutput
 
 # Phase 5 imports for enhanced agent testing
 from cogniverse_agents.search_agent import SearchAgent
@@ -73,7 +73,7 @@ class SimpleOutput(AgentOutput):
 class SimpleDeps(AgentDeps):
     """Simple deps for test agent"""
 
-    pass  # Only needs tenant_id from base
+    pass
 
 
 class SimpleDSPyA2AAgent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
@@ -83,7 +83,7 @@ class SimpleDSPyA2AAgent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
     """
 
     def __init__(self, port: int = 8000):
-        deps = SimpleDeps(tenant_id="test_tenant")
+        deps = SimpleDeps()
         config = A2AAgentConfig(
             agent_name="simple_test_agent",
             agent_description="Simple agent for testing",
@@ -304,7 +304,6 @@ class TestDSPyAgentIntegration:
         mock_optimizer.return_value = Mock()
 
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
@@ -317,7 +316,7 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "route_query")
         assert hasattr(agent, "get_routing_statistics")
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test type-safe A2AAgent integration in SummarizerAgent."""
@@ -329,24 +328,28 @@ class TestDSPyAgentIntegration:
                 "model_name": "test-model",
                 "base_url": "http://localhost:11434/v1",
                 "api_key": "test-key",
-            }
+            },
+            "inference": {
+                "provider": "ollama",
+                "model": "test-model",
+                "local_endpoint": "http://localhost:11434",
+            },
         }
 
-        deps = SummarizerDeps(tenant_id="test_tenant")
+        deps = SummarizerDeps()
         agent = SummarizerAgent(deps=deps)
 
         # Should have type-safe A2AAgent structure
         assert hasattr(agent, "deps")
         assert hasattr(agent, "config")
         assert hasattr(agent, "process")
-        assert agent.deps.tenant_id == "test_tenant"
 
         # Should have summarization capabilities
         assert hasattr(agent, "summarize_with_routing_decision")
         assert hasattr(agent, "summarize_with_relationships")
         assert callable(agent.summarize_with_relationships)
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test type-safe A2AAgent integration in DetailedReportAgent."""
@@ -358,17 +361,21 @@ class TestDSPyAgentIntegration:
                 "model_name": "test-model",
                 "base_url": "http://localhost:11434/v1",
                 "api_key": "test-key",
-            }
+            },
+            "inference": {
+                "provider": "ollama",
+                "model": "test-model",
+                "local_endpoint": "http://localhost:11434",
+            },
         }
 
-        deps = DetailedReportDeps(tenant_id="test_tenant")
+        deps = DetailedReportDeps()
         agent = DetailedReportAgent(deps=deps)
 
         # Should have type-safe A2AAgent structure
         assert hasattr(agent, "deps")
         assert hasattr(agent, "config")
         assert hasattr(agent, "process")
-        assert agent.deps.tenant_id == "test_tenant"
 
         # Should have report generation capabilities
         assert hasattr(agent, "generate_report_with_routing_decision")
@@ -747,7 +754,7 @@ class TestDSPy30A2ABaseIntegration:
                     confidence=getattr(result, "confidence", 0.0),
                 )
 
-        deps = SimpleDeps(tenant_id="test_tenant")
+        deps = SimpleDeps()
         config = A2AAgentConfig(
             agent_name="TestDSPy30Agent",
             agent_description="DSPy 3.0 test agent",
@@ -777,7 +784,6 @@ class TestDSPy30A2ABaseIntegration:
 
         # Verify agent configuration
         assert agent.config.agent_name == "simple_test_agent"
-        assert agent.deps.tenant_id == "test_tenant"
         assert "testing" in agent.config.capabilities
 
     @pytest.mark.asyncio
@@ -1973,7 +1979,6 @@ class TestDSPyComponentsIntegration:
         from cogniverse_core.agents.a2a_agent import A2AAgent
 
         assert isinstance(agent, A2AAgent)
-        assert agent.tenant_id == "test_tenant"
         assert agent.agent_name == "simple_test_agent"
 
     def test_composable_module_entity_to_enhancement_flow(self):
@@ -2255,7 +2260,6 @@ class TestRoutingAgent:
 
         # Test with default config
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
@@ -2265,7 +2269,6 @@ class TestRoutingAgent:
 
         # Test with custom config via deps (RoutingDeps contains all config)
         custom_deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
@@ -2283,7 +2286,6 @@ class TestRoutingAgent:
         from cogniverse_agents.routing_agent import RoutingDeps
 
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
@@ -2333,7 +2335,6 @@ class TestRoutingAgent:
         from cogniverse_agents.routing_agent import RoutingDeps
 
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
@@ -2904,7 +2905,6 @@ class TestSystemIntegration:
 
         # Create components
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         router = RoutingAgent(deps=deps)
@@ -2918,7 +2918,7 @@ class TestSystemIntegration:
         complex_query = "find videos of robots playing soccer then analyze techniques and create comprehensive report"
 
         # Mock routing decision with orchestration need
-        mock_decision = RoutingDecision(
+        mock_decision = RoutingOutput(
             query=complex_query,
             recommended_agent="video_search_agent",
             confidence=0.7,
@@ -2987,7 +2987,6 @@ class TestSystemIntegration:
 
         # Test 1: Enhanced Routing Agent (independent)
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         router = RoutingAgent(deps=deps)
@@ -3031,7 +3030,6 @@ class TestSystemIntegration:
         try:
             # Test with invalid config that might cause errors
             deps = RoutingDeps(
-                tenant_id="test_tenant",
                 telemetry_config=telemetry_manager_without_phoenix.config,
             )
             router = RoutingAgent(deps=deps)
@@ -3065,7 +3063,6 @@ class TestSystemIntegration:
 
         # All statistics should return dict with consistent structure
         deps = RoutingDeps(
-            tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         router = RoutingAgent(deps=deps)
@@ -3138,11 +3135,11 @@ class TestVideoSearchAgent:
                 # Mock schema_loader
                 mock_schema_loader = Mock()
 
-                deps = SearchAgentDeps(tenant_id="test_tenant")
+                deps = SearchAgentDeps()
                 agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
                 assert agent is not None
-                assert hasattr(agent, "search_backend")
-                assert hasattr(agent, "search_config")  # SearchAgent uses search_config
+                assert hasattr(agent, "_tenant_backends")
+                assert hasattr(agent, "_backend_config")
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""
@@ -3152,6 +3149,7 @@ class TestVideoSearchAgent:
 
         params = RelationshipAwareSearchParams(
             query="robots playing soccer",
+            tenant_id="test_tenant",
             original_query="find videos of robots",
             enhanced_query="robots playing soccer",
             entities=[{"text": "robots", "label": "ENTITY", "confidence": 0.9}],
@@ -3181,7 +3179,11 @@ class TestVideoSearchAgent:
         )
 
         RelationshipAwareSearchParams(
-            query="test query", entities=[], relationships=[], confidence_threshold=0.8
+            query="test query",
+            tenant_id="test_tenant",
+            entities=[],
+            relationships=[],
+            confidence_threshold=0.8,
         )
 
         context = SearchContext(
@@ -3294,7 +3296,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            deps = SearchAgentDeps(tenant_id="test_tenant")
+            deps = SearchAgentDeps()
             agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
@@ -3356,7 +3358,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            deps = SearchAgentDeps(tenant_id="test_tenant")
+            deps = SearchAgentDeps()
             agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation

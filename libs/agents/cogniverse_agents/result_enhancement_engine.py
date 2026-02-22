@@ -192,7 +192,6 @@ class ResultEnhancementEngine:
                 and entity_confidence >= self.entity_confidence_threshold
                 and entity_text in result_text
             ):
-
                 # Calculate match strength based on context
                 match_strength = self._calculate_entity_match_strength(
                     entity_text, result_text, entity_confidence

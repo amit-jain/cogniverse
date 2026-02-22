@@ -3,18 +3,22 @@ OrchestratorAgent - Autonomous A2A agent for coordinating multi-agent query proc
 
 Implements two-phase orchestration:
 1. Planning Phase: Analyze query and create execution plan
-2. Action Phase: Execute plan by coordinating specialized agents
+2. Action Phase: Execute plan by coordinating specialized agents via A2A HTTP
 """
 
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import dspy
 from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+
+if TYPE_CHECKING:
+    from cogniverse_agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,12 @@ class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration"""
 
     query: str = Field(..., description="Query to orchestrate")
+    tenant_id: str = Field(
+        default="default", description="Tenant identifier (per-request)"
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Session identifier (per-request)"
+    )
 
 
 class OrchestratorOutput(AgentOutput):
@@ -51,11 +61,9 @@ class OrchestratorOutput(AgentOutput):
 
 
 class OrchestratorDeps(AgentDeps):
-    """Dependencies for orchestrator agent"""
+    """Dependencies for orchestrator agent (tenant-agnostic at startup)."""
 
-    agent_registry: Dict[Any, Any] = Field(
-        default_factory=dict, description="Registry of available agents"
-    )
+    pass
 
 
 class AgentType(str, Enum):
@@ -157,7 +165,7 @@ class OrchestrationModule(dspy.Module):
 
 
 class OrchestratorAgent(
-    A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]
+    MemoryAwareMixin, A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]
 ):
     """
     Type-safe autonomous A2A agent for multi-agent orchestration.
@@ -176,25 +184,22 @@ class OrchestratorAgent(
     def __init__(
         self,
         deps: OrchestratorDeps,
-        agent_registry: Optional[Dict[AgentType, Any]] = None,
+        registry: "AgentRegistry",
         port: int = 8013,
     ):
         """
-        Initialize OrchestratorAgent with typed dependencies.
+        Initialize OrchestratorAgent with real AgentRegistry.
 
         Args:
-            deps: Typed dependencies with tenant_id
-            agent_registry: Registry of available agents
+            deps: Typed dependencies (tenant-agnostic)
+            registry: AgentRegistry for dynamic agent discovery
             port: Port for A2A server
 
         Raises:
             TypeError: If deps is not OrchestratorDeps
-            ValidationError: If deps fails Pydantic validation
+            ValueError: If registry is not provided
         """
-        # Use agent_registry from constructor or fall back to deps
-        self.agent_registry = (
-            agent_registry if agent_registry is not None else deps.agent_registry
-        )
+        self.registry = registry
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
@@ -217,10 +222,59 @@ class OrchestratorAgent(
         # Initialize base class
         super().__init__(deps=deps, config=config, dspy_module=orchestration_module)
 
+        # Track which tenants have memory initialized
+        self._memory_initialized_tenants: set = set()
+
         logger.info(
-            f"OrchestratorAgent initialized for tenant: {deps.tenant_id}, "
-            f"agents: {len(self.agent_registry)}"
+            f"OrchestratorAgent initialized with {len(self.registry.agents)} registered agents"
         )
+
+    def _ensure_memory_for_tenant(self, tenant_id: str) -> None:
+        """Lazily initialize memory for a tenant (first request only)."""
+        if tenant_id in self._memory_initialized_tenants:
+            return
+
+        try:
+            from cogniverse_foundation.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
+
+            config_manager = create_default_config_manager()
+            config = get_config(tenant_id="default", config_manager=config_manager)
+
+            inference = config.get("inference", {})
+            backend_section = config.get("backend", {})
+            backend_url = backend_section.get("url", "http://localhost")
+            backend_port = backend_section.get("port", 8080)
+            provider = inference.get("provider", "ollama")
+            llm_model = inference.get("model", "gemma3:4b")
+            embedding_model = inference.get("embedding_model", "nomic-embed-text")
+            llm_base_url = inference.get("local_endpoint", "http://localhost:11434")
+            if provider == "modal":
+                llm_base_url = inference.get("modal_endpoint", llm_base_url)
+
+            from pathlib import Path
+
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+            self.initialize_memory(
+                agent_name="orchestrator_agent",
+                tenant_id=tenant_id,
+                backend_host=backend_url,
+                backend_port=backend_port,
+                llm_model=llm_model,
+                embedding_model=embedding_model,
+                llm_base_url=llm_base_url,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+                provider=provider,
+            )
+            self._memory_initialized_tenants.add(tenant_id)
+        except Exception as e:
+            logger.warning(f"Memory initialization failed for tenant {tenant_id}: {e}")
 
     # ==========================================================================
     # Type-safe process method (required by AgentBase)
@@ -233,16 +287,18 @@ class OrchestratorAgent(
         Process orchestration request with typed input/output.
 
         Args:
-            input: Typed input with query field (or dict)
+            input: Typed input with query, tenant_id, session_id (or dict)
 
         Returns:
             OrchestratorOutput with plan, agent results, and final output
         """
-        # Handle dict input for backward compatibility with tests
+        # Coerce dict to typed input (A2A sends JSON dicts)
         if isinstance(input, dict):
-            input = self.validate_input(input)
+            input = OrchestratorInput(**input)
 
         query = input.query
+        tenant_id = input.tenant_id
+        session_id = input.session_id
 
         if not query:
             return OrchestratorOutput(
@@ -255,17 +311,30 @@ class OrchestratorAgent(
                 execution_summary="No execution performed",
             )
 
+        # Lazy memory initialization for this tenant
+        self._ensure_memory_for_tenant(tenant_id)
+
+        # Get relevant context from memory (cross-session)
+        memory_context = self.get_relevant_context(query)
+        if memory_context:
+            logger.info(f"Retrieved memory context for query: {query[:50]}...")
+
         # Phase 1: Planning
         plan = await self._create_plan(query)
 
-        # Phase 2: Action
-        agent_results = await self._execute_plan(plan)
+        # Phase 2: Action — execute via A2A HTTP, passing tenant_id/session_id
+        agent_results = await self._execute_plan(
+            plan, tenant_id=tenant_id, session_id=session_id
+        )
 
         # Aggregate results
         final_output = self._aggregate_results(query, agent_results)
 
         # Generate summary
         execution_summary = self._generate_summary(plan, agent_results)
+
+        # Remember this interaction for future context
+        self.remember_success(query, execution_summary)
 
         return OrchestratorOutput(
             query=query,
@@ -324,7 +393,7 @@ class OrchestratorAgent(
                     agent_type=agent_type,
                     input_data={"query": query},
                     depends_on=self._calculate_dependencies(i, parallel_groups),
-                    reasoning=f"Step {i+1}: {agent_type.value} processing",
+                    reasoning=f"Step {i + 1}: {agent_type.value} processing",
                 )
                 steps.append(step)
             except ValueError:
@@ -390,12 +459,22 @@ class OrchestratorAgent(
 
         return depends_on
 
-    async def _execute_plan(self, plan: OrchestrationPlan) -> Dict[str, Any]:
+    async def _execute_plan(
+        self,
+        plan: OrchestrationPlan,
+        tenant_id: str = "default",
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Action Phase: Execute orchestration plan with parallel execution support
+        Action Phase: Execute orchestration plan via A2A HTTP calls.
+
+        Discovers agents from the real AgentRegistry, calls them via HTTP,
+        and passes tenant_id/session_id through to each agent.
 
         Args:
             plan: OrchestrationPlan to execute
+            tenant_id: Tenant identifier (per-request)
+            session_id: Session identifier (per-request)
 
         Returns:
             Dictionary of agent results
@@ -412,35 +491,44 @@ class OrchestratorAgent(
             for i, step in enumerate(plan.steps):
                 if executed[i]:
                     continue
-                # Check if all dependencies are satisfied
                 deps_met = all(executed[dep_idx] for dep_idx in step.depends_on)
                 if deps_met:
                     ready_steps.append((i, step))
 
             if not ready_steps:
-                # No steps ready but not all executed - circular dependency or error
                 logger.error("No steps ready to execute but execution incomplete")
                 break
 
-            # Execute all ready steps in parallel using asyncio.gather
             logger.info(
-                f"Executing {len(ready_steps)} steps in parallel: {[s[1].agent_type.value for s in ready_steps]}"
+                f"Executing {len(ready_steps)} steps in parallel: "
+                f"{[s[1].agent_type.value for s in ready_steps]}"
             )
 
             async def execute_step(step_index: int, step: AgentStep):
-                """Execute a single step"""
-                agent = self.agent_registry.get(step.agent_type)
-                if not agent:
-                    logger.warning(
-                        f"Agent {step.agent_type.value} not found in registry"
-                    )
-                    return step.agent_type.value, {
+                """Execute a single step via A2A HTTP."""
+                agent_name = step.agent_type.value
+
+                # Discover agent from registry by name
+                agent_endpoint = self.registry.get_agent(agent_name)
+                if not agent_endpoint:
+                    # Try finding by capability (agent_type.value matches capability name)
+                    candidates = self.registry.find_agents_by_capability(agent_name)
+                    if candidates:
+                        agent_endpoint = candidates[0]
+
+                if not agent_endpoint:
+                    logger.warning(f"Agent '{agent_name}' not found in registry")
+                    return agent_name, {
                         "status": "error",
-                        "message": f"Agent {step.agent_type.value} not available",
+                        "message": f"Agent '{agent_name}' not available in registry",
                     }
 
                 # Prepare input (merge query with previous results if needed)
                 agent_input = step.input_data.copy()
+                agent_input["tenant_id"] = tenant_id
+                if session_id:
+                    agent_input["session_id"] = session_id
+
                 for dep_idx in step.depends_on:
                     if dep_idx < len(plan.steps):
                         dep_agent = plan.steps[dep_idx].agent_type.value
@@ -449,13 +537,20 @@ class OrchestratorAgent(
                                 dep_agent
                             ]
 
-                # Execute agent
+                # Call agent via A2A HTTP
                 try:
-                    result = await agent.process(agent_input)
-                    return step.agent_type.value, result
+                    query = agent_input.pop("query", "")
+                    result = await self.a2a_client.send_task(
+                        agent_endpoint.url,
+                        query=query,
+                        **agent_input,
+                    )
+                    return agent_name, result
                 except Exception as e:
-                    logger.error(f"Agent {step.agent_type.value} execution failed: {e}")
-                    return step.agent_type.value, {
+                    logger.error(
+                        f"Agent {agent_name} at {agent_endpoint.url} failed: {e}"
+                    )
+                    return agent_name, {
                         "status": "error",
                         "message": str(e),
                     }
@@ -574,14 +669,19 @@ orchestrator_agent = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize agent on startup"""
+    """Initialize agent on startup — tenant-agnostic, no env vars."""
     global orchestrator_agent
 
-    import os
+    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
-    tenant_id = os.getenv("TENANT_ID", "default")
-    deps = OrchestratorDeps(tenant_id=tenant_id)
-    orchestrator_agent = OrchestratorAgent(deps=deps)
+    config_manager = create_default_config_manager()
+
+    # AgentRegistry reads agents from config.json > agents section
+    registry = AgentRegistry(config_manager=config_manager)
+
+    deps = OrchestratorDeps()
+    orchestrator_agent = OrchestratorAgent(deps=deps, registry=registry)
     logger.info("OrchestratorAgent started")
 
 
@@ -610,7 +710,12 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    deps = OrchestratorDeps(tenant_id="default")
-    agent = OrchestratorAgent(deps=deps, port=8013)
+    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = create_default_config_manager()
+    registry = AgentRegistry(config_manager=config_manager)
+    deps = OrchestratorDeps()
+    agent = OrchestratorAgent(deps=deps, registry=registry, port=8013)
     logger.info("Starting OrchestratorAgent on port 8013...")
     agent.start()

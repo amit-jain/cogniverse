@@ -94,16 +94,14 @@ class HybridReranker:
         valid_strategies = ["weighted_ensemble", "cascade", "consensus"]
         if self.strategy not in valid_strategies:
             raise ValueError(
-                f"Invalid strategy: {self.strategy}. "
-                f"Must be one of {valid_strategies}"
+                f"Invalid strategy: {self.strategy}. Must be one of {valid_strategies}"
             )
 
         # Validate weights
         total_weight = self.learned_weight + self.heuristic_weight
         if not (0.99 <= total_weight <= 1.01):
             logger.warning(
-                f"Weights don't sum to 1.0 (got {total_weight}). "
-                "Normalizing weights."
+                f"Weights don't sum to 1.0 (got {total_weight}). Normalizing weights."
             )
             self.learned_weight /= total_weight
             self.heuristic_weight /= total_weight
