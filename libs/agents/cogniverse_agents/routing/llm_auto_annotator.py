@@ -10,7 +10,6 @@ Uses LLM to analyze routing spans and provide initial annotations:
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -70,11 +69,9 @@ class LLMAutoAnnotator:
             api_base: API base URL for local models (e.g., http://localhost:11434 for Ollama)
             api_key: API key (defaults to ANNOTATION_API_KEY env var)
         """
-        self.model = model or os.getenv(
-            "ANNOTATION_MODEL", "claude-3-5-sonnet-20241022"
-        )
-        self.api_base = api_base or os.getenv("ANNOTATION_API_BASE")
-        self.api_key = api_key or os.getenv("ANNOTATION_API_KEY")
+        self.model = model or "claude-3-5-sonnet-20241022"
+        self.api_base = api_base
+        self.api_key = api_key
 
         logger.info(
             f"🤖 Initialized LLMAutoAnnotator with model: {self.model}"

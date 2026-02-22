@@ -9,7 +9,6 @@ This optimizer implements the design specified in NEW_PROPOSAL.md:
 """
 
 import json
-import os
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -406,6 +405,7 @@ def evaluate_routing_accuracy(
 def optimize_router(
     student_model: str = "google/gemma-3-1b-it",
     teacher_model: Optional[str] = None,
+    teacher_api_key: Optional[str] = None,
     use_manual_examples: bool = True,
     num_teacher_examples: int = 50,
     output_dir: str = "optimization_results",
@@ -416,6 +416,7 @@ def optimize_router(
     Args:
         student_model: Model ID for the student (default: google/gemma-3-1b-it)
         teacher_model: Model ID for the teacher (optional, for generating examples)
+        teacher_api_key: API key for the teacher model (required when teacher_model is set)
         use_manual_examples: Whether to use manually crafted examples
         num_teacher_examples: Number of examples to generate with teacher
         output_dir: Directory to save results
@@ -465,12 +466,11 @@ def optimize_router(
         )
 
         # Configure teacher LM — LiteLLM resolves provider from model name
-        api_key = os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY")
-        if not api_key:
-            raise ValueError(
-                "ROUTER_OPTIMIZER_TEACHER_KEY not found in environment variables"
-            )
-        teacher_lm = dspy.LM(model=teacher_model, api_key=api_key, temperature=0.7)
+        if not teacher_api_key:
+            raise ValueError("teacher_api_key is required when teacher_model is set")
+        teacher_lm = dspy.LM(
+            model=teacher_model, api_key=teacher_api_key, temperature=0.7
+        )
 
         teacher_examples = generate_teacher_examples(teacher_lm, num_teacher_examples)
         train_examples.extend(teacher_examples)
@@ -722,10 +722,24 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Read teacher API key from config.json — single source of truth
+    teacher_api_key = None
+    if args.teacher_model:
+        from cogniverse_foundation.config import create_default_config_manager
+
+        config_manager = create_default_config_manager()
+        optimization_config = config_manager.get_raw_config().get("optimization", {})
+        teacher_api_key = optimization_config.get("teacher", {}).get("api_key")
+        if not teacher_api_key:
+            raise ValueError(
+                "Teacher API key not found in config.json (optimization.teacher.api_key)"
+            )
+
     # Run optimization
     results = optimize_router(
         student_model=args.student_model,
         teacher_model=args.teacher_model,
+        teacher_api_key=teacher_api_key,
         use_manual_examples=not args.no_manual_examples,
         num_teacher_examples=args.num_examples,
         output_dir=args.output_dir,

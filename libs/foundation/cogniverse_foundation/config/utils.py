@@ -202,9 +202,7 @@ class ConfigUtils:
         system_keys = {
             "routing_agent_url": lambda: self._system_config.routing_agent_url,
             "video_agent_url": lambda: self._system_config.video_agent_url,
-            "text_agent_url": lambda: self._system_config.text_agent_url,
             "summarizer_agent_url": lambda: self._system_config.summarizer_agent_url,
-            "text_analysis_agent_url": lambda: self._system_config.text_analysis_agent_url,
             "detailed_report_agent_url": lambda: self._system_config.summarizer_agent_url,  # Alias
             "orchestrator_agent_port": lambda: 8013,  # OrchestratorAgent default
             "routing_agent_port": lambda: 8001,  # Hardcoded default
@@ -214,7 +212,6 @@ class ConfigUtils:
             "backend_port": lambda: self._system_config.backend_port,
             "url": lambda: self._system_config.backend_url,  # Alias for backend dict access
             "port": lambda: self._system_config.backend_port,  # Alias for backend dict access
-            "elasticsearch_url": lambda: self._system_config.elasticsearch_url,
             "llm_model": lambda: self._system_config.llm_model,
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
             "base_url": lambda: self._system_config.base_url,
@@ -283,9 +280,7 @@ class ConfigUtils:
                 "backend",
                 "routing_agent_url",
                 "video_agent_url",
-                "text_agent_url",
                 "summarizer_agent_url",
-                "text_analysis_agent_url",
                 "detailed_report_agent_url",
                 "orchestrator_agent_port",
                 "routing_agent_port",
@@ -295,7 +290,6 @@ class ConfigUtils:
                 "backend_port",
                 "url",
                 "port",
-                "elasticsearch_url",
                 "llm_model",
                 "local_llm_model",
                 "base_url",

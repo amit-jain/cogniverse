@@ -12,15 +12,11 @@
     "detailed_report": {"url": "http://localhost:8004", "enabled": true}
   },
   "routing_agent_url": "http://localhost:8001",
-  "text_agent_url": "http://localhost:8002",
   "video_agent_url": "http://localhost:8002",
   "detailed_report_agent_url": "http://localhost:8003",
   "summarizer_agent_url": "http://localhost:8004",
   "orchestrator_agent_port": 8013,
   "search_backend": "vespa",
-  "elastic_cloud_id": "your_elastic_cloud_id",
-  "elastic_api_key": "your_elastic_api_key",
-  "elastic_index": "your-text-index",
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
@@ -326,14 +322,19 @@
       "rrf_k": 60
     },
     "entity_confidence_threshold": 0.6,
-    "min_entities_for_fast_path": 1
+    "min_entities_for_fast_path": 1,
+    "annotation": {
+      "model": "claude-3-5-sonnet-20241022",
+      "api_base": null,
+      "api_key": null
+    }
   },
   "optimization": {
     "enabled": true,
     "type": "dspy",
     "teacher": {
       "model": "claude-3-5-sonnet-20241022",
-      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
+      "api_key": null
     },
     "student": {
       "model": "HuggingFaceTB/SmolLM3-3B",

@@ -265,7 +265,7 @@ class TestMLflowIntegration:
                 experiment_name="test_experiment", tracking_uri="file:///tmp/test"
             )
 
-            integration = MLflowIntegration(config)
+            integration = MLflowIntegration(config, test_mode=True)
 
             # Just verify it was created without errors
             assert integration is not None

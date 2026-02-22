@@ -48,74 +48,17 @@ def test_imports():
     except ImportError as e:
         print(f"❌ router_optimizer: {e}")
 
-    # Test 3: Orchestrator
+    # Test 3: DSPy agent optimizer
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.orchestrator import (
-            OptimizationOrchestrator,  # noqa: F401
+        from cogniverse_agents.optimizer.dspy_agent_optimizer import (  # noqa: F401
+            DSPyAgentPromptOptimizer,
         )
 
-        print("✅ orchestrator: OptimizationOrchestrator")
+        print("✅ dspy_agent_optimizer: DSPyAgentPromptOptimizer")
         tests_passed += 1
     except ImportError as e:
-        print(f"❌ orchestrator: {e}")
-
-    # Test 4: Provider abstractions
-    total_tests += 1
-    try:
-        from cogniverse_agents.optimizer.providers.base_provider import (
-            ProviderFactory,  # noqa: F401
-        )
-
-        print("✅ base_provider: ProviderFactory")
-        tests_passed += 1
-    except ImportError as e:
-        print(f"❌ base_provider: {e}")
-
-    # Test 5: Modal provider
-    total_tests += 1
-    try:
-        from cogniverse_agents.optimizer.providers.modal_provider import (  # noqa: F401
-            ModalModelProvider,
-        )
-
-        print("✅ modal_provider: ModalModelProvider")
-        tests_passed += 1
-    except ImportError as e:
-        print(f"❌ modal_provider: {e}")
-
-    # Test 6: Local provider
-    total_tests += 1
-    try:
-        from cogniverse_agents.optimizer.providers.local_provider import (  # noqa: F401
-            LocalModelProvider,
-        )
-
-        print("✅ local_provider: LocalModelProvider")
-        tests_passed += 1
-    except ImportError as e:
-        print(f"❌ local_provider: {e}")
-
-    # Test 7: Production API (Modal app)
-    total_tests += 1
-    try:
-        # This imports the Modal app, so it might fail without Modal setup
-        print("✅ production_api: Modal app")
-        tests_passed += 1
-    except Exception as e:
-        print(f"⚠️ production_api: {e} (might need Modal setup)")
-        # Don't count this as a failure since Modal might not be configured
-        tests_passed += 1
-
-    # Test 8: Model service
-    total_tests += 1
-    try:
-        print("✅ model_service: Modal app")
-        tests_passed += 1
-    except Exception as e:
-        print(f"⚠️ model_service: {e} (might need Modal setup)")
-        # Don't count this as a failure since Modal might not be configured
-        tests_passed += 1
+        print(f"❌ dspy_agent_optimizer: {e}")
 
     # Summary
     print("\n" + "=" * 60)
@@ -135,15 +78,9 @@ def test_structure_integrity():
 
     parent_dir = Path(__file__).parent.parent
     required_paths = [
-        "src/optimizer/schemas.py",
-        "src/optimizer/router_optimizer.py",
-        "src/optimizer/orchestrator.py",
-        "src/optimizer/providers/__init__.py",
-        "src/optimizer/providers/base_provider.py",
-        "src/optimizer/providers/modal_provider.py",
-        "src/optimizer/providers/local_provider.py",
-        "src/inference/production_api.py",
-        "src/inference/model_service.py",
+        "libs/agents/cogniverse_agents/optimizer/schemas.py",
+        "libs/agents/cogniverse_agents/optimizer/router_optimizer.py",
+        "libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py",
     ]
 
     all_exist = True
@@ -167,28 +104,18 @@ def test_old_files_status():
     print("=" * 60)
 
     parent_dir = Path(__file__).parent.parent
-    old_files = [
-        "orchestrator.py",
-        "agentic_router_optimizer.py",
-        "router_optimizer.py",
-        "production_api.py",
-        "model_service.py",
+    # Verify dead code has been cleaned up
+    dead_files = [
+        "libs/agents/cogniverse_agents/optimizer/orchestrator.py",
+        "libs/agents/cogniverse_agents/text_agent_server.py",
     ]
 
-    for file_path in old_files:
+    for file_path in dead_files:
         full_path = parent_dir / file_path
         if full_path.exists():
-            print(f"📄 {file_path} - Still exists (can be removed after testing)")
+            print(f"⚠️ {file_path} - Dead code still present, should be deleted")
         else:
-            print(f"🗑️ {file_path} - Removed/moved")
-
-    # Check modal_inference directory
-    modal_inference_dir = parent_dir / "modal_inference"
-    if modal_inference_dir.exists():
-        print("📁 modal_inference/ - Directory exists (can be removed after migration)")
-        print(f"   └─ Contains: {len(list(modal_inference_dir.glob('*')))} items")
-    else:
-        print("🗑️ modal_inference/ - Directory removed")
+            print(f"✅ {file_path} - Cleaned up")
 
 
 def main():
@@ -215,16 +142,7 @@ def main():
         print("=" * 80)
 
         if success:
-            print("🚀 New src/ structure is ready to use!")
-            print("\nNext steps:")
-            print(
-                "1. Test orchestrator: python scripts/run_orchestrator.py --test-models"
-            )
-            print("2. Run optimization: python scripts/run_orchestrator.py")
-            print(
-                "3. Deploy service: modal deploy src/inference/modal_inference_service.py"
-            )
-            print("4. Test the system: python tests/test_system.py")
+            print("Optimizer structure validation passed.")
         else:
             print("🔧 Please fix the issues above before proceeding.")
 

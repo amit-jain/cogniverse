@@ -1,16 +1,11 @@
 {
   "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
   
-  "text_agent_url": "http://localhost:8002",
   "video_agent_url": "http://localhost:8001",
   "orchestrator_agent_port": 8013,
-  
+
   "search_backend": "byaldi",
-  
-  "elastic_cloud_id": "your_elastic_cloud_id",
-  "elastic_api_key": "your_elastic_api_key",
-  "elastic_index": "your-text-index",
-  
+
   "vespa_url": "http://localhost",
   "vespa_port": 8080,
   "schema_name": "video_content",

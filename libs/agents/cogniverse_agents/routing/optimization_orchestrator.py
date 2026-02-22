@@ -52,6 +52,9 @@ class OptimizationOrchestrator:
         confidence_threshold: float = 0.6,
         min_annotations_for_optimization: int = 50,
         optimization_improvement_threshold: float = 0.05,
+        annotation_model: str | None = None,
+        annotation_api_base: str | None = None,
+        annotation_api_key: str | None = None,
     ):
         """
         Initialize optimization orchestrator
@@ -64,6 +67,9 @@ class OptimizationOrchestrator:
             confidence_threshold: Confidence below which annotations are needed
             min_annotations_for_optimization: Minimum annotations before triggering optimization
             optimization_improvement_threshold: Minimum improvement required to accept optimization
+            annotation_model: Model name for LLM auto-annotator
+            annotation_api_base: API base URL for annotation model
+            annotation_api_key: API key for annotation model
         """
         self.tenant_id = tenant_id
         self.span_eval_interval = span_eval_interval_minutes
@@ -84,7 +90,11 @@ class OptimizationOrchestrator:
             confidence_threshold=confidence_threshold,
             max_annotations_per_run=100,
         )
-        self.llm_annotator = LLMAutoAnnotator()
+        self.llm_annotator = LLMAutoAnnotator(
+            model=annotation_model,
+            api_base=annotation_api_base,
+            api_key=annotation_api_key,
+        )
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
         # Feedback loop

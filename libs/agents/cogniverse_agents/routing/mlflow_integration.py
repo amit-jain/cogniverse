@@ -124,10 +124,22 @@ class MLflowIntegration:
     monitoring, and A/B testing capabilities.
     """
 
-    def __init__(self, config: ExperimentConfig, storage_dir: str = "data/mlflow"):
-        """Initialize MLflow integration"""
+    def __init__(
+        self,
+        config: ExperimentConfig,
+        storage_dir: str = "data/mlflow",
+        test_mode: bool = False,
+    ):
+        """Initialize MLflow integration
+
+        Args:
+            config: Experiment configuration
+            storage_dir: Directory for MLflow artifacts
+            test_mode: If True, use mock MLflow (for tests/CI)
+        """
         if not MLFLOW_AVAILABLE:
             raise ImportError("MLflow not available. Install with: pip install mlflow")
+        self._test_mode = test_mode
 
         self.config = config
         self.storage_dir = Path(storage_dir)
@@ -168,17 +180,7 @@ class MLflowIntegration:
 
     def _initialize_mlflow(self):
         """Initialize MLflow tracking and experiment"""
-        import os
-
-        # Check if we're in a test environment
-        is_test_env = (
-            "pytest" in os.environ.get("_", "")
-            or "PYTEST_CURRENT_TEST" in os.environ
-            or "TEST_" in os.environ
-            or os.environ.get("CI") == "true"
-        )
-
-        if is_test_env:
+        if self._test_mode:
             logger.warning("Test environment detected, using mock MLflow integration")
             self._initialize_mock_mlflow()
             return

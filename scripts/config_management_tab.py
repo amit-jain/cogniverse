@@ -117,19 +117,11 @@ def render_system_config_ui(manager, tenant_id: str):
                 "Video Agent URL",
                 value=system_config.video_agent_url,
             )
-            text_agent_url = st.text_input(
-                "Text Agent URL",
-                value=system_config.text_agent_url,
-            )
 
         with col2:
             summarizer_agent_url = st.text_input(
                 "Summarizer Agent URL",
                 value=system_config.summarizer_agent_url,
-            )
-            text_analysis_agent_url = st.text_input(
-                "Text Analysis Agent URL",
-                value=system_config.text_analysis_agent_url,
             )
 
         st.markdown("### Search Backend")
@@ -202,9 +194,7 @@ def render_system_config_ui(manager, tenant_id: str):
                 tenant_id=tenant_id,
                 routing_agent_url=routing_agent_url,
                 video_agent_url=video_agent_url,
-                text_agent_url=text_agent_url,
                 summarizer_agent_url=summarizer_agent_url,
-                text_analysis_agent_url=text_analysis_agent_url,
                 search_backend=search_backend,
                 backend_url=backend_url,
                 backend_port=backend_port,

@@ -469,7 +469,11 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
             tenant_id=tenant_id,
             confidence_threshold=0.6
         )
-        llm_annotator = LLMAutoAnnotator()
+        llm_annotator = LLMAutoAnnotator(
+            model=st.session_state.get("annotation_model"),
+            api_base=st.session_state.get("annotation_api_base"),
+            api_key=st.session_state.get("annotation_api_key"),
+        )
         annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
     except Exception as e:
         st.error(f"❌ Failed to initialize annotation agents: {e}")

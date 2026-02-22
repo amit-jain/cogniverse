@@ -36,7 +36,9 @@ class TestMLflowCoreIntegration:
             )
 
             # Should not raise exception
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
             assert integration.config == config
             assert integration.storage_dir == Path(temp_dir)
 
@@ -47,7 +49,9 @@ class TestMLflowCoreIntegration:
                 experiment_name="test_context", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Test context manager exists and is callable
             assert hasattr(integration, "start_run")
@@ -62,7 +66,9 @@ class TestMLflowCoreIntegration:
                 experiment_name="test_methods", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Check essential methods exist
             assert hasattr(integration, "start_run")
@@ -122,7 +128,9 @@ class TestMLflowIntegrationReadiness:
                 lambda x, artifact_location=None, tags=None: "test_exp_id"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Should be ready for use
             assert integration is not None

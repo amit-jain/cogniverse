@@ -115,7 +115,9 @@ class TestMLflowIntegration:
             )
 
             # Should initialize without error
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             assert integration.config == config
             assert integration.storage_dir == Path(temp_dir)
@@ -139,7 +141,9 @@ class TestMLflowIntegration:
                 experiment_name="run_test", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start a run using context manager
             with integration.start_run(run_name="test_run", tags={"version": "1.0"}):
@@ -155,7 +159,9 @@ class TestMLflowIntegration:
                 tracking_uri=f"file://{temp_dir}/mlruns",
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start run and log performance
             with integration.start_run("performance_test_run"):
@@ -185,7 +191,9 @@ class TestMLflowIntegration:
                 tracking_uri=f"file://{temp_dir}/mlruns",
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start run and log optimization metrics
             with integration.start_run("optimization_test_run"):
@@ -215,7 +223,9 @@ class TestMLflowIntegration:
                 experiment_name="model_test", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             with integration.start_run("model_test_run"):
                 # Mock object can't be pickled in test environment
@@ -245,7 +255,9 @@ class TestMLflowIntegration:
                 experiment_name="ab_test", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             ab_config = ABTestConfig(
                 test_name="routing_strategy_test", minimum_sample_size=100
@@ -267,7 +279,9 @@ class TestMLflowIntegration:
                 tracking_uri=f"file://{temp_dir}/mlruns",
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start A/B test
             ab_config = ABTestConfig(
@@ -298,7 +312,9 @@ class TestMLflowIntegration:
                 tracking_uri=f"file://{temp_dir}/mlruns",
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start A/B test
             ab_config = ABTestConfig(test_name="result_test")
@@ -325,7 +341,9 @@ class TestMLflowIntegration:
                 experiment_name="summary_test", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start run and log some metrics
             with integration.start_run("summary_test_run"):
@@ -360,7 +378,9 @@ class TestMLflowIntegration:
                 experiment_name="cleanup_test", tracking_uri=f"file://{temp_dir}/mlruns"
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start run using context manager
             with integration.start_run("cleanup_test_run"):
@@ -418,7 +438,9 @@ class TestMLflowIntegrationIntegration:
                 auto_log_metrics=True,
             )
 
-            integration = MLflowIntegration(config, storage_dir=temp_dir)
+            integration = MLflowIntegration(
+                config, storage_dir=temp_dir, test_mode=True
+            )
 
             # Start experiment run
             with integration.start_run(

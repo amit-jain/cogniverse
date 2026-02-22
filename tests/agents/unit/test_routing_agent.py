@@ -25,7 +25,6 @@ class TestRoutingAgentLegacy:
         """Mock system configuration"""
         return {
             "video_agent_url": "http://localhost:8002",
-            "text_agent_url": "http://localhost:8003",
         }
 
     @pytest.fixture
@@ -118,16 +117,13 @@ class TestRoutingConfigLoading:
         assert "variant_strategies" not in config.query_fusion_config
 
     @pytest.mark.ci_fast
-    def test_env_var_overrides_query_fusion_rrf_k(self, monkeypatch):
-        """ROUTING_QUERYFUSION_RRF_K overrides config."""
+    def test_from_dict_overrides_query_fusion_rrf_k(self):
+        """from_dict overrides rrf_k."""
         from cogniverse_agents.routing.config import RoutingConfig
 
-        config = RoutingConfig()
-        assert config.query_fusion_config["rrf_k"] == 60
-
-        monkeypatch.setenv("ROUTING_QUERYFUSION_RRF_K", "30")
-        config.merge_with_env()
-
+        config = RoutingConfig.from_dict(
+            {"query_fusion_config": {"rrf_k": 30, "include_original": True}}
+        )
         assert config.query_fusion_config["rrf_k"] == 30
 
     @pytest.mark.ci_fast

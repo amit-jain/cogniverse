@@ -6,7 +6,6 @@ Provides flexible configuration loading from multiple sources.
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -290,48 +289,6 @@ Use exact JSON format in your response.""",
 
         logger.info(f"Configuration saved to {filepath}")
 
-    def merge_with_env(self):
-        """
-        Merge configuration with environment variables.
-        Environment variables override file configuration.
-
-        Format: ROUTING_<SECTION>_<KEY>
-        Example: ROUTING_LLM_MODEL=gemma2:2b
-        """
-        for key, value in os.environ.items():
-            if key.startswith("ROUTING_"):
-                parts = key[8:].lower().split("_", 1)
-                if len(parts) == 2:
-                    section, param = parts
-
-                    # Map section to config attribute
-                    section_map = {
-                        "tier": "tier_config",
-                        "gliner": "gliner_config",
-                        "llm": "llm_config",
-                        "keyword": "keyword_config",
-                        "ensemble": "ensemble_config",
-                        "optimization": "optimization_config",
-                        "monitoring": "monitoring_config",
-                        "cache": "cache_config",
-                        "langextract": "langextract_config",
-                        "queryfusion": "query_fusion_config",
-                    }
-
-                    if section in section_map:
-                        config_section = getattr(self, section_map[section])
-
-                        # Convert value to appropriate type
-                        if value.lower() in ["true", "false"]:
-                            value = value.lower() == "true"
-                        elif value.isdigit():
-                            value = int(value)
-                        elif "." in value and value.replace(".", "").isdigit():
-                            value = float(value)
-
-                        config_section[param] = value
-                        logger.info(f"Override from env: {section}.{param} = {value}")
-
 
 def get_default_config() -> RoutingConfig:
     """
@@ -377,9 +334,6 @@ def load_config(config_path: Path | None = None) -> RoutingConfig:
     else:
         config = get_default_config()
         logger.info("Using default configuration")
-
-    # Merge with environment variables
-    config.merge_with_env()
 
     return config
 

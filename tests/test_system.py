@@ -109,7 +109,7 @@ class SystemTester:
         """Test configuration loading and validation."""
         try:
             # Test basic configuration loading
-            config_keys = ["text_agent_url", "video_agent_url", "search_backend"]
+            config_keys = ["video_agent_url", "search_backend"]
             for key in config_keys:
                 value = self.config.get(key)
                 if not value:
@@ -143,7 +143,6 @@ class SystemTester:
     async def test_agent_connectivity(self) -> bool:
         """Test connectivity to all agents."""
         agent_urls = [
-            # self.config.get("text_agent_url"),  # Commented out until Elasticsearch setup
             self.config.get("video_agent_url")
         ]
 
@@ -177,7 +176,6 @@ class SystemTester:
         """Test agent discovery functionality."""
         try:
             agent_urls = [
-                # self.config.get("text_agent_url"),  # Commented out until Elasticsearch setup
                 self.config.get("video_agent_url")
             ]
 

@@ -34,9 +34,7 @@ class SystemConfig:
     # Agent service URLs
     routing_agent_url: str = "http://localhost:8001"
     video_agent_url: str = "http://localhost:8002"
-    text_agent_url: str = "http://localhost:8003"
     summarizer_agent_url: str = "http://localhost:8004"
-    text_analysis_agent_url: str = "http://localhost:8005"
 
     # API service URLs
     ingestion_api_url: str = "http://localhost:8000"
@@ -46,7 +44,6 @@ class SystemConfig:
     backend_url: str = "http://localhost"
     backend_port: int = 8080
     application_name: str = "cogniverse"  # Vespa application package name
-    elasticsearch_url: Optional[str] = None
 
     # LLM configuration
     llm_model: str = "ollama/gemma3:4b"
@@ -76,15 +73,12 @@ class SystemConfig:
             "tenant_id": self.tenant_id,
             "routing_agent_url": self.routing_agent_url,
             "video_agent_url": self.video_agent_url,
-            "text_agent_url": self.text_agent_url,
             "summarizer_agent_url": self.summarizer_agent_url,
-            "text_analysis_agent_url": self.text_analysis_agent_url,
             "ingestion_api_url": self.ingestion_api_url,
             "search_backend": self.search_backend,
             "backend_url": self.backend_url,
             "backend_port": self.backend_port,
             "application_name": self.application_name,
-            "elasticsearch_url": self.elasticsearch_url,
             "llm_model": self.llm_model,
             "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
@@ -104,19 +98,14 @@ class SystemConfig:
             tenant_id=data.get("tenant_id", "default"),
             routing_agent_url=data.get("routing_agent_url", "http://localhost:8001"),
             video_agent_url=data.get("video_agent_url", "http://localhost:8002"),
-            text_agent_url=data.get("text_agent_url", "http://localhost:8003"),
             summarizer_agent_url=data.get(
                 "summarizer_agent_url", "http://localhost:8004"
-            ),
-            text_analysis_agent_url=data.get(
-                "text_analysis_agent_url", "http://localhost:8005"
             ),
             ingestion_api_url=data.get("ingestion_api_url", "http://localhost:8000"),
             search_backend=data.get("search_backend", "vespa"),
             backend_url=data.get("backend_url") or data.get("backend", {}).get("url"),
             backend_port=data.get("backend_port")
             or data.get("backend", {}).get("port"),
-            elasticsearch_url=data.get("elasticsearch_url"),
             llm_model=data.get("llm_model", "gpt-4"),
             base_url=data.get("base_url", "http://localhost:11434"),
             llm_api_key=data.get("llm_api_key"),
