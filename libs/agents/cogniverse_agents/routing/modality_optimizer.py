@@ -24,6 +24,8 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategyModel,
 )
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_synthetic import (
     ModalityExampleSchema,
     SyntheticDataRequest,
@@ -93,6 +95,7 @@ class ModalityOptimizer:
 
     def __init__(
         self,
+        llm_config: LLMEndpointConfig,
         tenant_id: str = "default",
         model_dir: Optional[Path] = None,
         vespa_client=None,
@@ -102,11 +105,13 @@ class ModalityOptimizer:
         Initialize modality optimizer
 
         Args:
+            llm_config: LLM endpoint configuration (REQUIRED)
             tenant_id: Tenant identifier for multi-tenancy
             model_dir: Directory for saving models (defaults to outputs/models/modality)
             vespa_client: Optional Vespa client for synthetic data generation
             backend_config: Optional backend configuration for synthetic data generation
         """
+        self.llm_config = llm_config
         self.tenant_id = tenant_id
         self.model_dir = model_dir or Path("outputs/models/modality")
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -506,40 +511,11 @@ class ModalityOptimizer:
             f"(strategy: {strategy.value})"
         )
 
+        # Create LM via centralized factory
+        lm = create_dspy_lm(self.llm_config)
+
         try:
-            # Configure DSPy with LM if not already configured
-            # This is needed for training/compilation
-            if not dspy.settings.lm:
-                try:
-                    # Use Ollama with qwen2.5:7b as default
-                    ollama_lm = dspy.LM(
-                        model="ollama_chat/qwen2.5:7b",
-                        api_base="http://localhost:11434",
-                        temperature=0.7,
-                    )
-                    dspy.configure(lm=ollama_lm)
-                    logger.info("Configured DSPy with Ollama qwen2.5:7b model")
-                except Exception as e:
-                    logger.warning(f"Failed to configure Ollama LM: {e}")
-                    # Just return unoptimized module for testing
-                    routing_module = ModalityRoutingModule()
-                    self.modality_models[modality] = routing_module
-
-                    model_path = (
-                        self.model_dir / f"{modality.value}_routing_module.json"
-                    )
-                    routing_module.save(str(model_path))
-
-                    return {
-                        "status": "success",
-                        "training_samples": len(training_data),
-                        "strategy": strategy.value,
-                        "optimizer": "none (no LM available)",
-                        "validation_accuracy": 0.0,
-                        "model_path": str(model_path),
-                        "timestamp": datetime.now().isoformat(),
-                    }
-
+            # All DSPy operations scoped to this LM
             # Convert ModalityExample to DSPy examples
             dspy_examples = []
             for example in training_data:
@@ -560,34 +536,31 @@ class ModalityOptimizer:
             # Create routing module
             routing_module = ModalityRoutingModule()
 
-            # Select optimizer based on dataset size
-            if len(dspy_examples) >= 50:
-                # Use MIPROv2 for larger datasets (metric-aware optimization)
-                logger.info(f"Using MIPROv2 optimizer ({len(dspy_examples)} examples)")
-                optimizer = MIPROv2()
-
-                # Compile with MIPROv2
-                optimized_module = optimizer.compile(
-                    routing_module,
-                    trainset=dspy_examples,
-                    max_bootstrapped_demos=4,
-                    max_labeled_demos=8,
-                    num_threads=1,
-                )
-            else:
-                # Use BootstrapFewShot for smaller datasets
-                logger.info(
-                    f"Using BootstrapFewShot optimizer ({len(dspy_examples)} examples)"
-                )
-                optimizer = BootstrapFewShot(
-                    max_bootstrapped_demos=min(len(dspy_examples), 4),
-                )
-
-                # Compile with BootstrapFewShot
-                optimized_module = optimizer.compile(
-                    routing_module,
-                    trainset=dspy_examples,
-                )
+            # Select optimizer based on dataset size, scoped to this LM
+            with dspy.context(lm=lm):
+                if len(dspy_examples) >= 50:
+                    logger.info(
+                        f"Using MIPROv2 optimizer ({len(dspy_examples)} examples)"
+                    )
+                    optimizer = MIPROv2()
+                    optimized_module = optimizer.compile(
+                        routing_module,
+                        trainset=dspy_examples,
+                        max_bootstrapped_demos=4,
+                        max_labeled_demos=8,
+                        num_threads=1,
+                    )
+                else:
+                    logger.info(
+                        f"Using BootstrapFewShot optimizer ({len(dspy_examples)} examples)"
+                    )
+                    optimizer = BootstrapFewShot(
+                        max_bootstrapped_demos=min(len(dspy_examples), 4),
+                    )
+                    optimized_module = optimizer.compile(
+                        routing_module,
+                        trainset=dspy_examples,
+                    )
 
             # Store in memory
             self.modality_models[modality] = optimized_module

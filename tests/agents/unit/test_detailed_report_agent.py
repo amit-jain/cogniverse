@@ -91,50 +91,55 @@ class TestDetailedVisualAnalysisSignature:
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_core.common.vlm_interface.get_config")
-    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @pytest.mark.ci_fast
     def test_vlm_interface_initialization_success(
-        self, mock_dspy_settings, mock_get_config
+        self, mock_get_config, mock_create_dspy_lm
     ):
         """Test VLM interface initialization with proper config"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-                "api_key": "test-key",
-            }
-        }
+        mock_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_config
+        mock_create_dspy_lm.return_value = Mock()
 
         vlm = VLMInterface(config_manager=create_default_config_manager())
 
         assert vlm.config is not None
-        mock_dspy_settings.configure.assert_called_once()
+        mock_create_dspy_lm.assert_called_once_with(mock_endpoint)
 
     @patch("cogniverse_core.common.vlm_interface.get_config")
     def test_vlm_interface_initialization_missing_config(self, mock_get_config):
         """Test VLM interface initialization fails with missing config"""
-        mock_get_config.return_value = {
-            "llm": {"model_name": "test"}
-        }  # Missing base_url
+        mock_config = Mock()
+        mock_config.get_llm_config.side_effect = ValueError("LLM configuration missing")
+        mock_get_config.return_value = mock_config
 
         with pytest.raises(ValueError, match="LLM configuration missing"):
             VLMInterface(config_manager=create_default_config_manager())
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_core.common.vlm_interface.get_config")
-    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @patch("cogniverse_core.common.vlm_interface.dspy.Predict")
     @pytest.mark.asyncio
     async def test_analyze_visual_content_detailed(
-        self, mock_predict, mock_dspy_settings, mock_get_config
+        self, mock_predict, mock_get_config, mock_create_dspy_lm
     ):
         """Test detailed visual content analysis"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            }
-        }
+        mock_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_config
+        mock_create_dspy_lm.return_value = Mock()
 
         # Mock DSPy prediction result
         mock_result = Mock()
@@ -168,28 +173,27 @@ class TestVLMInterface:
 class TestDetailedReportAgent:
     """Test cases for DetailedReportAgent class"""
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_detailed_report_agent_initialization(
-        self, mock_vlm_class, mock_get_config
+        self, mock_vlm_class, mock_get_config, mock_create_dspy_lm
     ):
         """Test DetailedReportAgent initialization"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            },
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        mock_sys_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_sys_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_sys_config
+        mock_create_dspy_lm.return_value = Mock()
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = DetailedReportAgent(deps=DetailedReportDeps())
+        agent = DetailedReportAgent(deps=DetailedReportDeps(), config_manager=Mock())
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -198,21 +202,22 @@ class TestDetailedReportAgent:
         assert agent.visual_analysis_enabled is True
         assert agent.technical_analysis_enabled is True
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
-    def test_detailed_report_agent_custom_config(self, mock_vlm_class, mock_get_config):
+    def test_detailed_report_agent_custom_config(
+        self, mock_vlm_class, mock_get_config, mock_create_dspy_lm
+    ):
         """Test DetailedReportAgent with custom configuration"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            },
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        mock_sys_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_sys_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_sys_config
+        mock_create_dspy_lm.return_value = Mock()
         mock_vlm_class.return_value = Mock()
 
         agent = DetailedReportAgent(
@@ -221,7 +226,8 @@ class TestDetailedReportAgent:
                 thinking_enabled=False,
                 visual_analysis_enabled=False,
                 technical_analysis_enabled=False,
-            )
+            ),
+            config_manager=Mock(),
         )
 
         assert agent.deps.max_report_length == 1500
@@ -286,23 +292,19 @@ class TestDetailedReportAgent:
         assert len(result.recommendations) == 2
         assert result.confidence_assessment["overall"] == 0.8
 
-    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_process_a2a_task_success(self, mock_vlm_class, mock_get_config):
+    async def test_process_a2a_task_success(self, mock_vlm_class):
         """Test processing report generation request successfully"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            }
-        }
         mock_vlm_class.return_value = Mock()
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(deps=DetailedReportDeps())
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
 
         # Create report request
         request = ReportRequest(
@@ -320,22 +322,18 @@ class TestDetailedReportAgent:
         assert isinstance(result.recommendations, list)
         assert isinstance(result.confidence_assessment, dict)
 
-    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
-    async def test_process_a2a_task_no_messages(self, mock_vlm_class, mock_get_config):
+    async def test_process_a2a_task_no_messages(self, mock_vlm_class):
         """Test report generation with empty search results"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            }
-        }
         mock_vlm_class.return_value = Mock()
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(deps=DetailedReportDeps())
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
 
         # Empty search results should still generate a report
         request = ReportRequest(
@@ -388,19 +386,11 @@ class TestDetailedReportAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch(
                 "cogniverse_agents.detailed_report_agent.VLMInterface"
             ) as mock_vlm_class,
             patch.object(DetailedReportAgent, "_initialize_vlm_client"),
         ):
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "test-model",
-                    "base_url": "http://localhost:11434",
-                }
-            }
-
             mock_vlm = Mock()
             mock_vlm.analyze_visual_content = AsyncMock(
                 return_value={
@@ -412,7 +402,10 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent(deps=DetailedReportDeps())
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
             agent.vlm = mock_vlm
             return agent
 

@@ -15,6 +15,9 @@ from unittest.mock import AsyncMock, patch
 import dspy
 import pytest
 
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
 from .conftest import skip_if_no_ollama
 
 
@@ -221,9 +224,11 @@ class TestComposableModulePathSelection:
     @pytest.fixture(autouse=True)
     def configure_dspy_lm(self):
         """Configure DSPy with real Ollama for composable module tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -477,8 +482,10 @@ class TestComposableModulePathSelection:
         )
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
+            llm_config=LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            ),
             query_fusion_config={"include_original": True, "rrf_k": 60},
         )
         agent = RoutingAgent(deps=deps)
@@ -524,9 +531,11 @@ class TestSIMBAWithRealLLMAndEmbeddings:
     @pytest.fixture(autouse=True)
     def configure_dspy_lm(self):
         """Configure DSPy with real Ollama for SIMBA tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -692,9 +701,11 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
     @pytest.fixture(autouse=True)
     def configure_dspy_lm(self):
         """Configure DSPy with real Ollama for optimizer tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -717,6 +728,7 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
         )
         return AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
             base_storage_dir=str(tmp_path / "optimization"),
         )
@@ -1046,9 +1058,11 @@ class TestFullLearningPipelineIntegration:
     @pytest.fixture(autouse=True)
     def configure_dspy_lm(self):
         """Configure DSPy with real Ollama for full pipeline tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -1095,6 +1109,7 @@ class TestFullLearningPipelineIntegration:
 
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=AdvancedOptimizerConfig(
                 min_experiences_for_training=3,
                 update_frequency=3,
@@ -1197,9 +1212,11 @@ class TestSIMBACompileWithRealLLM:
     @pytest.fixture
     def dspy_lm(self):
         """Configure DSPy LM for SIMBA compile tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -1407,9 +1424,11 @@ class TestForceOptimizerSelection:
     @pytest.fixture
     def dspy_lm(self):
         """Configure DSPy LM for optimizer tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -1431,6 +1450,7 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=f"test_force_{force_optimizer_name}",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
             base_storage_dir=str(tmp_path / f"force_{force_optimizer_name}"),
         )
@@ -1513,6 +1533,7 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_adaptive",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
             base_storage_dir=str(tmp_path / "adaptive"),
         )
@@ -1567,6 +1588,7 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_compile_e2e",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
             base_storage_dir=str(tmp_path / "compile_e2e"),
         )
@@ -1607,9 +1629,11 @@ class TestVespaLearningPipelineIntegration:
     @pytest.fixture
     def dspy_lm(self):
         """Configure DSPy LM for Vespa pipeline tests."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
         )
         dspy.configure(lm=lm)
         yield lm

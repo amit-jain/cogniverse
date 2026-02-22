@@ -1995,7 +1995,17 @@ with monitoring_tabs[5]:
             from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 
             if 'modality_optimizer' not in st.session_state:
-                st.session_state.modality_optimizer = ModalityOptimizer()
+                from cogniverse_foundation.config.manager import (
+                    create_default_config_manager,
+                )
+                from cogniverse_foundation.config.utils import get_config
+
+                _cm = create_default_config_manager()
+                _cfg = get_config(tenant_id="default", config_manager=_cm)
+                _llm = _cfg.get_llm_config().primary
+                st.session_state.modality_optimizer = ModalityOptimizer(
+                    llm_config=_llm
+                )
 
             optimizer = st.session_state.modality_optimizer
 

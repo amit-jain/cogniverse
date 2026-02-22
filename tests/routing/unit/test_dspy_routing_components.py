@@ -28,6 +28,7 @@ from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementP
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestDSPyRoutingSignatures:
@@ -157,7 +158,10 @@ class TestAdvancedRoutingOptimizer:
         """Test optimizer initialization"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+            base_storage_dir=temp_storage,
         )
 
         assert optimizer.config == config
@@ -169,7 +173,10 @@ class TestAdvancedRoutingOptimizer:
         """Test recording routing experience"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+            base_storage_dir=temp_storage,
         )
 
         reward = await optimizer.record_routing_experience(
@@ -191,7 +198,10 @@ class TestAdvancedRoutingOptimizer:
         """Test getting optimization status"""
         config = AdvancedOptimizerConfig()
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test-tenant", config=config, base_storage_dir=temp_storage
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+            base_storage_dir=temp_storage,
         )
 
         status = optimizer.get_optimization_status()
@@ -227,6 +237,7 @@ class TestDSPyRoutingIntegration:
         )  # Create but don't assign to unused variable
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=AdvancedOptimizerConfig(min_experiences_for_training=10),
             base_storage_dir=str(tmp_path / "test_optimizer"),
         )

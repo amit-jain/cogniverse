@@ -19,6 +19,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.integration
@@ -385,7 +386,9 @@ class TestAgentWorkflowIntegration:
     def test_summarizer_agent_functionality(self):
         """Test summarizer agent with real data structures"""
         deps = SummarizerDeps()
-        summarizer = SummarizerAgent(deps=deps)
+        summarizer = SummarizerAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
 
         # Test agent exists and has required interface
         assert summarizer is not None
@@ -400,7 +403,9 @@ class TestAgentWorkflowIntegration:
     def test_detailed_report_agent_functionality(self):
         """Test detailed report agent with real data structures"""
         deps = DetailedReportDeps()
-        reporter = DetailedReportAgent(deps=deps)
+        reporter = DetailedReportAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
 
         # Test agent exists and has required interface
         assert reporter is not None
@@ -444,10 +449,15 @@ class TestAgentWorkflowIntegration:
     def test_multi_agent_coordination_readiness(self):
         """Test that agents can coordinate in a multi-agent workflow"""
         # Test that we can create multiple agents without conflicts
+        _config_manager = create_default_config_manager()
         summarizer_deps = SummarizerDeps()
-        summarizer = SummarizerAgent(deps=summarizer_deps)
+        summarizer = SummarizerAgent(
+            deps=summarizer_deps, config_manager=_config_manager
+        )
         reporter_deps = DetailedReportDeps()
-        reporter = DetailedReportAgent(deps=reporter_deps)
+        reporter = DetailedReportAgent(
+            deps=reporter_deps, config_manager=_config_manager
+        )
 
         # Both should coexist without issues
         assert summarizer is not None
@@ -475,10 +485,15 @@ class TestSystemIntegrationReadiness:
             components["enhancer"] = QueryEnhancementPipeline()
 
             # Agents
+            _config_manager = create_default_config_manager()
             summarizer_deps = SummarizerDeps()
-            components["summarizer"] = SummarizerAgent(deps=summarizer_deps)
+            components["summarizer"] = SummarizerAgent(
+                deps=summarizer_deps, config_manager=_config_manager
+            )
             reporter_deps = DetailedReportDeps()
-            components["reporter"] = DetailedReportAgent(deps=reporter_deps)
+            components["reporter"] = DetailedReportAgent(
+                deps=reporter_deps, config_manager=_config_manager
+            )
 
             # All should initialize successfully
             for name, component in components.items():

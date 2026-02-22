@@ -35,9 +35,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import get_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _get_llm_config(tenant_id: str) -> LLMEndpointConfig:
+    """Resolve LLM config from centralized config system."""
+    from cogniverse_foundation.config.manager import create_default_config_manager
+
+    config_manager = create_default_config_manager()
+    system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    return system_config.get_llm_config().primary
 
 
 async def optimize_modality(
@@ -63,7 +74,8 @@ async def optimize_modality(
     """
     logger.info(f"🎯 Optimizing MODALITY routing for tenant '{tenant_id}'")
 
-    optimizer = ModalityOptimizer(tenant_id=tenant_id)
+    llm_config = _get_llm_config(tenant_id)
+    optimizer = ModalityOptimizer(llm_config=llm_config, tenant_id=tenant_id)
     results = await optimizer.optimize_all_modalities(
         lookback_hours=lookback_hours,
         min_confidence=min_confidence
@@ -132,7 +144,8 @@ async def optimize_routing(
     """
     logger.info(f"🎯 Optimizing ROUTING (entity-based) for tenant '{tenant_id}'")
 
-    optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
+    llm_config = _get_llm_config(tenant_id)
+    optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id, llm_config=llm_config)
     results = await optimizer.optimize()
 
     return {

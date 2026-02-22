@@ -46,8 +46,12 @@ class TestRoutingAgentCacheMetrics:
 
         # Mock all external dependencies to avoid network calls and delays
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
+        def _mock_configure_dspy(self_agent, deps_arg):
+            """Mock _configure_dspy that sets _dspy_lm to a MagicMock."""
+            self_agent._dspy_lm = MagicMock()
+
         with (
-            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy),
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
             patch(

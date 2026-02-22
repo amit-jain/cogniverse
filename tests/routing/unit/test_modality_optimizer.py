@@ -17,6 +17,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategy,
 )
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestModalityOptimizer:
@@ -68,7 +69,10 @@ class TestModalityOptimizer:
     def optimizer(self, temp_model_dir, mock_components):
         """Create optimizer instance with mocked components"""
         return ModalityOptimizer(
-            tenant_id="test-tenant", model_dir=temp_model_dir, vespa_client=None
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            tenant_id="test-tenant",
+            model_dir=temp_model_dir,
+            vespa_client=None,
         )
 
     def test_initialization(self, optimizer, temp_model_dir):

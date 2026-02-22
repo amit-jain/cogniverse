@@ -14,15 +14,13 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import dspy
-from dotenv import load_dotenv
 from dspy.teleprompt import MIPROv2
+
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Import schemas from the new location
 from .schemas import AgenticRouter, RoutingDecision
-
-# Load environment variables
-load_dotenv()
-
 
 # ==================== DSPy Module ====================
 
@@ -403,23 +401,19 @@ def evaluate_routing_accuracy(
 
 
 def optimize_router(
-    student_model: str = "google/gemma-3-1b-it",
-    teacher_model: Optional[str] = None,
-    teacher_api_key: Optional[str] = None,
+    student_config: LLMEndpointConfig,
+    teacher_config: Optional[LLMEndpointConfig] = None,
     use_manual_examples: bool = True,
     num_teacher_examples: int = 50,
-    output_dir: str = "optimization_results",
 ) -> Dict:
     """
     Run the MIPROv2 optimization for the router.
 
     Args:
-        student_model: Model ID for the student (default: google/gemma-3-1b-it)
-        teacher_model: Model ID for the teacher (optional, for generating examples)
-        teacher_api_key: API key for the teacher model (required when teacher_model is set)
+        student_config: LLM endpoint config for the student model
+        teacher_config: Optional LLM endpoint config for the teacher model
         use_manual_examples: Whether to use manually crafted examples
         num_teacher_examples: Number of examples to generate with teacher
-        output_dir: Directory to save results
 
     Returns:
         Dictionary with optimization results
@@ -430,27 +424,9 @@ def optimize_router(
     output_manager = get_output_manager()
     output_path = output_manager.get_optimization_dir()
 
-    # Initialize models
-    print(f"Initializing student model: {student_model}")
-
-    # Configure student LM based on the model type
-    if "gemma" in student_model.lower():
-        # For Gemma models, we'll use the appropriate provider
-        # This could be HuggingFace, Together, or another provider
-        student_lm = dspy.LM(
-            model=student_model,
-            temperature=0.1,  # Low temperature for consistent JSON output
-            max_tokens=100,  # Router output is small
-        )
-    else:
-        # Default configuration for other models
-        student_lm = dspy.LM(
-            model=student_model,
-            temperature=0.1,
-            max_tokens=100,
-        )
-
-    dspy.configure(lm=student_lm)
+    # Initialize student model via centralized factory
+    print(f"Initializing student model: {student_config.model}")
+    student_lm = create_dspy_lm(student_config)
 
     # Generate or load training data
     print("Generating training data...")
@@ -460,17 +436,13 @@ def optimize_router(
     else:
         train_examples = []
 
-    if teacher_model and num_teacher_examples > 0:
+    if teacher_config and num_teacher_examples > 0:
         print(
-            f"Generating {num_teacher_examples} examples with teacher model: {teacher_model}"
+            f"Generating {num_teacher_examples} examples with teacher model: {teacher_config.model}"
         )
 
-        # Configure teacher LM — LiteLLM resolves provider from model name
-        if not teacher_api_key:
-            raise ValueError("teacher_api_key is required when teacher_model is set")
-        teacher_lm = dspy.LM(
-            model=teacher_model, api_key=teacher_api_key, temperature=0.7
-        )
+        # Configure teacher LM via centralized factory
+        teacher_lm = create_dspy_lm(teacher_config)
 
         teacher_examples = generate_teacher_examples(teacher_lm, num_teacher_examples)
         train_examples.extend(teacher_examples)
@@ -502,43 +474,45 @@ def optimize_router(
 
         return score
 
-    # Initialize router module
-    router = RouterModule()
+    # All DSPy operations scoped to student LM
+    with dspy.context(lm=student_lm):
+        # Initialize router module
+        router = RouterModule()
 
-    # Run baseline evaluation
-    print("\nEvaluating baseline performance...")
-    baseline_metrics = evaluate_routing_accuracy(router, val_set)
-    print(f"Baseline accuracy: {baseline_metrics}")
+        # Run baseline evaluation
+        print("\nEvaluating baseline performance...")
+        baseline_metrics = evaluate_routing_accuracy(router, val_set)
+        print(f"Baseline accuracy: {baseline_metrics}")
 
-    # Run MIPROv2 optimization
-    print("\nRunning MIPROv2 optimization...")
-    start_time = time.time()
+        # Run MIPROv2 optimization
+        print("\nRunning MIPROv2 optimization...")
+        start_time = time.time()
 
-    optimizer = MIPROv2(
-        metric=routing_metric,
-        num_candidates=10,  # Number of instruction candidates
-        init_temperature=0.7,
-        verbose=True,
-    )
+        optimizer = MIPROv2(
+            metric=routing_metric,
+            num_candidates=10,  # Number of instruction candidates
+            init_temperature=0.7,
+            verbose=True,
+        )
 
-    # Compile the module
-    optimized_router = optimizer.compile(
-        router,
-        trainset=train_set,
-        valset=val_set,
-        num_trials=20,  # Number of optimization trials
-        minibatch_size=4,
-        minibatch_full_eval_steps=10,
-        minibatch=True,
-        requires_permission_to_run=False,
-    )
+        # Compile the module
+        optimized_router = optimizer.compile(
+            router,
+            trainset=train_set,
+            valset=val_set,
+            num_trials=20,  # Number of optimization trials
+            minibatch_size=4,
+            minibatch_full_eval_steps=10,
+            minibatch=True,
+            requires_permission_to_run=False,
+        )
 
-    optimization_time = time.time() - start_time
+        optimization_time = time.time() - start_time
 
-    # Evaluate optimized performance
-    print("\nEvaluating optimized performance...")
-    optimized_metrics = evaluate_routing_accuracy(optimized_router, val_set)
-    print(f"Optimized accuracy: {optimized_metrics}")
+        # Evaluate optimized performance
+        print("\nEvaluating optimized performance...")
+        optimized_metrics = evaluate_routing_accuracy(optimized_router, val_set)
+        print(f"Optimized accuracy: {optimized_metrics}")
 
     # Extract optimized prompt and demonstrations
     print("\nExtracting optimization artifacts...")
@@ -551,9 +525,9 @@ def optimize_router(
         "instructions": state.get("route", {}).get("instructions", ""),
         "demonstrations": [],
         "model_config": {
-            "student_model": student_model,
-            "temperature": 0.1,
-            "max_tokens": 100,
+            "student_model": student_config.model,
+            "temperature": student_config.temperature,
+            "max_tokens": student_config.max_tokens,
         },
         "metrics": {
             "baseline": baseline_metrics,
@@ -628,13 +602,14 @@ class OptimizedRouter:
         with open(artifact_path, "r") as f:
             self.artifacts = json.load(f)
 
-        # Initialize the LM with optimized config
+        # Initialize the LM with optimized config via centralized factory
         config = self.artifacts["model_config"]
-        self.lm = dspy.LM(
+        endpoint_config = LLMEndpointConfig(
             model=config["student_model"],
             temperature=config["temperature"],
             max_tokens=config["max_tokens"],
         )
+        self.lm = create_dspy_lm(endpoint_config)
 
         # Build the prompt template
         self.system_prompt = self.artifacts["system_prompt"]
@@ -696,23 +671,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Optimize the Agentic RAG Router")
     parser.add_argument(
-        "--student-model",
-        default="google/gemma-3-1b-it",
-        help="Student model to optimize",
-    )
-    parser.add_argument(
-        "--teacher-model",
-        default=None,
-        help="Teacher model for generating examples (optional)",
+        "--use-teacher",
+        action="store_true",
+        help="Use teacher model for generating examples",
     )
     parser.add_argument(
         "--num-examples",
         type=int,
         default=50,
         help="Number of examples to generate with teacher",
-    )
-    parser.add_argument(
-        "--output-dir", default="optimization_results", help="Directory to save results"
     )
     parser.add_argument(
         "--no-manual-examples",
@@ -722,34 +689,31 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Read teacher API key from config.json — single source of truth
-    teacher_api_key = None
-    if args.teacher_model:
-        from cogniverse_foundation.config import create_default_config_manager
+    # Load LLM config from centralized config.json
+    from cogniverse_foundation.config import create_default_config_manager
+    from cogniverse_foundation.config.utils import get_config
 
-        config_manager = create_default_config_manager()
-        optimization_config = config_manager.get_raw_config().get("optimization", {})
-        teacher_api_key = optimization_config.get("teacher", {}).get("api_key")
-        if not teacher_api_key:
-            raise ValueError(
-                "Teacher API key not found in config.json (optimization.teacher.api_key)"
-            )
+    config_manager = create_default_config_manager()
+    config_utils = get_config(config_manager=config_manager)
+    llm_config = config_utils.get_llm_config()
+
+    # Student = primary, Teacher = teacher from llm_config
+    student_config = llm_config.primary
+    teacher_config = llm_config.teacher if args.use_teacher else None
 
     # Run optimization
     results = optimize_router(
-        student_model=args.student_model,
-        teacher_model=args.teacher_model,
-        teacher_api_key=teacher_api_key,
+        student_config=student_config,
+        teacher_config=teacher_config,
         use_manual_examples=not args.no_manual_examples,
         num_teacher_examples=args.num_examples,
-        output_dir=args.output_dir,
     )
 
     # Print summary
     print("\n" + "=" * 50)
     print("OPTIMIZATION SUMMARY")
     print("=" * 50)
-    print(f"Student Model: {args.student_model}")
+    print(f"Student Model: {student_config.model}")
     print(
         f"Baseline Overall Accuracy: {results['metrics']['baseline']['overall_accuracy']:.2%}"
     )

@@ -391,8 +391,8 @@ class LLMRoutingStrategy(RoutingStrategy):
         super().__init__(config)
         cfg = config or {}
         self.provider = cfg.get("provider", "local")
-        self.model = cfg.get("model", "gemma2:2b")
-        self.endpoint = cfg.get("endpoint", "http://localhost:11434")
+        self.model = cfg.get("model")  # Populated from centralized llm_config
+        self.endpoint = cfg.get("endpoint")  # Populated from centralized llm_config
         self.temperature = cfg.get("temperature", 0.1)
         self.max_tokens = cfg.get("max_tokens", 150)
 
@@ -1069,9 +1069,10 @@ class LangExtractRoutingStrategy(RoutingStrategy):
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         cfg = config or {}
-        # Use local Ollama model instead of Gemini
-        self.model_name = cfg.get("langextract_model", "gemma3:4b")
-        self.ollama_url = cfg.get("ollama_url", "http://localhost:11434")
+        self.model_name = cfg.get(
+            "langextract_model"
+        )  # Populated from centralized llm_config
+        self.ollama_url = cfg.get("ollama_url")  # Populated from centralized llm_config
         self.extractor = None
         self.schema_prompt = """
         Classify query generation type by looking for EXACT keywords:

@@ -17,6 +17,7 @@ from typing import Optional
 from litellm import completion
 
 from cogniverse_agents.routing.annotation_agent import AnnotationRequest
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -57,21 +58,17 @@ class LLMAutoAnnotator:
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        api_base: Optional[str] = None,
-        api_key: Optional[str] = None,
+        llm_config: LLMEndpointConfig,
     ):
         """
         Initialize LLM auto-annotator
 
         Args:
-            model: Model name to use (defaults to env var or claude-3-5-sonnet-20241022)
-            api_base: API base URL for local models (e.g., http://localhost:11434 for Ollama)
-            api_key: API key (defaults to ANNOTATION_API_KEY env var)
+            llm_config: LLM endpoint configuration from centralized llm_config.
         """
-        self.model = model or "claude-3-5-sonnet-20241022"
-        self.api_base = api_base
-        self.api_key = api_key
+        self.model = llm_config.model
+        self.api_base = llm_config.api_base
+        self.api_key = llm_config.api_key
 
         logger.info(
             f"🤖 Initialized LLMAutoAnnotator with model: {self.model}"

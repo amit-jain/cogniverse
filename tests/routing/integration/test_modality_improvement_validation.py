@@ -22,6 +22,7 @@ from cogniverse_agents.routing.modality_optimizer import (
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 @pytest.mark.integration
@@ -32,7 +33,9 @@ class TestModalityImprovementValidation:
     def modality_optimizer(self, tmp_path: Path, telemetry_manager_with_phoenix):
         """Create modality optimizer with test directory"""
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models", tenant_id="test_tenant"
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            model_dir=tmp_path / "models",
+            tenant_id="test_tenant",
         )
         return optimizer
 
@@ -193,7 +196,9 @@ class TestModalityImprovementValidation:
         """
         # Create optimizer and train video model
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models", tenant_id="test_tenant"
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            model_dir=tmp_path / "models",
+            tenant_id="test_tenant",
         )
 
         optimizer._train_modality_model(
@@ -308,7 +313,9 @@ class TestModalityImprovementValidation:
         """
         # Create optimizer and train model
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models", tenant_id="test_tenant"
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            model_dir=tmp_path / "models",
+            tenant_id="test_tenant",
         )
 
         optimizer._train_modality_model(
@@ -369,7 +376,9 @@ class TestModalityImprovementValidation:
 
         # Create new optimizer instance (simulating new session)
         new_optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models", tenant_id="test_tenant"
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            model_dir=tmp_path / "models",
+            tenant_id="test_tenant",
         )
 
         # Load models

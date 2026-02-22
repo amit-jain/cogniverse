@@ -9,6 +9,7 @@ import pytest
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestCrossModalOptimizerIntegration:
@@ -67,14 +68,20 @@ class TestAdvancedRoutingOptimizerIntegration:
 
     def test_advanced_optimizer_initialization(self):
         """Test AdvancedRoutingOptimizer can be initialized"""
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
         assert optimizer is not None
         assert isinstance(optimizer.experiences, list)
 
     @pytest.mark.asyncio
     async def test_generate_synthetic_routing_data(self, test_generator_config):
         """Test generating synthetic data for AdvancedRoutingOptimizer"""
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         # Clear any existing experiences
         optimizer.experiences.clear()
@@ -90,7 +97,10 @@ class TestAdvancedRoutingOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_routing_data_structure(self, test_generator_config):
         """Test generated data has correct structure"""
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         await optimizer.generate_synthetic_training_data(
             count=5, generator_config=test_generator_config
@@ -109,7 +119,10 @@ class TestAdvancedRoutingOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_routing_data_variety(self, test_generator_config):
         """Test that generated data has variety"""
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         await optimizer.generate_synthetic_training_data(
             count=20, generator_config=test_generator_config
@@ -195,7 +208,10 @@ class TestMultiOptimizerIntegration:
     async def test_all_optimizers_can_generate_data(self, test_generator_config):
         """Test that all optimizers can generate synthetic data"""
         cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
-        routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        routing = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
         workflow = WorkflowIntelligence()
 
         # Generate for all
@@ -213,7 +229,10 @@ class TestMultiOptimizerIntegration:
     async def test_synthetic_data_is_independent(self, test_generator_config):
         """Test that each optimizer gets independent data"""
         cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
-        routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        routing = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         # Clear state before testing
         cross_modal.fusion_history.clear()

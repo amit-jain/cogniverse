@@ -7,10 +7,12 @@ import subprocess
 import dspy
 import pytest
 
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     BackendConfig,
     DSPyModuleConfig,
+    LLMEndpointConfig,
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
@@ -33,10 +35,11 @@ def dspy_lm():
     if not is_ollama_available():
         pytest.skip("Ollama not available - required for integration tests")
 
-    lm = dspy.LM(
+    config = LLMEndpointConfig(
         model="ollama/gemma3:4b",
         api_base="http://localhost:11434",
     )
+    lm = create_dspy_lm(config)
     dspy.configure(lm=lm)
     yield lm
     dspy.configure(lm=None)

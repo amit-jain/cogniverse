@@ -24,6 +24,8 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -105,7 +107,10 @@ class TestDSPySystemIntegration:
     @pytest.mark.ci_fast
     def test_advanced_optimizer_initialization(self):
         """Test advanced optimizer components are properly initialized"""
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         # Should have required components
         assert hasattr(optimizer, "config")
@@ -193,7 +198,10 @@ class TestDSPySystemIntegration:
         try:
             components["extractor"] = RelationshipExtractorTool()
             components["pipeline"] = QueryEnhancementPipeline()
-            components["optimizer"] = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+            components["optimizer"] = AdvancedRoutingOptimizer(
+                tenant_id="test_tenant",
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            )
             components["learner"] = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
             # All components should initialize successfully
@@ -216,10 +224,16 @@ class TestMultiAgentSystem:
     """Test multi-agent system components"""
 
     def test_core_agents_initialization(self):
-        """Test that core agents can be initialized"""
+        """Test that core agents can be initialized with real config."""
+        config_manager = create_default_config_manager()
+
         # Should initialize with proper config
-        summarizer = SummarizerAgent(deps=SummarizerDeps())
-        reporter = DetailedReportAgent(deps=DetailedReportDeps())
+        summarizer = SummarizerAgent(
+            deps=SummarizerDeps(), config_manager=config_manager
+        )
+        reporter = DetailedReportAgent(
+            deps=DetailedReportDeps(), config_manager=config_manager
+        )
 
         assert summarizer is not None
         assert reporter is not None
@@ -227,6 +241,10 @@ class TestMultiAgentSystem:
         # Should have required interfaces
         assert hasattr(summarizer, "summarize")
         assert hasattr(reporter, "generate_report")
+
+        # Should have DSPy LM initialized from real config
+        assert summarizer._dspy_lm is not None
+        assert reporter._dspy_lm is not None
 
     def test_enhanced_video_search_real_config(self):
         """Test enhanced video search agent with real configuration"""

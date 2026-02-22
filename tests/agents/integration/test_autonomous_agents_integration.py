@@ -54,10 +54,15 @@ def real_dspy_lm():
     if not is_ollama_available():
         pytest.skip("Ollama server not available")
 
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
     # Configure DSPy with Ollama - use smallest model for fast tests
-    lm = dspy.LM(
-        model="ollama/qwen2.5:1.5b",  # Small, fast model
-        api_base="http://localhost:11434",
+    lm = create_dspy_lm(
+        LLMEndpointConfig(
+            model="ollama/qwen2.5:1.5b",  # Small, fast model
+            api_base="http://localhost:11434",
+        )
     )
 
     # Test connection

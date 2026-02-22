@@ -20,6 +20,7 @@ import requests
 
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
@@ -268,7 +269,9 @@ async def routing_agent_with_spans(phoenix_container):
 @pytest.fixture(scope="function")
 def optimizer():
     """Create AdvancedRoutingOptimizer for testing - fresh for each test"""
-    return AdvancedRoutingOptimizer(tenant_id="test-tenant")
+    return AdvancedRoutingOptimizer(
+        tenant_id="test-tenant", llm_config=LLMEndpointConfig(model="ollama/test-model")
+    )
 
 
 @pytest.fixture(scope="function")
@@ -378,7 +381,9 @@ class TestRoutingSpanEvaluatorIntegration:
         # Create optimizer with temporary storage to avoid loading existing data
         with tempfile.TemporaryDirectory() as temp_dir:
             optimizer = AdvancedRoutingOptimizer(
-                tenant_id="test-tenant", base_storage_dir=temp_dir
+                tenant_id="test-tenant",
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                base_storage_dir=temp_dir,
             )
 
             # Verify optimizer starts empty (no loaded data)

@@ -21,6 +21,7 @@ from cogniverse_core.events.types import (
     EventType,
     TaskState,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestInstrumentedRLMBasics:
@@ -165,8 +166,7 @@ class TestRLMInferenceWithEventQueue:
         """RLMInference accepts event_queue parameters."""
         mock_queue = MagicMock()
         rlm_inference = RLMInference(
-            backend="openai",
-            model="gpt-4o",
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
             max_iterations=5,
             event_queue=mock_queue,
             task_id="task_123",
@@ -179,8 +179,7 @@ class TestRLMInferenceWithEventQueue:
     def test_get_rlm_without_event_queue(self):
         """_get_rlm returns standard RLM without event_queue."""
         rlm_inference = RLMInference(
-            backend="openai",
-            model="gpt-4o",
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
         )
 
         with patch("cogniverse_agents.inference.rlm_inference.dspy") as mock_dspy:
@@ -197,8 +196,7 @@ class TestRLMInferenceWithEventQueue:
         """_get_rlm returns InstrumentedRLM with event_queue."""
         mock_queue = MagicMock()
         rlm_inference = RLMInference(
-            backend="openai",
-            model="gpt-4o",
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
             event_queue=mock_queue,
             task_id="task_123",
             tenant_id="tenant_1",
@@ -229,14 +227,14 @@ class TestRLMAwareMixinWithEventQueue:
 
         agent = TestAgent()
         mock_queue = MagicMock()
+        llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 
         # First call without event_queue
-        rlm1 = agent.get_rlm(backend="openai", model="gpt-4o")
+        rlm1 = agent.get_rlm(llm_config=llm_config)
 
         # Second call with event_queue should create new instance
         rlm2 = agent.get_rlm(
-            backend="openai",
-            model="gpt-4o",
+            llm_config=llm_config,
             event_queue=mock_queue,
             task_id="task_123",
         )
@@ -256,10 +254,10 @@ class TestRLMAwareMixinWithEventQueue:
 
         agent = TestAgent()
         mock_queue = MagicMock()
+        llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 
         rlm = agent.get_rlm(
-            backend="openai",
-            model="gpt-4o",
+            llm_config=llm_config,
             event_queue=mock_queue,
             task_id="task_123",
             # tenant_id not specified

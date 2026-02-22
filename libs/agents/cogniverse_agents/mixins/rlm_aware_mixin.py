@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
@@ -58,8 +59,7 @@ class RLMAwareMixin:
 
     def get_rlm(
         self,
-        backend: str = "openai",
-        model: str = "gpt-4o",
+        llm_config: LLMEndpointConfig,
         max_iterations: int = 10,
         max_llm_calls: int = 30,
         timeout_seconds: int = 300,
@@ -70,8 +70,7 @@ class RLMAwareMixin:
         """Get or create RLM inference instance with specified config.
 
         Args:
-            backend: LLM backend (openai, anthropic, litellm)
-            model: Model name
+            llm_config: LLM endpoint configuration
             max_iterations: Maximum REPL iteration loops
             max_llm_calls: Maximum LLM sub-calls
             timeout_seconds: Timeout for RLM processing
@@ -86,8 +85,7 @@ class RLMAwareMixin:
         # (event_queue/task_id may change per request)
         if event_queue:
             return RLMInference(
-                backend=backend,
-                model=model,
+                llm_config=llm_config,
                 max_iterations=max_iterations,
                 max_llm_calls=max_llm_calls,
                 timeout_seconds=timeout_seconds,
@@ -99,15 +97,13 @@ class RLMAwareMixin:
         # Create cached instance if config changed (no event_queue)
         if (
             self._rlm_instance is None
-            or self._rlm_instance.backend != backend
-            or self._rlm_instance.model != model
+            or self._rlm_instance.model != llm_config.model
             or self._rlm_instance.max_iterations != max_iterations
             or self._rlm_instance.max_llm_calls != max_llm_calls
             or self._rlm_instance.timeout_seconds != timeout_seconds
         ):
             self._rlm_instance = RLMInference(
-                backend=backend,
-                model=model,
+                llm_config=llm_config,
                 max_iterations=max_iterations,
                 max_llm_calls=max_llm_calls,
                 timeout_seconds=timeout_seconds,
@@ -157,9 +153,15 @@ class RLMAwareMixin:
         Returns:
             RLMResult with answer and telemetry data
         """
+        # Build LLMEndpointConfig from RLMOptions
+        model_name = rlm_options.model or "gpt-4o"
+        # Ensure provider prefix is present
+        if "/" not in model_name:
+            model_name = f"{rlm_options.backend}/{model_name}"
+        rlm_llm_config = LLMEndpointConfig(model=model_name)
+
         rlm = self.get_rlm(
-            backend=rlm_options.backend,
-            model=rlm_options.model or "gpt-4o",
+            llm_config=rlm_llm_config,
             max_iterations=rlm_options.max_iterations,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
@@ -202,9 +204,14 @@ class RLMAwareMixin:
         Returns:
             RLMResult with synthesized answer
         """
+        # Build LLMEndpointConfig from RLMOptions
+        model_name = rlm_options.model or "gpt-4o"
+        if "/" not in model_name:
+            model_name = f"{rlm_options.backend}/{model_name}"
+        rlm_llm_config = LLMEndpointConfig(model=model_name)
+
         rlm = self.get_rlm(
-            backend=rlm_options.backend,
-            model=rlm_options.model or "gpt-4o",
+            llm_config=rlm_llm_config,
             max_iterations=rlm_options.max_iterations,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,

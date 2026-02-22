@@ -67,15 +67,17 @@ class RoutingConfig:
     )
 
     # LLM configuration (Slow Path - Tier 2)
+    # NOTE: model/endpoint defaults are populated from llm_config.resolve("routing_agent")
+    # at startup. Do NOT hardcode model names here.
     llm_config: dict[str, Any] = field(
         default_factory=lambda: {
-            "provider": "local",  # "local", "modal", "langextract"
-            "model": "gemma3:4b",  # SmolLM3-3B as recommended
-            "endpoint": "http://localhost:11434",
+            "provider": "local",
+            "model": None,  # Populated from centralized llm_config at startup
+            "endpoint": None,  # Populated from centralized llm_config at startup
             "temperature": 0.1,
             "max_tokens": 150,
             "use_chain_of_thought": True,
-            "use_think_mode": True,  # SmolLM3 /think mode
+            "use_think_mode": True,
             "timeout": 30,
             "system_prompt": """You are a precise routing agent for a multi-modal search system.
 Analyze the user query and determine:
@@ -350,7 +352,7 @@ def create_example_config(filepath: Path = Path("configs/routing_config_example.
     # Add some example customizations
     config.routing_mode = "tiered"
     config.gliner_config["model"] = "urchade/gliner_large-v2.1"
-    config.llm_config["model"] = "gemma3:4b"
+    config.llm_config["model"] = None  # Populated from centralized llm_config
     config.optimization_config["enable_auto_optimization"] = True
 
     config.save(filepath)

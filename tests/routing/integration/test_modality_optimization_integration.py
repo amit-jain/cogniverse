@@ -17,6 +17,7 @@ from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_synthetic import ModalityExampleSchema
 
 
@@ -39,6 +40,7 @@ class TestModalityOptimizationIntegration:
         ):
             # Step 1: Initialize components
             optimizer = ModalityOptimizer(
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
                 vespa_client=None,
@@ -176,6 +178,7 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
                 vespa_client=None,
@@ -240,6 +243,7 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
                 vespa_client=None,
@@ -342,6 +346,7 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
                 vespa_client=None,
@@ -369,6 +374,7 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
                 vespa_client=None,

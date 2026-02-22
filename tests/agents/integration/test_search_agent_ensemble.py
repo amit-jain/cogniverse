@@ -809,9 +809,13 @@ class TestEndToEndQueryFusionPipeline:
     @pytest.fixture(autouse=True)
     def configure_dspy_lm(self):
         """Configure DSPy with real Ollama for variant generation."""
-        lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            )
         )
         dspy.configure(lm=lm)
         yield lm
@@ -821,6 +825,7 @@ class TestEndToEndQueryFusionPipeline:
     def routing_agent_parallel(self):
         """RoutingAgent configured with query_fusion_config for multi-query fusion."""
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -836,8 +841,9 @@ class TestEndToEndQueryFusionPipeline:
         )
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             query_fusion_config={
                 "include_original": True,
                 "rrf_k": 60,
@@ -1056,6 +1062,7 @@ class TestEndToEndQueryFusionPipeline:
         which SearchAgent reads at search time.
         """
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -1072,8 +1079,9 @@ class TestEndToEndQueryFusionPipeline:
         custom_rrf_k = 30  # Non-default (default is 60)
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             query_fusion_config={
                 "include_original": True,
                 "rrf_k": custom_rrf_k,
@@ -1110,6 +1118,7 @@ class TestEndToEndQueryFusionPipeline:
         from variants, so only strategy-generated variants are used.
         """
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -1125,8 +1134,9 @@ class TestEndToEndQueryFusionPipeline:
         )
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             query_fusion_config={
                 "include_original": False,
                 "rrf_k": 60,
@@ -1171,6 +1181,7 @@ class TestEndToEndQueryFusionPipeline:
         This verifies the guard: len(context.query_variants) > 1
         """
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.telemetry.config import (
             BatchExportConfig,
             TelemetryConfig,
@@ -1188,8 +1199,9 @@ class TestEndToEndQueryFusionPipeline:
         # we get empty variants → single-query fallback
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             query_fusion_config={
                 "include_original": False,
                 "rrf_k": 60,

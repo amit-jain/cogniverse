@@ -99,44 +99,22 @@ class TestAgentConstructionNoEnvVars:
 
     def test_summarizer_no_env_vars(self):
         """SummarizerAgent constructs without env vars."""
-        mock_config = {
-            "llm": {"model": "test"},
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
-        with patch(
-            "cogniverse_foundation.config.utils.get_config",
-            return_value=mock_config,
-        ):
-            with patch("dspy.ChainOfThought"):
-                deps = SummarizerDeps()
-                agent = SummarizerAgent(deps=deps, port=8003)
+        config_manager = create_default_config_manager()
+        deps = SummarizerDeps()
+        agent = SummarizerAgent(deps=deps, config_manager=config_manager, port=8003)
 
         assert agent.agent_name == "summarizer_agent"
         assert "summarization" in agent.capabilities
 
     def test_detailed_report_no_env_vars(self):
         """DetailedReportAgent constructs without env vars."""
-        mock_config = {
-            "llm": {"model": "test"},
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
-        with patch(
-            "cogniverse_foundation.config.utils.get_config",
-            return_value=mock_config,
-        ):
-            with patch("dspy.ChainOfThought"):
-                deps = DetailedReportDeps()
-                agent = DetailedReportAgent(deps=deps, port=8004)
+        config_manager = create_default_config_manager()
+        deps = DetailedReportDeps()
+        agent = DetailedReportAgent(deps=deps, config_manager=config_manager, port=8004)
 
         assert agent.agent_name == "detailed_report_agent"
         assert "detailed_report" in agent.capabilities

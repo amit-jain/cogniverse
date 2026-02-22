@@ -25,6 +25,7 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 @pytest.fixture
@@ -210,7 +211,9 @@ class TestLLMAutoAnnotator:
         mock_completion.return_value = mock_litellm_response
 
         # Initialize annotator
-        annotator = LLMAutoAnnotator()
+        annotator = LLMAutoAnnotator(
+            llm_config=LLMEndpointConfig(model="ollama/test-model")
+        )
 
         # Create annotation request
         request = AnnotationRequest(
@@ -247,7 +250,9 @@ class TestLLMAutoAnnotator:
         mock_completion.return_value = mock_litellm_response
 
         # Initialize annotator
-        annotator = LLMAutoAnnotator()
+        annotator = LLMAutoAnnotator(
+            llm_config=LLMEndpointConfig(model="ollama/test-model")
+        )
 
         # Create multiple requests
         requests = [
@@ -367,7 +372,10 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
         feedback_loop = AnnotationFeedbackLoop(
@@ -411,7 +419,10 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
 
         # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
         feedback_loop = AnnotationFeedbackLoop(optimizer=optimizer, tenant_id="test")
@@ -480,7 +491,9 @@ class TestEndToEndAnnotationWorkflow:
         assert len(requests) > 0, "Should identify spans needing annotation"
 
         # Step 2: Generate LLM annotations
-        annotator = LLMAutoAnnotator()
+        annotator = LLMAutoAnnotator(
+            llm_config=LLMEndpointConfig(model="ollama/test-model")
+        )
         annotations = annotator.batch_annotate(requests[:1])
 
         assert len(annotations) > 0, "Should generate LLM annotations"
@@ -513,7 +526,10 @@ class TestEndToEndAnnotationWorkflow:
         )
         mock_feedback_storage_class.return_value = mock_feedback_storage
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id="test", min_annotations_for_update=1
         )

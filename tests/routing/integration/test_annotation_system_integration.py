@@ -34,6 +34,7 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
     TelemetryConfig,
@@ -370,7 +371,9 @@ class TestAnnotationSystemIntegration:
         has_llm_access = os.getenv("ANNOTATION_API_KEY")
 
         if has_llm_access:
-            llm_annotator = LLMAutoAnnotator()
+            llm_annotator = LLMAutoAnnotator(
+                llm_config=LLMEndpointConfig(model="ollama/test-model")
+            )
 
             # Annotate first request only (to save API calls)
             auto_annotation = llm_annotator.annotate(annotation_requests[0])
@@ -454,7 +457,10 @@ class TestAnnotationSystemIntegration:
         # STEP 7: Test feedback loop with optimizer
         logger.info("\n=== STEP 7: Testing feedback loop ===")
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
         )
@@ -669,7 +675,10 @@ class TestAnnotationSystemIntegration:
         wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Run feedback loop
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        )
         initial_experience_count = len(optimizer.experiences)
 
         feedback_loop = AnnotationFeedbackLoop(

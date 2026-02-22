@@ -10,6 +10,7 @@ from cogniverse_agents.routing.optimizer_coordinator import (
     OptimizationType,
     OptimizerCoordinator,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestOptimizerCoordinator:
@@ -19,6 +20,7 @@ class TestOptimizerCoordinator:
     def coordinator(self, tmp_path):
         """Create coordinator with temp optimization dir."""
         return OptimizerCoordinator(
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
             optimization_dir=str(tmp_path / "optimization"),
             tenant_id="test_tenant",
         )
@@ -50,6 +52,7 @@ class TestOptimizerCoordinator:
         assert opt1 is opt2
         mock_cls.assert_called_once_with(
             tenant_id="test_tenant",
+            llm_config=coordinator.llm_config,
             base_storage_dir=coordinator.optimization_dir,
         )
 

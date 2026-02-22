@@ -10,16 +10,16 @@ import pytest
 from pydantic import Field
 
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
-from cogniverse_agents.dspy_agent_optimizer import (
-    DSPyAgentOptimizerPipeline,
-    DSPyAgentPromptOptimizer,
-)
 from cogniverse_agents.dspy_integration_mixin import (
     DSPyDetailedReportMixin,
     DSPyIntegrationMixin,
     DSPyQueryAnalysisMixin,
     DSPyRoutingMixin,
     DSPySummaryMixin,
+)
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+    DSPyAgentOptimizerPipeline,
+    DSPyAgentPromptOptimizer,
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing.dspy_relationship_router import (
@@ -52,6 +52,7 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 # Phase 1-3 imports for integration tests
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -318,26 +319,26 @@ class TestDSPyAgentIntegration:
 
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
-    def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
+    def test_summarizer_agent_dspy_integration(
+        self, mock_create_dspy_lm, mock_vlm, mock_config
+    ):
         """Test type-safe A2AAgent integration in SummarizerAgent."""
         from cogniverse_agents.summarizer_agent import SummarizerDeps
 
         mock_vlm.return_value = Mock()
-        mock_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434/v1",
-                "api_key": "test-key",
-            },
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        mock_sys_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_sys_config.get_llm_config.return_value = mock_llm_config
+        mock_config.return_value = mock_sys_config
+        mock_create_dspy_lm.return_value = Mock()
 
         deps = SummarizerDeps()
-        agent = SummarizerAgent(deps=deps)
+        agent = SummarizerAgent(deps=deps, config_manager=Mock())
 
         # Should have type-safe A2AAgent structure
         assert hasattr(agent, "deps")
@@ -351,26 +352,26 @@ class TestDSPyAgentIntegration:
 
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
-    def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
+    def test_detailed_report_agent_dspy_integration(
+        self, mock_create_dspy_lm, mock_vlm, mock_config
+    ):
         """Test type-safe A2AAgent integration in DetailedReportAgent."""
         from cogniverse_agents.detailed_report_agent import DetailedReportDeps
 
         mock_vlm.return_value = Mock()
-        mock_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434/v1",
-                "api_key": "test-key",
-            },
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        mock_sys_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_sys_config.get_llm_config.return_value = mock_llm_config
+        mock_config.return_value = mock_sys_config
+        mock_create_dspy_lm.return_value = Mock()
 
         deps = DetailedReportDeps()
-        agent = DetailedReportAgent(deps=deps)
+        agent = DetailedReportAgent(deps=deps, config_manager=Mock())
 
         # Should have type-safe A2AAgent structure
         assert hasattr(agent, "deps")
@@ -416,30 +417,33 @@ class TestDSPyAgentOptimizer:
         assert optimizer.lm is None
         assert "max_bootstrapped_demos" in optimizer.optimization_settings
 
-    @patch("dspy.LM")
-    def test_language_model_initialization(self, mock_lm_class):
+    @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
+    def test_language_model_initialization(self, mock_create_dspy_lm):
         """Test language model initialization."""
         optimizer = DSPyAgentPromptOptimizer()
 
         mock_lm = Mock()
-        mock_lm_class.return_value = mock_lm
+        mock_create_dspy_lm.return_value = mock_lm
 
-        result = optimizer.initialize_language_model(
-            api_base="http://localhost:11434/v1", model="smollm3:8b"
+        endpoint_config = LLMEndpointConfig(
+            model="smollm3:8b",
+            api_base="http://localhost:11434/v1",
         )
+        result = optimizer.initialize_language_model(endpoint_config=endpoint_config)
 
         assert result
         assert optimizer.lm == mock_lm
-        mock_lm_class.assert_called_once()
+        mock_create_dspy_lm.assert_called_once_with(endpoint_config)
 
-    @patch("dspy.LM")
-    def test_language_model_initialization_failure(self, mock_lm_class):
+    @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
+    def test_language_model_initialization_failure(self, mock_create_dspy_lm):
         """Test language model initialization failure."""
         optimizer = DSPyAgentPromptOptimizer()
 
-        mock_lm_class.side_effect = Exception("Connection failed")
+        mock_create_dspy_lm.side_effect = Exception("Connection failed")
 
-        result = optimizer.initialize_language_model()
+        endpoint_config = LLMEndpointConfig(model="smollm3:8b")
+        result = optimizer.initialize_language_model(endpoint_config=endpoint_config)
         assert not result
         assert optimizer.lm is None
 
@@ -638,13 +642,15 @@ class TestDSPyEndToEndIntegration:
     """End-to-end integration tests for DSPy optimization."""
 
     @pytest.mark.asyncio
-    @patch("dspy.LM")
+    @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
     @patch("dspy.teleprompt.BootstrapFewShot")
-    async def test_full_optimization_pipeline(self, mock_teleprompter, mock_lm_class):
+    async def test_full_optimization_pipeline(
+        self, mock_teleprompter, mock_create_dspy_lm
+    ):
         """Test the complete optimization pipeline."""
         # Mock DSPy components
         mock_lm = Mock()
-        mock_lm_class.return_value = mock_lm
+        mock_create_dspy_lm.return_value = mock_lm
 
         mock_compiled_module = Mock()
         mock_teleprompter_instance = Mock()
@@ -653,7 +659,8 @@ class TestDSPyEndToEndIntegration:
 
         # Create optimizer
         optimizer = DSPyAgentPromptOptimizer()
-        assert optimizer.initialize_language_model()
+        endpoint_config = LLMEndpointConfig(model="smollm3:8b")
+        assert optimizer.initialize_language_model(endpoint_config=endpoint_config)
 
         # Create pipeline
         pipeline = DSPyAgentOptimizerPipeline(optimizer)

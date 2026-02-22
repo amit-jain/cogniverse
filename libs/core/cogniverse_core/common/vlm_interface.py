@@ -61,38 +61,16 @@ class VLMInterface:
         self._initialize_vlm_client()
 
     def _initialize_vlm_client(self):
-        """Initialize DSPy LM from configuration"""
-        llm_config = self.config.get("llm", {})
-        model_name = llm_config.get("model_name")
-        base_url = llm_config.get("base_url")
-        api_key = llm_config.get("api_key")
+        """Initialize DSPy LM from centralized llm_config."""
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-        if not all([model_name, base_url]):
-            raise ValueError(
-                "LLM configuration missing: model_name and base_url required"
-            )
+        llm_config = self.config.get_llm_config()
+        endpoint_config = llm_config.resolve("vlm_interface")
 
-        # Ensure model name has provider prefix for litellm (Ollama models)
-        if (
-            "localhost:11434" in base_url or "11434" in base_url
-        ) and not model_name.startswith("ollama/"):
-            model_name = f"ollama/{model_name}"
-
-        try:
-            if api_key:
-                dspy.settings.configure(
-                    lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
-                )
-            else:
-                dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
-            logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
-        except RuntimeError as e:
-            if "can only be called from the same async task" in str(e):
-                logger.warning(
-                    "DSPy already configured in this async context, skipping reconfiguration"
-                )
-            else:
-                raise
+        self._dspy_lm = create_dspy_lm(endpoint_config)
+        logger.info(
+            f"Created DSPy LM: {endpoint_config.model} at {endpoint_config.api_base}"
+        )
 
     async def analyze_visual_content(
         self, image_paths: List[str], query: str
@@ -107,52 +85,61 @@ class VLMInterface:
         Returns:
             Analysis results including descriptions, themes, and insights
         """
-        visual_analysis = dspy.Predict(VisualAnalysisSignature)
+        with dspy.context(lm=self._dspy_lm):
+            visual_analysis = dspy.Predict(VisualAnalysisSignature)
 
-        image_descriptions = []
-        for image_path in image_paths:
-            if Path(image_path).exists():
-                image_descriptions.append(f"Image: {Path(image_path).name}")
+            image_descriptions = []
+            for image_path in image_paths:
+                if Path(image_path).exists():
+                    image_descriptions.append(f"Image: {Path(image_path).name}")
 
-        result = visual_analysis(images=", ".join(image_descriptions), query=query)
+            result = visual_analysis(
+                images=", ".join(image_descriptions), query=query
+            )
 
-        return {
-            "descriptions": result.descriptions.split(", "),
-            "themes": result.themes.split(", "),
-            "key_objects": result.key_objects.split(", "),
-            "insights": result.insights.split(", "),
-            "relevance_score": float(result.relevance_score),
-        }
+            def _split_or_empty(val: str | None) -> list[str]:
+                return val.split(", ") if val else []
+
+            return {
+                "descriptions": _split_or_empty(result.descriptions),
+                "themes": _split_or_empty(result.themes),
+                "key_objects": _split_or_empty(result.key_objects),
+                "insights": _split_or_empty(result.insights),
+                "relevance_score": float(result.relevance_score) if result.relevance_score else 0.0,
+            }
 
     async def analyze_visual_content_detailed(
         self, image_paths: List[str], query: str, context: str = ""
     ) -> Dict[str, Any]:
         """Perform detailed visual analysis using DSPy"""
-        visual_analysis = dspy.Predict(DetailedVisualAnalysisSignature)
+        with dspy.context(lm=self._dspy_lm):
+            visual_analysis = dspy.Predict(DetailedVisualAnalysisSignature)
 
-        image_descriptions = []
-        for image_path in image_paths:
-            image_descriptions.append(f"Image: {image_path}")
+            image_descriptions = []
+            for image_path in image_paths:
+                image_descriptions.append(f"Image: {image_path}")
 
-        logger.info(f"Analyzing {len(image_paths)} images with detailed VLM analysis")
+            logger.info(
+                f"Analyzing {len(image_paths)} images with detailed VLM analysis"
+            )
 
-        result = visual_analysis(
-            images=", ".join(image_descriptions),
-            query=query,
-            context=context or "No additional context",
-        )
+            result = visual_analysis(
+                images=", ".join(image_descriptions),
+                query=query,
+                context=context or "No additional context",
+            )
 
-        return {
-            "detailed_descriptions": result.detailed_descriptions.split(", "),
-            "technical_analysis": result.technical_analysis.split(", "),
-            "visual_patterns": result.visual_patterns.split(", "),
-            "quality_assessment": {
-                "overall": float(result.quality_score),
-                "clarity": float(result.quality_score),
-                "relevance": float(result.quality_score),
-            },
-            "annotations": [
-                {"element": ann, "confidence": float(result.quality_score)}
-                for ann in result.annotations.split(", ")
-            ],
-        }
+            return {
+                "detailed_descriptions": result.detailed_descriptions.split(", "),
+                "technical_analysis": result.technical_analysis.split(", "),
+                "visual_patterns": result.visual_patterns.split(", "),
+                "quality_assessment": {
+                    "overall": float(result.quality_score),
+                    "clarity": float(result.quality_score),
+                    "relevance": float(result.quality_score),
+                },
+                "annotations": [
+                    {"element": ann, "confidence": float(result.quality_score)}
+                    for ann in result.annotations.split(", ")
+                ],
+            }

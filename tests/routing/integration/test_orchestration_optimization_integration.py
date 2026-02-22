@@ -30,6 +30,7 @@ from cogniverse_agents.workflow_intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 @pytest.mark.integration
@@ -48,7 +49,9 @@ class TestOrchestrationOptimizationIntegration:
     def routing_optimizer(self):
         """Create real AdvancedRoutingOptimizer instance"""
         return AdvancedRoutingOptimizer(
-            tenant_id="test-tenant", base_storage_dir="/tmp/test_routing_optimizer"
+            tenant_id="test-tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            base_storage_dir="/tmp/test_routing_optimizer",
         )
 
     @pytest.mark.asyncio

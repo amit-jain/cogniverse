@@ -239,13 +239,13 @@ class DetailedReportAgent(
         # Initialize A2A base
         super().__init__(deps=deps, config=config, dspy_module=self.report_module)
 
-        # Config manager for VLM and other services
-        if config_manager is not None:
-            self._config_manager = config_manager
-        else:
-            from cogniverse_foundation.config.utils import create_default_config_manager
-
-            self._config_manager = create_default_config_manager()
+        # Config manager — required from caller, no silent fallback
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required. "
+                "Pass create_default_config_manager() from startup boundary."
+            )
+        self._config_manager = config_manager
 
         # Initialize DSPy components
         self._initialize_vlm_client()
@@ -264,62 +264,20 @@ class DetailedReportAgent(
         logger.info("DetailedReportAgent initialized (tenant-agnostic)")
 
     def _initialize_vlm_client(self):
-        """Initialize DSPy LM from config.json inference section."""
+        """Initialize DSPy LM from centralized llm_config."""
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
         from cogniverse_foundation.config.utils import get_config
 
-        # Use the injected config_manager (set in __init__), not a new default one.
         system_config = get_config(
             tenant_id="default", config_manager=self._config_manager
         )
+        llm_config = system_config.get_llm_config()
+        endpoint_config = llm_config.resolve("detailed_report_agent")
 
-        # Read from config.json > inference section
-        inference_config = system_config.get("inference", {})
-        if not inference_config:
-            raise ValueError(
-                "Missing 'inference' section in config.json. "
-                "Required fields: provider, model, local_endpoint or modal_endpoint"
-            )
-
-        provider = inference_config.get("provider", "ollama")
-        model_name = inference_config.get("model")
-        if not model_name:
-            raise ValueError("Missing 'model' in config.json > inference section")
-
-        # Determine base_url from provider
-        if provider == "modal":
-            base_url = inference_config.get("modal_endpoint")
-        else:
-            base_url = inference_config.get("local_endpoint")
-
-        if not base_url:
-            raise ValueError(
-                f"Missing endpoint for provider '{provider}' in config.json > inference. "
-                f"Set 'modal_endpoint' (provider=modal) or 'local_endpoint' (provider=ollama)."
-            )
-
-        api_key = inference_config.get("api_key")
-
-        # Ensure model name has provider prefix for litellm (Ollama models)
-        if (
-            "localhost:11434" in base_url or "11434" in base_url
-        ) and not model_name.startswith("ollama/"):
-            model_name = f"ollama/{model_name}"
-
-        try:
-            if api_key:
-                dspy.settings.configure(
-                    lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
-                )
-            else:
-                dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
-            logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
-        except RuntimeError as e:
-            if "can only be called from the same async task" in str(e):
-                logger.warning(
-                    "DSPy already configured in this async context, skipping reconfiguration"
-                )
-            else:
-                raise
+        self._dspy_lm = create_dspy_lm(endpoint_config)
+        logger.info(
+            f"Created DSPy LM: {endpoint_config.model} at {endpoint_config.api_base}"
+        )
 
     async def _generate_report(self, request: ReportRequest) -> ReportResult:
         """
@@ -333,61 +291,64 @@ class DetailedReportAgent(
         """
         logger.info(f"Generating detailed report for: '{request.query}'")
 
-        try:
-            # Phase 1: Thinking phase - comprehensive analysis
-            thinking_phase = await self._thinking_phase(request)
+        with dspy.context(lm=self._dspy_lm):
+            try:
+                # Phase 1: Thinking phase - comprehensive analysis
+                thinking_phase = await self._thinking_phase(request)
 
-            # Phase 2: Visual analysis (if enabled)
-            visual_analysis = await self._perform_visual_analysis(
-                request, thinking_phase
-            )
+                # Phase 2: Visual analysis (if enabled)
+                visual_analysis = await self._perform_visual_analysis(
+                    request, thinking_phase
+                )
 
-            # Phase 3: Generate executive summary
-            executive_summary = await self._generate_executive_summary(
-                request, thinking_phase
-            )
+                # Phase 3: Generate executive summary
+                executive_summary = await self._generate_executive_summary(
+                    request, thinking_phase
+                )
 
-            # Phase 4: Generate detailed findings
-            detailed_findings = self._generate_detailed_findings(
-                request, thinking_phase
-            )
+                # Phase 4: Generate detailed findings
+                detailed_findings = self._generate_detailed_findings(
+                    request, thinking_phase
+                )
 
-            # Phase 5: Generate technical details
-            technical_details = self._generate_technical_details(
-                request, thinking_phase
-            )
+                # Phase 5: Generate technical details
+                technical_details = self._generate_technical_details(
+                    request, thinking_phase
+                )
 
-            # Phase 6: Generate recommendations
-            recommendations = self._generate_recommendations(request, thinking_phase)
+                # Phase 6: Generate recommendations
+                recommendations = self._generate_recommendations(
+                    request, thinking_phase
+                )
 
-            # Phase 7: Confidence assessment
-            confidence_assessment = self._calculate_confidence_assessment(
-                request, thinking_phase
-            )
+                # Phase 7: Confidence assessment
+                confidence_assessment = self._calculate_confidence_assessment(
+                    request, thinking_phase
+                )
 
-            result = ReportResult(
-                executive_summary=executive_summary,
-                detailed_findings=detailed_findings,
-                visual_analysis=visual_analysis,
-                technical_details=technical_details,
-                recommendations=recommendations,
-                confidence_assessment=confidence_assessment,
-                thinking_phase=thinking_phase,
-                metadata={
-                    "results_analyzed": len(request.search_results),
-                    "report_type": request.report_type,
-                    "visual_analysis_enabled": request.include_visual_analysis,
-                    "technical_analysis_enabled": request.include_technical_details,
-                    "recommendations_enabled": request.include_recommendations,
-                },
-            )
+                result = ReportResult(
+                    executive_summary=executive_summary,
+                    detailed_findings=detailed_findings,
+                    visual_analysis=visual_analysis,
+                    technical_details=technical_details,
+                    recommendations=recommendations,
+                    confidence_assessment=confidence_assessment,
+                    thinking_phase=thinking_phase,
+                    metadata={
+                        "results_analyzed": len(request.search_results),
+                        "report_type": request.report_type,
+                        "visual_analysis_enabled": request.include_visual_analysis,
+                        "technical_analysis_enabled": request.include_technical_details,
+                        "recommendations_enabled": request.include_recommendations,
+                    },
+                )
 
-            logger.info("Detailed report generation complete")
-            return result
+                logger.info("Detailed report generation complete")
+                return result
 
-        except Exception as e:
-            logger.error(f"Report generation failed: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Report generation failed: {e}")
+                raise
 
     async def generate_report(self, request: ReportRequest) -> ReportResult:
         """

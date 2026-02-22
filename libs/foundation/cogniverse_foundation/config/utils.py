@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import BackendConfig
+from cogniverse_foundation.config.unified_config import BackendConfig, LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,30 @@ class ConfigUtils:
             f"Merged backend config for tenant '{self.tenant_id}': "
             f"{len(self._backend_config.profiles)} profiles available"
         )
+
+    def get_llm_config(self) -> LLMConfig:
+        """
+        Load the centralized LLM configuration from config.json.
+
+        Reads the 'llm_config' section which contains:
+        - primary: Global default LLM for all DSPy modules/agents/optimizers
+        - teacher: LLM for DSPy optimization (MIPROv2, GEPA, annotation)
+        - overrides: Per-component partial overrides merged with primary
+
+        Returns:
+            LLMConfig instance
+
+        Raises:
+            ValueError: If llm_config section is missing from config.json
+        """
+        self._load_json_config()
+        llm_config_data = self._json_config.get("llm_config")
+        if llm_config_data is None:
+            raise ValueError(
+                "Missing 'llm_config' section in config.json. "
+                "This section is required for centralized LLM configuration."
+            )
+        return LLMConfig.from_dict(llm_config_data)
 
     def get(self, key: str, default: Any = None) -> Any:
         """

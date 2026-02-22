@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List
 
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +51,7 @@ class OptimizerCoordinator:
 
     def __init__(
         self,
+        llm_config: LLMEndpointConfig,
         optimization_dir: str = "optimization_results",
         tenant_id: str = "default",
     ):
@@ -56,9 +59,11 @@ class OptimizerCoordinator:
         Initialize optimizer coordinator.
 
         Args:
+            llm_config: LLM endpoint configuration for optimizers
             optimization_dir: Directory for optimization artifacts
             tenant_id: Tenant identifier for multi-tenant setups
         """
+        self.llm_config = llm_config
         self.optimization_dir = optimization_dir
         self.tenant_id = tenant_id
 
@@ -81,6 +86,7 @@ class OptimizerCoordinator:
 
             self._routing_optimizer = AdvancedRoutingOptimizer(
                 tenant_id=self.tenant_id,
+                llm_config=self.llm_config,
                 base_storage_dir=self.optimization_dir,
             )
         return self._routing_optimizer
@@ -91,6 +97,7 @@ class OptimizerCoordinator:
             from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 
             self._modality_optimizer = ModalityOptimizer(
+                llm_config=self.llm_config,
                 tenant_id=self.tenant_id,
                 model_dir=Path(self.optimization_dir) / "modality_models",
             )

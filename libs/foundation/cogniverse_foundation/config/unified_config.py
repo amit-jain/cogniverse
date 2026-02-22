@@ -3,6 +3,7 @@ Unified configuration schema with multi-tenant support.
 Consolidates AgentConfig, RoutingConfig, TelemetryConfig into single system.
 """
 
+import copy
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,6 +14,115 @@ from cogniverse_foundation.config.agent_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMEndpointConfig:
+    """
+    Configuration for a single LLM endpoint.
+
+    Provider prefix is always explicit in model string (e.g., "ollama/smollm3:3b",
+    "openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022"). No auto-detection.
+    Matches DSPy/LiteLLM convention.
+
+    api_key=None means no key needed (e.g., local Ollama).
+    """
+
+    model: str
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    temperature: float = 0.1
+    max_tokens: int = 1000
+    adapter_path: Optional[str] = None  # LoRA/fine-tuned artifact path
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary, omitting None values for clean serialization."""
+        result: Dict[str, Any] = {"model": self.model}
+        if self.api_base is not None:
+            result["api_base"] = self.api_base
+        if self.api_key is not None:
+            result["api_key"] = "***"  # Never serialize real keys
+        result["temperature"] = self.temperature
+        result["max_tokens"] = self.max_tokens
+        if self.adapter_path is not None:
+            result["adapter_path"] = self.adapter_path
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LLMEndpointConfig":
+        """Create from dictionary."""
+        return cls(
+            model=data["model"],
+            api_base=data.get("api_base"),
+            api_key=data.get("api_key"),
+            temperature=data.get("temperature", 0.1),
+            max_tokens=data.get("max_tokens", 1000),
+            adapter_path=data.get("adapter_path"),
+        )
+
+
+@dataclass
+class LLMConfig:
+    """
+    Centralized LLM configuration with override resolution.
+
+    - primary: Global default for ALL DSPy modules, agents, optimizers.
+      Also serves as the student model during optimization.
+    - teacher: For DSPy optimization (MIPROv2, GEPA, teacher examples, annotation).
+    - overrides: Per-component partial dicts merged with primary.
+      None = use primary unchanged. Only differing fields need to be specified.
+    """
+
+    primary: LLMEndpointConfig
+    teacher: LLMEndpointConfig
+    overrides: Dict[str, Optional[Dict[str, Any]]] = field(default_factory=dict)
+
+    def resolve(self, component: str) -> LLMEndpointConfig:
+        """
+        Resolve the LLM config for a specific component.
+
+        If the component has an override, merge it onto primary defaults
+        (override fields take precedence). If no override or override is None,
+        return a copy of primary.
+
+        Args:
+            component: Component name (e.g., "routing_agent", "summarizer_agent")
+
+        Returns:
+            Fully resolved LLMEndpointConfig
+        """
+        override = self.overrides.get(component)
+        if override is None:
+            return copy.deepcopy(self.primary)
+
+        # Merge: start with primary's full dict, overlay the partial override
+        merged = self.primary.to_dict()
+        merged.update(override)
+        return LLMEndpointConfig.from_dict(merged)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        overrides_dict: Dict[str, Any] = {}
+        for key, val in self.overrides.items():
+            overrides_dict[key] = val if val is not None else None
+        return {
+            "primary": self.primary.to_dict(),
+            "teacher": self.teacher.to_dict(),
+            "overrides": overrides_dict,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
+        """Create from dictionary."""
+        primary = LLMEndpointConfig.from_dict(data["primary"])
+        teacher = LLMEndpointConfig.from_dict(data["teacher"])
+
+        # Store overrides as raw dicts — they are partial and may lack "model"
+        overrides: Dict[str, Optional[Dict[str, Any]]] = {}
+        for key, val in data.get("overrides", {}).items():
+            overrides[key] = val  # None or partial dict
+
+        return cls(primary=primary, teacher=teacher, overrides=overrides)
 
 
 @dataclass

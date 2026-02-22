@@ -469,11 +469,14 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
             tenant_id=tenant_id,
             confidence_threshold=0.6
         )
-        llm_annotator = LLMAutoAnnotator(
-            model=st.session_state.get("annotation_model"),
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        _annotator_config = LLMEndpointConfig(
+            model=st.session_state.get("annotation_model", "ollama/smollm3:3b"),
             api_base=st.session_state.get("annotation_api_base"),
             api_key=st.session_state.get("annotation_api_key"),
         )
+        llm_annotator = LLMAutoAnnotator(llm_config=_annotator_config)
         annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
     except Exception as e:
         st.error(f"❌ Failed to initialize annotation agents: {e}")

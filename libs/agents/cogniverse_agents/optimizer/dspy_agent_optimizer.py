@@ -9,11 +9,15 @@ It optimizes prompts for RoutingAgent, SummarizerAgent, DetailedReportAgent, and
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import dspy
 from dspy.teleprompt import BootstrapFewShot
+
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +56,22 @@ class DSPyAgentPromptOptimizer:
 
     def initialize_language_model(
         self,
-        api_base: str = "http://localhost:11434/v1",
-        model: str = "smollm3:8b",
-        api_key: str = "fake-key",
+        endpoint_config: LLMEndpointConfig,
     ):
-        """Initialize DSPy language model (OpenAI-compatible)."""
+        """Initialize DSPy language model via centralized factory.
+
+        Args:
+            endpoint_config: LLM endpoint configuration from centralized llm_config.
+
+        Returns:
+            True if initialization succeeded, False otherwise.
+        """
         try:
-            # Configure DSPy with LM (new API)
-            self.lm = dspy.LM(
-                model=f"openai/{model}",  # Use openai/ prefix for OpenAI-compatible
-                api_base=api_base,
-                api_key=api_key,
-                max_tokens=2048,
-                temperature=0.7,
+            self.lm = create_dspy_lm(endpoint_config)
+            logger.info(
+                f"Initialized DSPy language model: {endpoint_config.model} "
+                f"at {endpoint_config.api_base}"
             )
-            # Don't use dspy.settings.configure in async contexts
-            # Store the LM instance and pass it explicitly where needed
-            logger.info(f"Initialized DSPy language model: {model} at {api_base}")
             return True
 
         except Exception as e:
@@ -651,7 +654,7 @@ class DSPyAgentOptimizerPipeline:
             "module_type": type(module).__name__,
             "compiled_prompts": {},
             "metadata": {
-                "optimization_timestamp": asyncio.get_event_loop().time(),
+                "optimization_timestamp": time.time(),
                 "dspy_version": (
                     dspy.__version__ if hasattr(dspy, "__version__") else "unknown"
                 ),
@@ -705,8 +708,16 @@ async def main():
     # Initialize optimizer
     optimizer = DSPyAgentPromptOptimizer()
 
-    # Initialize language model
-    if not optimizer.initialize_language_model():
+    # Initialize language model from centralized config
+    from cogniverse_foundation.config import create_default_config_manager
+    from cogniverse_foundation.config.utils import get_config
+
+    config_manager = create_default_config_manager()
+    config_utils = get_config(config_manager=config_manager)
+    llm_config = config_utils.get_llm_config()
+    endpoint_config = llm_config.primary
+
+    if not optimizer.initialize_language_model(endpoint_config):
         print("❌ Failed to initialize language model")
         return
 

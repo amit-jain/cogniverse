@@ -15,7 +15,6 @@ from cogniverse_agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
-from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit
@@ -53,62 +52,70 @@ class TestVisualAnalysisSignature:
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_core.common.vlm_interface.get_config")
-    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @pytest.mark.ci_fast
     def test_vlm_interface_initialization_success(
-        self, mock_dspy_settings, mock_get_config
+        self, mock_get_config, mock_create_dspy_lm
     ):
-        """Test VLM interface initialization with proper DSPy config"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-                "api_key": "test-key",
-            }
-        }
+        """Test VLM interface initialization with proper config"""
+        mock_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_config
+        mock_create_dspy_lm.return_value = Mock()
 
-        vlm = VLMInterface(config_manager=create_default_config_manager())
+        vlm = VLMInterface(config_manager=Mock())
 
         assert vlm.config is not None
-        mock_dspy_settings.configure.assert_called_once()
+        mock_create_dspy_lm.assert_called_once_with(mock_endpoint)
 
     @patch("cogniverse_core.common.vlm_interface.get_config")
     def test_vlm_interface_initialization_missing_config(self, mock_get_config):
         """Test VLM interface initialization fails with missing config"""
-        mock_get_config.return_value = {
-            "llm": {"model_name": "test"}
-        }  # Missing base_url
+        mock_config = Mock()
+        mock_config.get_llm_config.side_effect = ValueError("LLM configuration missing")
+        mock_get_config.return_value = mock_config
 
         with pytest.raises(ValueError, match="LLM configuration missing"):
-            VLMInterface(config_manager=create_default_config_manager())
+            VLMInterface(config_manager=Mock())
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_core.common.vlm_interface.get_config")
-    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @patch("cogniverse_core.common.vlm_interface.dspy.Predict")
     @pytest.mark.asyncio
     async def test_analyze_visual_content(
-        self, mock_predict, mock_dspy_settings, mock_get_config
+        self, mock_predict, mock_get_config, mock_create_dspy_lm
     ):
         """Test visual content analysis using DSPy"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            }
-        }
+        mock_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_config
+        mock_lm = Mock()
+        mock_create_dspy_lm.return_value = mock_lm
 
         # Mock DSPy prediction result
         mock_result = Mock()
         mock_result.descriptions = "description1, description2"
+        mock_result.themes = "theme1, theme2"
+        mock_result.key_objects = "obj1, obj2"
         mock_result.insights = "insight1, insight2"
-        mock_result.relevance_score = 0.85  # Return float not string
+        mock_result.relevance_score = "0.85"
 
         mock_predict_instance = Mock()
         mock_predict_instance.return_value = mock_result
         mock_predict.return_value = mock_predict_instance
 
-        vlm = VLMInterface(config_manager=create_default_config_manager())
+        vlm = VLMInterface(config_manager=Mock())
         result = await vlm.analyze_visual_content(
             ["/path/to/image1.jpg", "/path/to/image2.jpg"], "test query"
         )
@@ -122,26 +129,27 @@ class TestVLMInterface:
 class TestSummarizerAgent:
     """Test cases for SummarizerAgent class"""
 
+    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @pytest.mark.ci_fast
-    def test_summarizer_agent_initialization(self, mock_vlm_class, mock_get_config):
+    def test_summarizer_agent_initialization(
+        self, mock_vlm_class, mock_get_config, mock_create_dspy_lm
+    ):
         """Test SummarizerAgent initialization with DSPy"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            },
-            "inference": {
-                "provider": "ollama",
-                "model": "test-model",
-                "local_endpoint": "http://localhost:11434",
-            },
-        }
+        mock_sys_config = Mock()
+        mock_llm_config = Mock()
+        mock_endpoint = Mock()
+        mock_endpoint.model = "test-model"
+        mock_endpoint.api_base = "http://localhost:11434"
+        mock_llm_config.resolve.return_value = mock_endpoint
+        mock_sys_config.get_llm_config.return_value = mock_llm_config
+        mock_get_config.return_value = mock_sys_config
+        mock_create_dspy_lm.return_value = Mock()
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = SummarizerAgent(deps=SummarizerDeps())
+        agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -179,25 +187,17 @@ class TestSummarizerAgent:
         assert request.summary_type == "comprehensive"
         assert request.include_visual_analysis is True
 
-    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @patch.object(
         SummarizerAgent, "_initialize_vlm_client"
     )  # Prevent DSPy LM initialization
     @pytest.mark.asyncio
-    async def test_process_a2a_task_success(
-        self, mock_init_vlm, mock_vlm_class, mock_get_config
-    ):
+    async def test_process_a2a_task_success(self, mock_init_vlm, mock_vlm_class):
         """Test processing summarization request successfully"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "ollama/smollm3:500m",
-                "base_url": "http://localhost:11434",
-            }
-        }
         mock_vlm_class.return_value = Mock()
 
-        agent = SummarizerAgent(deps=SummarizerDeps())
+        agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
+        agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
 
         # Create summarization request
         request = SummaryRequest(
@@ -224,17 +224,9 @@ class TestSummarizerAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch("cogniverse_agents.summarizer_agent.VLMInterface") as mock_vlm_class,
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "ollama/llama3.2",
-                    "base_url": "http://localhost:11434",
-                }
-            }
-
             mock_vlm = Mock()
             mock_vlm.analyze_visual_content = AsyncMock(
                 return_value={
@@ -245,7 +237,8 @@ class TestSummarizerAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = SummarizerAgent(deps=SummarizerDeps())
+            agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
+            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
             agent.vlm = mock_vlm
             return agent
 

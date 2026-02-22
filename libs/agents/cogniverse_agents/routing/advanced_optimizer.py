@@ -28,6 +28,8 @@ import numpy as np
 from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
 
 from cogniverse_core.common.tenant_utils import get_tenant_storage_path
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +151,7 @@ class AdvancedRoutingOptimizer:
     def __init__(
         self,
         tenant_id: str,
+        llm_config: LLMEndpointConfig,
         config: Optional[AdvancedOptimizerConfig] = None,
         base_storage_dir: str = "data/optimization",
     ):
@@ -157,6 +160,7 @@ class AdvancedRoutingOptimizer:
 
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
+            llm_config: LLM endpoint configuration (REQUIRED)
             config: Optimizer configuration
             base_storage_dir: Base directory for storage
 
@@ -167,6 +171,7 @@ class AdvancedRoutingOptimizer:
             raise ValueError("tenant_id is required - no default tenant")
 
         self.tenant_id = tenant_id
+        self.llm_config = llm_config
         self.config = config or AdvancedOptimizerConfig()
 
         # Tenant-specific storage directory with org/tenant structure
@@ -304,50 +309,21 @@ class AdvancedRoutingOptimizer:
                 return 0.0
 
         class AdvancedMultiStageOptimizer:
-            def __init__(self, config: AdvancedOptimizerConfig):
+            def __init__(
+                self,
+                config: AdvancedOptimizerConfig,
+                llm_config: LLMEndpointConfig,
+            ):
                 self.config = config
 
-                # Get current DSPy LM for reflection (GEPA requires this)
-                try:
-                    current_lm = dspy.settings.lm
-                    if current_lm is None:
-                        # Set a default LM if none configured
-                        logger.warning(
-                            "No LM configured for GEPA, using default ollama:gemma3:4b"
-                        )
-                        current_lm = dspy.LM(
-                            "ollama/gemma3:4b", api_base="http://localhost:11434"
-                        )
-                        try:
-                            dspy.settings.configure(lm=current_lm)
-                        except RuntimeError as re:
-                            if "can only be called from the same async task" in str(re):
-                                logger.warning(
-                                    "DSPy already configured in this async context, skipping reconfiguration"
-                                )
-                            else:
-                                raise
-                except AttributeError:
-                    # Fallback for older DSPy versions
-                    logger.warning("Could not get DSPy LM, using default for GEPA")
-                    current_lm = dspy.LM(
-                        "ollama/gemma3:4b", api_base="http://localhost:11434"
-                    )
-                    try:
-                        dspy.settings.configure(lm=current_lm)
-                    except RuntimeError as re:
-                        if "can only be called from the same async task" in str(re):
-                            logger.warning(
-                                "DSPy already configured in this async context, skipping reconfiguration"
-                            )
-                        else:
-                            raise
+                # Create LM via centralized factory (stored for dspy.context scoping)
+                self._lm = create_dspy_lm(llm_config)
 
                 # Initialize all advanced optimizers with required parameters
                 self.gepa_optimizer = GEPA(
                     metric=routing_accuracy_metric,
                     auto="light",
-                    reflection_lm=current_lm,  # Required by GEPA
+                    reflection_lm=self._lm,  # Required by GEPA
                 )
                 self.mipro_optimizer = MIPROv2(
                     metric=routing_accuracy_metric  # Required by MIPRO
@@ -377,30 +353,38 @@ class AdvancedRoutingOptimizer:
 
             def compile(self, module, trainset, **kwargs):
                 """Advanced multi-stage optimization with configurable strategy"""
-                try:
-                    dataset_size = len(trainset)
-                    logger.info(
-                        f"Starting optimization with {dataset_size} examples, strategy: {self.config.optimizer_strategy}"
-                    )
+                # Scope the LM to this optimizer's compile call
+                with dspy.context(lm=self._lm):
+                    try:
+                        dataset_size = len(trainset)
+                        logger.info(
+                            f"Starting optimization with {dataset_size} examples, strategy: {self.config.optimizer_strategy}"
+                        )
 
-                    # Select optimizer based on configuration
-                    selected_optimizer, optimizer_name = self._select_optimizer(
-                        dataset_size
-                    )
+                        # Select optimizer based on configuration
+                        selected_optimizer, optimizer_name = self._select_optimizer(
+                            dataset_size
+                        )
 
-                    # Apply the selected optimization
-                    optimized_module = self._apply_optimizer(
-                        selected_optimizer, optimizer_name, module, trainset, **kwargs
-                    )
+                        # Apply the selected optimization
+                        optimized_module = self._apply_optimizer(
+                            selected_optimizer,
+                            optimizer_name,
+                            module,
+                            trainset,
+                            **kwargs,
+                        )
 
-                    logger.info(f"Optimization complete using {optimizer_name}")
-                    return optimized_module
+                        logger.info(f"Optimization complete using {optimizer_name}")
+                        return optimized_module
 
-                except Exception as e:
-                    logger.error(f"Optimization failed: {e}, falling back to bootstrap")
-                    return self.bootstrap_optimizer.compile(
-                        module, trainset=trainset, **kwargs
-                    )
+                    except Exception as e:
+                        logger.error(
+                            f"Optimization failed: {e}, falling back to bootstrap"
+                        )
+                        return self.bootstrap_optimizer.compile(
+                            module, trainset=trainset, **kwargs
+                        )
 
             def _select_optimizer(self, dataset_size):
                 """Select optimizer based on config strategy and dataset size"""
@@ -502,7 +486,7 @@ class AdvancedRoutingOptimizer:
                     "optimization_stages": len(applicable),
                 }
 
-        return AdvancedMultiStageOptimizer(self.config)
+        return AdvancedMultiStageOptimizer(self.config, self.llm_config)
 
     def _initialize_confidence_calibrator(self):
         """Initialize confidence calibration component"""

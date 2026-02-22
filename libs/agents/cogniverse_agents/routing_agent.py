@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 # DSPy 3.0 imports
 import dspy
-from dspy import LM
 
 # Advanced optimization
 from cogniverse_agents.routing.advanced_optimizer import (
@@ -73,6 +72,10 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+
+# Centralized LLM config
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # A2A protocol imports
 
@@ -155,10 +158,16 @@ class RoutingDeps(AgentDeps):
 
     telemetry_config: Any = Field(..., description="Telemetry configuration")
 
-    # DSPy LM Configuration (defaults to local SmolLM 3B)
-    model_name: str = Field("smollm3:3b", description="DSPy model name")
-    base_url: str = Field("http://localhost:11434/v1", description="Model API base URL")
-    api_key: str = Field("dummy", description="API key (not needed for local Ollama)")
+    # Centralized LLM configuration (resolved from llm_config.resolve("routing_agent"))
+    llm_config: LLMEndpointConfig = Field(
+        default_factory=lambda: LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+            temperature=0.1,
+            max_tokens=1000,
+        ),
+        description="LLM endpoint configuration for DSPy routing",
+    )
 
     # Routing thresholds
     confidence_threshold: float = Field(0.7, description="Min confidence threshold")
@@ -374,28 +383,11 @@ class RoutingAgent(
         return has_analysis_module and has_query_enhancement and has_routing_module
 
     def _configure_dspy(self, deps: RoutingDeps) -> None:
-        """Configure DSPy 3.0 with local SmolLM via Ollama"""
-        try:
-            # Configure DSPy to use local SmolLM 3B via Ollama
-            lm = LM(
-                model=deps.model_name,
-                base_url=deps.base_url,
-                api_key=deps.api_key,
-                # Additional LM configurations
-                max_tokens=1000,
-                temperature=0.1,  # Low temperature for consistent routing decisions
-                top_p=0.9,
-            )
-
-            dspy.settings.configure(lm=lm)
-            self.logger.info(
-                f"DSPy configured with {deps.model_name} at {deps.base_url}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Failed to configure DSPy with local SmolLM: {e}")
-            # Fallback to mock for development/testing
-            self.logger.warning("Falling back to mock LM for development")
+        """Configure DSPy LM instance (scoped via dspy.context, not global)."""
+        self._dspy_lm = create_dspy_lm(deps.llm_config)
+        self.logger.info(
+            f"Created DSPy LM: {deps.llm_config.model} at {deps.llm_config.api_base}"
+        )
 
     def _initialize_enhancement_pipeline(self, deps: RoutingDeps) -> None:
         """Initialize query analysis and enhancement using ComposableQueryAnalysisModule."""
@@ -486,6 +478,7 @@ class RoutingAgent(
             try:
                 self._tenant_optimizers[tenant_id] = AdvancedRoutingOptimizer(
                     tenant_id=tenant_id,
+                    llm_config=self.deps.llm_config,
                     config=self._optimizer_config,
                     base_storage_dir=self._optimization_storage_dir,
                 )
@@ -1055,10 +1048,11 @@ class RoutingAgent(
                 context, entities, relationships
             )
 
-            # DSPy routing decision
-            dspy_result = self.routing_module.forward(
-                query=routing_query, context=routing_context
-            )
+            # DSPy routing decision (scoped LM via context)
+            with dspy.context(lm=self._dspy_lm):
+                dspy_result = self.routing_module.forward(
+                    query=routing_query, context=routing_context
+                )
 
             # Extract routing information from DSPy result
             routing_info = {
@@ -1688,8 +1682,12 @@ if __name__ == "__main__":
         deps = RoutingDeps(
             tenant_id="demo-tenant",
             telemetry_config=MockTelemetryConfig(enabled=False),
-            model_name="smollm3:3b",
-            base_url="http://localhost:11434/v1",
+            llm_config=LLMEndpointConfig(
+                model="ollama/smollm3:3b",
+                api_base="http://localhost:11434",
+                temperature=0.1,
+                max_tokens=1000,
+            ),
             confidence_threshold=0.7,
             enable_relationship_extraction=True,
             enable_query_enhancement=True,

@@ -10,6 +10,9 @@ from cogniverse_agents.detailed_report_agent import (
     DetailedReportDeps,
 )
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.fixture
@@ -23,10 +26,12 @@ def real_dspy_lm():
         response.status_code == 200
     ), "Ollama server must be running at localhost:11434"
 
-    # Configure real DSPy.LM with Ollama using correct API
-    lm = dspy.LM(
-        model="ollama/gemma3:4b",  # Use smallest model for tests
-        api_base="http://localhost:11434",
+    # Configure real DSPy.LM with Ollama via factory
+    lm = create_dspy_lm(
+        LLMEndpointConfig(
+            model="ollama/qwen2.5:1.5b",
+            api_base="http://localhost:11434",
+        )
     )
     # Test the connection using correct DSPy API
     test_response = lm("test")
@@ -35,21 +40,9 @@ def real_dspy_lm():
 
 
 @pytest.fixture
-def dspy_config():
-    """Configuration for DSPy.LM through Ollama"""
-    return {
-        "llm": {
-            "model_name": "ollama/gemma3:4b",  # Use smallest available model
-            "base_url": "http://localhost:11434",
-            "api_key": "ollama",
-        },
-        "models": {
-            "small": "ollama/gemma3:4b",
-            "medium": "qwen2.5:1.5b",
-            "vision": "qwen2.5:1.5b",
-        },
-        "timeout": 30,
-    }
+def test_config_manager():
+    """Real ConfigManager for integration tests."""
+    return create_default_config_manager()
 
 
 @pytest.fixture
@@ -107,16 +100,18 @@ class TestSummarizerAgentDSPyIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_with_small_model(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test SummarizerAgent with small model via real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            # Create agent and set real LM
-            agent = SummarizerAgent(deps=SummarizerDeps())
-            agent.llm = real_dspy_lm
+            agent = SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=test_config_manager
+            )
 
-            # Create summary request
             from cogniverse_agents.summarizer_agent import SummaryRequest
 
             request = SummaryRequest(
@@ -126,12 +121,10 @@ class TestSummarizerAgentDSPyIntegration:
                 include_visual_analysis=False,
             )
 
-            # Generate summary with real DSPy.LM
             result = await agent._summarize(request)
 
-            # Verify results
             assert result.summary is not None
-            assert len(result.summary) > 10  # Should have actual content
+            assert len(result.summary) > 10
             assert len(result.key_points) >= 1
             assert result.confidence_score > 0
             assert result.metadata["summary_type"] == "brief"
@@ -139,15 +132,18 @@ class TestSummarizerAgentDSPyIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_a2a_processing(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = SummarizerAgent(deps=SummarizerDeps())
-            agent.llm = real_dspy_lm
+            agent = SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=test_config_manager
+            )
 
-            # Create summarization request (direct API instead of A2A)
             from cogniverse_agents.summarizer_agent import SummaryRequest
 
             request = SummaryRequest(
@@ -157,12 +153,10 @@ class TestSummarizerAgentDSPyIntegration:
                 include_visual_analysis=False,
             )
 
-            # Process request with real DSPy.LM
             result = await agent._summarize(request)
 
-            # Verify response
             assert result.summary is not None
-            assert len(result.summary) > 10  # Should have actual content
+            assert len(result.summary) > 10
             assert result.confidence_score > 0
 
 
@@ -173,13 +167,17 @@ class TestDetailedReportAgentDSPyIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_with_dspy(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test DetailedReportAgent with real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(deps=DetailedReportDeps())
-            agent.llm = real_dspy_lm
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=test_config_manager
+            )
 
             from cogniverse_agents.detailed_report_agent import ReportRequest
 
@@ -209,9 +207,8 @@ class TestDetailedReportAgentDSPyIntegration:
 
                 result = await agent._generate_report(request)
 
-                # Verify comprehensive report with real DSPy.LM
                 assert result.executive_summary is not None
-                assert len(result.executive_summary) > 20  # Should have actual content
+                assert len(result.executive_summary) > 20
                 assert len(result.detailed_findings) >= 3
                 assert len(result.visual_analysis) > 0
                 assert len(result.technical_details) >= 2
@@ -221,15 +218,18 @@ class TestDetailedReportAgentDSPyIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_a2a_processing(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            agent = DetailedReportAgent(deps=DetailedReportDeps())
-            agent.llm = real_dspy_lm
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=test_config_manager
+            )
 
-            # Create report request using direct API
             from cogniverse_agents.detailed_report_agent import ReportRequest
 
             request = ReportRequest(
@@ -239,7 +239,6 @@ class TestDetailedReportAgentDSPyIntegration:
                 include_visual_analysis=True,
             )
 
-            # Mock visual analysis to focus on DSPy.LM
             with patch.object(
                 agent, "_perform_visual_analysis", new_callable=AsyncMock
             ) as mock_visual:
@@ -251,9 +250,8 @@ class TestDetailedReportAgentDSPyIntegration:
 
                 result = await agent._generate_report(request)
 
-                # Verify response with real DSPy.LM
                 assert result.executive_summary is not None
-                assert len(result.executive_summary) > 20  # Should have actual content
+                assert len(result.executive_summary) > 20
                 assert len(result.detailed_findings) > 0
                 assert len(result.recommendations) > 0
 
@@ -265,17 +263,21 @@ class TestCrossAgentDSPyIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_to_detailed_report_workflow(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            summarizer = SummarizerAgent(deps=SummarizerDeps())
-            summarizer.llm = real_dspy_lm
-            report_agent = DetailedReportAgent(deps=DetailedReportDeps())
-            report_agent.llm = real_dspy_lm
+            summarizer = SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=test_config_manager
+            )
+            report_agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=test_config_manager
+            )
 
-            # Step 1: Generate summary with real DSPy.LM
             from cogniverse_agents.summarizer_agent import SummaryRequest
 
             summary_request = SummaryRequest(
@@ -286,7 +288,6 @@ class TestCrossAgentDSPyIntegration:
 
             summary_result = await summarizer._summarize(summary_request)
 
-            # Step 2: Use summary for detailed report
             enhanced_results = sample_search_results.copy()
             enhanced_results.append(
                 {
@@ -319,14 +320,11 @@ class TestCrossAgentDSPyIntegration:
 
                 report_result = await report_agent._generate_report(report_request)
 
-                # Verify integrated workflow with real DSPy.LM
                 assert summary_result.summary is not None
-                assert len(summary_result.summary) > 20  # Should have actual content
+                assert len(summary_result.summary) > 20
                 assert report_result.executive_summary is not None
-                assert (
-                    len(report_result.executive_summary) > 20
-                )  # Should have actual content
-                assert len(report_result.detailed_findings) >= 3  # Should have findings
+                assert len(report_result.executive_summary) > 20
+                assert len(report_result.detailed_findings) >= 3
                 assert report_result.confidence_assessment["overall"] > 0.0
 
 
@@ -334,27 +332,34 @@ class TestCrossAgentDSPyIntegration:
 class TestDSPyLMConfigurationIntegration:
     """Integration tests for DSPy.LM configuration and setup through Ollama"""
 
-    def test_dspy_lm_configuration(self, dspy_config):
-        """Test DSPy.LM configuration parsing"""
-        assert dspy_config["llm"]["model_name"] == "ollama/gemma3:4b"
-        assert dspy_config["llm"]["base_url"] == "http://localhost:11434"
-        assert dspy_config["llm"]["api_key"] == "ollama"
-        assert "gemma3" in dspy_config["models"]["small"]
-        assert "qwen" in dspy_config["models"]["medium"]
+    def test_dspy_lm_configuration(self, test_config_manager):
+        """Test DSPy.LM configuration from real config manager"""
+        from cogniverse_foundation.config.utils import get_config
+
+        config_helper = get_config(
+            tenant_id="default", config_manager=test_config_manager
+        )
+        llm_config = config_helper.get_llm_config()
+        assert llm_config.primary.model is not None
+        assert len(llm_config.primary.model) > 0
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_dspy_lm_model_switching(
-        self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
+        self,
+        sample_search_results,
+        real_dspy_lm,
+        mock_ollama_server,
+        test_config_manager,
     ):
         """Test switching between different models via real DSPy.LM"""
-        # Use dspy.context() for async tasks instead of configure()
         with dspy.context(lm=real_dspy_lm):
-            # Test with different model configurations (both using same LM for testing)
-            agent_small = SummarizerAgent(deps=SummarizerDeps())
-            agent_small.llm = real_dspy_lm
-            agent_medium = SummarizerAgent(deps=SummarizerDeps())
-            agent_medium.llm = real_dspy_lm
+            agent_small = SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=test_config_manager
+            )
+            agent_medium = SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=test_config_manager
+            )
 
             from cogniverse_agents.summarizer_agent import SummaryRequest
 
@@ -364,15 +369,13 @@ class TestDSPyLMConfigurationIntegration:
                 summary_type="brief",
             )
 
-            # Generate summaries with both configurations using real DSPy.LM
             result_small = await agent_small._summarize(request)
             result_medium = await agent_medium._summarize(request)
 
-        # Verify both configurations work with real DSPy.LM
         assert result_small.summary is not None
-        assert len(result_small.summary) > 10  # Should have actual content
+        assert len(result_small.summary) > 10
         assert result_medium.summary is not None
-        assert len(result_medium.summary) > 10  # Should have actual content
+        assert len(result_medium.summary) > 10
         assert result_small.confidence_score > 0
         assert result_medium.confidence_score > 0
 
@@ -380,36 +383,9 @@ class TestDSPyLMConfigurationIntegration:
     @pytest.mark.asyncio
     async def test_agent_error_handling_with_bad_dspy_config(self, mock_ollama_server):
         """Test agent error handling when DSPy.LM configuration fails"""
-        # Agent initialization should either:
-        # 1. Fail gracefully with clear error message, or
-        # 2. Initialize but fail on first LLM call
-        try:
-            agent = SummarizerAgent(deps=SummarizerDeps())
-
-            # If agent initializes, LLM calls should fail gracefully
-            from cogniverse_agents.summarizer_agent import SummaryRequest
-
-            request = SummaryRequest(
-                query="test error handling",
-                search_results=[],
-                summary_type="brief",
-            )
-
-            # This should raise an exception due to bad model config
-            result = await agent._summarize(request)
-            # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
-            assert result is not None, "Agent should either fail or return valid result"
-
-        except Exception as e:
-            # Should fail with meaningful error about model or connection
-            error_msg = str(e).lower()
-            assert (
-                "model" in error_msg
-                or "not found" in error_msg
-                or "connection" in error_msg
-                or "llm" in error_msg
-                or "api" in error_msg
-            ), f"Expected meaningful error, got: {str(e)}"
+        # Without config_manager, agent should raise ValueError
+        with pytest.raises(ValueError, match="config_manager is required"):
+            SummarizerAgent(deps=SummarizerDeps())
 
 
 # Integration test configuration for DSPy.LM + Ollama
@@ -418,12 +394,9 @@ To run these integration tests with real DSPy.LM + Ollama:
 
 1. Install Ollama: https://ollama.ai
 2. Pull models:
-   ollama pull ollama/gemma3:4b  # Smallest model for tests
-   ollama pull qwen2.5:1.5b
-3. Start Ollama server: ollama serve  
-4. Install DSPy: uv add dspy-ai
-5. Run tests with Ollama requirement:
+   ollama pull qwen2.5:1.5b  # Smallest model for tests
+   ollama pull gemma3:4b      # Larger model for teacher/generation tests
+3. Start Ollama server: ollama serve
+4. Run tests with Ollama requirement:
    pytest -m requires_ollama tests/agents/integration/test_specialized_agents_integration.py
-
-These tests validate real DSPy.LM → Ollama → model inference pipeline.
 """

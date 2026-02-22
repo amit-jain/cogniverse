@@ -13,6 +13,7 @@ import logging
 import pytest
 
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.agents.integration.conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
@@ -138,14 +139,20 @@ class TestRLMAwareMixinIntegration:
         mixin = RLMAwareMixin()
 
         # Get first instance
-        rlm1 = mixin.get_rlm(backend="openai", model="gpt-4o", max_iterations=10)
+        rlm1 = mixin.get_rlm(
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=10
+        )
 
         # Get same config - should return same instance
-        rlm2 = mixin.get_rlm(backend="openai", model="gpt-4o", max_iterations=10)
+        rlm2 = mixin.get_rlm(
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=10
+        )
         assert rlm1 is rlm2, "Same config should return cached instance"
 
         # Get different config - should return new instance
-        rlm3 = mixin.get_rlm(backend="openai", model="gpt-4o", max_iterations=20)
+        rlm3 = mixin.get_rlm(
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=20
+        )
         assert rlm3 is not rlm1, "Different config should create new instance"
 
         logger.info("RLM instance caching validated")
@@ -396,18 +403,17 @@ class TestRLMInferenceIntegration:
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
         rlm = RLMInference(
-            backend="anthropic",
-            model="claude-3-opus",
+            llm_config=LLMEndpointConfig(
+                model="anthropic/claude-3-opus", api_key="test-key"
+            ),
             max_iterations=5,
             max_llm_calls=20,
-            api_key="test-key",
         )
 
-        assert rlm.backend == "anthropic"
-        assert rlm.model == "claude-3-opus"
+        assert rlm.model == "anthropic/claude-3-opus"
         assert rlm.max_iterations == 5
         assert rlm.max_llm_calls == 20
-        assert rlm._api_key == "test-key"
+        assert rlm.llm_config.api_key == "test-key"
         assert rlm._rlm is None  # Lazy initialization
 
         logger.info("RLMInference configuration validated")
@@ -740,10 +746,9 @@ class TestRLMRealInferenceIntegration:
         """
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
-        # Create RLM with litellm backend pointing to Ollama
+        # Create RLM with Ollama backend (small model for fast tests)
         rlm = RLMInference(
-            backend="litellm",
-            model="ollama/qwen2.5:1.5b",  # Small model for fast tests
+            llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"),
             max_iterations=2,  # Limit iterations for faster tests
         )
 
@@ -782,8 +787,7 @@ class TestRLMRealInferenceIntegration:
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
         rlm = RLMInference(
-            backend="litellm",
-            model="ollama/qwen2.5:1.5b",
+            llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"),
             max_iterations=2,
         )
 

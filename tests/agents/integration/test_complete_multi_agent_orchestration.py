@@ -24,6 +24,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -90,7 +91,9 @@ class TestCompleteMultiAgentOrchestration:
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
         deps = SummarizerDeps()
-        summarizer = SummarizerAgent(deps=deps)
+        summarizer = SummarizerAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
 
         # Test with sample search results
 
@@ -104,7 +107,9 @@ class TestCompleteMultiAgentOrchestration:
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
         deps = DetailedReportDeps()
-        reporter = DetailedReportAgent(deps=deps)
+        reporter = DetailedReportAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
 
         # Test with comprehensive data structure
 
@@ -209,9 +214,13 @@ class TestCompleteMultiAgentOrchestration:
             routing_agent.logger = logging.getLogger(__name__)
 
         summarizer_deps = SummarizerDeps()
-        summarizer = SummarizerAgent(deps=summarizer_deps)
+        summarizer = SummarizerAgent(
+            deps=summarizer_deps, config_manager=create_default_config_manager()
+        )
         reporter_deps = DetailedReportDeps()
-        reporter = DetailedReportAgent(deps=reporter_deps)
+        reporter = DetailedReportAgent(
+            deps=reporter_deps, config_manager=create_default_config_manager()
+        )
 
         # Verify agents have expected coordination interfaces
         agents = {
@@ -348,9 +357,17 @@ class TestCompleteMultiAgentOrchestration:
                 routing_agent.logger = logging.getLogger(__name__)
                 agents.append(routing_agent)
                 summarizer_deps = SummarizerDeps()
-                agents.append(SummarizerAgent(deps=summarizer_deps))
+                agents.append(
+                    SummarizerAgent(
+                        deps=summarizer_deps, config_manager=_config_manager
+                    )
+                )
                 reporter_deps = DetailedReportDeps()
-                agents.append(DetailedReportAgent(deps=reporter_deps))
+                agents.append(
+                    DetailedReportAgent(
+                        deps=reporter_deps, config_manager=_config_manager
+                    )
+                )
 
             # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
             try:
@@ -458,9 +475,13 @@ class TestSystemScalability:
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
         summarizer_deps = SummarizerDeps()
-        summarizer = SummarizerAgent(deps=summarizer_deps)
+        summarizer = SummarizerAgent(
+            deps=summarizer_deps, config_manager=create_default_config_manager()
+        )
         reporter_deps = DetailedReportDeps()
-        reporter = DetailedReportAgent(deps=reporter_deps)
+        reporter = DetailedReportAgent(
+            deps=reporter_deps, config_manager=create_default_config_manager()
+        )
 
         # Simulate repeated operations
         for i in range(10):

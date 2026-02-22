@@ -23,6 +23,7 @@ from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbac
 from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class OptimizationOrchestrator:
 
     def __init__(
         self,
+        llm_config: LLMEndpointConfig,
         tenant_id: str = "default",
         span_eval_interval_minutes: int = 15,
         annotation_interval_minutes: int = 30,
@@ -52,14 +54,12 @@ class OptimizationOrchestrator:
         confidence_threshold: float = 0.6,
         min_annotations_for_optimization: int = 50,
         optimization_improvement_threshold: float = 0.05,
-        annotation_model: str | None = None,
-        annotation_api_base: str | None = None,
-        annotation_api_key: str | None = None,
     ):
         """
         Initialize optimization orchestrator
 
         Args:
+            llm_config: LLM endpoint configuration for optimizer and annotator
             tenant_id: Tenant identifier for multi-tenancy
             span_eval_interval_minutes: How often to evaluate spans
             annotation_interval_minutes: How often to identify spans for annotation
@@ -67,9 +67,6 @@ class OptimizationOrchestrator:
             confidence_threshold: Confidence below which annotations are needed
             min_annotations_for_optimization: Minimum annotations before triggering optimization
             optimization_improvement_threshold: Minimum improvement required to accept optimization
-            annotation_model: Model name for LLM auto-annotator
-            annotation_api_base: API base URL for annotation model
-            annotation_api_key: API key for annotation model
         """
         self.tenant_id = tenant_id
         self.span_eval_interval = span_eval_interval_minutes
@@ -77,7 +74,9 @@ class OptimizationOrchestrator:
         self.feedback_interval = feedback_interval_minutes
 
         # Initialize core components
-        self.optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
+        self.optimizer = AdvancedRoutingOptimizer(
+            tenant_id=tenant_id, llm_config=llm_config
+        )
 
         # Span evaluation component
         self.span_evaluator = RoutingSpanEvaluator(
@@ -90,11 +89,7 @@ class OptimizationOrchestrator:
             confidence_threshold=confidence_threshold,
             max_annotations_per_run=100,
         )
-        self.llm_annotator = LLMAutoAnnotator(
-            model=annotation_model,
-            api_base=annotation_api_base,
-            api_key=annotation_api_key,
-        )
+        self.llm_annotator = LLMAutoAnnotator(llm_config=llm_config)
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
         # Feedback loop

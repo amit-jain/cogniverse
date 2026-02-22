@@ -218,13 +218,13 @@ class SummarizerAgent(
             deps=deps, config=config, dspy_module=self.summarization_module
         )
 
-        # Config manager for VLM and other services
-        if config_manager is not None:
-            self._config_manager = config_manager
-        else:
-            from cogniverse_foundation.config.utils import create_default_config_manager
-
-            self._config_manager = create_default_config_manager()
+        # Config manager — required from caller, no silent fallback
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required. "
+                "Pass create_default_config_manager() from startup boundary."
+            )
+        self._config_manager = config_manager
 
         # Initialize DSPy components
         self._initialize_vlm_client()
@@ -242,61 +242,20 @@ class SummarizerAgent(
         logger.info("SummarizerAgent initialized (tenant-agnostic)")
 
     def _initialize_vlm_client(self):
-        """Initialize DSPy LM from config.json inference section."""
+        """Initialize DSPy LM from centralized llm_config."""
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
         from cogniverse_foundation.config.utils import get_config
 
         system_config = get_config(
             tenant_id="default", config_manager=self._config_manager
         )
+        llm_config = system_config.get_llm_config()
+        endpoint_config = llm_config.resolve("summarizer_agent")
 
-        # Read from config.json > inference section
-        inference_config = system_config.get("inference", {})
-        if not inference_config:
-            raise ValueError(
-                "Missing 'inference' section in config.json. "
-                "Required fields: provider, model, local_endpoint or modal_endpoint"
-            )
-
-        provider = inference_config.get("provider", "ollama")
-        model_name = inference_config.get("model")
-        if not model_name:
-            raise ValueError("Missing 'model' in config.json > inference section")
-
-        # Determine base_url from provider
-        if provider == "modal":
-            base_url = inference_config.get("modal_endpoint")
-        else:
-            base_url = inference_config.get("local_endpoint")
-
-        if not base_url:
-            raise ValueError(
-                f"Missing endpoint for provider '{provider}' in config.json > inference. "
-                f"Set 'modal_endpoint' (provider=modal) or 'local_endpoint' (provider=ollama)."
-            )
-
-        api_key = inference_config.get("api_key")
-
-        # Ensure model name has provider prefix for litellm (Ollama models)
-        if (
-            "localhost:11434" in base_url or "11434" in base_url
-        ) and not model_name.startswith("ollama/"):
-            model_name = f"ollama/{model_name}"
-
-        try:
-            if api_key:
-                dspy.settings.configure(
-                    lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
-                )
-            else:
-                dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
-            logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
-        except RuntimeError as e:
-            if "can only be called from the same async task" in str(e):
-                logger.warning(
-                    "DSPy already configured in this async context, skipping reconfiguration"
-                )
-            else:
-                raise
+        self._dspy_lm = create_dspy_lm(endpoint_config)
+        logger.info(
+            f"Created DSPy LM: {endpoint_config.model} at {endpoint_config.api_base}"
+        )
 
     async def _summarize(self, request: SummaryRequest) -> SummaryResult:
         """
@@ -311,48 +270,51 @@ class SummarizerAgent(
         logger.info(f"Starting summarization for query: '{request.query}'")
         logger.info(f"Analyzing {len(request.search_results)} search results")
 
-        try:
-            # Phase 1: Thinking phase - analyze and categorize results
-            thinking_phase = await self._thinking_phase(request)
+        with dspy.context(lm=self._dspy_lm):
+            try:
+                # Phase 1: Thinking phase - analyze and categorize results
+                thinking_phase = await self._thinking_phase(request)
 
-            # Phase 2: Extract visual content if enabled
-            visual_insights = []
-            if request.include_visual_analysis and self.visual_analysis_enabled:
-                visual_insights = await self._analyze_visual_content(
-                    request, thinking_phase
+                # Phase 2: Extract visual content if enabled
+                visual_insights = []
+                if request.include_visual_analysis and self.visual_analysis_enabled:
+                    visual_insights = await self._analyze_visual_content(
+                        request, thinking_phase
+                    )
+
+                # Phase 3: Generate summary based on analysis
+                summary = await self._generate_summary(
+                    request, thinking_phase, visual_insights
                 )
 
-            # Phase 3: Generate summary based on analysis
-            summary = await self._generate_summary(
-                request, thinking_phase, visual_insights
-            )
+                # Phase 4: Extract key points
+                key_points = self._extract_key_points(request, thinking_phase, summary)
 
-            # Phase 4: Extract key points
-            key_points = self._extract_key_points(request, thinking_phase, summary)
+                # Phase 5: Calculate confidence score
+                confidence_score = self._calculate_confidence(request, thinking_phase)
 
-            # Phase 5: Calculate confidence score
-            confidence_score = self._calculate_confidence(request, thinking_phase)
+                result = SummaryResult(
+                    summary=summary,
+                    key_points=key_points,
+                    visual_insights=visual_insights,
+                    confidence_score=confidence_score,
+                    thinking_phase=thinking_phase,
+                    metadata={
+                        "results_analyzed": len(request.search_results),
+                        "summary_type": request.summary_type,
+                        "visual_analysis_enabled": request.include_visual_analysis,
+                        "processing_time": asyncio.get_event_loop().time(),
+                    },
+                )
 
-            result = SummaryResult(
-                summary=summary,
-                key_points=key_points,
-                visual_insights=visual_insights,
-                confidence_score=confidence_score,
-                thinking_phase=thinking_phase,
-                metadata={
-                    "results_analyzed": len(request.search_results),
-                    "summary_type": request.summary_type,
-                    "visual_analysis_enabled": request.include_visual_analysis,
-                    "processing_time": asyncio.get_event_loop().time(),
-                },
-            )
+                logger.info(
+                    f"Summarization complete. Confidence: {confidence_score:.2f}"
+                )
+                return result
 
-            logger.info(f"Summarization complete. Confidence: {confidence_score:.2f}")
-            return result
-
-        except Exception as e:
-            logger.error(f"Summarization failed: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Summarization failed: {e}")
+                raise
 
     async def summarize(self, request: SummaryRequest) -> SummaryResult:
         """

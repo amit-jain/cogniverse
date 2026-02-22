@@ -1,32 +1,39 @@
 """
-Real end-to-end integration tests for multi-agent system.
+Real LLM integration tests for multi-agent system.
 
-These tests use actual LLMs, real DSPy optimization, and real backend services
-to test the complete multi-agent workflow without mocks.
+These tests use actual LLMs via Ollama to test agent functionality
+without mocking the LLM layer. They validate real inference through
+the centralized LLM config system (create_dspy_lm + LLMEndpointConfig).
+
+NOT true E2E tests — they don't ingest data or search Vespa.
 
 Requirements:
-- LLM server running locally (e.g. Ollama with gemma3:4b)
+- LLM server running locally (e.g. Ollama with qwen2.5:1.5b)
 - Vespa backend available (optional, falls back gracefully)
 - Phoenix telemetry server (optional)
 """
 
 import logging
 
+import dspy
 import pytest
 
-# E2E tests require an LLM server (default: Ollama with gemma3:4b)
+# E2E tests require an LLM server (default: Ollama with qwen2.5:1.5b)
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
 )
-from cogniverse_agents.dspy_agent_optimizer import (
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Configure logging for tests
@@ -34,14 +41,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Test configuration
-TEST_CONFIG = {
-    "llm_base_url": "http://localhost:11434/v1",
-    "llm_model": "gemma3:4b",
-    "llm_api_key": "no-key",
-    "vespa_url": "http://localhost:8080",
-    "test_timeout": 300,  # 5 minutes for real LLM calls
-    "optimization_rounds": 1,  # Keep optimization quick for tests
-}
+TEST_TIMEOUT = 300  # 5 minutes for real LLM calls
 
 
 class TestLLMAvailability:
@@ -52,10 +52,9 @@ class TestLLMAvailability:
         try:
             import requests
 
-            base = TEST_CONFIG["llm_base_url"].rstrip("/")
-            response = requests.get(f"{base}/models", timeout=5)
+            response = requests.get("http://localhost:11434/v1/models", timeout=5)
             assert response.status_code == 200, "LLM server not reachable"
-            logger.info(f"LLM server available with model: {TEST_CONFIG['llm_model']}")
+            logger.info("LLM server available")
         except Exception:
             pass
 
@@ -64,18 +63,13 @@ class TestRealQueryAnalysisIntegration:
     """Real integration tests for QueryAnalysisToolV3 with actual LLM."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_query_analysis_with_local_llm(self):
         """Test real query analysis with local Ollama model."""
-
-        # Initialize query analyzer with real LLM
-        from cogniverse_foundation.config.utils import create_default_config_manager
+        config_manager = create_default_config_manager()
 
         analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["llm_api_key"],
-            openai_base_url=TEST_CONFIG["llm_base_url"],
-            model_name=TEST_CONFIG["llm_model"],
-            config_manager=create_default_config_manager(),
+            config_manager=config_manager,
         )
 
         # Test queries with different complexity levels
@@ -119,12 +113,10 @@ class TestRealQueryAnalysisIntegration:
             if "expected_intent" in test_case:
                 expected = test_case["expected_intent"].lower()
                 actual = result_dict["primary_intent"].lower()
-                # Check if words match (e.g., "compare" matches "comparison")
                 expected_words = set(expected.split())
                 actual_words = set(actual.split())
                 matches = any(
-                    exp_word in actual
-                    or actual_word.startswith(exp_word[:4])  # Match first 4 chars
+                    exp_word in actual or actual_word.startswith(exp_word[:4])
                     for exp_word in expected_words
                     for actual_word in actual_words
                 )
@@ -148,27 +140,28 @@ class TestRealQueryAnalysisIntegration:
             reasoning = result_dict["thinking_phase"]["reasoning"]
             assert len(reasoning) > 10, "Reasoning should be substantive"
 
-            logger.info(f"✅ Analysis result: {result_dict}")
+            logger.info(f"Analysis result: {result_dict}")
 
 
 class TestRealAgentRoutingIntegration:
     """Real integration tests for RoutingAgent with actual LLM."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_agent_routing_with_local_llm(self):
         """Test real agent routing decisions with local Ollama model."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        import dspy
-
-        # Configure DSPy async-safe
-        mock_lm = MagicMock()
-        mock_lm.model = "test-model"
+        # Use real DSPy LM
+        test_lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
+        )
 
         with (
-            dspy.context(lm=mock_lm),
-            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            dspy.context(lm=test_lm),
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
@@ -180,7 +173,6 @@ class TestRealAgentRoutingIntegration:
         test_cases = [
             {
                 "query": "Find videos of basketball games",
-                # Routing logic may vary, just verify structure
             },
             {
                 "query": "Analyze the trends in renewable energy adoption",
@@ -205,7 +197,7 @@ class TestRealAgentRoutingIntegration:
             # Verify recommended agent is one of the valid agents
             assert routing_decision.recommended_agent in [
                 "video_search_agent",
-                "search_agent",  # Unified search agent
+                "search_agent",
                 "summarizer_agent",
                 "detailed_report_agent",
             ], f"Invalid agent: {routing_decision.recommended_agent}"
@@ -223,7 +215,7 @@ class TestRealAgentRoutingIntegration:
             ), "Reasoning should be substantive"
 
             logger.info(
-                f"✅ Routing decision: {routing_decision.recommended_agent} (confidence: {confidence})"
+                f"Routing decision: {routing_decision.recommended_agent} (confidence: {confidence})"
             )
 
 
@@ -231,18 +223,22 @@ class TestRealAgentSpecializationIntegration:
     """Real integration tests for specialized agents with actual LLMs."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_summarizer_agent_with_local_llm(self):
         """Test real summarization with local Ollama model."""
         from unittest.mock import patch
 
-        import dspy
-
         from cogniverse_agents.summarizer_agent import SummaryRequest
 
-        # E2E test - requires real Ollama, works in production
-        # Configure DSPy with correct model before creating agent
-        test_lm = dspy.LM(model="ollama/gemma3:4b", api_base="http://localhost:11434")
+        config_manager = create_default_config_manager()
+
+        # E2E test - requires real Ollama
+        test_lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
+        )
 
         with (
             dspy.context(lm=test_lm),
@@ -250,9 +246,8 @@ class TestRealAgentSpecializationIntegration:
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
             deps = SummarizerDeps()
-            summarizer = SummarizerAgent(deps=deps)
+            summarizer = SummarizerAgent(deps=deps, config_manager=config_manager)
 
-            # Test content summarization - use SummaryRequest with search_results
             test_search_results = [
                 {
                     "title": "Machine Learning Advances",
@@ -279,40 +274,36 @@ class TestRealAgentSpecializationIntegration:
 
             summary_result = await summarizer.summarize(request)
 
-            # Verify summary structure (SummaryResult object)
             assert hasattr(summary_result, "summary")
             assert hasattr(summary_result, "key_points")
             assert hasattr(summary_result, "confidence_score")
 
-            # Verify summary quality
             assert len(summary_result.summary) > 20, "Summary should be substantive"
-
-            # Verify key points (optional - may be empty with minimal test data)
             assert isinstance(summary_result.key_points, list)
 
-            # Verify confidence
             confidence = float(summary_result.confidence_score)
             assert 0.0 <= confidence <= 1.0
 
-            logger.info(f"✅ Summary result: {summary_result.summary[:100]}...")
+            logger.info(f"Summary result: {summary_result.summary[:100]}...")
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_detailed_report_agent_with_local_llm(self):
         """Test real detailed report generation with local Ollama model."""
         from unittest.mock import patch
 
         from cogniverse_agents.detailed_report_agent import ReportRequest
 
-        # E2E test - requires real Ollama, works in production
+        config_manager = create_default_config_manager()
+
+        # E2E test - requires real Ollama
         with (
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
             deps = DetailedReportDeps()
-            report_agent = DetailedReportAgent(deps=deps)
+            report_agent = DetailedReportAgent(deps=deps, config_manager=config_manager)
 
-            # Mock search results for testing
             mock_search_results = [
                 {
                     "title": "Advances in Neural Architecture Search",
@@ -337,13 +328,11 @@ class TestRealAgentSpecializationIntegration:
 
             report_result = await report_agent.generate_report(request)
 
-            # Verify report structure (ReportResult object)
             assert hasattr(report_result, "executive_summary")
             assert hasattr(report_result, "detailed_findings")
             assert hasattr(report_result, "recommendations")
             assert hasattr(report_result, "confidence_assessment")
 
-            # Verify report quality
             assert (
                 len(report_result.executive_summary) > 50
             ), "Executive summary should be comprehensive"
@@ -354,12 +343,11 @@ class TestRealAgentSpecializationIntegration:
                 len(report_result.recommendations) >= 1
             ), "Recommendations should be present"
 
-            # Verify confidence
             confidence = float(report_result.confidence_assessment.get("overall", 0.0))
             assert 0.0 <= confidence <= 1.0
 
             logger.info(
-                f"✅ Report executive summary: {report_result.executive_summary[:100]}..."
+                f"Report executive summary: {report_result.executive_summary[:100]}..."
             )
 
 
@@ -367,21 +355,19 @@ class TestRealDSPyOptimizationIntegration:
     """Real integration tests for DSPy optimization with actual LLMs."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(
-        TEST_CONFIG["test_timeout"] * 2
-    )  # DSPy optimization takes longer
+    @pytest.mark.timeout(TEST_TIMEOUT * 2)  # DSPy optimization takes longer
     async def test_real_dspy_optimization_pipeline(self):
         """Test real DSPy optimization with local Ollama model."""
 
         # Initialize DSPy optimizer with real LLM
         optimizer = DSPyAgentPromptOptimizer()
 
-        # Initialize with local LLM
-        _success = optimizer.initialize_language_model(
-            api_base=TEST_CONFIG["llm_base_url"],
-            model=TEST_CONFIG["llm_model"],
-            api_key=TEST_CONFIG["llm_api_key"],
+        endpoint_config = LLMEndpointConfig(
+            model="ollama/qwen2.5:1.5b",
+            api_base="http://localhost:11434",
         )
+        _success = optimizer.initialize_language_model(endpoint_config)
+
         # Create optimization pipeline
         pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
@@ -400,7 +386,7 @@ class TestRealDSPyOptimizationIntegration:
         assert len(training_data["query_analysis"]) > 0
         assert len(training_data["agent_routing"]) > 0
 
-        logger.info(f"✅ Loaded training data with {len(training_data)} modules")
+        logger.info(f"Loaded training data with {len(training_data)} modules")
 
         # Test module initialization
         pipeline.initialize_modules()
@@ -420,26 +406,21 @@ class TestRealDSPyOptimizationIntegration:
             assert optimized_module is not None, "Should return optimized module"
             assert "query_analysis" in pipeline.compiled_modules
 
-            logger.info("✅ Successfully optimized query_analysis module")
+            logger.info("Successfully optimized query_analysis module")
 
         except Exception as e:
             logger.warning(f"DSPy optimization failed (expected in test env): {e}")
-            # This is acceptable - DSPy optimization may fail in test environments
-            # The important part is that the pipeline structure works
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_agent_with_dspy_integration(self):
         """Test agents with DSPy optimization integration."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
+        config_manager = create_default_config_manager()
 
         # Create agent with DSPy disabled first
         analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["llm_api_key"],
-            openai_base_url=TEST_CONFIG["llm_base_url"],
-            model_name=TEST_CONFIG["llm_model"],
+            config_manager=config_manager,
             enable_dspy=False,
-            config_manager=create_default_config_manager(),
         )
 
         # Test without optimization
@@ -457,34 +438,37 @@ class TestRealDSPyOptimizationIntegration:
         assert dspy_metadata["enabled"]
         assert "agent_type" in dspy_metadata
 
-        logger.info(f"✅ DSPy integration metadata: {dspy_metadata}")
+        logger.info(f"DSPy integration metadata: {dspy_metadata}")
 
 
 class TestRealEndToEndWorkflow:
     """Real end-to-end workflow tests with multiple agents."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(
-        TEST_CONFIG["test_timeout"] * 2
-    )  # Allow more time for full workflow
+    @pytest.mark.timeout(TEST_TIMEOUT * 2)
     async def test_real_multi_agent_workflow(self):
         """Test complete multi-agent workflow with real LLMs."""
         from unittest.mock import patch
 
         from cogniverse_agents.summarizer_agent import SummaryRequest
-        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        config_manager = create_default_config_manager()
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["llm_api_key"],
-            openai_base_url=TEST_CONFIG["llm_base_url"],
-            model_name=TEST_CONFIG["llm_model"],
-            config_manager=create_default_config_manager(),
+            config_manager=config_manager,
         )
 
-        # E2E test - requires real Ollama, works in production
+        # E2E test - requires real Ollama
+        test_lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b",
+                api_base="http://localhost:11434",
+            )
+        )
+
         with (
-            patch.object(RoutingAgent, "_configure_dspy", return_value=None),
+            dspy.context(lm=test_lm),
             patch("cogniverse_core.agents.a2a_agent.FastAPI"),
             patch("cogniverse_core.agents.a2a_agent.A2AClient"),
         ):
@@ -492,7 +476,9 @@ class TestRealEndToEndWorkflow:
             routing_deps = RoutingDeps(telemetry_config=telemetry_config)
             routing_agent = RoutingAgent(deps=routing_deps, port=8001)
             summarizer_deps = SummarizerDeps()
-            summarizer = SummarizerAgent(deps=summarizer_deps)
+            summarizer = SummarizerAgent(
+                deps=summarizer_deps, config_manager=config_manager
+            )
 
             # Test complete workflow
             test_query = (
@@ -515,7 +501,6 @@ class TestRealEndToEndWorkflow:
             if "summarizer" in routing_decision.recommended_agent.lower():
                 logger.info("Step 3: Executing with SummarizerAgent")
 
-                # Mock some search results to summarize
                 ai_search_results = [
                     {
                         "title": "AI Developments 2024",
@@ -544,7 +529,6 @@ class TestRealEndToEndWorkflow:
                 logger.info(f"Summary result: {summary_result.summary[:100]}...")
 
                 # Verify complete workflow
-                # Convert to dict if needed
                 if hasattr(analysis_result, "to_dict"):
                     analysis_dict = analysis_result.to_dict()
                 elif hasattr(analysis_result, "__dict__"):
@@ -564,24 +548,21 @@ class TestRealEndToEndWorkflow:
                 assert "summarizer" in routing_decision.recommended_agent.lower()
                 assert len(summary_result.summary) > 20
 
-                logger.info("✅ Complete multi-agent workflow successful!")
+                logger.info("Complete multi-agent workflow successful!")
 
             else:
                 logger.info(f"Workflow routed to: {routing_decision.recommended_agent}")
-                logger.info("✅ Routing workflow completed successfully!")
+                logger.info("Routing workflow completed successfully!")
 
 
 class TestRealPerformanceComparison:
     """Test performance comparison between default and optimized agents."""
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
+    @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_agent_performance_comparison(self):
         """Compare performance of default vs DSPy-optimized agents."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        # This test demonstrates the structure for performance comparison
-        # In a real environment, you would run actual optimization first
+        config_manager = create_default_config_manager()
 
         test_queries = [
             "Analyze market trends in renewable energy",
@@ -591,38 +572,29 @@ class TestRealPerformanceComparison:
 
         # Initialize agent without DSPy optimization
         default_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["llm_api_key"],
-            openai_base_url=TEST_CONFIG["llm_base_url"],
-            model_name=TEST_CONFIG["llm_model"],
+            config_manager=config_manager,
             enable_dspy=False,
-            config_manager=create_default_config_manager(),
         )
 
         # Initialize agent with DSPy optimization (simulated)
         optimized_analyzer = QueryAnalysisToolV3(
-            openai_api_key=TEST_CONFIG["llm_api_key"],
-            openai_base_url=TEST_CONFIG["llm_base_url"],
-            model_name=TEST_CONFIG["llm_model"],
-            enable_dspy=True,  # Would use actual optimized prompts in real scenario
-            config_manager=create_default_config_manager(),
+            config_manager=config_manager,
+            enable_dspy=True,
         )
 
         performance_comparison = {"default": [], "optimized": []}
 
         for query in test_queries:
-            # Test default agent
             import time
 
             start_time = time.time()
             default_result = await default_analyzer.analyze(query)
             default_time = time.time() - start_time
 
-            # Test optimized agent
             start_time = time.time()
             optimized_result = await optimized_analyzer.analyze(query)
             optimized_time = time.time() - start_time
 
-            # Extract reasoning from result (object or dict)
             def get_reasoning(result):
                 if hasattr(result, "to_dict"):
                     result_dict = result.to_dict()
@@ -632,7 +604,6 @@ class TestRealPerformanceComparison:
                     result_dict = result
 
                 if isinstance(result_dict, dict):
-                    # Check for reasoning in thinking_phase
                     if "thinking_phase" in result_dict and isinstance(
                         result_dict["thinking_phase"], dict
                     ):
@@ -678,14 +649,12 @@ class TestRealPerformanceComparison:
             f"Optimized agent - Avg time: {avg_optimized_time:.2f}s, Avg quality: {avg_optimized_quality}"
         )
 
-        # In real optimization, we would expect improvements
-        # For now, just verify both agents work
         assert avg_default_time > 0
         assert avg_optimized_time > 0
         assert avg_default_quality > 0
         assert avg_optimized_quality > 0
 
-        logger.info("✅ Performance comparison completed successfully!")
+        logger.info("Performance comparison completed successfully!")
 
 
 if __name__ == "__main__":

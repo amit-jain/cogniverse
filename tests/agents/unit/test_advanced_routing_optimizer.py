@@ -16,6 +16,7 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     RoutingExperience,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestAdvancedRoutingOptimizerCore:
@@ -73,7 +74,11 @@ class TestAdvancedRoutingOptimizerCore:
         )
 
         # Advanced optimizer doesn't use SentenceTransformer directly, so no mocking needed
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         assert optimizer.config == config
         assert len(optimizer.experiences) == 0
@@ -89,7 +94,11 @@ class TestAdvancedRoutingOptimizerCore:
             enable_persistence=False,  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         # Record a basic experience
         reward = await optimizer.record_routing_experience(
@@ -116,7 +125,11 @@ class TestAdvancedRoutingOptimizerCore:
         """Test reward computation logic."""
         config = AdvancedOptimizerConfig()
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         # Test successful case
         reward_success = optimizer._compute_reward(
@@ -145,7 +158,11 @@ class TestAdvancedRoutingOptimizerCore:
         """Test baseline recommendation functionality."""
         config = AdvancedOptimizerConfig()
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         # Test video-related query
         recommendations = optimizer._get_baseline_recommendations(
@@ -175,7 +192,11 @@ class TestAdvancedRoutingOptimizerCore:
             enable_persistence=False  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         status = optimizer.get_optimization_status()
 
@@ -313,7 +334,11 @@ class TestAdvancedRoutingOptimizerIntegration:
                 enable_persistence=False,  # Disable persistence for test isolation
             )
 
-            optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+            optimizer = AdvancedRoutingOptimizer(
+                tenant_id="test_tenant",
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                config=config,
+            )
 
             # Collect 210 experiences to exceed GEPA threshold
             for i in range(210):
@@ -430,7 +455,11 @@ class TestAdvancedRoutingOptimizerIntegration:
                 enable_persistence=False,  # Disable persistence for test isolation
             )
 
-            optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+            optimizer = AdvancedRoutingOptimizer(
+                tenant_id="test_tenant",
+                llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                config=config,
+            )
 
             # Collect minimum experiences to init optimizer
             for i in range(15):
@@ -471,7 +500,11 @@ class TestAdvancedRoutingOptimizerIntegration:
             enable_persistence=False,  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
+        optimizer = AdvancedRoutingOptimizer(
+            tenant_id="test_tenant",
+            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            config=config,
+        )
 
         # Simulate multiple experiences
         queries = [

@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
 
 from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,8 @@ class RLMInference:
     - Long transcript processing
 
     Example:
-        rlm = RLMInference(backend="openai", model="gpt-4o", max_iterations=10)
+        config = LLMEndpointConfig(model="openai/gpt-4o")
+        rlm = RLMInference(llm_config=config, max_iterations=10)
         result = rlm.process(
             query="Summarize the main findings",
             context=large_context_string,
@@ -97,11 +100,9 @@ class RLMInference:
 
     def __init__(
         self,
-        backend: str = "openai",
-        model: str = "gpt-4o",
+        llm_config: LLMEndpointConfig,
         max_iterations: int = 10,
         max_llm_calls: int = 30,
-        api_key: Optional[str] = None,
         timeout_seconds: Optional[int] = 300,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
@@ -110,21 +111,18 @@ class RLMInference:
         """Initialize RLM inference wrapper.
 
         Args:
-            backend: LLM backend (openai, anthropic, ollama)
-            model: Model name to use
+            llm_config: LLM endpoint configuration from centralized llm_config.
             max_iterations: Maximum REPL interaction loops (default: 10)
             max_llm_calls: Limit on sub-LLM queries (default: 30)
-            api_key: Optional API key for the backend
             timeout_seconds: Maximum time for RLM processing (default: 300s/5min)
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events (required if event_queue provided)
             tenant_id: Tenant identifier for events
         """
-        self.backend = backend
-        self.model = model
+        self.llm_config = llm_config
+        self.model = llm_config.model
         self.max_iterations = max_iterations
         self.max_llm_calls = max_llm_calls
-        self._api_key = api_key
         self.timeout_seconds = timeout_seconds
         self._event_queue = event_queue
         self._task_id = task_id
@@ -132,21 +130,8 @@ class RLMInference:
         self._rlm = None  # Lazy initialization
 
     def _create_lm(self):
-        """Create DSPy LM based on backend."""
-        if self.backend == "ollama":
-            return dspy.LM(
-                f"ollama_chat/{self.model}", api_base="http://localhost:11434"
-            )
-        elif self.backend == "litellm":
-            # litellm format: ollama/model or openai/model
-            return dspy.LM(self.model, api_key=self._api_key)
-        elif self.backend == "openai":
-            return dspy.LM(f"openai/{self.model}", api_key=self._api_key)
-        elif self.backend == "anthropic":
-            return dspy.LM(f"anthropic/{self.model}", api_key=self._api_key)
-        else:
-            # Default to litellm format
-            return dspy.LM(self.model, api_key=self._api_key)
+        """Create DSPy LM via centralized factory."""
+        return create_dspy_lm(self.llm_config)
 
     def _get_rlm(self):
         """Get or create DSPy RLM instance.
@@ -258,7 +243,7 @@ class RLMInference:
             metadata={
                 "context_size_chars": len(context),
                 "query": query[:100],
-                "backend": self.backend,
+                "backend": self.model.split("/")[0] if "/" in self.model else "unknown",
                 "model": self.model,
                 "timeout_seconds": self.timeout_seconds,
             },

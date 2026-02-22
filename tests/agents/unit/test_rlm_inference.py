@@ -6,6 +6,7 @@ Tests RLMOptions, RLMInference, and RLMAwareMixin for A/B testing support.
 import pytest
 
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 class TestRLMOptions:
@@ -206,14 +207,12 @@ class TestRLMInference:
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
         rlm = RLMInference(
-            backend="anthropic",
-            model="claude-3-opus",
+            llm_config=LLMEndpointConfig(model="anthropic/claude-3-opus"),
             max_iterations=5,
             max_llm_calls=20,
         )
 
-        assert rlm.backend == "anthropic"
-        assert rlm.model == "claude-3-opus"
+        assert rlm.model == "anthropic/claude-3-opus"
         assert rlm.max_iterations == 5
         assert rlm.max_llm_calls == 20
         assert rlm._rlm is None  # Lazy initialization
@@ -222,10 +221,9 @@ class TestRLMInference:
         """Should configure DSPy LM for Ollama backend."""
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
-        rlm = RLMInference(backend="ollama", model="qwen2.5:1.5b")
+        rlm = RLMInference(llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"))
 
-        assert rlm.backend == "ollama"
-        assert rlm.model == "qwen2.5:1.5b"
+        assert rlm.model == "ollama/qwen2.5:1.5b"
 
 
 class TestSearchInputWithRLM:

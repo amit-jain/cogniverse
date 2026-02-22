@@ -16,6 +16,8 @@ from cogniverse_foundation.config.agent_config import (
     ModuleConfig,
     OptimizerConfig,
 )
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -59,33 +61,21 @@ class DynamicDSPyMixin:
 
     def _configure_dspy_lm(self, config: AgentConfig):
         """
-        Configure DSPy language model.
+        Configure DSPy language model via centralized factory.
 
         Args:
             config: Agent configuration
         """
-        lm_params = {"model": config.llm_model}
+        endpoint_config = LLMEndpointConfig(
+            model=config.llm_model,
+            api_base=config.llm_base_url,
+            api_key=config.llm_api_key,
+            temperature=config.llm_temperature,
+            max_tokens=config.llm_max_tokens or 1000,
+        )
 
-        if config.llm_base_url:
-            lm_params["api_base"] = config.llm_base_url
-
-        if config.llm_api_key:
-            lm_params["api_key"] = config.llm_api_key
-
-        if config.llm_max_tokens:
-            lm_params["max_tokens"] = config.llm_max_tokens
-
-        lm = dspy.LM(**lm_params)
-        try:
-            dspy.settings.configure(lm=lm)
-            logger.info(f"Configured DSPy LM: {config.llm_model}")
-        except RuntimeError as e:
-            if "can only be called from the same async task" in str(e):
-                logger.warning(
-                    "DSPy already configured in this async context, skipping reconfiguration"
-                )
-            else:
-                raise
+        self._dspy_lm = create_dspy_lm(endpoint_config)
+        logger.info(f"Created DSPy LM: {endpoint_config.model}")
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):
         """

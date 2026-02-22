@@ -3,16 +3,17 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
-from cogniverse_agents.dspy_agent_optimizer import (
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
@@ -134,101 +135,57 @@ class TestDSPyOptimizerIntegration:
     """Integration tests for DSPy optimizer with OpenAI-compatible APIs."""
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_optimizer_with_local_llm(self, mock_openai_compatible_api):
-        """Test DSPy optimizer with local LLM via OpenAI-compatible API."""
+    def test_optimizer_with_local_llm(self):
+        """Test DSPy optimizer with real local Ollama LLM."""
+        optimizer = DSPyAgentPromptOptimizer()
 
-        with patch("dspy.LM") as mock_lm_class:
-            # Mock the DSPy LM client
-            mock_lm = Mock()
-            mock_lm.generate = AsyncMock(side_effect=mock_openai_compatible_api)
-            mock_lm_class.return_value = mock_lm
+        endpoint_config = LLMEndpointConfig(
+            model="ollama/qwen2.5:1.5b",
+            api_base="http://localhost:11434",
+        )
+        success = optimizer.initialize_language_model(endpoint_config)
 
-            optimizer = DSPyAgentPromptOptimizer()
+        assert success
+        assert optimizer.lm is not None
+        # Verify it's a real DSPy LM, not a mock
+        import dspy
 
-            # Test initialization with local model
-            success = optimizer.initialize_language_model(
-                api_base="http://localhost:11434/v1",
-                model="smollm3:8b",
-                api_key="fake-key",
-            )
-
-            assert success
-            assert optimizer.lm == mock_lm
-
-            # Verify DSPy was configured
-            mock_lm_class.assert_called_once_with(
-                model="openai/smollm3:8b",
-                api_base="http://localhost:11434/v1",
-                api_key="fake-key",
-                max_tokens=2048,
-                temperature=0.7,
-            )
+        assert isinstance(optimizer.lm, dspy.LM)
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_pipeline_optimization_with_mocked_teleprompter(
-        self, mock_openai_compatible_api
-    ):
-        """Test full pipeline optimization with mocked DSPy teleprompter."""
+    async def test_pipeline_optimization_with_real_lm(self, mock_openai_compatible_api):
+        """Test full pipeline optimization with real DSPy LM."""
+        # Initialize optimizer with real LM
+        optimizer = DSPyAgentPromptOptimizer()
+        endpoint_config = LLMEndpointConfig(
+            model="ollama/qwen2.5:1.5b",
+            api_base="http://localhost:11434",
+        )
+        optimizer.initialize_language_model(endpoint_config)
 
-        with patch("dspy.LM") as mock_lm_class:
-            with patch("dspy.teleprompt.BootstrapFewShot") as mock_teleprompter:
-                # Mock DSPy components
-                mock_lm = Mock()
-                mock_lm_class.return_value = mock_lm
+        # Create and run pipeline, mocking optimize_module to avoid full DSPy optimization
+        with patch.object(
+            DSPyAgentOptimizerPipeline, "optimize_module"
+        ) as mock_optimize:
+            mock_optimize.side_effect = lambda module_name, *args, **kwargs: Mock(
+                name=f"compiled_{module_name}"
+            )
 
-                # Mock compiled modules
-                mock_compiled_modules = {}
-                for module_name in [
-                    "query_analysis",
-                    "agent_routing",
-                    "summary_generation",
-                    "detailed_report",
-                ]:
-                    mock_module = Mock()
-                    mock_module.__class__.__name__ = (
-                        f"Optimized{module_name.title()}Module"
-                    )
-                    mock_compiled_modules[module_name] = mock_module
+            pipeline = DSPyAgentOptimizerPipeline(optimizer)
+            optimized_modules = await pipeline.optimize_all_modules()
 
-                mock_teleprompter_instance = Mock()
-                mock_teleprompter_instance.compile.side_effect = (
-                    lambda module, **kwargs: mock_compiled_modules.get(
-                        getattr(module, "_module_name", "unknown"), module
-                    )
-                )
-                mock_teleprompter.return_value = mock_teleprompter_instance
+        # Verify all modules were optimized
+        expected_modules = [
+            "query_analysis",
+            "agent_routing",
+            "summary_generation",
+            "detailed_report",
+        ]
+        for module_name in expected_modules:
+            assert module_name in optimized_modules
 
-                # Initialize optimizer (avoid DSPy async issues)
-                optimizer = DSPyAgentPromptOptimizer()
-                optimizer.lm = mock_lm  # Set directly to avoid async issues
-
-                # Create and run pipeline, mocking optimize_module to avoid DSPy deep issues
-                with patch.object(
-                    DSPyAgentOptimizerPipeline, "optimize_module"
-                ) as mock_optimize:
-                    mock_optimize.side_effect = (
-                        lambda module_name, *args, **kwargs: Mock(
-                            name=f"compiled_{module_name}"
-                        )
-                    )
-
-                    pipeline = DSPyAgentOptimizerPipeline(optimizer)
-                    optimized_modules = await pipeline.optimize_all_modules()
-
-                # Verify all modules were optimized
-                expected_modules = [
-                    "query_analysis",
-                    "agent_routing",
-                    "summary_generation",
-                    "detailed_report",
-                ]
-                for module_name in expected_modules:
-                    assert module_name in optimized_modules
-
-                # Verify optimize_module was called for each module
-                assert mock_optimize.call_count == len(expected_modules)
+        assert mock_optimize.call_count == len(expected_modules)
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -319,7 +276,6 @@ class TestDSPyOptimizerIntegration:
         for module_name in mock_modules.keys():
             output_dir / f"{module_name}_prompts.json"
             # Files should exist or have attempted creation
-            # (May not exist due to mocking, but save method should have been called)
 
 
 class TestDSPyAgentIntegration:
@@ -329,7 +285,6 @@ class TestDSPyAgentIntegration:
     def test_routing_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
         """Test RoutingAgent with loaded optimized prompts."""
 
-        # Create the mock data inline
         mock_prompts = {
             "compiled_prompts": {
                 "routing": "Optimized routing decision prompt",
@@ -339,24 +294,16 @@ class TestDSPyAgentIntegration:
         }
 
         with patch.object(Path, "exists") as mock_exists:
-            # Mock path exists to find optimized prompts
             mock_exists.return_value = True
 
-            # Mock file loading directly
             with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
                 telemetry_config = TelemetryConfig(enabled=False)
                 deps = RoutingDeps(telemetry_config=telemetry_config)
                 agent = RoutingAgent(deps=deps)
 
-                # Should have DSPy module from parent class
                 assert hasattr(agent, "dspy_module")
                 assert agent.dspy_module is not None
 
-                # Test that agent can process queries
-                # The routing agent should be able to handle queries even if DSPy prompts aren't explicitly loaded
-                _test_query = "Find videos about AI"
-
-                # Basic validation that agent was created successfully
                 assert agent is not None
                 assert hasattr(agent, "route_query")
 
@@ -365,7 +312,6 @@ class TestDSPyAgentIntegration:
     ):
         """Test QueryAnalysisToolV3 with loaded optimized prompts."""
 
-        # Create the mock data inline
         mock_prompts = {
             "compiled_prompts": {
                 "system": "Optimized system prompt for query analysis",
@@ -376,10 +322,8 @@ class TestDSPyAgentIntegration:
 
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             with patch.object(Path, "exists") as mock_exists:
-                # Mock path exists to find optimized prompts
                 mock_exists.return_value = True
 
-                # Mock file loading directly
                 with patch(
                     "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
                 ):
@@ -387,11 +331,9 @@ class TestDSPyAgentIntegration:
                         config_manager=config_manager, enable_agent_integration=False
                     )
 
-                    # Should have loaded DSPy optimization
                     assert tool.dspy_enabled
                     assert "compiled_prompts" in tool.dspy_optimized_prompts
 
-                    # Test optimized prompt usage
                     analysis_prompt = tool.get_optimized_analysis_prompt(
                         "Analyze this complex query", "business context"
                     )
@@ -409,134 +351,107 @@ class TestDSPyEndToEndOptimization:
         self, temp_optimized_prompts_dir, mock_openai_compatible_api, config_manager
     ):
         """Test complete pipeline from optimization to agent integration."""
+        # Initialize optimizer with real LM
+        optimizer = DSPyAgentPromptOptimizer()
+        optimizer.initialize_language_model(
+            LLMEndpointConfig(
+                model="ollama/qwen2.5:1.5b", api_base="http://localhost:11434"
+            )
+        )
 
-        with patch("dspy.LM") as mock_lm_class:
-            with patch("dspy.teleprompt.BootstrapFewShot") as mock_teleprompter:
-                # Setup DSPy mocks
-                mock_lm = Mock()
-                mock_lm_class.return_value = mock_lm
+        # Create mock compiled modules that can extract prompts
+        def create_mock_module(module_type):
+            mock_module = Mock()
+            if module_type == "query_analysis":
+                mock_module.generate_analysis = Mock()
+                mock_module.generate_analysis.signature = (
+                    "Optimized query analysis signature"
+                )
+            elif module_type == "agent_routing":
+                mock_module.generate_routing = Mock()
+                mock_module.generate_routing.signature = "Optimized routing signature"
+            elif module_type == "summary_generation":
+                mock_module.generate_summary = Mock()
+                mock_module.generate_summary.signature = "Optimized summary signature"
+            elif module_type == "detailed_report":
+                mock_module.generate_report = Mock()
+                mock_module.generate_report.signature = "Optimized report signature"
 
-                # Create mock compiled modules that can extract prompts
-                def create_mock_module(module_type):
-                    mock_module = Mock()
-                    if module_type == "query_analysis":
-                        mock_module.generate_analysis = Mock()
-                        mock_module.generate_analysis.signature = (
-                            "Optimized query analysis signature"
-                        )
-                    elif module_type == "agent_routing":
-                        mock_module.generate_routing = Mock()
-                        mock_module.generate_routing.signature = (
-                            "Optimized routing signature"
-                        )
-                    elif module_type == "summary_generation":
-                        mock_module.generate_summary = Mock()
-                        mock_module.generate_summary.signature = (
-                            "Optimized summary signature"
-                        )
-                    elif module_type == "detailed_report":
-                        mock_module.generate_report = Mock()
-                        mock_module.generate_report.signature = (
-                            "Optimized report signature"
-                        )
+            mock_module.demos = [Mock(), Mock()]  # Few-shot examples
+            return mock_module
 
-                    mock_module.demos = [Mock(), Mock()]  # Few-shot examples
-                    return mock_module
+        compiled_modules = {
+            "query_analysis": create_mock_module("query_analysis"),
+            "agent_routing": create_mock_module("agent_routing"),
+            "summary_generation": create_mock_module("summary_generation"),
+            "detailed_report": create_mock_module("detailed_report"),
+        }
 
-                compiled_modules = {
-                    "query_analysis": create_mock_module("query_analysis"),
-                    "agent_routing": create_mock_module("agent_routing"),
-                    "summary_generation": create_mock_module("summary_generation"),
-                    "detailed_report": create_mock_module("detailed_report"),
+        pipeline = DSPyAgentOptimizerPipeline(optimizer)
+        pipeline.compiled_modules = compiled_modules
+
+        # Save optimized prompts
+        output_dir = temp_optimized_prompts_dir / "integration_test"
+        pipeline.save_optimized_prompts(str(output_dir))
+
+        # Load agents with optimized prompts
+        with patch.object(Path, "exists") as mock_exists:
+            mock_exists.return_value = True
+
+            def mock_open_factory(expected_content):
+                def mock_open_file(*args, **kwargs):
+                    from io import StringIO
+
+                    return StringIO(json.dumps(expected_content))
+
+                return mock_open_file
+
+            agents_to_test = [
+                (
+                    "query_analysis",
+                    QueryAnalysisToolV3,
+                    lambda: QueryAnalysisToolV3(
+                        config_manager=config_manager,
+                        enable_agent_integration=False,
+                    ),
+                ),
+            ]
+
+            for agent_type, agent_class, agent_factory in agents_to_test:
+                expected_content = {
+                    "compiled_prompts": {
+                        "signature": f"Optimized {agent_type} signature",
+                        "few_shot_examples": ["Example 1", "Example 2"],
+                    },
+                    "metadata": {"test": True},
                 }
 
-                mock_teleprompter_instance = Mock()
-                mock_teleprompter_instance.compile.side_effect = (
-                    lambda module, **kwargs: compiled_modules.get(
-                        getattr(module, "_module_type", "unknown"), module
-                    )
-                )
-                mock_teleprompter.return_value = mock_teleprompter_instance
-
-                # Step 1: Run optimization
-                optimizer = DSPyAgentPromptOptimizer()
-                optimizer.initialize_language_model()
-                pipeline = DSPyAgentOptimizerPipeline(optimizer)
-
-                # Mock the compiled modules directly for testing
-                pipeline.compiled_modules = compiled_modules
-
-                # Save optimized prompts
-                output_dir = temp_optimized_prompts_dir / "integration_test"
-                pipeline.save_optimized_prompts(str(output_dir))
-
-                # Step 2: Load agents with optimized prompts
-                with patch.object(Path, "exists") as mock_exists:
-                    mock_exists.return_value = True
-
-                    # Mock reading the saved prompt files
-                    def mock_open_factory(expected_content):
-                        def mock_open_file(*args, **kwargs):
-                            from io import StringIO
-
-                            return StringIO(json.dumps(expected_content))
-
-                        return mock_open_file
-
-                    # Test each agent type
-                    agents_to_test = [
-                        (
-                            "query_analysis",
-                            QueryAnalysisToolV3,
-                            lambda: QueryAnalysisToolV3(
-                                config_manager=config_manager,
-                                enable_agent_integration=False,
-                            ),
-                        ),
-                    ]
-
-                    for agent_type, agent_class, agent_factory in agents_to_test:
-                        expected_content = {
-                            "compiled_prompts": {
-                                "signature": f"Optimized {agent_type} signature",
-                                "few_shot_examples": ["Example 1", "Example 2"],
-                            },
-                            "metadata": {"test": True},
-                        }
-
+                with patch("builtins.open", mock_open_factory(expected_content)):
+                    if agent_class == QueryAnalysisToolV3:
                         with patch(
-                            "builtins.open", mock_open_factory(expected_content)
+                            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
                         ):
-                            if agent_class == QueryAnalysisToolV3:
-                                with patch(
-                                    "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-                                ):
-                                    agent = agent_factory()
-                            else:
-                                agent = agent_factory()
+                            agent = agent_factory()
+                    else:
+                        agent = agent_factory()
 
-                            # Verify DSPy integration
-                            assert agent.dspy_enabled
-                            assert "compiled_prompts" in agent.dspy_optimized_prompts
+                    assert agent.dspy_enabled
+                    assert "compiled_prompts" in agent.dspy_optimized_prompts
 
-                            # Test metadata
-                            metadata = agent.get_dspy_metadata()
-                            assert metadata["enabled"]
-                            assert "agent_type" in metadata
+                    metadata = agent.get_dspy_metadata()
+                    assert metadata["enabled"]
+                    assert "agent_type" in metadata
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_performance_comparison_optimized_vs_default(self, config_manager):
         """Test performance comparison between optimized and default prompts."""
 
-        # Create agents with and without optimization
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            # Agent without optimization
             agent_default = QueryAnalysisToolV3(
                 config_manager=config_manager, enable_agent_integration=False
             )
 
-            # Agent with mock optimization
             agent_optimized = QueryAnalysisToolV3(
                 config_manager=config_manager, enable_agent_integration=False
             )
@@ -549,7 +464,6 @@ class TestDSPyEndToEndOptimization:
                 "metadata": {"optimization_score": 0.92},
             }
 
-            # Test prompt generation for both
             test_query = "Find videos about machine learning"
 
             default_prompt = agent_default.get_optimized_analysis_prompt(
@@ -559,47 +473,18 @@ class TestDSPyEndToEndOptimization:
                 test_query, "test context"
             )
 
-            # Both should contain the query
             assert test_query in default_prompt
             assert test_query in optimized_prompt
 
-            # They should be different (optimized should have different structure)
-            # Note: In real usage, optimized prompts would be structurally different
             assert len(default_prompt) > 0
             assert len(optimized_prompt) > 0
 
-            # Test metadata comparison
             default_metadata = agent_default.get_dspy_metadata()
             optimized_metadata = agent_optimized.get_dspy_metadata()
 
             assert not default_metadata["enabled"]
             assert optimized_metadata["enabled"]
             assert "optimization_score" in optimized_metadata
-
-
-def mock_open_for_json(json_file_path):
-    """Helper to mock open for JSON file loading."""
-    original_open = open
-
-    def mock_open(*args, **kwargs):
-        if str(args[0]) == str(json_file_path) or args[0] == json_file_path:
-            # Read the actual JSON file content
-            with original_open(json_file_path, "r") as f:
-                content = f.read()
-            from io import StringIO
-
-            return StringIO(content)
-        elif hasattr(args[0], "name") and str(args[0].name) == str(json_file_path):
-            with original_open(json_file_path, "r") as f:
-                content = f.read()
-            from io import StringIO
-
-            return StringIO(content)
-        else:
-            # For any other file access, use original open
-            return original_open(*args, **kwargs)
-
-    return mock_open
 
 
 if __name__ == "__main__":

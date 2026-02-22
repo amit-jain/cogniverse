@@ -59,6 +59,34 @@
       }
     }
   },
+  "agents": {
+    "orchestrator": {"url": "http://localhost:8013", "enabled": true},
+    "entity_extraction": {"url": "http://localhost:8010", "enabled": true},
+    "profile_selection": {"url": "http://localhost:8011", "enabled": true},
+    "query_enhancement": {"url": "http://localhost:8012", "enabled": true},
+    "search": {"url": "http://localhost:8002", "enabled": true},
+    "summarizer": {"url": "http://localhost:8003", "enabled": true},
+    "detailed_report": {"url": "http://localhost:8004", "enabled": true}
+  },
+  "llm_config": {
+    "primary": {
+      "model": "ollama/qwen2.5:1.5b",
+      "api_base": "http://localhost:11434",
+      "api_key": null,
+      "temperature": 0.1,
+      "max_tokens": 1000,
+      "adapter_path": null
+    },
+    "teacher": {
+      "model": "ollama/gemma3:4b",
+      "api_base": "http://localhost:11434",
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2048,
+      "adapter_path": null
+    },
+    "overrides": {}
+  },
   "inference": {
     "provider": "ollama",
     "local_endpoint": "http://localhost:11434",
