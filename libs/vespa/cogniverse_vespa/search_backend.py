@@ -260,8 +260,8 @@ class VespaSearchBackend(SearchBackend):
 
     def __init__(
         self,
-        vespa_url: str = None,
-        vespa_port: int = None,
+        backend_url: str = None,
+        backend_port: int = None,
         schema_name: str = None,  # DEPRECATED - schema determined at query time
         profile: str = None,  # DEPRECATED - profile determined at query time
         query_encoder: Optional[Any] = None,
@@ -278,8 +278,8 @@ class VespaSearchBackend(SearchBackend):
         Schema is determined at query time, not initialization time.
 
         Args:
-            vespa_url: Vespa URL (or use config)
-            vespa_port: Vespa port (or use config)
+            backend_url: Backend URL (or use config)
+            backend_port: Backend port (or use config)
             schema_name: DEPRECATED - schema determined at query time from search() parameter
             profile: DEPRECATED - profile determined at query time from search() parameter
             query_encoder: Optional query encoder instance
@@ -296,7 +296,7 @@ class VespaSearchBackend(SearchBackend):
         # If config provided, extract from it (new approach)
         if config is not None:
             self.backend_url = config.get("url", "http://localhost")
-            self.vespa_port = config.get("port", 8080)
+            self.backend_port = config.get("port", 8080)
             # tenant_id is REQUIRED - no fallback allowed
             self.tenant_id = config.get("tenant_id")
             if not self.tenant_id:
@@ -312,8 +312,8 @@ class VespaSearchBackend(SearchBackend):
             self.query_encoder = query_encoder or config.get("query_encoder")
         else:
             # Legacy initialization with individual parameters
-            self.backend_url = vespa_url
-            self.vespa_port = vespa_port
+            self.backend_url = backend_url
+            self.backend_port = backend_port
             self.schema_name = schema_name
             self.profile = profile
             self.query_encoder = query_encoder
@@ -321,7 +321,7 @@ class VespaSearchBackend(SearchBackend):
             self.default_profiles = {}
 
         # Combine URL and port
-        full_url = f"{self.backend_url}:{self.vespa_port}"
+        full_url = f"{self.backend_url}:{self.backend_port}"
 
         # Initialize output manager
         self.output_manager = OutputManager()
@@ -331,7 +331,7 @@ class VespaSearchBackend(SearchBackend):
             self.pool = ConnectionPool(full_url, pool_config or ConnectionPoolConfig())
         else:
             self.pool = None
-            self.vespa = Vespa(url=self.backend_url, port=self.vespa_port)
+            self.vespa = Vespa(url=self.backend_url, port=self.backend_port)
 
         # Setup retry configuration
         self.retry_config = retry_config or RetryConfig(
@@ -359,7 +359,7 @@ class VespaSearchBackend(SearchBackend):
         """
         # Extract config values
         self.backend_url = config.get("url", "http://localhost")
-        self.vespa_port = config.get("port", 8080)
+        self.backend_port = config.get("port", 8080)
         base_schema_name = config.get("schema_name")
         tenant_id = config.get("tenant_id")
         self.profile = config.get("profile")
@@ -378,7 +378,7 @@ class VespaSearchBackend(SearchBackend):
             self.schema_name = base_schema_name
 
         # Combine URL and port
-        full_url = f"{self.backend_url}:{self.vespa_port}"
+        full_url = f"{self.backend_url}:{self.backend_port}"
 
         # Initialize output manager
         self.output_manager = OutputManager()
@@ -1288,7 +1288,7 @@ class VespaSearchBackend(SearchBackend):
 
         # Use visit API for bulk export
         namespace = "video"  # Default namespace for video schemas
-        visit_url = f"{self.backend_url}:{self.vespa_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
+        visit_url = f"{self.backend_url}:{self.backend_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
 
         try:
             import requests
@@ -1520,17 +1520,17 @@ class VespaSearchBackend(SearchBackend):
 
 # Factory function for creating search backend
 def create_vespa_search_backend(
-    schema_name: str, vespa_url: str = "http://localhost:8080", **kwargs
+    schema_name: str, backend_url: str = "http://localhost:8080", **kwargs
 ) -> VespaSearchBackend:
     """
     Create a production-ready Vespa search backend
 
     Args:
         schema_name: Vespa schema name
-        vespa_url: Vespa URL
+        backend_url: Backend URL
         **kwargs: Additional configuration
 
     Returns:
         VespaSearchBackend instance
     """
-    return VespaSearchBackend(vespa_url=vespa_url, schema_name=schema_name, **kwargs)
+    return VespaSearchBackend(backend_url=backend_url, schema_name=schema_name, **kwargs)

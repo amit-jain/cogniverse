@@ -322,7 +322,7 @@ class VespaBackend(Backend):
                             )
 
                         wait_for_vespa_document_visible(
-                            vespa_url=f"{self._url}:{self._port}",
+                            backend_url=f"{self._url}:{self._port}",
                             schema_name=target_schema,
                             document_id=doc.id,
                             timeout=timeout,

@@ -43,8 +43,8 @@ class VideoSearchComparison:
         for agent in agent_configs:
             profile = agent["profile"]
             # Update config with agent-specific settings
-            self.config["vespa_url"] = agent["url"]
-            self.config["vespa_port"] = agent["port"]
+            self.config["backend_url"] = agent["url"]
+            self.config["backend_port"] = agent["port"]
             self.search_services[profile] = SearchService(
                 self.config,
                 profile,

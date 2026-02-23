@@ -50,8 +50,8 @@ class TestConfigPersistence:
 
         # Create ConfigManager with VespaConfigStore pointing to test Docker container
         store = VespaConfigStore(
-            vespa_url="http://localhost",
-            vespa_port=http_port,
+            backend_url="http://localhost",
+            backend_port=http_port,
         )
         config_manager = ConfigManager(store=store)
 
@@ -231,8 +231,8 @@ class TestConfigPersistence:
 
         # Simulate restart by creating new manager instance with same store
         store2 = VespaConfigStore(
-            vespa_url="http://localhost",
-            vespa_port=http_port,
+            backend_url="http://localhost",
+            backend_port=http_port,
         )
         manager2 = ConfigManager(store=store2)
 

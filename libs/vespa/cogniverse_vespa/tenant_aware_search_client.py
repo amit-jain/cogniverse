@@ -143,7 +143,7 @@ class TenantAwareVespaSearchClient:
 
         # Initialize underlying search client
         self.client = VespaVideoSearchClient(
-            vespa_url=backend_url, vespa_port=backend_port
+            backend_url=backend_url, backend_port=backend_port
         )
 
         logger.info(

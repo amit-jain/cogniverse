@@ -305,8 +305,8 @@ def mock_get_config():
     """Mock get_config function."""
     with patch("cogniverse_agents.tools.config.get_config") as mock_config:
         mock_config.return_value = {
-            "vespa_url": "http://localhost",
-            "vespa_port": 8080,
+            "backend_url": "http://localhost",
+            "backend_port": 8080,
             "schema_name": "video_frame",
         }
         yield mock_config

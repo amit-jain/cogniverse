@@ -54,7 +54,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 
@@ -90,7 +90,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 
@@ -117,7 +117,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 
@@ -144,7 +144,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 
@@ -184,7 +184,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 
@@ -217,7 +217,7 @@ class TestPhoenixExperimentPlugin:
             ),
             patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ),
         ):
 

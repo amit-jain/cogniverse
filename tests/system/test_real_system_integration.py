@@ -199,7 +199,7 @@ class TestRealVespaIntegration:
         print("🎥 Testing REAL Enhanced Video Search Agent...")
 
         # Get test config and Vespa ports from fixture
-        vespa_url = shared_system_vespa["vespa_url"]
+        vespa_url = shared_system_vespa["backend_url"]
         vespa_port = shared_system_vespa["http_port"]
         default_schema = shared_system_vespa["default_schema"]
         base_url = shared_system_vespa["base_url"]
@@ -326,7 +326,7 @@ class TestRealVespaIntegration:
     def test_real_video_search_with_enhanced_agent(self, shared_system_vespa):
         """Test video search using the enhanced video search agent (if available)"""
         # Get test config and Vespa ports from fixture - NO environment variables
-        vespa_url = shared_system_vespa["vespa_url"]
+        vespa_url = shared_system_vespa["backend_url"]
         vespa_port = shared_system_vespa["http_port"]
         default_schema = shared_system_vespa["default_schema"]
 
@@ -513,7 +513,7 @@ class TestRealPipelineIntegration:
     def test_real_complete_pipeline(self, shared_system_vespa):
         """Test complete pipeline with real services: routing -> extraction -> enhancement -> search"""
         # Get Vespa ports from fixture
-        _vespa_url = shared_system_vespa["vespa_url"]
+        _vespa_url = shared_system_vespa["backend_url"]
         _vespa_port = shared_system_vespa["http_port"]
         base_url = shared_system_vespa["base_url"]
         # Initialize all components
@@ -623,7 +623,7 @@ class TestRealPipelineIntegration:
         """Test real multi-agent coordination with actual services"""
         # Test that multiple agents can work together with real services
         # Ensure Vespa is available via fixture
-        _vespa_url = shared_system_vespa["vespa_url"]
+        _vespa_url = shared_system_vespa["backend_url"]
         _vespa_port = shared_system_vespa["http_port"]
 
         config_manager = shared_system_vespa["manager"].config_manager

@@ -153,7 +153,7 @@ class AdapterStoreRegistry:
 
         # Create cache key from config
         config = config or {}
-        cache_key = f"{name}_{config.get('vespa_url', '')}_{config.get('vespa_port', '')}"
+        cache_key = f"{name}_{config.get('backend_url', '')}_{config.get('backend_port', '')}"
 
         # Check cache
         if cache_key in cls._store_instances:

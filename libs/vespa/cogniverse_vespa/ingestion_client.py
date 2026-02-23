@@ -40,8 +40,8 @@ class VespaPyClient:
     generator.
 
     Attributes:
-        vespa_url: URL of Vespa instance
-        vespa_port: Port for Vespa HTTP API
+        backend_url: URL of backend instance
+        backend_port: Port for backend HTTP API
         schema_name: Name of the Vespa schema to use
         app: Vespa application instance from pyvespa
     """
@@ -51,7 +51,7 @@ class VespaPyClient:
         Initialize VespaPyClient from config.
 
         Args:
-            config: Config dict with schema_name, vespa_url, vespa_port, and optionally model info
+            config: Config dict with schema_name, url, port, and optionally model info
             logger: Optional logger
         """
         # Extract from config
@@ -63,7 +63,7 @@ class VespaPyClient:
         self.backend_url = config.get("url")
         if not self.backend_url:
             raise ValueError("url is required in config")
-        self.vespa_port = config.get("port", 8080)
+        self.backend_port = config.get("port", 8080)
 
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
@@ -72,7 +72,7 @@ class VespaPyClient:
         self.logger.warning(f"   Schema name: {self.schema_name}")
         self.logger.warning(f"   Base schema name: {self.base_schema_name}")
         self.logger.warning(f"   Instance ID: {id(self)}")
-        self.logger.warning(f"   Vespa URL: {self.backend_url}:{self.vespa_port}")
+        self.logger.warning(f"   Vespa URL: {self.backend_url}:{self.backend_port}")
 
         self.app = None
         self._connected = False
@@ -182,14 +182,14 @@ class VespaPyClient:
             from vespa.application import Vespa
 
             # Create Vespa application instance
-            self.app = Vespa(url=self.backend_url, port=self.vespa_port)
+            self.app = Vespa(url=self.backend_url, port=self.backend_port)
 
             # Test connection
             health = self.app.get_application_status()
             if health:
                 self._connected = True
                 self.logger.info(
-                    f"Connected to Vespa at {self.backend_url}:{self.vespa_port}"
+                    f"Connected to Vespa at {self.backend_url}:{self.backend_port}"
                 )
                 return True
             else:

@@ -462,8 +462,8 @@ def workflow_store(backend_config_env):
     from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
 
     store = VespaWorkflowStore(
-        vespa_url=os.environ.get("BACKEND_URL", "http://localhost"),
-        vespa_port=int(os.environ.get("BACKEND_PORT", "8080")),
+        backend_url=os.environ.get("BACKEND_URL", "http://localhost"),
+        backend_port=int(os.environ.get("BACKEND_PORT", "8080")),
     )
     store.initialize()
     return store

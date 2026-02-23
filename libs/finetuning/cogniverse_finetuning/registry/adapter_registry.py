@@ -61,8 +61,8 @@ class AdapterRegistry:
             self.store = AdapterStoreRegistry.get_adapter_store(
                 name=bootstrap.backend_type,
                 config={
-                    "vespa_url": bootstrap.backend_url,
-                    "vespa_port": bootstrap.backend_port,
+                    "backend_url": bootstrap.backend_url,
+                    "backend_port": bootstrap.backend_port,
                 },
             )
 

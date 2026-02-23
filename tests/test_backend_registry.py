@@ -513,8 +513,8 @@ class TestBackendRegistry(unittest.TestCase):
 
             # Test getting Vespa backend instance
             config = {
-                "vespa_url": "http://localhost",
-                "vespa_port": 8080,
+                "backend_url": "http://localhost",
+                "backend_port": 8080,
                 "schema_name": "test_schema",
             }
 

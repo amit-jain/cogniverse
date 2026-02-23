@@ -32,8 +32,8 @@ def temp_config_manager(vespa_instance, tmp_path_factory):
     logger.info(f"Creating VespaConfigStore with http_port={http_port}")
 
     store = VespaConfigStore(
-        vespa_url="http://localhost",
-        vespa_port=http_port,
+        backend_url="http://localhost",
+        backend_port=http_port,
     )
     logger.info(f"VespaConfigStore created, vespa_app URL: {store.vespa_app.url}")
 

@@ -46,8 +46,8 @@ def get_available_videos() -> Dict[str, Dict]:
         config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         backend = SearchBackend(
-            url=config.get("vespa_url", "http://localhost"),
-            port=config.get("vespa_port", 8080),
+            url=config.get("backend_url", "http://localhost"),
+            port=config.get("backend_port", 8080),
             schema=config.get("schema_name", "video_frame")
         )
         

@@ -242,8 +242,8 @@ class VespaTestManager:
             _original_config_values = get_config(
                 tenant_id="default", config_manager=config_manager
             )
-            _original_config_vespa_url = _original_config_values.get("vespa_url")
-            _original_config_vespa_port = _original_config_values.get("vespa_port")
+            _original_config_vespa_url = _original_config_values.get("backend_url")
+            _original_config_vespa_port = _original_config_values.get("backend_port")
 
             os.environ["VESPA_URL"] = "http://localhost"
             os.environ["VESPA_PORT"] = str(self.http_port)
@@ -334,9 +334,9 @@ class VespaTestManager:
                 )
 
                 # Update test_config with correct Vespa ports for this isolated instance
-                test_config["vespa_port"] = self.http_port
+                test_config["backend_port"] = self.http_port
                 test_config["config_port"] = self.config_port
-                test_config["vespa_url"] = "http://localhost"
+                test_config["backend_url"] = "http://localhost"
 
                 # CRITICAL: Also update backend section to use test port
                 # Backend section takes precedence over top-level keys
@@ -424,7 +424,7 @@ class VespaTestManager:
                     from tests.utils.async_polling import wait_for_vespa_indexing
 
                     wait_for_vespa_indexing(
-                        vespa_url=f"http://localhost:{self.http_port}",
+                        backend_url=f"http://localhost:{self.http_port}",
                         delay=5.0,
                         description="Vespa document indexing after ingestion",
                     )

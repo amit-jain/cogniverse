@@ -187,8 +187,8 @@ class VespaVideoSearchClient:
 
     def __init__(
         self,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        backend_url: str = "http://localhost",
+        backend_port: int = 8080,
         tenant_id: str = "default",
         config_manager=None,
     ):
@@ -196,8 +196,8 @@ class VespaVideoSearchClient:
         Initialize Vespa search client
 
         Args:
-            vespa_url: Vespa server URL
-            vespa_port: Vespa server port
+            backend_url: Backend server URL
+            backend_port: Backend server port
             tenant_id: Tenant identifier for configuration
             config_manager: ConfigManager instance for retrieving config
         """
@@ -222,8 +222,8 @@ class VespaVideoSearchClient:
         )
 
         self.logger = logging.getLogger(__name__)
-        self.backend_url = vespa_url
-        self.vespa_port = vespa_port
+        self.backend_url = backend_url
+        self.backend_port = backend_port
 
         # Initialize query encoder based on schema (lazy initialization if schema not set)
         self.query_encoder = None
@@ -231,8 +231,8 @@ class VespaVideoSearchClient:
             self._init_query_encoder()
 
         try:
-            self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
-            self.logger.info(f"Connected to Vespa at {vespa_url}:{vespa_port}")
+            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
+            self.logger.info(f"Connected to Vespa at {backend_url}:{backend_port}")
         except Exception as e:
             self.logger.error(f"Failed to connect to Vespa: {e}")
             self.vespa_app = None

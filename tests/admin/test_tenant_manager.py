@@ -68,8 +68,8 @@ class TestTenantManagerAPI:
 
         # Create ConfigManager with VespaConfigStore pointing to test Docker container
         store = VespaConfigStore(
-            vespa_url="http://localhost",
-            vespa_port=vespa_backend.http_port,
+            backend_url="http://localhost",
+            backend_port=vespa_backend.http_port,
         )
         config_manager = ConfigManager(store=store)
 

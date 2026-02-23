@@ -73,8 +73,8 @@ def adapter_store(vespa_instance):
     logger.info(f"Creating VespaAdapterStore with http_port={http_port}")
 
     store = VespaAdapterStore(
-        vespa_url="http://localhost",
-        vespa_port=http_port,
+        backend_url="http://localhost",
+        backend_port=http_port,
     )
     return store
 

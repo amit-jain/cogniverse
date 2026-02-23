@@ -26,7 +26,7 @@ class TestRetrievalSolver:
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
                     profiles=["profile1"], strategies=["strategy1"], config={"top_k": 5}
@@ -57,7 +57,7 @@ class TestRetrievalSolver:
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
                     profiles=["profile1", "profile2"],
@@ -97,7 +97,7 @@ class TestRetrievalSolver:
         ):
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ):
                 # Note: enable_tracing config is accepted but not used in current implementation
                 solver = create_retrieval_solver(
@@ -125,7 +125,7 @@ class TestRetrievalSolver:
         with patch("cogniverse_agents.search.service.SearchService") as mock_service:
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost"},
+                return_value={"backend_url": "http://localhost"},
             ):
                 # Simulate search failure
                 mock_service.return_value.search.side_effect = Exception(

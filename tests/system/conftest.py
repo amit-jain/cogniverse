@@ -106,7 +106,7 @@ def shared_system_vespa():
             "config_port": manager.config_port,
             "container_name": manager.container_name,
             "base_url": f"http://localhost:{manager.http_port}",
-            "vespa_url": "http://localhost",
+            "backend_url": "http://localhost",
             "default_schema": manager.default_test_schema,
             "manager": manager,  # Provide manager for tests that need it
         }

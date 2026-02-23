@@ -93,8 +93,8 @@ class TestProfileAPICRUD:
 
         # Create config store pointing to isolated Vespa (metadata schemas already deployed)
         store = VespaConfigStore(
-            vespa_url="http://localhost",
-            vespa_port=vespa_instance["http_port"],
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
         )
         config_manager = ConfigManager(store=store)
 
@@ -627,8 +627,8 @@ class TestProfileAPISchemaDeployment:
 
         # Create config store pointing to isolated Vespa (metadata schemas already deployed)
         store = VespaConfigStore(
-            vespa_url="http://localhost",
-            vespa_port=vespa_instance["http_port"],
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
         )
         config_manager = ConfigManager(store=store)
 

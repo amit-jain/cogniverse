@@ -328,8 +328,8 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
         schema = kwargs.get("schema", "video_frame")
         
         return VespaSearchBackend(
-            vespa_url=base_url if "://" in base_url else f"http://{base_url}",
-            vespa_port=port,
+            backend_url=base_url if "://" in base_url else f"http://{base_url}",
+            backend_port=port,
             schema_name=schema,
             profile=None,  # No profile needed for export
             query_encoder=None,  # No encoder needed for export

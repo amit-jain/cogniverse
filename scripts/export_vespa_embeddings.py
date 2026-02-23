@@ -26,8 +26,6 @@ from sklearn.manifold import TSNE
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.common.config_utils import get_config
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -36,12 +34,15 @@ class VespaEmbeddingExporter:
     """Export embeddings from Vespa to Parquet for embedding-atlas"""
 
     def __init__(self, schema_name: str = "video_frame"):
-        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
         config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         # Use simpler Vespa client directly for export
         from vespa.application import Vespa
-        self.vespa = Vespa(url=f"http://localhost:{config.get('vespa_port', 8080)}")
+        self.vespa = Vespa(url=f"http://localhost:{config.get('backend_port', 8080)}")
         self.schema_name = schema_name
         
     def export_embeddings(
@@ -241,7 +242,7 @@ class VespaEmbeddingExporter:
                             embedding = embedding[2:]
                         bytes_data = bytes.fromhex(embedding)
                         return np.frombuffer(bytes_data, dtype=np.float32)
-                    except:
+                    except Exception:
                         logger.warning(f"Could not decode binary embedding from {field_name}")
                         
         return None

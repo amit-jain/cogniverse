@@ -227,7 +227,7 @@ def wait_for_docker_healthy(
 
 
 def wait_for_vespa_query_ready(
-    vespa_url: str,
+    backend_url: str,
     schema_name: str,
     timeout: float = 30.0,
 ) -> bool:
@@ -237,7 +237,7 @@ def wait_for_vespa_query_ready(
     Tests that documents can be queried from the schema (handles indexing delays).
 
     Args:
-        vespa_url: Vespa endpoint URL (e.g., http://localhost:8080)
+        backend_url: Backend endpoint URL (e.g., http://localhost:8080)
         schema_name: Schema/document type name
         timeout: Maximum time to wait in seconds
 
@@ -250,7 +250,7 @@ def wait_for_vespa_query_ready(
 
     def check_query():
         try:
-            query_url = f"{vespa_url}/search/"
+            query_url = f"{backend_url}/search/"
             params = {
                 "yql": f"select * from {schema_name} where true limit 0",
             }
@@ -268,7 +268,7 @@ def wait_for_vespa_query_ready(
 
 
 def wait_for_vespa_document_visible(
-    vespa_url: str,
+    backend_url: str,
     schema_name: str,
     document_id: str,
     timeout: float = 30.0,
@@ -279,7 +279,7 @@ def wait_for_vespa_document_visible(
     Handles Vespa's eventual consistency - document might be fed but not yet indexed.
 
     Args:
-        vespa_url: Vespa endpoint URL (e.g., http://localhost:8080)
+        backend_url: Backend endpoint URL (e.g., http://localhost:8080)
         schema_name: Schema/document type name
         document_id: Document ID to check for
         timeout: Maximum time to wait in seconds
@@ -293,7 +293,7 @@ def wait_for_vespa_document_visible(
 
     def check_document():
         try:
-            query_url = f"{vespa_url}/search/"
+            query_url = f"{backend_url}/search/"
             # Use matches for string attribute queries (works for UUIDs with hyphens)
             params = {
                 "yql": f'select * from {schema_name} where id matches "{document_id}" limit 1',
@@ -317,7 +317,7 @@ def wait_for_vespa_document_visible(
 
 
 def wait_for_vespa_indexing(
-    vespa_url: str = "http://localhost:8080",
+    backend_url: str = "http://localhost:8080",
     delay: float = 2.0,
     description: str = "Vespa indexing",
 ) -> bool:
@@ -328,7 +328,7 @@ def wait_for_vespa_indexing(
     for Vespa indexing, making it easier to optimize in the future.
 
     Args:
-        vespa_url: Vespa endpoint (for future optimization)
+        backend_url: Backend endpoint (for future optimization)
         delay: How long to wait (backwards compatible with time.sleep)
         description: What we're waiting for
 

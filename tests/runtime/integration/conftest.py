@@ -137,8 +137,8 @@ def config_manager(vespa_instance):
     and adds two test profiles for the default tenant.
     """
     store = VespaConfigStore(
-        vespa_url="http://localhost",
-        vespa_port=vespa_instance["http_port"],
+        backend_url="http://localhost",
+        backend_port=vespa_instance["http_port"],
     )
 
     cm = ConfigManager(store=store)

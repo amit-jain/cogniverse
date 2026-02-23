@@ -430,8 +430,8 @@ def create_default_config_manager(cache_size: int = 100) -> ConfigManager:
         from cogniverse_vespa.config.config_store import VespaConfigStore
 
         store = VespaConfigStore(
-            vespa_url=bootstrap.backend_url,
-            vespa_port=bootstrap.backend_port,
+            backend_url=bootstrap.backend_url,
+            backend_port=bootstrap.backend_port,
         )
     else:
         raise ValueError(f"Unsupported backend type: {bootstrap.backend_type}")

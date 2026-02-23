@@ -29,7 +29,7 @@ class TestEndToEnd:
             # Patch get_config where it's imported
             with patch(
                 "cogniverse_core.config.utils.get_config",
-                return_value={"vespa_url": "http://localhost", "vespa_port": 8080},
+                return_value={"backend_url": "http://localhost", "backend_port": 8080},
             ):
                 # Create evaluation task
                 task = evaluation_task(

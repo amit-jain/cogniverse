@@ -46,8 +46,8 @@ class VespaConfigStore(ConfigStore):
     def __init__(
         self,
         vespa_app: Optional[Vespa] = None,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        backend_url: str = "http://localhost",
+        backend_port: int = 8080,
         schema_name: str = "config_metadata",
     ):
         """
@@ -55,8 +55,8 @@ class VespaConfigStore(ConfigStore):
 
         Args:
             vespa_app: Existing Vespa application instance (optional)
-            vespa_url: Vespa server URL
-            vespa_port: Vespa server port
+            backend_url: Backend server URL
+            backend_port: Backend server port
             schema_name: Vespa schema name for config storage
         """
         if vespa_app is not None:
@@ -64,12 +64,12 @@ class VespaConfigStore(ConfigStore):
         else:
             from vespa.application import Vespa
 
-            self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
+            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
 
         self.schema_name = schema_name
         logger.info(
             f"VespaConfigStore initialized with schema: {schema_name} "
-            f"at {vespa_url}:{vespa_port}"
+            f"at {backend_url}:{backend_port}"
         )
 
     def initialize(self) -> None:

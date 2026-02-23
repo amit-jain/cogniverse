@@ -236,8 +236,8 @@ def test_float_float_search(
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
-    vespa_url = config.get("vespa_url", "http://localhost")
-    vespa_port = config.get("vespa_port", 8080)
+    vespa_url = config.get("backend_url", "http://localhost")
+    vespa_port = config.get("backend_port", 8080)
 
     # Use same device detection as video agent
     if torch.cuda.is_available():
@@ -280,8 +280,8 @@ def test_float_float_search(
 
     # Initialize search client
     search_client = VespaVideoSearchClient(
-        vespa_url=vespa_url,
-        vespa_port=vespa_port,
+        backend_url=vespa_url,
+        backend_port=vespa_port,
         tenant_id="test_tenant",
         config_manager=config_manager,
     )
@@ -358,8 +358,8 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
-    vespa_url = config.get("vespa_url", "http://localhost")
-    vespa_port = config.get("vespa_port", 8080)
+    vespa_url = config.get("backend_url", "http://localhost")
+    vespa_port = config.get("backend_port", 8080)
 
     # Use same device detection as video agent
     if torch.cuda.is_available():
@@ -402,8 +402,8 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
 
     # Initialize search client
     search_client = VespaVideoSearchClient(
-        vespa_url=vespa_url,
-        vespa_port=vespa_port,
+        backend_url=vespa_url,
+        backend_port=vespa_port,
         tenant_id="test_tenant",
         config_manager=config_manager,
     )
