@@ -505,16 +505,22 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
     memory_a.initialize(
         backend_host="localhost",
         backend_port=8080,
+        llm_model="ollama/gemma3:4b",
+        embedding_model="ollama/nomic-embed-text",
+        llm_base_url="http://localhost:11434",
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     memory_b = Mem0MemoryManager(tenant_id="globex_inc")
     memory_b.initialize(
         backend_host="localhost",
         backend_port=8080,
+        llm_model="ollama/gemma3:4b",
+        embedding_model="ollama/nomic-embed-text",
+        llm_base_url="http://localhost:11434",
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     # Add memory for tenant A

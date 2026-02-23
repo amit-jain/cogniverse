@@ -276,8 +276,13 @@ def render_memory_management_tab():
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     manager.initialize(
+        backend_host="localhost",
+        backend_port=8080,
+        llm_model="ollama/gemma3:4b",
+        embedding_model="ollama/nomic-embed-text",
+        llm_base_url="http://localhost:11434",
         config_manager=config_manager,
-        schema_loader=schema_loader
+        schema_loader=schema_loader,
     )
 
     # Memory stats

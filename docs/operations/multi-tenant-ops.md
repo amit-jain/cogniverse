@@ -52,7 +52,11 @@ memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 memory_manager.initialize(
     backend_host="localhost",
     backend_port=8080,
-    config_manager=config_manager
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 print(f"✅ Tenant {tenant_id} created successfully")
@@ -397,14 +401,22 @@ memory_acme = Mem0MemoryManager(tenant_id="acme_corp")
 memory_acme.initialize(
     backend_host="localhost",
     backend_port=8080,
-    config_manager=config_manager
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 memory_globex = Mem0MemoryManager(tenant_id="globex_inc")
 memory_globex.initialize(
     backend_host="localhost",
     backend_port=8080,
-    config_manager=config_manager
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 # Add memory for acme_corp
@@ -834,7 +846,7 @@ agent = VideoSearchAgent(
 )
 results = agent.search(
     query="machine learning",
-    profiles=["video_colpali_smol500_mv_frame"],
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="acme_corp",
     top_k=10,
 )
@@ -863,7 +875,7 @@ agent = VideoSearchAgent(
 # Search as tenant A
 results_a = agent.search(
     query="test query",
-    profiles=["video_colpali_smol500_mv_frame"],
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="tenant_a",
     top_k=10,
 )
@@ -871,7 +883,7 @@ results_a = agent.search(
 # Search as tenant B — completely isolated schemas
 results_b = agent.search(
     query="test query",
-    profiles=["video_colpali_smol500_mv_frame"],
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="tenant_b",
     top_k=10,
 )
