@@ -227,12 +227,13 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     elif capabilities & {"detailed_report", "analysis"}:
         return _execute_text_generation_task(task, agent_name)
     else:
-        return {
-            "status": "success",
-            "agent": agent_name,
-            "message": f"Agent '{agent_name}' acknowledged query: {task.query}",
-            "capabilities": agent.capabilities,
-        }
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                f"Agent '{agent_name}' has no supported execution path in "
+                f"unified runtime mode. Capabilities: {agent.capabilities}"
+            ),
+        )
 
 
 async def _execute_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any]:
@@ -279,28 +280,26 @@ def _execute_text_generation_task(
     task: AgentTask, agent_name: str
 ) -> Dict[str, Any]:
     """Execute a text generation task (summarization, reports)."""
-    return {
-        "status": "success",
-        "agent": agent_name,
-        "message": (
-            f"Text generation via '{agent_name}' requires an LLM backend. "
-            f"Query received: {task.query}"
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            f"Agent '{agent_name}' text generation is not implemented in "
+            f"unified runtime mode. Requires LLM backend integration."
         ),
-    }
+    )
 
 
 def _execute_text_analysis_task(
     task: AgentTask, agent_name: str
 ) -> Dict[str, Any]:
     """Execute a text analysis task (sentiment, classification)."""
-    return {
-        "status": "success",
-        "agent": agent_name,
-        "message": (
-            f"Text analysis via '{agent_name}' requires an LLM backend. "
-            f"Query received: {task.query}"
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            f"Agent '{agent_name}' text analysis is not implemented in "
+            f"unified runtime mode. Requires LLM backend integration."
         ),
-    }
+    )
 
 
 @router.post("/{agent_name}/upload")
