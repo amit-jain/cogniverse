@@ -8,8 +8,9 @@ without requiring major refactoring of existing code.
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, Dict
+
+from cogniverse_core.common.utils.output_manager import get_output_manager
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,10 @@ class DSPyIntegrationMixin:
             # Determine agent type from class name
             agent_type = self._get_agent_type()
 
-            # Look for optimized prompts in standard locations
+            # Look for optimized prompts in output manager's optimization dir
+            optimization_dir = get_output_manager().get_optimization_dir()
             search_paths = [
-                Path("optimized_prompts") / f"{agent_type}_prompts.json",
-                Path("src/app/agents/optimized_prompts") / f"{agent_type}_prompts.json",
-                Path(f"{agent_type}_prompts.json"),
+                optimization_dir / f"{agent_type}_prompts.json",
             ]
 
             for prompt_file in search_paths:

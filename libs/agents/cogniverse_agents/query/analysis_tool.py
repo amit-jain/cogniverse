@@ -10,8 +10,8 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from cogniverse_agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_core.agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:

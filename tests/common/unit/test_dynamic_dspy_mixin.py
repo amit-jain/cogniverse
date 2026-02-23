@@ -94,10 +94,11 @@ class TestDynamicDSPyMixin:
             TestAgent(agent_config)
 
             # Verify LM was created with correct parameters
+            # create_dspy_lm passes model as first positional arg
             mock_lm.assert_called_once()
-            call_kwargs = mock_lm.call_args[1]
-            assert call_kwargs["model"] == "gpt-4"
-            assert call_kwargs["api_base"] == "http://localhost:11434"
+            call_args = mock_lm.call_args
+            assert call_args[0][0] == "gpt-4"
+            assert call_args[1]["api_base"] == "http://localhost:11434"
 
     def test_register_signature(self, agent_config):
         """Test signature registration"""

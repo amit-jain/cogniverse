@@ -412,13 +412,13 @@ class LLMRoutingStrategy(RoutingStrategy):
 
         try:
             import json
-            from pathlib import Path
 
-            # Look for optimized prompts in standard locations
+            from cogniverse_core.common.utils.output_manager import get_output_manager
+
+            # Look for optimized prompts in output manager's optimization dir
+            optimization_dir = get_output_manager().get_optimization_dir()
             search_paths = [
-                Path("optimized_prompts/routing_prompts.json"),
-                Path("src/app/routing/optimized_prompts/routing_prompts.json"),
-                Path("routing_prompts.json"),
+                optimization_dir / "routing_prompts.json",
             ]
 
             for prompt_file in search_paths:

@@ -626,9 +626,14 @@ class DSPyAgentOptimizerPipeline:
         logger.info("Completed DSPy optimization for all modules")
         return optimized_modules
 
-    def save_optimized_prompts(self, output_dir: str = "optimized_prompts"):
+    def save_optimized_prompts(self, output_dir: Optional[str] = None):
         """Save optimized prompts to files for integration."""
-        output_path = Path(output_dir)
+        if output_dir is None:
+            from cogniverse_core.common.utils.output_manager import get_output_manager
+
+            output_path = get_output_manager().get_optimization_dir()
+        else:
+            output_path = Path(output_dir)
         output_path.mkdir(exist_ok=True)
 
         for module_name, compiled_module in self.compiled_modules.items():
@@ -734,7 +739,10 @@ async def main():
 
         # Save optimized prompts
         pipeline.save_optimized_prompts()
-        print("\n💾 Saved optimized prompts to 'optimized_prompts/' directory")
+        from cogniverse_core.common.utils.output_manager import get_output_manager
+
+        opt_dir = get_output_manager().get_optimization_dir()
+        print(f"\n💾 Saved optimized prompts to '{opt_dir}' directory")
 
     except Exception as e:
         print(f"❌ Optimization failed: {e}")
