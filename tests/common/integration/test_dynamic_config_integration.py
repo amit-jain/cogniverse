@@ -1,6 +1,8 @@
 """
 Integration tests for Dynamic DSPy Configuration.
 Tests complete end-to-end flow with TextAnalysisAgent.
+
+Uses vespa_instance fixture from conftest.py to manage Vespa Docker lifecycle.
 """
 
 from unittest.mock import MagicMock, patch
@@ -8,8 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from cogniverse_agents.text_analysis_agent import TextAnalysisAgent, app
+from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
 from cogniverse_foundation.config.agent_config import DSPyModuleType
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
 
 @pytest.mark.integration
@@ -17,20 +21,19 @@ from cogniverse_foundation.config.agent_config import DSPyModuleType
 class TestDynamicConfigIntegration:
     """Test dynamic DSPy configuration integration"""
 
-    @pytest.fixture
-    def client(self):
-        """Create test client"""
-        return TestClient(app)
+    @pytest.fixture(scope="class")
+    def config_manager(self, vespa_instance):
+        """Create ConfigManager with VespaConfigStore pointing to test Docker container."""
+        store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
+        )
+        return ConfigManager(store=store)
 
     @pytest.fixture
-    def fresh_agent(self, tmp_path):
+    def fresh_agent(self, config_manager):
         """Create fresh TextAnalysisAgent instance with clean config"""
         from fastapi import FastAPI
-
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        # Create ConfigManager instance with backend store
-        config_manager = create_default_config_manager()
 
         fresh_app = FastAPI()
         with patch("dspy.LM"):
