@@ -143,8 +143,12 @@ def orchestrator_with_real_agents(real_dspy_lm):
     registry.agents = agent_endpoints
 
     orchestrator_deps = OrchestratorDeps()
+    mock_config_manager = Mock()
     orchestrator = OrchestratorAgent(
-        deps=orchestrator_deps, registry=registry, port=8013
+        deps=orchestrator_deps,
+        registry=registry,
+        config_manager=mock_config_manager,
+        port=8013,
     )
     return orchestrator
 

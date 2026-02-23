@@ -14,7 +14,6 @@ Requirements:
 
 import functools
 import logging
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -125,37 +124,19 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
 
     Patches A2AClient.send_task to dispatch directly to agent._process_impl()
     instead of making HTTP calls.
-
-    Also ensures BACKEND_PORT env var is set correctly — the orchestrator's
-    _ensure_memory_for_tenant() creates its own config_manager via
-    create_default_config_manager() which reads BACKEND_PORT from env.
     """
     config_manager = vespa_with_schema["manager"].config_manager
-    vespa_http_port = vespa_with_schema["http_port"]
     registry = AgentRegistry(config_manager=config_manager)
-
-    # Ensure BACKEND_PORT is set so the orchestrator's internal
-    # create_default_config_manager() uses the correct dynamic port
-    original_port = os.environ.get("BACKEND_PORT")
-    os.environ["BACKEND_PORT"] = str(vespa_http_port)
 
     # Re-assert DSPy LM — can get cleared by agent init code
     dspy.configure(lm=dspy_lm)
 
     orchestrator = OrchestratorAgent(
-        deps=OrchestratorDeps(), registry=registry, port=8013
+        deps=OrchestratorDeps(),
+        registry=registry,
+        config_manager=config_manager,
+        port=8013,
     )
-
-    # Clear backend registry cache AFTER orchestrator construction —
-    # OrchestratorAgent.__init__ calls _ensure_memory_for_tenant() which
-    # creates backends at port 8081 (from config file) and caches them.
-    # Clearing after init ensures the search agent creates fresh backends
-    # at the correct dynamic port.
-    from cogniverse_core.registries.backend_registry import get_backend_registry
-
-    registry_cache = get_backend_registry()
-    if hasattr(registry_cache, "_backend_instances"):
-        registry_cache._backend_instances.clear()
 
     async def dispatch_to_agent(agent_url: str, query: str, **kwargs):
         """Route A2A HTTP calls to in-process agent instances."""
@@ -249,12 +230,6 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     orchestrator._create_plan = _scoped_create_plan
 
     yield orchestrator
-
-    # Restore original BACKEND_PORT
-    if original_port:
-        os.environ["BACKEND_PORT"] = original_port
-    else:
-        os.environ.pop("BACKEND_PORT", None)
 
 
 @pytest.mark.integration

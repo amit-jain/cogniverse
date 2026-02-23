@@ -243,12 +243,6 @@ class ConfigUtils:
             "phoenix_url": lambda: self._system_config.phoenix_url,
             "phoenix_collector_endpoint": lambda: self._system_config.phoenix_collector_endpoint,
             "environment": lambda: self._system_config.environment,
-            # Nested llm dict for backward compatibility with agents expecting config.get("llm")
-            "llm": lambda: {
-                "model_name": self._system_config.llm_model,
-                "base_url": self._system_config.base_url,
-                "api_key": self._system_config.llm_api_key,
-            },
         }
 
         # Routing config mappings
@@ -321,7 +315,6 @@ class ConfigUtils:
                 "phoenix_url",
                 "phoenix_collector_endpoint",
                 "environment",
-                "llm",
             ]
         )
 

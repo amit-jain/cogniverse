@@ -60,7 +60,7 @@ class PromptManager:
 
         # Try path from config
         config_artifacts = (
-            self.config.get("inference", {}).get("prompts", {}).get("artifacts_path")
+            self.config.get("prompts", {}).get("artifacts_path")
         )
         if config_artifacts and os.path.exists(config_artifacts):
             return self._read_artifacts(config_artifacts)
@@ -149,7 +149,7 @@ class PromptManager:
     def _build_default_prompt(self, user_query: str, conversation_history: str) -> str:
         """Build prompt using defaults from config."""
         # Get defaults from config
-        prompt_config = self.config.get("inference", {}).get("prompts", {})
+        prompt_config = self.config.get("prompts", {})
 
         system_prompt = prompt_config.get(
             "default_system_prompt",
@@ -206,11 +206,8 @@ class PromptManager:
         if self.artifacts and "model_config" in self.artifacts:
             return self.artifacts["model_config"]
 
-        # Return defaults from config or hardcoded
-        return self.config.get("inference", {}).get(
-            "model_config",
-            {"temperature": 0.1, "max_tokens": 100, "model": "google/gemma-3-1b-it"},
-        )
+        # Return defaults — callers should prefer llm_config.resolve() instead
+        return {"temperature": 0.1, "max_tokens": 100, "model": "google/gemma-3-1b-it"}
 
     def reload_artifacts(self, artifacts_path: Optional[str] = None) -> bool:
         """

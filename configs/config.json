@@ -50,10 +50,9 @@
   "embedding_model": "all-MiniLM-L6-v2",
   "local_llm_model": "deepseek-r1:7b",
   "base_url": "http://localhost:11434",
-  "llm": {
-    "model_name": "deepseek-r1:7b",
-    "base_url": "http://localhost:11434",
-    "api_key": null
+  "prompts": {
+    "artifacts_path": null,
+    "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
   },
   "remote_inference_url": null,
   "evaluation_datasets": {
@@ -149,24 +148,6 @@
   "video_data_dir": "data/videos",
   "text_data_dir": "data/text",
   "index_dir": "data/indexes",
-  "inference": {
-    "provider": "modal",
-    "local_endpoint": "http://localhost:11434",
-    "model": "HuggingFaceTB/SmolLM3-3B",
-    "modal_endpoint": "https://amit-jain--general-inference-service-serve.modal.run",
-    "timeout": 30,
-    "retry_count": 3,
-    "retry_delay": 1.0,
-    "prompts": {
-      "artifacts_path": null,
-      "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
-    },
-    "model_config": {
-      "temperature": 0.1,
-      "max_tokens": 100,
-      "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-    }
-  },
   "reranking": {
     "enabled": false,
     "model": "heuristic",
@@ -353,47 +334,6 @@
       "model": "claude-3-5-sonnet-20241022",
       "api_base": null,
       "api_key": null
-    }
-  },
-  "optimization": {
-    "enabled": true,
-    "type": "dspy",
-    "teacher": {
-      "model": "claude-3-5-sonnet-20241022",
-      "api_key": null
-    },
-    "student": {
-      "model": "HuggingFaceTB/SmolLM3-3B",
-      "provider": "modal"
-    },
-    "providers": {
-      "modal": {
-        "gpu_config": "A10G",
-        "memory_mb": 16000,
-        "timeout_seconds": 3600
-      },
-      "local": {
-        "base_url": "http://localhost:11434",
-        "timeout": 30
-      }
-    },
-    "settings": {
-      "num_examples": 50,
-      "num_candidates": 10,
-      "num_trials": 20
-    },
-    "output": {
-      "dir": "optimization_results"
-    },
-    "artifact_storage": {
-      "type": "modal",
-      "modal": {
-        "volume_name": "optimization-artifacts",
-        "remote_path": "/artifacts/unified_router_prompt_artifact.json"
-      },
-      "local": {
-        "base_path": "./optimization_results"
-      }
     }
   },
   "backend": {

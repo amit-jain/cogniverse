@@ -56,7 +56,13 @@ def orchestrator(mock_registry):
     """OrchestratorAgent with mock registry."""
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
-        return OrchestratorAgent(deps=deps, registry=mock_registry, port=8013)
+        mock_config_manager = Mock()
+        return OrchestratorAgent(
+            deps=deps,
+            registry=mock_registry,
+            config_manager=mock_config_manager,
+            port=8013,
+        )
 
 
 class TestA2APipelineFlow:

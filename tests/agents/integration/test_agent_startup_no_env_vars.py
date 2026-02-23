@@ -75,7 +75,13 @@ class TestAgentConstructionNoEnvVars:
 
         with patch("dspy.ChainOfThought"):
             deps = OrchestratorDeps()
-            agent = OrchestratorAgent(deps=deps, registry=registry, port=8013)
+            mock_config_manager = Mock()
+            agent = OrchestratorAgent(
+                deps=deps,
+                registry=registry,
+                config_manager=mock_config_manager,
+                port=8013,
+            )
 
         assert agent.agent_name == "orchestrator_agent"
         assert "orchestration" in agent.capabilities

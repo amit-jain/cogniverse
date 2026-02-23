@@ -66,7 +66,13 @@ def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
-        agent = OrchestratorAgent(deps=deps, registry=mock_agent_registry, port=8013)
+        mock_config_manager = Mock()
+        agent = OrchestratorAgent(
+            deps=deps,
+            registry=mock_agent_registry,
+            config_manager=mock_config_manager,
+            port=8013,
+        )
         return agent
 
 

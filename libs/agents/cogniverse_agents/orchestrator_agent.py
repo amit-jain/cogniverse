@@ -19,6 +19,7 @@ from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 if TYPE_CHECKING:
     from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ class OrchestratorAgent(
         self,
         deps: OrchestratorDeps,
         registry: "AgentRegistry",
+        config_manager: "ConfigManager" = None,
         port: int = 8013,
     ):
         """
@@ -193,13 +195,20 @@ class OrchestratorAgent(
         Args:
             deps: Typed dependencies (tenant-agnostic)
             registry: AgentRegistry for dynamic agent discovery
+            config_manager: ConfigManager instance (REQUIRED)
             port: Port for A2A server
 
         Raises:
             TypeError: If deps is not OrchestratorDeps
-            ValueError: If registry is not provided
+            ValueError: If registry or config_manager is not provided
         """
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for OrchestratorAgent. "
+                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
+            )
         self.registry = registry
+        self._config_manager = config_manager
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
@@ -235,24 +244,24 @@ class OrchestratorAgent(
             return
 
         try:
-            from cogniverse_foundation.config.utils import (
-                create_default_config_manager,
-                get_config,
+            from cogniverse_foundation.config.utils import get_config
+
+            config = get_config(
+                tenant_id="default", config_manager=self._config_manager
             )
 
-            config_manager = create_default_config_manager()
-            config = get_config(tenant_id="default", config_manager=config_manager)
+            llm_config = config.get_llm_config()
+            resolved = llm_config.resolve("orchestrator_agent")
 
-            inference = config.get("inference", {})
             backend_section = config.get("backend", {})
             backend_url = backend_section.get("url", "http://localhost")
             backend_port = backend_section.get("port", 8080)
-            provider = inference.get("provider", "ollama")
-            llm_model = inference.get("model", "gemma3:4b")
-            embedding_model = inference.get("embedding_model", "nomic-embed-text")
-            llm_base_url = inference.get("local_endpoint", "http://localhost:11434")
-            if provider == "modal":
-                llm_base_url = inference.get("modal_endpoint", llm_base_url)
+
+            # Extract provider from model string (e.g., "ollama/smollm3:3b" -> "ollama")
+            provider = resolved.model.split("/")[0] if "/" in resolved.model else "local"
+            llm_model = resolved.model
+            llm_base_url = resolved.api_base or "http://localhost:11434"
+            embedding_model = config.get("embedding_model", "nomic-embed-text")
 
             from pathlib import Path
 
@@ -268,7 +277,7 @@ class OrchestratorAgent(
                 llm_model=llm_model,
                 embedding_model=embedding_model,
                 llm_base_url=llm_base_url,
-                config_manager=config_manager,
+                config_manager=self._config_manager,
                 schema_loader=schema_loader,
                 provider=provider,
             )
@@ -681,7 +690,9 @@ async def startup_event():
     registry = AgentRegistry(config_manager=config_manager)
 
     deps = OrchestratorDeps()
-    orchestrator_agent = OrchestratorAgent(deps=deps, registry=registry)
+    orchestrator_agent = OrchestratorAgent(
+        deps=deps, registry=registry, config_manager=config_manager
+    )
     logger.info("OrchestratorAgent started")
 
 
@@ -716,6 +727,8 @@ if __name__ == "__main__":
     config_manager = create_default_config_manager()
     registry = AgentRegistry(config_manager=config_manager)
     deps = OrchestratorDeps()
-    agent = OrchestratorAgent(deps=deps, registry=registry, port=8013)
+    agent = OrchestratorAgent(
+        deps=deps, registry=registry, config_manager=config_manager, port=8013
+    )
     logger.info("Starting OrchestratorAgent on port 8013...")
     agent.start()
