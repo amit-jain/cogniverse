@@ -172,7 +172,7 @@ from cogniverse_agents.agent_registry import AgentRegistry
 # OrchestratorAgent discovers agents via AgentRegistry (from config.json > agents section)
 registry = AgentRegistry(config_manager=config_manager)
 deps = OrchestratorDeps()
-orchestrator = OrchestratorAgent(deps=deps, registry=registry)
+orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
 # Execute complex workflow
 result = await orchestrator.process_complex_query(

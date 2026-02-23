@@ -371,6 +371,59 @@ manager.set_agent_config(
 )
 ```
 
+### Centralized LLM Configuration
+
+All DSPy-based agents and optimizers use a centralized LLM configuration system instead of reading environment variables or configuring `dspy.settings` globally.
+
+**Config structure** (`config.json`):
+
+```json
+{
+  "llm_config": {
+    "primary": {
+      "provider": "ollama",
+      "model": "ollama_chat/smollm3:3b",
+      "api_base": "http://localhost:11434"
+    },
+    "teacher": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-20241022",
+      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
+    },
+    "overrides": {
+      "orchestrator_agent": {
+        "model": "ollama_chat/qwen3:8b"
+      }
+    }
+  }
+}
+```
+
+**Key classes and factory**:
+
+```python
+from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+# Load from config.json
+llm_config = LLMConfig.from_dict(config.get("llm_config", {}))
+
+# Resolve endpoint for a specific component (checks overrides, falls back to primary)
+endpoint = llm_config.resolve("orchestrator_agent")  # Returns LLMEndpointConfig
+
+# Create a scoped DSPy LM instance via the factory
+lm = create_dspy_lm(endpoint)
+
+# Use with scoped context (never global dspy.settings.configure)
+import dspy
+with dspy.context(lm=lm):
+    result = module(query="machine learning videos")
+```
+
+- `LLMEndpointConfig`: Dataclass with `provider`, `model`, `api_base`, `api_key`, `api_key_env`, `temperature`, `max_tokens`
+- `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
+- `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. Resolves `api_key_env` to actual key. All DSPy LM creation goes through this factory
+
 ## Backend Configuration API
 
 The ConfigManager provides methods for managing backend and profile configurations:

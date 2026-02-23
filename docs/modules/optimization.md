@@ -2038,32 +2038,31 @@ results = orchestrator.run_optimization()
 
 #### Configuration Structure
 
+LLM configuration is centralized in the `llm_config` section of `config.json`:
+
 ```json
 {
-  "optimization": {
-    "enabled": true,
-    "type": "dspy",
+  "llm_config": {
+    "primary": {
+      "provider": "ollama",
+      "model": "ollama_chat/smollm3:3b",
+      "api_base": "http://localhost:11434"
+    },
     "teacher": {
+      "provider": "anthropic",
       "model": "claude-3-5-sonnet-20241022",
       "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
     },
-    "student": {
-      "provider": "modal",
-      "model": "google/gemma-7b"
-    },
-    "providers": {
-      "modal": {"volume_name": "cogniverse-artifacts"}
-    },
-    "settings": {
-      "num_examples": 50,
-      "train_split": 0.8
-    },
-    "output": {
-      "dir": "optimization_results"
+    "overrides": {
+      "orchestrator_agent": {
+        "model": "ollama_chat/qwen3:8b"
+      }
     }
   }
 }
 ```
+
+All agents and optimizers resolve their LLM config from this section via `LLMConfig.from_dict()` and `create_dspy_lm()`. The old `"optimization"`, `"inference"`, and `"llm"` config sections have been removed.
 
 ### DSPyAgentPromptOptimizer
 
@@ -2087,18 +2086,22 @@ optimizer = DSPyAgentPromptOptimizer(config={
     }
 })
 
-# Initialize language model
-optimizer.initialize_language_model(
-    api_base="http://localhost:11434/v1",
-    model="llama3:8b"
+# Initialize language model via centralized LLM config
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+endpoint_config = LLMEndpointConfig(
+    provider="ollama",
+    model="ollama_chat/llama3:8b",
+    api_base="http://localhost:11434",
 )
+optimizer.initialize_language_model(endpoint_config=endpoint_config)
 
 # Create and run pipeline
 pipeline = DSPyAgentOptimizerPipeline(optimizer)
 optimized_modules = await pipeline.optimize_all_modules()
 
-# Save optimized prompts
-pipeline.save_optimized_prompts("optimized_prompts/")
+# Save optimized prompts (defaults to get_output_manager().get_optimization_dir())
+pipeline.save_optimized_prompts()
 ```
 
 #### Optimizable Modules

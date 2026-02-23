@@ -801,7 +801,7 @@ async def test_new_optimizer_generator():
 - **Note**: Configuration is required - no defaults or fallbacks
 
 **Issue**: `ValueError: Failed to generate query containing entities after 3 attempts`
-- **Fix**: Check DSPy LM is configured correctly (`dspy.configure(lm=...)`)
+- **Fix**: Check DSPy LM is configured correctly (use `create_dspy_lm()` and `dspy.context(lm=...)`)
 - **Note**: ValidatedEntityQueryGenerator retries 3 times before raising error
 
 **Issue**: Tests fail with import errors

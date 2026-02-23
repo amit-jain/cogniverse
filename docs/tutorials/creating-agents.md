@@ -477,9 +477,10 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         """Initialize DSPy module."""
         self.summarization_module = SummarizationModule()
 
-        # Note: Configure DSPy LM separately, not in deps
-        # Example: dspy.configure(lm=dspy.LM(model="ollama/smollm3:3b"))
-        # This is typically done before agent instantiation
+        # Note: DSPy LM is scoped per-call via dspy.context(lm=...), not globally.
+        # Use create_dspy_lm() from cogniverse_foundation.config.llm_factory
+        # Example: lm = create_dspy_lm(llm_endpoint_config)
+        #          with dspy.context(lm=lm): module(query=...)
 
     def _generate_summary(
         self,

@@ -347,7 +347,7 @@ class MyAgent(AgentBase[...], HealthCheckMixin):
 Integrates DSPy modules for AI processing:
 
 ```python
-from cogniverse_core.agents.dspy_integration_mixin import DSPyIntegrationMixin
+from cogniverse_agents.dspy_integration_mixin import DSPyIntegrationMixin
 import dspy
 
 class MyAgent(AgentBase[...], DSPyIntegrationMixin):

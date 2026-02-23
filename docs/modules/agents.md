@@ -670,7 +670,9 @@ from cogniverse_agents.agent_registry import AgentRegistry
 # Construction — tenant-agnostic, no env vars
 registry = AgentRegistry(config_manager=config_manager)
 deps = OrchestratorDeps()
-orchestrator = OrchestratorAgent(deps=deps, registry=registry, port=8013)
+orchestrator = OrchestratorAgent(
+    deps=deps, registry=registry, config_manager=config_manager, port=8013
+)
 
 # Processing — tenant_id and session_id arrive per-request
 result = await orchestrator._process_impl(
@@ -1241,12 +1243,19 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
 
 #### Configuration
 
-EntityExtractionDeps has no configuration fields — the agent is fully tenant-agnostic at startup. The DSPy LLM backend is configured globally via the DSPy settings (e.g., `dspy.settings.configure(lm=...)`).
+EntityExtractionDeps has no configuration fields — the agent is fully tenant-agnostic at startup. The DSPy LLM is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
 
 ```python
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
 # EntityExtractionAgent requires no agent-specific config — instantiate with empty deps:
 deps = EntityExtractionDeps()
 agent = EntityExtractionAgent(deps=deps, port=8010)
+
+# DSPy LM is scoped per-call, not configured globally:
+lm = create_dspy_lm(llm_endpoint_config)
+with dspy.context(lm=lm):
+    result = agent.extraction_module(query="machine learning videos")
 ```
 
 #### API Usage
@@ -1404,13 +1413,20 @@ class OrchestratorAgent(
     tenant_id and session_id arrive per-request in task payload.
     """
 
-    def __init__(self, deps: OrchestratorDeps, registry: "AgentRegistry", port: int = 8013):
+    def __init__(
+        self,
+        deps: OrchestratorDeps,
+        registry: "AgentRegistry",
+        config_manager: "ConfigManager" = None,
+        port: int = 8013,
+    ):
         """
         Initialize orchestrator agent.
 
         Args:
             deps: OrchestratorDeps (infrastructure only, no tenant_id)
             registry: AgentRegistry for dynamic agent discovery (REQUIRED)
+            config_manager: ConfigManager for tenant memory initialization
             port: A2A HTTP server port
         """
         self.registry = registry
@@ -3069,7 +3085,9 @@ from cogniverse_agents.agent_registry import AgentRegistry
 
 # Create orchestrator with agent registry (discovers agents from config.json)
 registry = AgentRegistry(config_manager=config_manager)
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(), registry=registry, config_manager=config_manager
+)
 
 # Execute orchestration — tenant_id and session_id per-request
 result = await orchestrator._process_impl(

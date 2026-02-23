@@ -123,9 +123,10 @@ dspy_lm = DSPyLMProvider(
     model_type="modal"
 )
 
-# Use with DSPy optimizers
+# Use with DSPy modules via scoped context
 import dspy
-dspy.configure(lm=dspy_lm)
+with dspy.context(lm=dspy_lm):
+    result = module(query="...")
 ```
 
 ### VLM Service Deployment
@@ -197,38 +198,21 @@ Embedding fine-tuning runs on Modal GPUs using triplet loss (sentence-transforme
 
 ### Configuration
 
-Update your configuration file with your Modal endpoints. The config structure follows this format (see configs/config.json):
+Update your configuration file with your Modal endpoints. LLM configuration is centralized in `llm_config` (see configs/config.json):
 
 ```json
 {
-  "optimization": {
-    "enabled": true,
-    "type": "dspy",
+  "llm_config": {
+    "primary": {
+      "provider": "modal",
+      "model": "HuggingFaceTB/SmolLM3-3B",
+      "api_base": "https://username--general-inference-service-serve.modal.run"
+    },
     "teacher": {
+      "provider": "anthropic",
       "model": "claude-3-5-sonnet-20241022",
       "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
-    },
-    "student": {
-      "model": "HuggingFaceTB/SmolLM3-3B",
-      "provider": "modal"
-    },
-    "providers": {
-      "modal": {
-        "gpu_config": "A10G",
-        "memory_mb": 16000,
-        "timeout_seconds": 3600
-      },
-    },
-    "settings": {
-      "num_examples": 50,
-      "num_candidates": 10,
-      "num_trials": 20
     }
-  },
-  "inference": {
-    "provider": "modal",
-    "modal_endpoint": "https://username--general-inference-service-serve.modal.run",
-    "model": "HuggingFaceTB/SmolLM3-3B"
   },
   "vlm_endpoint_url": "https://username--cogniverse-vlm-vlmmodel-generate-description.modal.run/"
 }
