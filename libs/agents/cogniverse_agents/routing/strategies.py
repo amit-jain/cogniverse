@@ -63,7 +63,6 @@ class GLiNERRoutingStrategy(RoutingStrategy):
         self.model_name = (config or {}).get(
             "gliner_model", "urchade/gliner_large-v2.1"
         )
-        self._initialize_model()
 
     def _initialize_model(self):
         """Initialize the GLiNER model."""
@@ -90,6 +89,8 @@ class GLiNERRoutingStrategy(RoutingStrategy):
         """Route using GLiNER entity extraction."""
         start_time = time.time()
 
+        if self.model is None:
+            self._initialize_model()
         if not self.model:
             # Fallback if model not available
             return RoutingDecision(

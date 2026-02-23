@@ -32,7 +32,6 @@ class GLiNERRelationshipExtractor:
         """
         self.model_name = model_name
         self.gliner_model = None
-        self._load_gliner_model()
 
     def _load_gliner_model(self):
         """Load GLiNER model with error handling"""
@@ -61,6 +60,8 @@ class GLiNERRelationshipExtractor:
         Returns:
             List of entity dictionaries with text, label, score, start, end
         """
+        if self.gliner_model is None:
+            self._load_gliner_model()
         if not self.gliner_model:
             logger.warning("GLiNER model not available, returning empty entities")
             return []
@@ -314,7 +315,6 @@ class SpaCyDependencyAnalyzer:
         """
         self.model_name = model_name
         self.nlp = None
-        self._load_spacy_model()
 
     def _load_spacy_model(self):
         """Load spaCy model with error handling"""
@@ -340,6 +340,8 @@ class SpaCyDependencyAnalyzer:
         Returns:
             Dictionary with dependency analysis results
         """
+        if self.nlp is None:
+            self._load_spacy_model()
         if not self.nlp:
             logger.warning("spaCy model not available")
             return {"dependencies": [], "structure": "unknown"}
@@ -386,6 +388,8 @@ class SpaCyDependencyAnalyzer:
         Returns:
             List of semantic relationship tuples
         """
+        if self.nlp is None:
+            self._load_spacy_model()
         if not self.nlp:
             return []
 
