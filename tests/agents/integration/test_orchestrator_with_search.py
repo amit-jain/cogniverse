@@ -54,16 +54,13 @@ logger = logging.getLogger(__name__)
 def dspy_lm():
     """Module-scoped DSPy LM for orchestrator tests."""
     lm = create_dspy_lm(
-        LLMEndpointConfig(
-            model="ollama/gemma3:4b", api_base="http://localhost:11434"
-        )
+        LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434")
     )
     dspy.configure(lm=lm)
     # Verify the LM was actually set
-    assert dspy.settings.lm is not None, (
-        f"dspy.configure(lm=...) failed silently. "
-        f"settings.lm={dspy.settings.lm}"
-    )
+    assert (
+        dspy.settings.lm is not None
+    ), f"dspy.configure(lm=...) failed silently. settings.lm={dspy.settings.lm}"
     logger.info(f"DSPy LM configured: {dspy.settings.lm}")
     yield lm
     dspy.configure(lm=None)
@@ -178,7 +175,12 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     # Production _create_plan() uses AgentType enum (ALL agents including
     # summarizer/detailed_report), but this test only has 4 agents registered.
     # Without this, the LLM may plan agents that can't be dispatched.
-    test_agents = ["entity_extraction", "query_enhancement", "profile_selection", "search"]
+    test_agents = [
+        "entity_extraction",
+        "query_enhancement",
+        "profile_selection",
+        "search",
+    ]
     original_create_plan = orchestrator._create_plan
 
     @functools.wraps(original_create_plan)
@@ -253,7 +255,9 @@ class TestOrchestratorWithRealAgents:
         entity_agent = agent_instances["http://localhost:8010"]
         with dspy.context(lm=dspy_lm):
             result = await entity_agent._process_impl(
-                EntityExtractionInput(query="Find videos about Python programming by Google")
+                EntityExtractionInput(
+                    query="Find videos about Python programming by Google"
+                )
             )
 
         assert result is not None
@@ -268,12 +272,12 @@ class TestOrchestratorWithRealAgents:
 
         # Each entity should have text and type (Entity is a Pydantic model)
         for entity in result.entities:
-            assert hasattr(entity, "text") and entity.text, (
-                f"Entity missing text: {entity}"
-            )
-            assert hasattr(entity, "type") and entity.type, (
-                f"Entity missing type: {entity}"
-            )
+            assert (
+                hasattr(entity, "text") and entity.text
+            ), f"Entity missing text: {entity}"
+            assert (
+                hasattr(entity, "type") and entity.type
+            ), f"Entity missing type: {entity}"
 
         entity_names = [e.text.lower() for e in result.entities]
         logger.info(f"Extracted entities: {result.entities}")
@@ -310,9 +314,9 @@ class TestOrchestratorWithRealAgents:
         )
 
         # Should not be a fallback (fallback has confidence=0.5)
-        assert result.confidence > 0.5, (
-            f"Should use real LLM, not fallback. confidence={result.confidence}"
-        )
+        assert (
+            result.confidence > 0.5
+        ), f"Should use real LLM, not fallback. confidence={result.confidence}"
 
         logger.info(f"Original: '{original}' → Enhanced: '{result.enhanced_query}'")
         logger.info(f"Expansion terms: {result.expansion_terms}")
@@ -378,9 +382,9 @@ class TestOrchestratorWithRealAgents:
             first = result.results[0]
             assert isinstance(first, dict)
             # Vespa results have documentid and relevance
-            assert "documentid" in first or "id" in first, (
-                f"Result missing documentid/id: {first.keys()}"
-            )
+            assert (
+                "documentid" in first or "id" in first
+            ), f"Result missing documentid/id: {first.keys()}"
 
         logger.info(
             f"Search returned {result.total_results} results, "
@@ -427,68 +431,62 @@ class TestOrchestratorWithRealAgents:
         # Validate plan DAG structure
         for i, step in enumerate(result.plan_steps):
             for dep_idx in step["depends_on"]:
-                assert 0 <= dep_idx < i, (
-                    f"Step {i} ({step['agent_type']}) has invalid dep {dep_idx}"
-                )
+                assert (
+                    0 <= dep_idx < i
+                ), f"Step {i} ({step['agent_type']}) has invalid dep {dep_idx}"
 
         # --- Every planned agent must have results ---
         for agent_name in planned_agents:
-            assert agent_name in result.agent_results, (
-                f"Agent '{agent_name}' was planned but has no result"
-            )
+            assert (
+                agent_name in result.agent_results
+            ), f"Agent '{agent_name}' was planned but has no result"
             agent_result = result.agent_results[agent_name]
-            assert isinstance(agent_result, dict), (
-                f"{agent_name} result should be dict, got {type(agent_result)}"
-            )
+            assert isinstance(
+                agent_result, dict
+            ), f"{agent_name} result should be dict, got {type(agent_result)}"
 
         # --- Concrete assertions on each planned agent's output ---
         if "entity_extraction" in planned_agents:
             ee_result = result.agent_results["entity_extraction"]
-            assert "entities" in ee_result, (
-                f"entity_extraction missing 'entities' key: {ee_result.keys()}"
-            )
+            assert (
+                "entities" in ee_result
+            ), f"entity_extraction missing 'entities' key: {ee_result.keys()}"
             assert isinstance(ee_result["entities"], list)
-            assert len(ee_result["entities"]) >= 1, (
-                f"Should extract at least 1 entity. Got: {ee_result['entities']}"
-            )
+            assert (
+                len(ee_result["entities"]) >= 1
+            ), f"Should extract at least 1 entity. Got: {ee_result['entities']}"
             for entity in ee_result["entities"]:
-                assert "name" in entity or "text" in entity, (
-                    f"Entity missing name/text field: {entity}"
-                )
+                assert (
+                    "name" in entity or "text" in entity
+                ), f"Entity missing name/text field: {entity}"
 
         if "query_enhancement" in planned_agents:
             qe_result = result.agent_results["query_enhancement"]
-            assert "enhanced_query" in qe_result, (
-                f"query_enhancement missing 'enhanced_query': {qe_result.keys()}"
-            )
+            assert (
+                "enhanced_query" in qe_result
+            ), f"query_enhancement missing 'enhanced_query': {qe_result.keys()}"
             assert isinstance(qe_result["enhanced_query"], str)
-            assert len(qe_result["enhanced_query"]) > 0, (
-                "Enhanced query must not be empty"
-            )
+            assert (
+                len(qe_result["enhanced_query"]) > 0
+            ), "Enhanced query must not be empty"
 
         if "profile_selection" in planned_agents:
             ps_result = result.agent_results["profile_selection"]
-            assert "selected_profile" in ps_result, (
-                f"profile_selection missing 'selected_profile': {ps_result.keys()}"
-            )
+            assert (
+                "selected_profile" in ps_result
+            ), f"profile_selection missing 'selected_profile': {ps_result.keys()}"
             assert isinstance(ps_result["selected_profile"], str)
             assert len(ps_result["selected_profile"]) > 0, "Must select a profile"
 
         # Search is always planned (asserted above)
         s_result = result.agent_results["search"]
-        assert "results" in s_result, (
-            f"search missing 'results' key: {s_result.keys()}"
-        )
+        assert "results" in s_result, f"search missing 'results' key: {s_result.keys()}"
         assert isinstance(s_result["results"], list)
 
         # Log full pipeline for debugging
-        logger.info(
-            f"Pipeline planned: {[s['agent_type'] for s in result.plan_steps]}"
-        )
+        logger.info(f"Pipeline planned: {[s['agent_type'] for s in result.plan_steps]}")
         for agent_name in planned_agents:
-            logger.info(
-                f"  {agent_name}: {result.agent_results[agent_name]}"
-            )
+            logger.info(f"  {agent_name}: {result.agent_results[agent_name]}")
 
     @pytest.mark.asyncio
     async def test_orchestrator_empty_query(self, orchestrator_with_agents, dspy_lm):

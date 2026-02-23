@@ -258,7 +258,9 @@ class OrchestratorAgent(
             backend_port = backend_section.get("port", 8080)
 
             # Extract provider from model string (e.g., "ollama/smollm3:3b" -> "ollama")
-            provider = resolved.model.split("/")[0] if "/" in resolved.model else "local"
+            provider = (
+                resolved.model.split("/")[0] if "/" in resolved.model else "local"
+            )
             llm_model = resolved.model
             llm_base_url = resolved.api_base or "http://localhost:11434"
             embedding_model = config.get("embedding_model", "nomic-embed-text")
