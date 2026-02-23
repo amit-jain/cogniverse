@@ -105,8 +105,8 @@ class TestRealVespaIntegration:
         # cogniverse-vespa package
         from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
         vespa_client = VespaVideoSearchClient(
-            vespa_url="http://localhost",
-            vespa_port=8080,
+            backend_url="http://localhost",
+            backend_port=8080,
             tenant_id="test",
             config_manager=config_manager
         )
@@ -197,8 +197,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
 vespa_client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="test",
     config_manager=config_manager
 )

@@ -389,8 +389,8 @@ def workflow_store(backend_config_env):
     """Create VespaWorkflowStore for testing."""
     from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
     store = VespaWorkflowStore(
-        vespa_url=os.environ.get("BACKEND_URL", "http://localhost"),
-        vespa_port=int(os.environ.get("BACKEND_PORT", "8080")),
+        backend_url=os.environ.get("BACKEND_URL", "http://localhost"),
+        backend_port=int(os.environ.get("BACKEND_PORT", "8080")),
     )
     store.initialize()
     return store
@@ -500,11 +500,11 @@ class TestVespaIntegration:
         """Create real Vespa client."""
         import os
         from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-        vespa_url = os.getenv("BACKEND_URL", "http://localhost")
-        vespa_port = int(os.getenv("BACKEND_PORT", "8080"))
+        backend_url = os.getenv("BACKEND_URL", "http://localhost")
+        backend_port = int(os.getenv("BACKEND_PORT", "8080"))
         return VespaVideoSearchClient(
-            vespa_url=vespa_url,
-            vespa_port=vespa_port,
+            backend_url=backend_url,
+            backend_port=backend_port,
             tenant_id="test-tenant",
             config_manager=config_manager
         )

@@ -227,8 +227,8 @@ from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 # Initialize client with required parameters
 # config_manager must be provided via dependency injection
 client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="default",
     config_manager=config_manager
 )

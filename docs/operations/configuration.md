@@ -228,8 +228,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 # Initialize Vespa store with URL and port
 vespa_store = VespaConfigStore(
-    vespa_url="http://localhost",
-    vespa_port=8080
+    backend_url="http://localhost",
+    backend_port=8080
 )
 
 # Use with ConfigManager (tenant isolation handled via document IDs)

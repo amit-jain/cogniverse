@@ -392,8 +392,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()  # Create config manager first
 search_client = VespaVideoSearchClient(
-    vespa_url="http://vespa.prod.internal",
-    vespa_port=8080,
+    backend_url="http://vespa.prod.internal",
+    backend_port=8080,
     tenant_id="acme",
     config_manager=config_manager  # REQUIRED parameter
 )

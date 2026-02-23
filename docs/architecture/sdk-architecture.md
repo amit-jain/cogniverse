@@ -908,8 +908,8 @@ async def test_routing_agent_with_vespa_backend(config_manager, tenant_id):
 
     # Initialize Vespa backend (config_manager required)
     vespa_client = VespaVideoSearchClient(
-        vespa_url="http://localhost",
-        vespa_port=8080,
+        backend_url="http://localhost",
+        backend_port=8080,
         tenant_id=tenant_id,
         config_manager=config_manager
     )

@@ -380,7 +380,7 @@ def benchmark_all_strategies(
     query_text: str = "",
     num_tokens: int = 2,
     hits: int = 5,
-    vespa_url: str = "http://localhost:8080"
+    backend_url: str = "http://localhost:8080"
 ) -> Dict[str, Any]:
     """
     Benchmark all 9 ranking strategies with a single query.
@@ -783,7 +783,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 # Initialize with required config_manager and store
-store = VespaConfigStore(vespa_url="http://localhost", vespa_port=8080)
+store = VespaConfigStore(backend_url="http://localhost", backend_port=8080)
 config_manager = ConfigManager(store=store)
 pm = PromptManager(config_manager=config_manager, tenant_id="default")
 
@@ -956,7 +956,7 @@ results = benchmark_all_strategies(
     query_text='fire',
     num_tokens=2,
     hits=5,
-    vespa_url='http://localhost:8080'
+    backend_url='http://localhost:8080'
 )
 
 print_benchmark_results(results)

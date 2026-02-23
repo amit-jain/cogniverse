@@ -184,14 +184,14 @@ class VespaConfigStore(ConfigStore):
     def __init__(
         self,
         vespa_app: Optional[Vespa] = None,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        backend_url: str = "http://localhost",
+        backend_port: int = 8080,
         schema_name: str = "config_metadata",
     ):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
+            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
         self.schema_name = schema_name
 
     def _get_latest_version(self, tenant_id, scope, service, config_key) -> int:

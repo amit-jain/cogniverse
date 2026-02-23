@@ -224,7 +224,7 @@ class SearchService:
         Initialize search service
 
         Args:
-            config: Configuration dictionary with vespa_url, etc.
+            config: Configuration dictionary with backend_url, etc.
             profile: Video processing profile (frame_based_colpali, etc.)
             tenant_id: Tenant identifier for multi-tenancy
             config_manager: ConfigManager instance (REQUIRED - raises ValueError if None)
@@ -675,8 +675,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 config = {
-    "vespa_url": "http://localhost",
-    "vespa_port": 8080,
+    "backend_url": "http://localhost",
+    "backend_port": 8080,
     "search_backend": "vespa"
 }
 config_manager = create_default_config_manager()

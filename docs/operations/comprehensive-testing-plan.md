@@ -503,8 +503,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 # VespaVideoSearchClient requires config_manager (REQUIRED parameter)
 config_manager = create_default_config_manager()
 backend = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="default",
     config_manager=config_manager  # REQUIRED - no default value
 )
@@ -564,8 +564,8 @@ schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol50
 # Initialize Vespa client for tenant
 config_manager = create_default_config_manager()
 client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="test_tenant",
     config_manager=config_manager
 )

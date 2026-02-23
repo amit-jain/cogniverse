@@ -1241,8 +1241,8 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 
 # VespaConfigStore implements ConfigStore using Vespa's config_metadata schema
 store = VespaConfigStore(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     schema_name="config_metadata"
 )
 store.initialize()

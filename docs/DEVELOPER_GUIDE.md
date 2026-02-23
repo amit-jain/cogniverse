@@ -697,8 +697,8 @@ async def test_full_routing_pipeline(config_manager):
 
     # Initialize Vespa (requires config_manager)
     vespa = VespaVideoSearchClient(
-        vespa_url="http://localhost",
-        vespa_port=8080,
+        backend_url="http://localhost",
+        backend_port=8080,
         tenant_id="test",
         config_manager=config_manager
     )

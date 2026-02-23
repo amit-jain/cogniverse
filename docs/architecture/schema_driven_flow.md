@@ -494,8 +494,8 @@ from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 # Initialize with URL and port (Vespa app created internally)
 config_store = VespaConfigStore(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     schema_name="config_metadata"
 )
 config_store.initialize()
@@ -579,7 +579,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
 # Initialize config store and manager
-config_store = VespaConfigStore(vespa_url="http://localhost", vespa_port=8080)
+config_store = VespaConfigStore(backend_url="http://localhost", backend_port=8080)
 config_manager = ConfigManager(store=config_store)
 
 # Load system configuration for tenant

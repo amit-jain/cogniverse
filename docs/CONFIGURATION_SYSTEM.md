@@ -134,8 +134,8 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 # Initialize backend store
 store = VespaConfigStore(
     vespa_app=None,  # Optional: pass existing Vespa app instance
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     schema_name="config_metadata"
 )
 
@@ -756,8 +756,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 try:
     store = VespaConfigStore(
         vespa_app=None,
-        vespa_url="http://localhost",
-        vespa_port=8080,
+        backend_url="http://localhost",
+        backend_port=8080,
         schema_name="config_metadata"
     )
     manager = ConfigManager(store=store)

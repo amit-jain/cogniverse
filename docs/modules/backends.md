@@ -1365,8 +1365,8 @@ config_manager = create_default_config_manager()
 # 2. Initialize client with tenant_id and config_manager
 # The client uses tenant_id to route to the correct tenant schema automatically
 client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="acme",
     config_manager=config_manager  # REQUIRED
 )
@@ -1402,8 +1402,8 @@ config_manager = create_default_config_manager()
 
 # Tenant A: acme
 client_acme = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="acme",
     config_manager=config_manager  # REQUIRED
 )
@@ -1412,8 +1412,8 @@ results_acme = client_acme.search("cooking videos")
 
 # Tenant B: startup
 client_startup = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="startup",
     config_manager=config_manager  # REQUIRED
 )
@@ -1920,8 +1920,8 @@ def search_for_tenant(tenant_id: str, query: str, config_manager) -> list:
     """
     # Initialize client with tenant_id
     client = VespaVideoSearchClient(
-        vespa_url="http://localhost",
-        vespa_port=8080,
+        backend_url="http://localhost",
+        backend_port=8080,
         tenant_id=tenant_id,
         config_manager=config_manager  # REQUIRED
     )
@@ -2131,8 +2131,8 @@ class TestTenantSchemaLifecycle:
 
         # Create client with tenant_id
         client = VespaVideoSearchClient(
-            vespa_url="http://localhost",
-            vespa_port=8080,
+            backend_url="http://localhost",
+            backend_port=8080,
             tenant_id=tenant_id,
             config_manager=self.config_manager  # REQUIRED
         )
@@ -2152,15 +2152,15 @@ class TestTenantSchemaLifecycle:
         """Verify tenants cannot access each other's data"""
         # Create clients for different tenants
         client_a = VespaVideoSearchClient(
-            vespa_url="http://localhost",
-            vespa_port=8080,
+            backend_url="http://localhost",
+            backend_port=8080,
             tenant_id="tenant_a",
             config_manager=self.config_manager  # REQUIRED
         )
 
         client_b = VespaVideoSearchClient(
-            vespa_url="http://localhost",
-            vespa_port=8080,
+            backend_url="http://localhost",
+            backend_port=8080,
             tenant_id="tenant_b",
             config_manager=self.config_manager  # REQUIRED
         )
@@ -2216,8 +2216,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 # ✅ Good: Use tenant_id with config_manager
 config_manager = create_default_config_manager()
 client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id="acme",
     config_manager=config_manager  # REQUIRED
 )
@@ -2236,8 +2236,8 @@ config_manager = create_default_config_manager()
 
 # Create client with tenant_id and config_manager
 client = VespaVideoSearchClient(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     tenant_id=tenant_id,
     config_manager=config_manager  # REQUIRED - raises ValueError if None
 )
@@ -2302,8 +2302,8 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 store = VespaConfigStore(
-    vespa_url="http://localhost",
-    vespa_port=8080,
+    backend_url="http://localhost",
+    backend_port=8080,
     schema_name="config_metadata"
 )
 

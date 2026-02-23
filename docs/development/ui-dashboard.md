@@ -348,8 +348,8 @@ def get_available_videos():
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     backend = VespaSearchBackend(
-        vespa_url=config.get("backend_url", "http://localhost"),
-        vespa_port=config.get("backend_port", 8080)
+        backend_url=config.get("backend_url", "http://localhost"),
+        backend_port=config.get("backend_port", 8080)
         # Note: schema_name is optional - can be determined at query time if not provided
     )
 
@@ -1146,8 +1146,8 @@ def get_vespa_client():
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     return VespaSearchBackend(
-        vespa_url=config.get("backend_url", "http://localhost"),
-        vespa_port=config.get("backend_port", 8080)
+        backend_url=config.get("backend_url", "http://localhost"),
+        backend_port=config.get("backend_port", 8080)
         # Schema is determined at query time, not initialization
     )
 
