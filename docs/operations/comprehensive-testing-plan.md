@@ -296,7 +296,15 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Initialize manager (requires tenant_id)
 manager = Mem0MemoryManager(tenant_id="default")
-manager.initialize()
+manager.initialize(
+    backend_host="localhost",
+    backend_port=8080,
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
 
 print(f"Memory manager initialized: {manager.memory is not None}")
 ```

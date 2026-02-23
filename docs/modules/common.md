@@ -192,9 +192,7 @@ class SystemConfig:
     # Agent service URLs
     routing_agent_url: str = "http://localhost:8001"
     video_agent_url: str = "http://localhost:8002"
-    text_agent_url: str = "http://localhost:8003"
     summarizer_agent_url: str = "http://localhost:8004"
-    text_analysis_agent_url: str = "http://localhost:8005"
 
     # API service URLs
     ingestion_api_url: str = "http://localhost:8000"
@@ -204,7 +202,6 @@ class SystemConfig:
     backend_url: str = "http://localhost"
     backend_port: int = 8080
     application_name: str = "cogniverse"
-    elasticsearch_url: Optional[str] = None
 
     # LLM configuration
     llm_model: str = "ollama/gemma3:4b"
@@ -218,7 +215,7 @@ class SystemConfig:
     # Video processing
     video_processing_profiles: List[str] = field(default_factory=list)
 
-    # Agent Registry
+    # Agent Registry - structured config for all agents
     agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     agent_registry_url: str = "http://localhost:8000"
 

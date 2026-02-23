@@ -154,7 +154,7 @@ class SummarizationDeps(AgentDeps):
 ```
 
 `★ Insight ─────────────────────────────────────`
-- Dependency fields CAN be optional (like `lm`, `config_manager`), but `tenant_id` (inherited from AgentDeps) is ALWAYS REQUIRED
+- Dependency fields CAN be optional (like `lm`, `config_manager`). Note: `tenant_id` arrives per-request in the A2A task payload, not at agent construction time
 - Use Pydantic v2 `model_config = ConfigDict(arbitrary_types_allowed=True)` for non-Pydantic types like `dspy.LM`
 - This pattern allows easy mocking in tests
 `─────────────────────────────────────────────────`

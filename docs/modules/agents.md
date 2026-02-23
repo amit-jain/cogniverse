@@ -117,7 +117,6 @@ graph TD
     Root --> ImageAgent["<span style='color:#000'>image_search_agent.py</span>"]
     Root --> SummarizerAgent["<span style='color:#000'>summarizer_agent.py</span>"]
     Root --> MultiOrch["<span style='color:#000'>multi_agent_orchestrator.py</span>"]
-    Root --> DspyOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
     Root --> More32["<span style='color:#000'>... (32 total agent files at top level)</span>"]
 
     Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>39 files</span>"]
@@ -145,7 +144,7 @@ graph TD
     OptDir --> OptInit["<span style='color:#000'>__init__.py</span>"]
     OptDir --> DspyAgentOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
     OptDir --> RouterOpt["<span style='color:#000'>router_optimizer.py</span>"]
-    OptDir --> ProvidersDir["<span style='color:#000'>providers/</span>"]
+    OptDir --> Schemas["<span style='color:#000'>schemas.py</span>"]
 
     Root --> QueryDir["<span style='color:#000'><b>query/</b></span>"]
     Root --> ResultsDir["<span style='color:#000'><b>results/</b></span>"]

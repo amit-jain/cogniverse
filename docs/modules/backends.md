@@ -1601,17 +1601,12 @@ config = {
     "port": 8080,
     "schema_loader": schema_loader,  # Required: SchemaLoader instance
 
-    # Feed configuration (can be overridden by environment variables)
-    "feed_max_queue_size": 500,      # VESPA_FEED_MAX_QUEUE_SIZE
-    "feed_max_workers": 4,            # VESPA_FEED_MAX_WORKERS
-    "feed_max_connections": 8,        # VESPA_FEED_MAX_CONNECTIONS
-    "feed_compress": "auto"           # VESPA_FEED_COMPRESS
+    # Feed configuration (set via config dict — no env var fallbacks)
+    "feed_max_queue_size": 500,
+    "feed_max_workers": 4,
+    "feed_max_connections": 8,
+    "feed_compress": "auto"
 }
-
-# Or use environment variables:
-# export VESPA_FEED_MAX_QUEUE_SIZE=1000
-# export VESPA_FEED_MAX_WORKERS=8
-# export VESPA_FEED_MAX_CONNECTIONS=16
 
 client = VespaPyClient(config=config)
 

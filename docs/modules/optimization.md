@@ -1875,11 +1875,11 @@ flowchart TB
         Client["<span style='color:#000'>ModelClient</span>"]
     end
 
-    subgraph "Providers"
-        Factory["<span style='color:#000'>ProviderFactory</span>"]
-        Modal["<span style='color:#000'>ModalModelProvider</span>"]
-        Local["<span style='color:#000'>LocalModelProvider</span>"]
-        API["<span style='color:#000'>Anthropic/OpenAI</span>"]
+    subgraph "LLM Factory"
+        Factory["<span style='color:#000'>create_dspy_lm()</span>"]
+        Modal["<span style='color:#000'>Modal (OpenAI-compatible)</span>"]
+        Local["<span style='color:#000'>Ollama / Local</span>"]
+        API["<span style='color:#000'>Anthropic / OpenAI</span>"]
     end
 
     subgraph "DSPy Optimization"
@@ -1921,119 +1921,63 @@ flowchart TB
     style Artifacts fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### Provider Interfaces
+### LLM Factory
 
-**Location:** `libs/agents/cogniverse_agents/optimizer/providers/base_provider.py`
+**Location:** `libs/foundation/cogniverse_foundation/config/llm_factory.py`
 
-| Interface | Purpose |
-|-----------|---------|
-| `ModelProvider` | Abstract base for model hosting (Modal, Ollama, cloud APIs) |
-| `ArtifactProvider` | Abstract base for artifact storage |
-| `DSPyLMProvider` | DSPy LM wrapper for any `ModelProvider` |
-| `ProviderFactory` | Factory for creating providers by type |
+All DSPy LM creation goes through the centralized `create_dspy_lm()` factory. Provider is encoded in the model string (LiteLLM convention).
 
 ```python
-from cogniverse_agents.optimizer.providers.base_provider import (
-    ModelProvider,
-    ArtifactProvider,
-    DSPyLMProvider,
-    ProviderFactory,
-)
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-# Register a custom provider
-ProviderFactory.register_model_provider("my_provider", MyModelProvider)
+# Local Ollama
+local_lm = create_dspy_lm(LLMEndpointConfig(
+    model="ollama_chat/llama3:8b",
+    api_base="http://localhost:11434",
+))
 
-# Create provider from config
-provider = ProviderFactory.create_model_provider("modal", {
-    "volume_name": "cogniverse-artifacts",
-    "app_name": "cogniverse-inference"
-})
+# Modal (OpenAI-compatible endpoint)
+modal_lm = create_dspy_lm(LLMEndpointConfig(
+    model="openai/HuggingFaceTB/SmolLM3-3B",
+    api_base="https://username--general-inference-service-serve.modal.run",
+))
 
-# Wrap any provider for DSPy
-dspy_lm = DSPyLMProvider(provider, model_id="google/gemma-7b", model_type="student")
-```
+# Cloud API (Anthropic)
+teacher_lm = create_dspy_lm(LLMEndpointConfig(
+    model="anthropic/claude-3-5-sonnet-20241022",
+    api_key="sk-ant-...",
+))
 
-### Provider Implementations
-
-#### ModalModelProvider
-
-**Location:** `libs/agents/cogniverse_agents/optimizer/providers/modal_provider.py`
-
-Deploys models on Modal GPU infrastructure with vLLM serving.
-
-```python
-from cogniverse_agents.optimizer.providers.modal_provider import ModalModelProvider
-
-provider = ModalModelProvider({
-    "volume_name": "cogniverse-artifacts",
-    "app_name": "cogniverse-inference"
-})
-
-# Deploy model service (requires SystemConfig)
-endpoints = provider.deploy_model_service(
-    model_id="google/gemma-7b",
-    config=system_config
-)
-# Returns: {"inference_endpoint": "https://...", "health_endpoint": "https://..."}
-
-# Call deployed model
-response = provider.call_model(
-    model_id="google/gemma-7b",
-    prompt="Analyze this query...",
-    temperature=0.1,
-    max_tokens=150
-)
-```
-
-#### LocalModelProvider
-
-**Location:** `libs/agents/cogniverse_agents/optimizer/providers/local_provider.py`
-
-Uses LiteLLM for unified local model access (supports Ollama, vLLM, and other OpenAI-compatible servers).
-
-```python
-from cogniverse_agents.optimizer.providers.local_provider import LocalModelProvider
-
-provider = LocalModelProvider({
-    "base_url": "http://localhost:11434/v1",  # Required - OpenAI-compatible endpoint
-    "api_key": "no-key",                      # Optional - for authenticated endpoints
-})
-
-# Check available models
-endpoints = provider.deploy_model_service(model_id="llama3:8b")
-# Returns: {"inference_endpoint": "...", "models_available": ["llama3:8b", ...]}
-
-# Call local model via LiteLLM
-response = provider.call_model(
-    model_id="llama3:8b",
-    prompt="Route this query...",
-    temperature=0.1
-)
+# Use with scoped context (never global dspy.settings.configure)
+import dspy
+with dspy.context(lm=local_lm):
+    result = module(query="Route this query...")
 ```
 
 ### OptimizationOrchestrator
 
-**Location:** `libs/agents/cogniverse_agents/optimizer/orchestrator.py`
+**Location:** `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py`
 
-Orchestrates the full optimization pipeline with teacher/student model coordination.
+Orchestrates the complete routing optimization pipeline with continuous span evaluation, annotation, and feedback.
 
 ```python
-from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-# Initialize from config.json
-orchestrator = OptimizationOrchestrator()
+# Initialize with required LLM config
+orchestrator = OptimizationOrchestrator(
+    llm_config=LLMEndpointConfig(
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    tenant_id="production",
+    span_eval_interval_minutes=15,
+    confidence_threshold=0.6,
+)
 
-# Setup services (deploy models if needed)
-orchestrator.setup_services()
-
-# Run full optimization
-results = orchestrator.run_optimization()
-# Returns: {
-#   "instructions": "...",
-#   "demonstrations": [...],
-#   "metrics": {"baseline": {...}, "optimized": {...}, "improvement": {...}},
-#   "optimization_time": 120.5
-# }
+# Start continuous optimization loop
+await orchestrator.start()
 ```
 
 #### Configuration Structure
@@ -2044,14 +1988,12 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
 {
   "llm_config": {
     "primary": {
-      "provider": "ollama",
       "model": "ollama_chat/smollm3:3b",
       "api_base": "http://localhost:11434"
     },
     "teacher": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet-20241022",
-      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
+      "model": "anthropic/claude-3-5-sonnet-20241022",
+      "api_key": "sk-ant-..."
     },
     "overrides": {
       "orchestrator_agent": {
@@ -2090,7 +2032,6 @@ optimizer = DSPyAgentPromptOptimizer(config={
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 endpoint_config = LLMEndpointConfig(
-    provider="ollama",
     model="ollama_chat/llama3:8b",
     api_base="http://localhost:11434",
 )
@@ -2226,12 +2167,9 @@ optimization_results/
 | File | Purpose |
 |------|---------|
 | `optimizer/dspy_agent_optimizer.py` | Multi-agent prompt optimization |
-| `optimizer/orchestrator.py` | Provider-based optimization orchestration |
 | `optimizer/router_optimizer.py` | Router MIPROv2 optimization |
 | `optimizer/schemas.py` | RoutingDecision, AgenticRouter schemas |
-| `optimizer/providers/base_provider.py` | Abstract provider interfaces |
-| `optimizer/providers/modal_provider.py` | Modal GPU provider |
-| `optimizer/providers/local_provider.py` | Ollama local provider |
+| `routing/optimization_orchestrator.py` | Continuous routing optimization pipeline |
 
 ---
 

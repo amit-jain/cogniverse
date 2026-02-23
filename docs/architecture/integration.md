@@ -174,18 +174,15 @@ registry = AgentRegistry(config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
-# Execute complex workflow
-result = await orchestrator.process_complex_query(
-    query=user_query,
-    context=None,
-    user_id="test_user",
-    preferences=None
-)
+# Execute via A2A task protocol
+from cogniverse_agents.orchestrator_agent import OrchestratorInput
+
+input_data = OrchestratorInput(query=user_query, tenant_id="test_tenant")
+result = await orchestrator._process_impl(input_data)
 
 # Validate execution
-assert result["status"] == "completed"
-assert "result" in result
-assert result["execution_summary"]["completed_tasks"] > 0
+assert result is not None
+assert result.result is not None
 ```
 
 ### 3. Backend Integration

@@ -100,32 +100,26 @@ Deploy:
 modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
 ```
 
-### DSPy with Modal (via ProviderFactory)
+### DSPy with Modal (via create_dspy_lm)
 
-Use the existing provider infrastructure to run DSPy optimization with Modal:
+Use the centralized LLM config to run DSPy optimization with Modal:
 
 ```python
-from cogniverse_agents.optimizer.providers.base_provider import (
-    ProviderFactory,
-    DSPyLMProvider
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+# Create LLM endpoint config pointing to your Modal deployment
+endpoint = LLMEndpointConfig(
+    model="openai/HuggingFaceTB/SmolLM3-3B",  # Modal serves OpenAI-compatible API
+    api_base="https://username--general-inference-service-serve.modal.run",
 )
 
-# Create Modal model provider
-modal_provider = ProviderFactory.create_model_provider(
-    provider_type="modal",
-    config={}  # Provider config from config.json
-)
-
-# Wrap for DSPy compatibility
-dspy_lm = DSPyLMProvider(
-    model_provider=modal_provider,
-    model_id="HuggingFaceTB/SmolLM3-3B",  # Or any model deployed to Modal
-    model_type="modal"
-)
+# Create DSPy LM via the factory
+lm = create_dspy_lm(endpoint)
 
 # Use with DSPy modules via scoped context
 import dspy
-with dspy.context(lm=dspy_lm):
+with dspy.context(lm=lm):
     result = module(query="...")
 ```
 
@@ -204,14 +198,12 @@ Update your configuration file with your Modal endpoints. LLM configuration is c
 {
   "llm_config": {
     "primary": {
-      "provider": "modal",
-      "model": "HuggingFaceTB/SmolLM3-3B",
+      "model": "openai/HuggingFaceTB/SmolLM3-3B",
       "api_base": "https://username--general-inference-service-serve.modal.run"
     },
     "teacher": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet-20241022",
-      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
+      "model": "anthropic/claude-3-5-sonnet-20241022",
+      "api_key": "sk-ant-..."
     }
   },
   "vlm_endpoint_url": "https://username--cogniverse-vlm-vlmmodel-generate-description.modal.run/"
@@ -293,13 +285,14 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 modal app list
 
 # 3. Update your configuration file with endpoints
-# Edit the config to include Modal endpoint in inference.modal_endpoint
+# Edit config.json: set llm_config.primary.api_base to your Modal endpoint
 
 # 4. Test integration
 uv run python -c "
-from cogniverse_agents.optimizer.providers.base_provider import ProviderFactory
-provider = ProviderFactory.create_model_provider('modal', {'endpoint': 'YOUR_ENDPOINT'})
-print(provider.health_check())
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+lm = create_dspy_lm(LLMEndpointConfig(model='openai/test', api_base='YOUR_ENDPOINT'))
+print('LM created:', type(lm).__name__)
 "
 ```
 

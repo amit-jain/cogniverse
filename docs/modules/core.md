@@ -488,11 +488,14 @@ memory = Mem0MemoryManager(tenant_id="acme")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
     backend_config_port=19071,  # Optional, defaults to 19071
-    base_schema_name="agent_memories",
-    auto_create_schema=True,
-    config_manager=config_manager,  # Required
-    schema_loader=schema_loader,  # Required
+    base_schema_name="agent_memories",  # Optional
+    auto_create_schema=True,  # Optional
 )
 
 # Add memories

@@ -308,8 +308,11 @@ memory = Mem0MemoryManager(tenant_id="default")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
     config_manager=config_manager,
-    schema_loader=schema_loader
+    schema_loader=schema_loader,
 )
 
 # Add user preference
@@ -945,8 +948,11 @@ memory = Mem0MemoryManager(tenant_id="default")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
+    llm_model="ollama/gemma3:4b",
+    embedding_model="ollama/nomic-embed-text",
+    llm_base_url="http://localhost:11434",
     config_manager=config_manager,
-    schema_loader=schema_loader
+    schema_loader=schema_loader,
 )
 
 # Add memory (requires tenant_id and agent_name)

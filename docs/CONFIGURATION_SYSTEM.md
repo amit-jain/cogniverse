@@ -381,14 +381,12 @@ All DSPy-based agents and optimizers use a centralized LLM configuration system 
 {
   "llm_config": {
     "primary": {
-      "provider": "ollama",
       "model": "ollama_chat/smollm3:3b",
       "api_base": "http://localhost:11434"
     },
     "teacher": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet-20241022",
-      "api_key_env": "ROUTER_OPTIMIZER_TEACHER_KEY"
+      "model": "anthropic/claude-3-5-sonnet-20241022",
+      "api_key": "sk-ant-..."
     },
     "overrides": {
       "orchestrator_agent": {
@@ -420,9 +418,9 @@ with dspy.context(lm=lm):
     result = module(query="machine learning videos")
 ```
 
-- `LLMEndpointConfig`: Dataclass with `provider`, `model`, `api_base`, `api_key`, `api_key_env`, `temperature`, `max_tokens`
+- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`. Provider is encoded in the model string (e.g., `"ollama_chat/smollm3:3b"`, `"anthropic/claude-3-5-sonnet-20241022"`)
 - `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
-- `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. Resolves `api_key_env` to actual key. All DSPy LM creation goes through this factory
+- `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory
 
 ## Backend Configuration API
 
