@@ -699,8 +699,8 @@ configs = tracker.get_experiment_configurations(
 
 ---
 
-#### `async run_experiment_async(profile: str, strategy: str, dataset_name: str, description: str) -> dict`
-Run a single experiment using Inspect AI framework.
+#### `run_experiment(profile: str, strategy: str, dataset_name: str, description: str) -> dict`
+Run a single experiment using the Inspect AI framework (synchronous).
 
 **Parameters:**
 
@@ -720,7 +720,7 @@ Run a single experiment using Inspect AI framework.
 
 2. Create Inspect AI evaluation task
 
-3. Execute evaluation with inspect_eval()
+3. Execute evaluation synchronously (Inspect AI manages its own event loop)
 
 4. Extract metrics from result
 
@@ -732,7 +732,8 @@ Run a single experiment using Inspect AI framework.
 ```python
 tracker = ExperimentTracker()
 
-result = await tracker.run_experiment_async(
+# Synchronous — do NOT use await or asyncio.run()
+result = tracker.run_experiment(
     profile="frame_based_colpali",
     strategy="binary_binary",
     dataset_name="golden_eval_v1",

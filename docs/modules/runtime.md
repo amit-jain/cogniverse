@@ -116,11 +116,14 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 2. Initialize `SchemaLoader` for Vespa schemas
 3. Set dependencies on routers
 4. Initialize `BackendRegistry` and `AgentRegistry`
-5. Wire registries to routers
-6. Load backends and agents from config
+5. Wire registries and dependencies to routers
+6. Load backends and agents from config (agents are validated and registered as endpoints, not instantiated)
+7. Initialize telemetry
+8. Wire tenant manager to backend
+9. Configure DSPy LM and synthetic data service
 
 ```python
-# From main.py
+# From main.py (simplified)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app."""
@@ -142,17 +145,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     backend_registry = BackendRegistry(config_manager=config_manager)
     agent_registry = AgentRegistry(config_manager=config_manager)
 
-    # 5. Wire agent registry
+    # 5. Wire agent registry and dependencies
     agents.set_agent_registry(agent_registry)
+    agents.set_agent_dependencies(config_manager, schema_loader)
 
-    # 6. Load from config
+    # 6. Load from config — agents are validated and registered as endpoints
     config_loader = get_config_loader()
     config_loader.load_backends()
-    config_loader.load_agents()
+    config_loader.load_agents(agent_registry=agent_registry)
+
+    # ... telemetry, tenant manager, DSPy/synthetic setup ...
 
     yield
-
-    # Shutdown logic here
 ```
 
 ### Router Architecture
@@ -164,9 +168,10 @@ The server uses modular routers for different functionality:
 | `health` | `/health` | Health checks, readiness probes |
 | `search` | `/search` | Multi-modal search API |
 | `ingestion` | `/ingestion` | Video upload and processing |
-| `agents` | `/agents` | Agent orchestration endpoints |
+| `agents` | `/agents` | Agent registry and in-process execution |
 | `admin` | `/admin` | Tenant and profile management |
 | `events` | `/events` | SSE streaming for real-time notifications |
+| `synthetic` | `/synthetic` | Synthetic data generation (from `cogniverse_synthetic`) |
 
 ```python
 # Router registration in main.py
@@ -176,6 +181,7 @@ app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(events.router, prefix="/events", tags=["events"])
+app.include_router(synthetic_router, tags=["synthetic-data"])
 ```
 
 ---
@@ -521,9 +527,9 @@ curl http://localhost:8000/agents/video-search-agent/card
 curl -X DELETE http://localhost:8000/agents/video-search-agent
 ```
 
-**POST /agents/{agent_name}/process** - Process task with agent (returns redirect to agent URL)
+**POST /agents/{agent_name}/process** - Process task with agent in-process (search capabilities execute via `SearchService`; text generation/analysis return 501 Not Implemented)
 
-**POST /agents/{agent_name}/upload** - Upload file to agent (returns redirect to agent URL)
+**POST /agents/{agent_name}/upload** - Upload file to agent
 
 ### Admin Endpoints
 

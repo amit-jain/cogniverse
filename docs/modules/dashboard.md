@@ -42,7 +42,7 @@ The Dashboard module provides a **Streamlit-based UI** for:
 - **HITL Workflows**: Human approval queues and orchestration annotation
 - **System Monitoring**: Configuration, memory, and ingestion management
 
-The dashboard routes all queries through the **OrchestratorAgent** via A2A protocol (`POST /tasks/send`). The orchestrator plans the pipeline (entity extraction, profile selection, query enhancement, search) and executes agents via AgentRegistry discovery. The dashboard never calls downstream agents directly.
+The dashboard communicates with the **unified Runtime** (`http://localhost:8000`) via REST API. Search queries go through `POST /search/`, agent status is checked via `GET /agents/`, and configuration is managed through `/admin/` endpoints. The Runtime handles routing, agent dispatch, and telemetry internally. The dashboard never instantiates agents directly.
 
 **Main Entry Point:** The primary dashboard application is `scripts/phoenix_dashboard_standalone.py`, which aggregates all dashboard tabs and provides the complete UI. The `libs/dashboard/cogniverse_dashboard/` package contains utility modules (PhoenixDataManager, PhoenixLauncher) that support dashboard operations.
 
@@ -103,7 +103,7 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 
 1. **Analytics Session State**: Maintains Phoenix analytics instance across interactions
 2. **Tab Loading**: Dynamically imports tab modules with graceful fallback
-3. **A2A Client**: Communicates with agents for real-time operations
+3. **Runtime Client**: Communicates with unified Runtime for search, agent status, and admin operations
 4. **Async Wrapper**: Handles async operations in Streamlit's sync context
 
 ```python
@@ -275,7 +275,7 @@ render_routing_evaluation_tab()
 ```python
 from interactive_search_tab import render_interactive_search_tab
 
-# Render with agent status for availability checking
+# Render search tab (calls Runtime POST /search/ directly)
 render_interactive_search_tab(agent_status=agent_status)
 ```
 
@@ -472,20 +472,17 @@ render_ingestion_testing_tab(agent_status=agent_status)
 ```python
 from multi_modal_chat_tab import render_multi_modal_chat_tab
 
-# Render chat interface with agent configuration
-render_multi_modal_chat_tab(agent_config={
-    "routing_agent": "http://localhost:8000/agents/routing_agent",
-    "video_search": "http://localhost:8000/agents/video_search"
-})
+# Render chat interface (uses runtime_url from get_agent_config())
+render_multi_modal_chat_tab(agent_config=get_agent_config())
 ```
 
 **Memory Integration:**
 
-The chat tab integrates with the RoutingAgent's `MemoryAwareMixin`:
+The chat tab integrates with Mem0 for memory management:
 - Context retention across conversations
 - Semantic memory search for relevant context
 - Automatic interaction storage
-- Memory capability checking via `/agents/routing_agent` endpoint
+- Memory initialized with backend and LLM configuration from the Runtime
 
 ### Enhanced Optimization Tab
 
@@ -819,4 +816,4 @@ uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
 
 ---
 
-**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, embedding visualization, interactive search, and HITL workflows. The `PhoenixDataManager` provides utilities for data backup/restore. All tabs integrate with the A2A protocol for real-time agent communication.
+**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, embedding visualization, interactive search, and HITL workflows. The `PhoenixDataManager` provides utilities for data backup/restore. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.
