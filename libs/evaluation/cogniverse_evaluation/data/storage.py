@@ -5,7 +5,6 @@ retry logic, health checks, and monitoring.
 
 import json
 import logging
-import os
 import threading
 import time
 from collections import deque
@@ -58,6 +57,7 @@ class ConnectionConfig:
     export_timeout_millis: int = 30000
     enable_metrics: bool = True
     enable_health_checks: bool = True
+    environment: str = "production"
 
 
 @dataclass
@@ -278,7 +278,7 @@ class TelemetryStorage:
                 {
                     "service.name": "evaluation",
                     "service.version": "1.0.0",
-                    "deployment.environment": os.getenv("ENVIRONMENT", "production"),
+                    "deployment.environment": self.config.environment,
                 }
             )
 

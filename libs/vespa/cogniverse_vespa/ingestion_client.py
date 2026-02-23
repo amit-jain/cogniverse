@@ -97,28 +97,12 @@ class VespaPyClient:
         # Load schema fields for this specific schema
         self._load_schema_fields()
 
-        # Production-ready feed configuration with environment variable overrides
-        import os
-
+        # Feed configuration from config dict (set at startup boundary)
         self.feed_config = {
-            "max_queue_size": int(
-                os.environ.get(
-                    "VESPA_FEED_MAX_QUEUE_SIZE", config.get("feed_max_queue_size", 500)
-                )
-            ),
-            "max_workers": int(
-                os.environ.get(
-                    "VESPA_FEED_MAX_WORKERS", config.get("feed_max_workers", 4)
-                )
-            ),
-            "max_connections": int(
-                os.environ.get(
-                    "VESPA_FEED_MAX_CONNECTIONS", config.get("feed_max_connections", 8)
-                )
-            ),
-            "compress": os.environ.get(
-                "VESPA_FEED_COMPRESS", config.get("feed_compress", "auto")
-            ),
+            "max_queue_size": int(config.get("feed_max_queue_size", 500)),
+            "max_workers": int(config.get("feed_max_workers", 4)),
+            "max_connections": int(config.get("feed_max_connections", 8)),
+            "compress": config.get("feed_compress", "auto"),
         }
 
         self.logger.info(f"Feed configuration: {self.feed_config}")

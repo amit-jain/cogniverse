@@ -5,7 +5,6 @@ Note: Core config is generic - no provider-specific fields (Phoenix, LangSmith, 
 Provider-specific config goes in provider_config dict.
 """
 
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -84,9 +83,7 @@ class TelemetryConfig:
 
     # Service identification
     service_name: str = "video-search"
-    service_version: str = field(
-        default_factory=lambda: os.getenv("SERVICE_VERSION", "1.0.0")
-    )
+    service_version: str = "1.0.0"
 
     # Resource attributes
     extra_resource_attributes: Dict[str, str] = field(default_factory=dict)

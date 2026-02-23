@@ -216,9 +216,7 @@ class VideoIngestionPipeline:
         else:
             self.app_config = app_config
         self.schema_name = schema_name
-        self.debug_mode = (
-            debug_mode or os.environ.get("DEBUG_PIPELINE", "").lower() == "true"
-        )
+        self.debug_mode = debug_mode
 
         # Initialize logging with unique logger per profile
         logger_name = (
