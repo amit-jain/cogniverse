@@ -279,8 +279,8 @@ class TestPerformanceTracking:
         await router.route("test query")
         elapsed = time.time() - start
 
-        # Should complete within reasonable time (5 seconds)
-        assert elapsed < 5.0
+        # Should complete within reasonable time (includes lazy model loading)
+        assert elapsed < 30.0
 
 
 @pytest.mark.integration

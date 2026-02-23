@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
 )
@@ -136,6 +137,10 @@ class TestCompleteOptimizationIntegration:
         )
 
         orchestrator = OptimizationOrchestrator(
+            llm_config=LLMEndpointConfig(
+                model="ollama_chat/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,
             min_annotations_for_optimization=1,  # Low threshold for testing
@@ -259,6 +264,10 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 2: Initializing orchestrator ===")
 
         orchestrator = OptimizationOrchestrator(
+            llm_config=LLMEndpointConfig(
+                model="ollama_chat/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,  # All test spans are below this
             min_annotations_for_optimization=1,
@@ -360,6 +369,10 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 2: Initializing orchestrator with low thresholds ===")
 
         orchestrator = OptimizationOrchestrator(
+            llm_config=LLMEndpointConfig(
+                model="ollama_chat/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
             tenant_id=test_tenant_id,
             confidence_threshold=0.7,  # Many spans below this
             min_annotations_for_optimization=5,  # Low threshold for testing
@@ -424,6 +437,10 @@ class TestCompleteOptimizationIntegration:
 
         # STEP 1: Initialize orchestrator
         orchestrator = OptimizationOrchestrator(
+            llm_config=LLMEndpointConfig(
+                model="ollama_chat/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,
             min_annotations_for_optimization=5,
