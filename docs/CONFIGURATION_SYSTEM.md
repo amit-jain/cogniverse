@@ -253,7 +253,7 @@ tenant_a_config = SystemConfig(
     llm_model="gpt-4",
     base_url="https://api.openai.com/v1",
     backend_url="http://backend-tenant-a:8080",
-    phoenix_url="http://phoenix-tenant-a:6006"
+    telemetry_url="http://phoenix-tenant-a:6006"
 )
 manager.set_system_config(tenant_a_config, tenant_id="tenant_a")
 
@@ -263,7 +263,7 @@ tenant_b_config = SystemConfig(
     llm_model="claude-3-opus",
     base_url="https://api.anthropic.com",
     backend_url="http://backend-tenant-b:8080",
-    phoenix_url="http://phoenix-tenant-b:6006"
+    telemetry_url="http://phoenix-tenant-b:6006"
 )
 manager.set_system_config(tenant_b_config, tenant_id="tenant_b")
 

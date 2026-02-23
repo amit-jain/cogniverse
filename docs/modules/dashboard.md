@@ -167,7 +167,7 @@ if 'auto_refresh' not in st.session_state:
 # For programmatic access to Phoenix traces, import from the telemetry-phoenix package:
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
-analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
+analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 traces = analytics.get_traces(
     start_time=None,
     end_time=None,

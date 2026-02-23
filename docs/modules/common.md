@@ -212,8 +212,8 @@ class SystemConfig:
     llm_api_key: Optional[str] = None
 
     # Phoenix/Telemetry
-    phoenix_url: str = "http://localhost:6006"
-    phoenix_collector_endpoint: str = "localhost:4317"
+    telemetry_url: str = "http://localhost:6006"
+    telemetry_collector_endpoint: str = "localhost:4317"
 
     # Video processing
     video_processing_profiles: List[str] = field(default_factory=list)

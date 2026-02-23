@@ -216,7 +216,7 @@ st.markdown("""
 # Initialize analytics with explicit Phoenix endpoint
 if 'analytics' not in st.session_state:
     if Analytics is not None:
-        st.session_state.analytics = Analytics(phoenix_url="http://localhost:6006")
+        st.session_state.analytics = Analytics(telemetry_url="http://localhost:6006")
     else:
         st.session_state.analytics = None
 
@@ -252,7 +252,7 @@ def get_agent_config():
         "detailed_report_agent_url": system_config.text_analysis_agent_url,
         "tenant_manager_url": system_config.routing_agent_url,
         "ingestion_api_url": system_config.ingestion_api_url,
-        "phoenix_base_url": system_config.phoenix_url,
+        "phoenix_base_url": system_config.telemetry_url,
     }
 
 a2a_client = get_a2a_client()

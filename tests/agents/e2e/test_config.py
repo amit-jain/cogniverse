@@ -13,7 +13,7 @@ E2E_CONFIG: Dict[str, Any] = {
     "llm_api_key": os.getenv("LLM_API_KEY", "no-key"),
     # Backend Services
     "vespa_url": os.getenv("VESPA_URL", "http://localhost:8080"),
-    "phoenix_url": os.getenv("PHOENIX_URL", "http://localhost:6006"),
+    "telemetry_url": os.getenv("PHOENIX_URL", "http://localhost:6006"),
     # Test Settings
     "test_timeout": int(os.getenv("E2E_TEST_TIMEOUT", "300")),  # 5 minutes default
     "optimization_rounds": int(
@@ -79,7 +79,7 @@ def is_service_available(service_name: str) -> bool:
             return response.status_code == 200
 
         elif service_name == "phoenix":
-            response = requests.get(E2E_CONFIG["phoenix_url"], timeout=5)
+            response = requests.get(E2E_CONFIG["telemetry_url"], timeout=5)
             return response.status_code == 200
 
         return False

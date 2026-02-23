@@ -97,7 +97,7 @@ def main():
         st.header("⚙️ Configuration")
         
         # Phoenix connection
-        phoenix_url = st.text_input(
+        telemetry_url = st.text_input(
             "Phoenix URL",
             value="http://localhost:6006",
             help="URL of the Phoenix server"
@@ -105,8 +105,8 @@ def main():
         
         if st.button("🔄 Test Connection"):
             try:
-                test_analytics = PhoenixAnalytics(phoenix_url)
-                test_traces = test_analytics.get_traces(limit=1)
+                test_analytics = PhoenixAnalytics(telemetry_url)
+                test_analytics.get_traces(limit=1)
                 st.success("✅ Connected to Phoenix!")
             except Exception as e:
                 st.error(f"❌ Connection failed: {e}")
@@ -261,7 +261,7 @@ def main():
         # Calculate statistics
         stats = st.session_state.analytics.calculate_statistics(traces)
         stats_by_profile = st.session_state.analytics.calculate_statistics(traces, group_by="profile")
-        stats_by_operation = st.session_state.analytics.calculate_statistics(traces, group_by="operation")
+        st.session_state.analytics.calculate_statistics(traces, group_by="operation")
         
         # Display tabs - add RCA tab if enabled
         if st.session_state.enable_rca:
@@ -418,7 +418,7 @@ def main():
                     index=0
                 )
             with col3:
-                show_percentiles = st.checkbox("Show Percentile Bands", value=True)
+                st.checkbox("Show Percentile Bands", value=True)
             
             # Create time series plot
             fig = st.session_state.analytics.create_time_series_plot(
@@ -623,15 +623,6 @@ def main():
                 end_idx = min(start_idx + rows_per_page, len(trace_df))
                 
                 st.info(f"Showing {start_idx + 1}-{end_idx} of {len(trace_df)} traces")
-                
-                # Style the dataframe
-                styled_df = trace_df.iloc[start_idx:end_idx].style.applymap(
-                    lambda x: 'color: red' if x == 'error' else '',
-                    subset=['Status']
-                ).format({
-                    'Duration (ms)': '{:.2f}',
-                    'Timestamp': lambda x: x.strftime('%Y-%m-%d %H:%M:%S')
-                })
                 
                 st.dataframe(
                     trace_df.iloc[start_idx:end_idx],

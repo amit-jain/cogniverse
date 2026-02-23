@@ -1024,7 +1024,7 @@ asyncio.run(get_routing_spans())
 
 **Key Attributes:**
 ```python
-phoenix_url: str           # Phoenix endpoint
+telemetry_url: str           # Phoenix endpoint
 client: px.Client          # Phoenix client
 _cache: dict               # Internal cache
 ```
@@ -1694,7 +1694,7 @@ Generate analytics reports with visualizations.
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 from datetime import datetime, timedelta
 
-analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
+analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 
 # Define analysis period
 end_time = datetime.now()

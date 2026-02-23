@@ -74,8 +74,8 @@ class TestConfigManagementUI:
             llm_model="gpt-4-turbo",
             base_url="http://localhost:11434",
             llm_api_key="test-key-123",
-            phoenix_url="http://localhost:6006",
-            phoenix_collector_endpoint="localhost:4317",
+            telemetry_url="http://localhost:6006",
+            telemetry_collector_endpoint="localhost:4317",
             environment="development",
         )
 

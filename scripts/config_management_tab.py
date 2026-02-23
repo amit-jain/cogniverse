@@ -168,12 +168,12 @@ def render_system_config_ui(manager, tenant_id: str):
         col1, col2 = st.columns(2)
 
         with col1:
-            phoenix_url = st.text_input("Phoenix URL", value=system_config.phoenix_url)
+            telemetry_url = st.text_input("Phoenix URL", value=system_config.telemetry_url)
 
         with col2:
-            phoenix_collector_endpoint = st.text_input(
+            telemetry_collector_endpoint = st.text_input(
                 "Phoenix Collector Endpoint",
-                value=system_config.phoenix_collector_endpoint,
+                value=system_config.telemetry_collector_endpoint,
             )
 
         st.markdown("### Environment")
@@ -201,8 +201,8 @@ def render_system_config_ui(manager, tenant_id: str):
                 llm_model=llm_model,
                 base_url=base_url,
                 llm_api_key=llm_api_key if llm_api_key else None,
-                phoenix_url=phoenix_url,
-                phoenix_collector_endpoint=phoenix_collector_endpoint,
+                telemetry_url=telemetry_url,
+                telemetry_collector_endpoint=telemetry_collector_endpoint,
                 environment=environment,
             )
 

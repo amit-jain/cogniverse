@@ -38,7 +38,7 @@ tenant_config = SystemConfig(
     base_url="http://localhost:11434",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006",
+    telemetry_url="http://localhost:6006",
 )
 config_manager.set_system_config(tenant_config)
 
@@ -346,7 +346,7 @@ from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 from datetime import datetime
 
 # Admin can view aggregated metrics across tenants
-analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
+analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 
 # Get traces for time range
 start_time = datetime(2025, 1, 1)
@@ -456,19 +456,19 @@ TENANT_TEMPLATES = {
         "llm_model": "mistral:7b-instruct",
         "backend_url": "http://localhost",
         "backend_port": 8080,
-        "phoenix_url": "http://localhost:6006"
+        "telemetry_url": "http://localhost:6006"
     },
     "startup": {
         "llm_model": "ollama/gemma3:4b",
         "backend_url": "http://localhost",
         "backend_port": 8080,
-        "phoenix_url": "http://localhost:6006"
+        "telemetry_url": "http://localhost:6006"
     },
     "trial": {
         "llm_model": "ollama/gemma3:4b",
         "backend_url": "http://localhost",
         "backend_port": 8080,
-        "phoenix_url": "http://localhost:6006"
+        "telemetry_url": "http://localhost:6006"
     }
 }
 
@@ -802,7 +802,7 @@ def diagnose_tenant_config(tenant_id: str):
         config = config_manager.get_system_config(tenant_id)
         print(f"✅ Configuration found:")
         print(f"   LLM Model: {config.llm_model}")
-        print(f"   Telemetry URL: {config.phoenix_url}")
+        print(f"   Telemetry URL: {config.telemetry_url}")
         print(f"   Backend URL: {config.backend_url}")
     except Exception as e:
         print(f"❌ Configuration not found for {tenant_id}: {e}")

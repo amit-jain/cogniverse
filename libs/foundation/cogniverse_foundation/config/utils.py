@@ -240,8 +240,8 @@ class ConfigUtils:
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
             "base_url": lambda: self._system_config.base_url,
             "llm_api_key": lambda: self._system_config.llm_api_key,
-            "phoenix_url": lambda: self._system_config.phoenix_url,
-            "phoenix_collector_endpoint": lambda: self._system_config.phoenix_collector_endpoint,
+            "telemetry_url": lambda: self._system_config.telemetry_url,
+            "telemetry_collector_endpoint": lambda: self._system_config.telemetry_collector_endpoint,
             "environment": lambda: self._system_config.environment,
         }
 
@@ -312,8 +312,8 @@ class ConfigUtils:
                 "local_llm_model",
                 "base_url",
                 "llm_api_key",
-                "phoenix_url",
-                "phoenix_collector_endpoint",
+                "telemetry_url",
+                "telemetry_collector_endpoint",
                 "environment",
             ]
         )

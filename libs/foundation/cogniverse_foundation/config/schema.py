@@ -35,8 +35,8 @@ SYSTEM_CONFIG_SCHEMA = {
                 "embedding_model": {"type": "string", "minLength": 1},
             },
         },
-        "phoenix_url": {"type": "string", "format": "uri"},
-        "phoenix_collector_endpoint": {"type": "string"},
+        "telemetry_url": {"type": "string", "format": "uri"},
+        "telemetry_collector_endpoint": {"type": "string"},
         "video_processing_profiles": {"type": "array", "items": {"type": "string"}},
         "environment": {
             "type": "string",

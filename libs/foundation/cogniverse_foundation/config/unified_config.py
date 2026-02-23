@@ -161,8 +161,8 @@ class SystemConfig:
     llm_api_key: Optional[str] = None
 
     # Phoenix/Telemetry
-    phoenix_url: str = "http://localhost:6006"
-    phoenix_collector_endpoint: str = "localhost:4317"
+    telemetry_url: str = "http://localhost:6006"
+    telemetry_collector_endpoint: str = "localhost:4317"
 
     # Video processing
     video_processing_profiles: List[str] = field(default_factory=list)
@@ -192,8 +192,8 @@ class SystemConfig:
             "llm_model": self.llm_model,
             "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
-            "phoenix_url": self.phoenix_url,
-            "phoenix_collector_endpoint": self.phoenix_collector_endpoint,
+            "telemetry_url": self.telemetry_url,
+            "telemetry_collector_endpoint": self.telemetry_collector_endpoint,
             "video_processing_profiles": self.video_processing_profiles,
             "agents": self.agents,
             "agent_registry_url": self.agent_registry_url,
@@ -219,9 +219,9 @@ class SystemConfig:
             llm_model=data.get("llm_model", "gpt-4"),
             base_url=data.get("base_url", "http://localhost:11434"),
             llm_api_key=data.get("llm_api_key"),
-            phoenix_url=data.get("phoenix_url", "http://localhost:6006"),
-            phoenix_collector_endpoint=data.get(
-                "phoenix_collector_endpoint", "localhost:4317"
+            telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
+            telemetry_collector_endpoint=data.get(
+                "telemetry_collector_endpoint", "localhost:4317"
             ),
             video_processing_profiles=data.get("video_processing_profiles", []),
             agents=data.get("agents", {}),

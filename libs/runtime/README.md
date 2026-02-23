@@ -297,7 +297,7 @@ config = SystemConfig(
     tenant_id="acme_corp",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006",
+    telemetry_url="http://localhost:6006",
     environment="production",
 )
 

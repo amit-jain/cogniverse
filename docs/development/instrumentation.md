@@ -389,7 +389,7 @@ Analytics and visualization engine for Phoenix traces.
 from datetime import datetime, timedelta
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
-analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
+analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 
 # Fetch recent traces
 end_time = datetime.now()

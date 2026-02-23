@@ -67,7 +67,7 @@ system_config = SystemConfig(
     base_url="https://api.openai.com/v1",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006",
+    telemetry_url="http://localhost:6006",
 )
 ```
 
@@ -349,7 +349,7 @@ tenant_a_config = SystemConfig(
     base_url="https://api.openai.com/v1",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006",  # Isolated project
+    telemetry_url="http://localhost:6006",  # Isolated project
 )
 manager.set_system_config(tenant_a_config)
 
@@ -360,7 +360,7 @@ tenant_b_config = SystemConfig(
     base_url="https://api.anthropic.com",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006",  # Isolated project
+    telemetry_url="http://localhost:6006",  # Isolated project
 )
 manager.set_system_config(tenant_b_config)
 
@@ -385,7 +385,7 @@ new_tenant_config = SystemConfig(
     base_url="https://api.openai.com/v1",
     backend_url="http://localhost",
     backend_port=8080,
-    phoenix_url="http://localhost:6006"
+    telemetry_url="http://localhost:6006"
 )
 manager.set_system_config(new_tenant_config)
 
@@ -631,7 +631,7 @@ TEMPLATES = {
         base_url="http://localhost:11434",
         backend_url="http://localhost",
         backend_port=8080,
-        phoenix_url="http://localhost:6006"
+        telemetry_url="http://localhost:6006"
     ),
     "production": SystemConfig(
         tenant_id="",
@@ -639,7 +639,7 @@ TEMPLATES = {
         base_url="https://api.openai.com/v1",
         backend_url="http://production-vespa",
         backend_port=8080,
-        phoenix_url="http://production-phoenix:6006"
+        telemetry_url="http://production-phoenix:6006"
     )
 }
 
@@ -651,7 +651,7 @@ new_config = SystemConfig(
     base_url=template.base_url,
     backend_url=template.backend_url,
     backend_port=template.backend_port,
-    phoenix_url=template.phoenix_url
+    telemetry_url=template.telemetry_url
 )
 manager.set_system_config(new_config)
 ```

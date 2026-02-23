@@ -296,7 +296,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 config = SystemConfig(
     tenant_id="acme_corp",
-    phoenix_url="http://localhost:6006",
+    telemetry_url="http://localhost:6006",
     backend_url="http://localhost",
     backend_port=8080,
 )

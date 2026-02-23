@@ -38,9 +38,9 @@ class TraceMetrics:
 class PhoenixAnalytics:
     """Analytics engine for Phoenix traces and spans"""
 
-    def __init__(self, phoenix_url: str = "http://localhost:6006"):
-        self.phoenix_url = phoenix_url
-        self.client = px.Client(endpoint=phoenix_url)
+    def __init__(self, telemetry_url: str = "http://localhost:6006"):
+        self.telemetry_url = telemetry_url
+        self.client = px.Client(endpoint=telemetry_url)
         self._cache = {}
 
     def get_traces(

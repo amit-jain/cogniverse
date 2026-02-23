@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 class TraceAnalyzer:
     """Interactive trace analyzer with various visualization options"""
     
-    def __init__(self, phoenix_url: str = "http://localhost:6006"):
-        self.analytics = PhoenixAnalytics(phoenix_url)
+    def __init__(self, telemetry_url: str = "http://localhost:6006"):
+        self.analytics = PhoenixAnalytics(telemetry_url)
         self.output_dir = Path("outputs/analytics")
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -287,7 +287,7 @@ class TraceAnalyzer:
         
         if output_format in ["json", "all"]:
             json_file = self.output_dir / f"comprehensive_report_{timestamp}.json"
-            report = self.analytics.generate_report(
+            self.analytics.generate_report(
                 start_time=start_time,
                 end_time=end_time,
                 output_file=str(json_file)
@@ -517,7 +517,7 @@ def main():
         sys.exit(1)
     
     # Create analyzer
-    analyzer = TraceAnalyzer(phoenix_url=args.phoenix_url)
+    analyzer = TraceAnalyzer(telemetry_url=args.telemetry_url)
     
     # Execute command
     try:
