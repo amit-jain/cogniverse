@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 from phoenix.experiments.types import EvaluationResult
 
 from cogniverse_evaluation.providers.base import EvaluationProvider
-
 from cogniverse_telemetry_phoenix.evaluation.framework import PhoenixEvaluatorFramework
 
 logger = logging.getLogger(__name__)
@@ -159,26 +158,20 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         try:
             logger.info(f"Creating Phoenix dataset: {name} with {len(data)} examples")
 
-            # Use Phoenix client to create dataset
-            if self.phoenix_client:
-                # Convert data to Phoenix format
-                import pandas as pd
+            import pandas as pd
+            import phoenix as px
 
-                df = pd.DataFrame(data)
+            df = pd.DataFrame(data)
 
-                # Create dataset via Phoenix API
-                # Note: This may need adjustment based on actual Phoenix SDK
-                from phoenix.experiments import create_dataset
+            sync_client = px.Client(endpoint=self.http_endpoint)
+            dataset = sync_client.upload_dataset(
+                dataset_name=name,
+                dataframe=df,
+                dataset_description=description or f"Dataset: {name}",
+            )
 
-                dataset = create_dataset(
-                    name=name,
-                    data=df,
-                    description=description or f"Dataset: {name}",
-                )
-                return dataset
-            else:
-                # Fallback if client not available
-                return {"id": name, "data": data, "description": description}
+            logger.info(f"Created Phoenix dataset '{name}' with {len(data)} examples")
+            return dataset
         except Exception as e:
             logger.error(f"Failed to create dataset: {e}")
             raise

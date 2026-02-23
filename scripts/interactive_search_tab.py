@@ -2,7 +2,7 @@
 """
 Interactive Search Tab
 
-Live search testing and evaluation routed through the OrchestratorAgent.
+Live search testing via the unified Runtime search API.
 Session-aware with cross-session conversational memory.
 """
 
@@ -12,15 +12,37 @@ import uuid
 import httpx
 import streamlit as st
 
+# Search strategies available in Vespa ColPali profiles
+SEARCH_STRATEGIES = [
+    "float_float",
+    "binary_binary",
+    "float_binary",
+    "default",
+    "phased",
+    "hybrid_float_bm25",
+    "hybrid_binary_bm25",
+    "bm25_only",
+]
+
 
 def render_interactive_search_tab(agent_status: dict):
     """Render the interactive search tab interface."""
     st.header("Interactive Search Interface")
-    st.markdown("Search routed through OrchestratorAgent with session memory.")
+    st.markdown("Search via unified Runtime API (`POST /search/`).")
 
     # Generate session_id for conversational memory (persists per browser session)
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = str(uuid.uuid4())
+
+    # Determine runtime URL from agent_status
+    # Any registered agent's url points to the unified runtime
+    runtime_url = ""
+    for agent_info in agent_status.values():
+        if isinstance(agent_info, dict) and agent_info.get("status") == "online":
+            runtime_url = agent_info.get("url", "")
+            break
+
+    runtime_available = bool(runtime_url)
 
     # Search Interface
     st.subheader("Search Interface")
@@ -34,36 +56,38 @@ def render_interactive_search_tab(agent_status: dict):
         )
 
     with col2:
-        # Check if orchestrator or video search agent is available
-        orchestrator_available = (
-            "error" not in agent_status
-            and agent_status.get("Orchestrator Agent", {}).get("status") == "online"
-        )
-        video_search_agent_available = (
-            "error" not in agent_status
-            and agent_status.get("Video Search Agent", {}).get("status") == "online"
-        )
-        any_agent_available = orchestrator_available or video_search_agent_available
-        search_button_disabled = not search_query or not any_agent_available
-
-        if orchestrator_available:
-            st.success("Orchestrator connected")
-        elif video_search_agent_available:
-            st.info("Direct search (orchestrator offline)")
+        if runtime_available:
+            st.success("Runtime connected")
         else:
-            st.warning("No agents available")
+            st.warning("Runtime not available")
 
-        search_button = st.button("Search", type="primary", disabled=search_button_disabled)
+        search_button = st.button(
+            "Search", type="primary", disabled=not search_query or not runtime_available
+        )
 
     # Search Configuration
     st.subheader("Search Configuration")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         top_k = st.slider("Number of Results", 1, 20, 5)
 
     with col2:
+        # Profile — use the tenant's deployed schema
+        current_tenant = st.session_state.get("current_tenant", "default")
+        profile = st.text_input(
+            "Profile",
+            value="video_colpali_smol500_mv_frame",
+            help="Search profile (schema name without tenant suffix)",
+        )
+
+    with col3:
+        strategy = st.selectbox("Strategy", SEARCH_STRATEGIES, index=0)
+
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
         st.text(f"Session: {st.session_state['session_id'][:8]}...")
+    with col_s2:
         if st.button("New Session"):
             st.session_state["session_id"] = str(uuid.uuid4())
             st.rerun()
@@ -72,34 +96,21 @@ def render_interactive_search_tab(agent_status: dict):
     if search_button and search_query:
         st.subheader("Search Results")
 
-        # Get tenant_id from session state (set via sidebar Active Tenant)
         current_tenant = st.session_state.get("current_tenant", "default")
         session_id = st.session_state["session_id"]
 
-        if orchestrator_available:
-            orchestrator_url = agent_status.get("Orchestrator Agent", {}).get("url", "")
-            with st.spinner(f"Searching for '{search_query}' via OrchestratorAgent..."):
-                start_time = time.time()
-                results = _call_orchestrator(
-                    agent_url=orchestrator_url,
-                    query=search_query,
-                    top_k=top_k,
-                    tenant_id=current_tenant,
-                    session_id=session_id,
-                )
-                elapsed_ms = (time.time() - start_time) * 1000
-        else:
-            # Fallback: direct search via Video Search Agent
-            video_search_url = agent_status.get("Video Search Agent", {}).get("url", "")
-            with st.spinner(f"Searching for '{search_query}' via Video Search Agent..."):
-                start_time = time.time()
-                results = _call_agent_search(
-                    agent_url=video_search_url,
-                    query=search_query,
-                    top_k=top_k,
-                    tenant_id=current_tenant,
-                )
-                elapsed_ms = (time.time() - start_time) * 1000
+        with st.spinner(f"Searching for '{search_query}'..."):
+            start_time = time.time()
+            results = _call_runtime_search(
+                runtime_url=runtime_url,
+                query=search_query,
+                top_k=top_k,
+                profile=profile,
+                strategy=strategy,
+                tenant_id=current_tenant,
+                session_id=session_id,
+            )
+            elapsed_ms = (time.time() - start_time) * 1000
 
         if results is None or results.get("status") == "error":
             error_msg = results.get("message", "Unknown error") if results else "Request failed"
@@ -199,51 +210,28 @@ def render_interactive_search_tab(agent_status: dict):
         """)
 
 
-def _call_orchestrator(
-    agent_url: str,
+def _call_runtime_search(
+    runtime_url: str,
     query: str,
     top_k: int,
+    profile: str,
+    strategy: str,
     tenant_id: str = "default",
     session_id: str | None = None,
 ) -> dict:
-    """Call OrchestratorAgent's /tasks/send A2A endpoint."""
+    """Call the unified Runtime's POST /search/ endpoint."""
     try:
-        task_payload = {
-            "messages": [
-                {"role": "user", "parts": [{"type": "text", "text": query}]}
-            ],
+        payload = {
+            "query": query,
+            "top_k": top_k,
+            "profile": profile,
+            "strategy": strategy,
             "tenant_id": tenant_id,
             "session_id": session_id,
-            "top_k": top_k,
         }
         response = httpx.post(
-            f"{agent_url}/tasks/send",
-            json=task_payload,
-            timeout=120.0,
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-def _call_agent_search(
-    agent_url: str,
-    query: str,
-    top_k: int,
-    tenant_id: str = "default",
-) -> dict:
-    """Call Video Search Agent's /search endpoint (fallback when orchestrator is offline)."""
-    try:
-        response = httpx.post(
-            f"{agent_url}/search",
-            json={
-                "query": query,
-                "top_k": top_k,
-                "tenant_id": tenant_id,
-            },
+            f"{runtime_url}/search/",
+            json=payload,
             timeout=120.0,
         )
         if response.status_code == 200:

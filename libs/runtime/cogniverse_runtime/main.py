@@ -21,6 +21,7 @@ from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.config_loader import get_config_loader
 from cogniverse_runtime.routers import admin, agents, events, health, ingestion, search
+from cogniverse_synthetic.api import router as synthetic_router
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +71,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 
-    # 5. Wire agent registry to agents router for Curated Registry pattern
+    # 5. Wire agent registry and dependencies to agents router
     agents.set_agent_registry(agent_registry)
-    logger.info("AgentRegistry wired to agents router")
+    agents.set_agent_dependencies(config_manager, schema_loader)
+    logger.info("AgentRegistry and dependencies wired to agents router")
 
     # 6. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()
     config_loader.load_backends()
-    config_loader.load_agents()
+    config_loader.load_agents(agent_registry=agent_registry)
 
     logger.info(
         f"Loaded {len(backend_registry.list_backends())} backends, "
@@ -110,6 +112,56 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.set_schema_loader(schema_loader)
     tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
+
+    # 9. Configure DSPy LM and synthetic data service
+    import dspy
+
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.unified_config import (
+        AgentMappingRule,
+        DSPyModuleConfig,
+        OptimizerGenerationConfig,
+        SyntheticGeneratorConfig,
+    )
+    from cogniverse_synthetic.api import configure_service as configure_synthetic
+
+    llm_config = config.get_llm_config()
+    primary_lm = create_dspy_lm(llm_config.primary)
+    dspy.configure(lm=primary_lm)
+    logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
+
+    modality_config = OptimizerGenerationConfig(
+        optimizer_type="modality",
+        dspy_modules={
+            "query_generator": DSPyModuleConfig(
+                signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
+                module_type="ChainOfThought",
+            ),
+        },
+        agent_mappings=[
+            AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
+            AgentMappingRule(modality="DOCUMENT", agent_name="document_agent"),
+            AgentMappingRule(modality="IMAGE", agent_name="image_search_agent"),
+            AgentMappingRule(modality="AUDIO", agent_name="audio_analysis_agent"),
+        ],
+    )
+    routing_config = OptimizerGenerationConfig(
+        optimizer_type="routing",
+        dspy_modules={
+            "query_generator": DSPyModuleConfig(
+                signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+                module_type="ChainOfThought",
+            ),
+        },
+    )
+    synthetic_gen_config = SyntheticGeneratorConfig(
+        optimizer_configs={
+            "modality": modality_config,
+            "routing": routing_config,
+        },
+    )
+    configure_synthetic(generator_config=synthetic_gen_config)
+    logger.info("Synthetic data service configured")
 
     logger.info("Cogniverse Runtime started successfully")
 
@@ -146,6 +198,7 @@ app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
+app.include_router(synthetic_router, tags=["synthetic-data"])
 
 
 @app.get("/")

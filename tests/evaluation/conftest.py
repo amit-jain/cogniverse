@@ -115,12 +115,17 @@ def phoenix_client(phoenix_test_server):
 
 @pytest.fixture
 def mock_phoenix_client():
-    """Mock Phoenix client for testing."""
+    """Mock Phoenix client for testing.
+
+    Patches phoenix.Client (used as px.Client in task.py) to return
+    mock datasets with as_dataframe() returning a proper DataFrame.
+    """
     with patch("phoenix.Client") as mock_client_class:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
 
-        # Mock dataset
+        # Mock dataset with as_dataframe() returning DataFrame
+        # task.py calls: sync_client.get_dataset(name=...).as_dataframe()
         mock_dataset = MagicMock()
         mock_dataset.id = "test_dataset_id"
         mock_dataset.name = "test_dataset"
@@ -139,6 +144,13 @@ def mock_phoenix_client():
                 output={"expected_videos": ["item3"], "expected_items": ["item3"]},
             ),
         ]
+        # as_dataframe() returns Phoenix nested input format
+        mock_dataset.as_dataframe.return_value = pd.DataFrame(
+            [
+                {"input": {"query": "test query 1", "expected_videos": "item1,item2", "query_type": "test"}},
+                {"input": {"query": "test query 2", "expected_videos": "item3", "query_type": "test"}},
+            ]
+        )
         mock_client.get_dataset.return_value = mock_dataset
         mock_client.upload_dataset.return_value = mock_dataset
 

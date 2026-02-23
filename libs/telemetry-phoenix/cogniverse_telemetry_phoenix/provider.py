@@ -371,8 +371,12 @@ class PhoenixDatasetStore(DatasetStore):
             DataFrame with dataset records
         """
         try:
-            client = self._get_client()
-            dataset = await client.get_dataset(name=name)
+            # Phoenix v12: sync Client has get_dataset() directly,
+            # but AsyncClient moved it under .datasets sub-client
+            import phoenix as px
+
+            sync_client = px.Client(endpoint=self.http_endpoint)
+            dataset = sync_client.get_dataset(name=name)
             df = dataset.as_dataframe()
 
             logger.debug(f"Retrieved dataset '{name}' with {len(df)} records")
@@ -395,8 +399,10 @@ class PhoenixDatasetStore(DatasetStore):
         try:
             # Try to load existing dataset
             try:
-                client = self._get_client()
-                existing_dataset = await client.get_dataset(name=name)
+                import phoenix as px
+
+                sync_client = px.Client(endpoint=self.http_endpoint)
+                existing_dataset = sync_client.get_dataset(name=name)
                 existing_df = existing_dataset.as_dataframe()
 
                 # Concatenate and create versioned dataset
@@ -408,8 +414,7 @@ class PhoenixDatasetStore(DatasetStore):
                 version_suffix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                 versioned_name = f"{name}_v{version_suffix}"
 
-                client = self._get_client()
-                await client.upload_dataset(
+                sync_client.upload_dataset(
                     dataset_name=versioned_name,
                     dataframe=combined_df,
                 )
@@ -667,6 +672,10 @@ class PhoenixProvider(TelemetryProvider):
         """
         try:
             from phoenix.otel import register
+
+            # Ensure endpoint has scheme — phoenix.otel.register() requires it
+            if "://" not in endpoint:
+                endpoint = f"http://{endpoint}"
 
             tracer_provider = register(
                 endpoint=endpoint,

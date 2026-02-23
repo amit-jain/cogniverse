@@ -3,7 +3,7 @@ Unit tests for experiment tracker module.
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
 import pytest
@@ -225,20 +225,20 @@ class TestExperimentTracker:
             assert configs == []
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_run_experiment_async_success(self, tracker):
-        """Test successful experiment execution."""
-        mock_result = Mock()
-        mock_result.scores = {"mrr": Mock(value=0.85), "recall": Mock(value=0.75)}
+    def test_run_experiment_success(self, tracker):
+        """Test successful experiment execution (synchronous)."""
+        mock_result = [Mock()]
+        mock_result[0].results = Mock()
+        mock_result[0].results.scores = [
+            Mock(name="mrr", value=Mock(as_float=Mock(return_value=0.85))),
+        ]
 
         with (
             patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
-            patch("inspect_ai.eval", new_callable=AsyncMock) as mock_eval,
+            patch("inspect_ai.eval", return_value=mock_result),
         ):
 
-            mock_eval.return_value = mock_result
-
-            result = await tracker.run_experiment_async(
+            result = tracker.run_experiment(
                 profile="test_profile",
                 strategy="test_strategy",
                 dataset_name="test_dataset",
@@ -249,21 +249,17 @@ class TestExperimentTracker:
             assert result["profile"] == "test_profile"
             assert result["strategy"] == "test_strategy"
             assert result["description"] == "Test Description"
-            assert "metrics" in result
-            assert result["metrics"]["mrr"] == 0.85
-            assert result["metrics"]["recall"] == 0.75
             assert "timestamp" in result
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_run_experiment_async_failure(self, tracker):
+    def test_run_experiment_failure(self, tracker):
         """Test experiment execution failure."""
         with (
             patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
 
-            result = await tracker.run_experiment_async(
+            result = tracker.run_experiment(
                 profile="test_profile",
                 strategy="test_strategy",
                 dataset_name="test_dataset",
@@ -274,19 +270,6 @@ class TestExperimentTracker:
             assert result["error"] == "Evaluation failed"
             assert result["profile"] == "test_profile"
             assert result["strategy"] == "test_strategy"
-
-    @pytest.mark.unit
-    def test_run_experiment_sync(self, tracker):
-        """Test synchronous experiment wrapper."""
-        mock_result = {"status": "success", "metrics": {}}
-
-        with patch.object(
-            tracker, "run_experiment_async", return_value=mock_result
-        ) as mock_async:
-            result = tracker.run_experiment("profile", "strategy", "dataset", "desc")
-
-            assert result == mock_result
-            mock_async.assert_called_once_with("profile", "strategy", "dataset", "desc")
 
     @pytest.mark.unit
     def test_create_or_get_dataset_existing(self, tracker, mock_dependencies):

@@ -65,8 +65,29 @@ def render_memory_management_tab():
             config_manager = create_default_config_manager()
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
+            # Extract required params from config
+            system_config = config_manager.get_system_config()
+
+            with open("configs/config.json") as f:
+                raw_config = json.load(f)
+            llm_primary = raw_config.get("llm_config", {}).get("primary", {})
+
+            # Strip provider prefix (e.g. "ollama/qwen3:4b" -> "qwen3:4b")
+            # Mem0 with provider="ollama" expects bare model names
+            llm_model = llm_primary.get("model", "qwen3:4b")
+            if "/" in llm_model:
+                llm_model = llm_model.split("/", 1)[1]
+
             manager.initialize(
-                config_manager=config_manager, schema_loader=schema_loader
+                backend_host=system_config.backend_url,
+                backend_port=system_config.backend_port,
+                llm_model=llm_model,
+                embedding_model="nomic-embed-text",
+                llm_base_url=llm_primary.get(
+                    "api_base", "http://localhost:11434"
+                ),
+                config_manager=config_manager,
+                schema_loader=schema_loader,
             )
             st.success("✅ Memory manager initialized")
     except Exception as e:

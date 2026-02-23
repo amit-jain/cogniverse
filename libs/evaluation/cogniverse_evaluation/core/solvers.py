@@ -48,16 +48,14 @@ def create_retrieval_solver(
         query_str = str(query)  # Ensure it's a string
         logger.info(f"Running retrieval for query: {query_str[:50]}...")
 
-        # Import here to avoid circular dependencies
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-            get_config,
-        )
-        from cogniverse_runtime.search.service import SearchService
+        import os
 
-        # Initialize ConfigManager for dependency injection
-        config_manager = create_default_config_manager()
-        main_config = get_config(tenant_id="default", config_manager=config_manager)
+        import httpx
+
+        # Use runtime API instead of instantiating SearchService directly
+        # (avoids complex dependency chain — runtime is already running)
+        runtime_url = os.environ.get("RUNTIME_URL", "http://localhost:8000")
+        tenant_id = config.get("tenant_id", "flywheel_org:production")
 
         # Store results for each configuration
         all_results = {}
@@ -67,29 +65,31 @@ def create_retrieval_solver(
                 config_key = f"{profile}_{strategy}"
 
                 try:
-                    # Create search service with specified profile
-                    search_service = SearchService(main_config, profile)
-
                     logger.info(f"Searching with {config_key}: {query_str[:30]}...")
 
-                    # Run the actual search
-                    search_results = search_service.search(
-                        query=query_str,
-                        top_k=config.get("top_k", 10),
-                        ranking_strategy=strategy,
+                    # Call runtime search API
+                    response = httpx.post(
+                        f"{runtime_url}/search/",
+                        json={
+                            "query": query_str,
+                            "profile": profile,
+                            "top_k": config.get("top_k", 10),
+                            "ranking_strategy": strategy,
+                            "tenant_id": tenant_id,
+                        },
+                        timeout=30.0,
                     )
+                    response.raise_for_status()
+                    search_response = response.json()
 
-                    # Convert results to standard format
+                    # Convert API results to standard format
                     formatted_results = []
-                    for i, result in enumerate(search_results):
-                        result_dict = (
-                            result.to_dict() if hasattr(result, "to_dict") else result
-                        )
-
+                    results_list = search_response.get("results", [])
+                    for i, result in enumerate(results_list):
                         # Extract video_id
-                        video_id = result_dict.get("source_id", "")
-                        if not video_id and "document_id" in result_dict:
-                            doc_id = result_dict["document_id"]
+                        video_id = result.get("source_id", "")
+                        if not video_id and "document_id" in result:
+                            doc_id = result["document_id"]
                             if "_frame_" in doc_id:
                                 video_id = doc_id.split("_frame_")[0]
                             else:
@@ -98,9 +98,9 @@ def create_retrieval_solver(
                         formatted_results.append(
                             {
                                 "video_id": video_id,
-                                "score": float(result_dict.get("score", 1.0 / (i + 1))),
+                                "score": float(result.get("score", 1.0 / (i + 1))),
                                 "rank": i + 1,
-                                "content": result_dict.get("content", ""),
+                                "content": result.get("content", ""),
                             }
                         )
 

@@ -132,7 +132,7 @@ class TestEvaluationTask:
         """Test handling of missing dataset."""
         mock_phoenix_client.get_dataset.return_value = None
 
-        with pytest.raises(ValueError, match="Dataset 'missing_dataset' not found"):
+        with pytest.raises(ValueError, match="Dataset 'missing_dataset' not found or empty"):
             evaluation_task(mode="batch", dataset_name="missing_dataset")
 
     @pytest.mark.unit

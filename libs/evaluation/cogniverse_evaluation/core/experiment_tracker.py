@@ -5,7 +5,6 @@ This module provides functionality similar to run_experiments_with_visualization
 but uses the new Inspect AI-based evaluation framework with proper Phoenix integration.
 """
 
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -192,13 +191,14 @@ class ExperimentTracker:
         self.configurations = configurations
         return configurations
 
-    async def run_experiment_async(
+    def run_experiment(
         self, profile: str, strategy: str, dataset_name: str, description: str
     ) -> dict:
         """
-        Run a single experiment using the new Inspect AI framework.
+        Run a single experiment using the Inspect AI framework.
 
-        This uses the evaluation_task we created with proper Phoenix integration.
+        inspect_ai's run function is sync and manages its own event loop,
+        so this method must be fully synchronous to avoid nested asyncio.run().
         """
         try:
             # Log experiment start
@@ -213,7 +213,7 @@ class ExperimentTracker:
                 },
             )
 
-            # Create evaluation task using our new framework
+            # Create evaluation task using our framework
             task = evaluation_task(
                 mode="experiment",
                 dataset_name=dataset_name,
@@ -230,13 +230,14 @@ class ExperimentTracker:
                 },
             )
 
-            # Run evaluation using Inspect AI
-            from inspect_ai import eval as inspect_eval
+            # Run evaluation using Inspect AI (sync — manages its own event loop)
+            # Use mockllm since our solvers do direct Vespa searches, not LLM calls
+            from inspect_ai import eval as inspect_run
 
-            result = await inspect_eval(
+            result = inspect_run(
                 task,
-                model="openai/gpt-4",  # This is overridden by our solvers
-                log_dir=self.output_dir / "logs",
+                model="mockllm/model",
+                log_dir=str(self.output_dir / "logs"),
             )
 
             # Extract metrics from result
@@ -282,18 +283,6 @@ class ExperimentTracker:
                 "timestamp": datetime.now().isoformat(),
             }
 
-    def run_experiment(
-        self, profile: str, strategy: str, dataset_name: str, description: str
-    ) -> dict:
-        """
-        Synchronous wrapper for run_experiment_async.
-
-        Maintains compatibility with run_experiments_with_visualization.py
-        """
-        return asyncio.run(
-            self.run_experiment_async(profile, strategy, dataset_name, description)
-        )
-
     def create_or_get_dataset(
         self,
         dataset_name: str | None = None,
@@ -311,9 +300,21 @@ class ExperimentTracker:
             dataset_name or f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
 
+        # Try to use existing dataset if not forcing new
         if dataset_name and not force_new:
-            # Provider will check if dataset exists
-            logger.info(f"Using dataset: {final_dataset_name}")
+            try:
+                import phoenix as px
+
+                sync_client = px.Client(endpoint=self.provider.http_endpoint)
+                existing = sync_client.get_dataset(name=final_dataset_name)
+                if existing is not None:
+                    logger.info(f"Using existing dataset: {final_dataset_name}")
+                    self.dataset_url = self.provider.get_dataset_url(final_dataset_name)
+                    return final_dataset_name
+            except Exception:
+                logger.info(
+                    f"Dataset '{final_dataset_name}' not found, will create new"
+                )
 
         # Create new dataset via provider
         if csv_path:

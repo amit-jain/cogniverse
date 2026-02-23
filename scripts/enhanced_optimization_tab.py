@@ -377,8 +377,10 @@ def _save_search_annotation(
             await provider.annotations.add_annotation(
                 span_id=span_id,
                 name="search_quality_annotation",
-                annotator_kind="HUMAN",
-                result=annotation_data
+                label=label,
+                score=float(rating),
+                metadata=annotation_data,
+                project=f"cogniverse-{st.session_state.get('tenant_id', 'default')}",
             )
 
         run_async_in_streamlit(save_annotation())

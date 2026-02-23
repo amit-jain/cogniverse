@@ -6,13 +6,25 @@ enabling third-party extensions and clean separation of concerns.
 
 import importlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
+
+# Agent capabilities mapping — what each agent can do
+AGENT_CAPABILITIES: Dict[str, List[str]] = {
+    "routing_agent": ["routing", "query_analysis", "entity_extraction"],
+    "search_agent": ["search", "video_search", "retrieval"],
+    "text_analysis_agent": ["text_analysis", "sentiment", "classification"],
+    "summarizer_agent": ["summarization", "text_generation"],
+    "detailed_report_agent": ["detailed_report", "analysis", "text_generation"],
+    "image_search_agent": ["image_search", "visual_analysis"],
+    "audio_analysis_agent": ["audio_analysis", "transcription"],
+    "document_agent": ["document_analysis", "pdf_processing"],
+}
 
 
 class ConfigLoader:
@@ -26,7 +38,7 @@ class ConfigLoader:
         "weaviate": "cogniverse_weaviate",  # Future third-party extension
     }
 
-    # Mapping of agent types to classes
+    # Mapping of agent types to classes (for import validation)
     AGENT_CLASSES = {
         "routing_agent": "cogniverse_agents.routing_agent:RoutingAgent",
         "search_agent": "cogniverse_agents.search_agent:SearchAgent",
@@ -44,7 +56,6 @@ class ConfigLoader:
 
         self.config_manager = create_default_config_manager()
         self.backend_registry = BackendRegistry.get_instance()
-        self.agent_registry = AgentRegistry(config_manager=self.config_manager)
         self.config = get_config(
             tenant_id=tenant_id, config_manager=self.config_manager
         )
@@ -105,8 +116,17 @@ class ConfigLoader:
             f"Backend loading complete. {len(self.backend_registry.list_backends())} backends registered"
         )
 
-    def load_agents(self) -> None:
-        """Load and register agents from configuration."""
+    def load_agents(self, agent_registry: Optional[AgentRegistry] = None) -> None:
+        """Load and register agents from configuration.
+
+        Registers agent endpoints in the AgentRegistry for A2A discovery.
+        In unified runtime mode, all agents share the same base URL (localhost:8000)
+        and are routed by the runtime's agent router.
+
+        Args:
+            agent_registry: External registry instance (from main.py). If None,
+                agents are validated but not registered.
+        """
         agents_config = self.config.get("agents", {})
 
         logger.info(f"Loading {len(agents_config)} agents from configuration...")
@@ -118,35 +138,61 @@ class ConfigLoader:
                     logger.info(f"Agent '{agent_name}' is disabled, skipping")
                     continue
 
-                # Get agent class path
+                # Validate agent class exists
                 agent_class_path = self.AGENT_CLASSES.get(agent_name)
                 if not agent_class_path:
                     logger.warning(f"Unknown agent '{agent_name}', skipping")
                     continue
 
-                # Parse module:class format
+                # Verify the module can be imported
                 module_path, class_name = agent_class_path.split(":")
-
-                # Import module and get class
                 try:
                     module = importlib.import_module(module_path)
-                    agent_class = getattr(module, class_name)
-
-                    # Instantiate agent with config
-                    agent_instance = agent_class(**agent_config)
-
-                    # Register agent
-                    self.agent_registry.register_agent(agent_name, agent_instance)
-                    logger.info(f"✓ Agent '{agent_name}' loaded and registered")
-
+                    _ = getattr(module, class_name)
                 except (ImportError, AttributeError) as e:
-                    logger.warning(f"Agent class '{agent_class_path}' not found: {e}")
+                    logger.warning(
+                        f"Agent class '{agent_class_path}' not importable: {e}"
+                    )
+                    continue
+
+                # Register as an agent endpoint in the registry
+                if agent_registry is not None:
+                    url = agent_config.get("url", "http://localhost:8000")
+                    capabilities = AGENT_CAPABILITIES.get(agent_name, [])
+
+                    success = agent_registry.register_agent_from_data(
+                        {
+                            "name": agent_name,
+                            "url": url,
+                            "capabilities": capabilities,
+                            "health_endpoint": "/health",
+                            "process_endpoint": f"/agents/{agent_name}/process",
+                            "timeout": agent_config.get("timeout", 30),
+                        }
+                    )
+
+                    if success:
+                        logger.info(
+                            f"✓ Agent '{agent_name}' registered (url={url}, "
+                            f"capabilities={capabilities})"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to register agent '{agent_name}' in registry"
+                        )
+                else:
+                    logger.info(
+                        f"✓ Agent '{agent_name}' validated (no registry provided)"
+                    )
 
             except Exception as e:
                 logger.error(f"Failed to load agent '{agent_name}': {e}")
 
+        registered_count = (
+            len(agent_registry.list_agents()) if agent_registry else 0
+        )
         logger.info(
-            f"Agent loading complete. {len(self.agent_registry.list_agents())} agents registered"
+            f"Agent loading complete. {registered_count} agents registered"
         )
 
     def get_backend_config(self, backend_name: str) -> Optional[Dict[str, Any]]:

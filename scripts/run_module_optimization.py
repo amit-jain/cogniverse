@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 def _get_llm_config(tenant_id: str) -> LLMEndpointConfig:
     """Resolve LLM config from centralized config system."""
-    from cogniverse_foundation.config.manager import create_default_config_manager
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
     system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
@@ -116,7 +116,7 @@ async def optimize_cross_modal(
     logger.info(f"🎯 Optimizing CROSS-MODAL fusion for tenant '{tenant_id}'")
 
     optimizer = CrossModalOptimizer(tenant_id=tenant_id)
-    results = await optimizer.optimize()
+    results = optimizer.train_fusion_model()
 
     return {
         "module": "cross_modal",
@@ -146,7 +146,7 @@ async def optimize_routing(
 
     llm_config = _get_llm_config(tenant_id)
     optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id, llm_config=llm_config)
-    results = await optimizer.optimize()
+    results = await optimizer.optimize_routing_policy()
 
     return {
         "module": "routing",

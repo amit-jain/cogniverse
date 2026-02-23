@@ -53,52 +53,83 @@ def evaluation_task(
     if mode == "experiment" and not (profiles and strategies):
         raise ValueError("profiles and strategies required for experiment mode")
 
-    # Load dataset from telemetry provider
-    import asyncio
+    # Load dataset from Phoenix using sync client directly
+    # (avoids nested asyncio.run issues when called from async context)
+    import pandas as pd
+    import phoenix as px
 
     from cogniverse_evaluation.providers import get_evaluation_provider
 
     provider = get_evaluation_provider()
 
-    # Handle case where event loop is already running (e.g., in tests)
-    try:
-        asyncio.get_running_loop()
-        # If we're here, loop is running - run in a separate thread
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            dataset_data = pool.submit(
-                lambda: asyncio.run(
-                    provider.telemetry.datasets.get_dataset(dataset_name)
-                )
-            ).result()
-    except RuntimeError:
-        # No event loop running, safe to use asyncio.run()
-        dataset_data = asyncio.run(
-            provider.telemetry.datasets.get_dataset(dataset_name)
-        )
-
-    if not dataset_data or not dataset_data.get("examples"):
+    sync_client = px.Client(endpoint=provider.http_endpoint)
+    phoenix_dataset = sync_client.get_dataset(name=dataset_name)
+    if phoenix_dataset is None:
         raise ValueError(f"Dataset '{dataset_name}' not found or empty")
+    dataset_data = phoenix_dataset.as_dataframe()
 
-    # Convert dataset to Inspect AI dataset
-    samples = []
-    examples = dataset_data.get("examples", [])
-    for example in examples:
-        # Extract query and expected results
-        query = example.get("input", {}).get("query", "")
-        expected_videos = example.get("output", {}).get("expected_videos", [])
+    # PhoenixDatasetStore.get_dataset() returns a DataFrame
+    if isinstance(dataset_data, pd.DataFrame):
+        if dataset_data.empty:
+            raise ValueError(f"Dataset '{dataset_name}' is empty")
 
-        # Create Inspect AI sample
-        sample = Sample(
-            input=query,
-            target=expected_videos,  # Ground truth for reference-based metrics
-            metadata={
-                "example_id": example.get("id", ""),
-                "category": example.get("input", {}).get("category", "general"),
-            },
-        )
-        samples.append(sample)
+        # Convert DataFrame rows to Inspect AI Samples
+        # Phoenix wraps CSV columns into a nested 'input' dict column
+        # when no input_keys/output_keys specified during upload.
+        # Format: {'input': {'query': '...', 'expected_videos': '...', ...}}
+        samples = []
+        for _, row in dataset_data.iterrows():
+            # Handle Phoenix nested 'input' dict format
+            if "input" in row.index and isinstance(row["input"], dict):
+                record = row["input"]
+            else:
+                # Flat column format (direct CSV columns)
+                record = row.to_dict()
+
+            query = str(record.get("query", ""))
+            if not query:
+                continue
+
+            expected_videos = record.get("expected_videos", "")
+            # Handle comma-separated video IDs or single value
+            if isinstance(expected_videos, str):
+                target = [v.strip() for v in expected_videos.split(",") if v.strip()]
+            elif isinstance(expected_videos, list):
+                target = expected_videos
+            else:
+                target = [str(expected_videos)] if expected_videos else []
+
+            sample = Sample(
+                input=query,
+                target=target,
+                metadata={
+                    "query_type": str(record.get("query_type", "general")),
+                },
+            )
+            samples.append(sample)
+    else:
+        # Legacy dict format with "examples" key
+        if not dataset_data or not dataset_data.get("examples"):
+            raise ValueError(f"Dataset '{dataset_name}' not found or empty")
+
+        samples = []
+        examples = dataset_data.get("examples", [])
+        for example in examples:
+            query = example.get("input", {}).get("query", "")
+            expected_videos = example.get("output", {}).get("expected_videos", [])
+
+            sample = Sample(
+                input=query,
+                target=expected_videos,
+                metadata={
+                    "example_id": example.get("id", ""),
+                    "category": example.get("input", {}).get("category", "general"),
+                },
+            )
+            samples.append(sample)
+
+    if not samples:
+        raise ValueError(f"No valid samples in dataset '{dataset_name}'")
 
     # Create Inspect AI dataset
     dataset = MemoryDataset(samples)

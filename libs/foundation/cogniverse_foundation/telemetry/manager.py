@@ -449,9 +449,24 @@ class TelemetryManager:
         registry = get_telemetry_registry()
 
         # Build generic config for provider (provider interprets keys)
+        # Derive grpc_endpoint and http_endpoint from otlp_endpoint when not
+        # explicitly set in provider_config, so providers like Phoenix can
+        # initialise without requiring manual provider_config entries.
+        otlp_ep = self.config.otlp_endpoint  # e.g. "localhost:4317"
+        scheme = "https" if self.config.otlp_use_tls else "http"
+        grpc_default = (
+            f"{scheme}://{otlp_ep}"
+            if "://" not in otlp_ep
+            else otlp_ep
+        )
+        # HTTP endpoint: replace gRPC port (4317) with HTTP port (6006)
+        http_default = grpc_default.replace(":4317", ":6006")
+
         provider_config = {
             "tenant_id": tenant_id,
-            **self.config.provider_config,  # Merge provider-specific config from TelemetryConfig
+            "grpc_endpoint": grpc_default,
+            "http_endpoint": http_default,
+            **self.config.provider_config,  # Explicit overrides take precedence
         }
 
         # Check for project-specific endpoints in registered project configs

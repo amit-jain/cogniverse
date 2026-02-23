@@ -7,13 +7,17 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Module-level registry (injected from main.py)
+# Module-level dependencies (injected from main.py)
 _agent_registry: Optional[AgentRegistry] = None
+_config_manager: Optional[ConfigManager] = None
+_schema_loader: Optional[SchemaLoader] = None
 
 
 def set_agent_registry(registry: AgentRegistry) -> None:
@@ -21,6 +25,16 @@ def set_agent_registry(registry: AgentRegistry) -> None:
     global _agent_registry
     _agent_registry = registry
     logger.info("AgentRegistry injected into agents router")
+
+
+def set_agent_dependencies(
+    config_manager: ConfigManager, schema_loader: SchemaLoader
+) -> None:
+    """Inject config_manager and schema_loader for in-process agent execution."""
+    global _config_manager, _schema_loader
+    _config_manager = config_manager
+    _schema_loader = schema_loader
+    logger.info("Agent dependencies (config_manager, schema_loader) injected")
 
 
 def get_registry() -> AgentRegistry:
@@ -185,8 +199,8 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     """
     Process a task with a specific agent.
 
-    Note: This endpoint is for routing to agents. For direct agent execution,
-    agents should expose their own process endpoints.
+    In unified runtime mode, this endpoint executes agent logic in-process
+    by routing to the appropriate service (search, LLM, etc.).
     """
     registry = get_registry()
 
@@ -194,12 +208,99 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # In curated registry pattern, agents are remote services
-    # This endpoint would forward the request to the agent's URL
-    raise HTTPException(
-        status_code=501,
-        detail=f"Direct processing not supported. Call agent at {agent.url}{agent.process_endpoint}",
+    if _config_manager is None or _schema_loader is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent dependencies not configured. Runtime not fully initialized.",
+        )
+
+    tenant_id = task.context.get("tenant_id", "default")
+    capabilities = set(agent.capabilities)
+
+    # Route based on agent capabilities
+    if capabilities & {"search", "video_search", "retrieval", "routing"}:
+        return await _execute_search_task(task, tenant_id)
+    elif capabilities & {"summarization", "text_generation"}:
+        return _execute_text_generation_task(task, agent_name)
+    elif capabilities & {"text_analysis", "sentiment", "classification"}:
+        return _execute_text_analysis_task(task, agent_name)
+    elif capabilities & {"detailed_report", "analysis"}:
+        return _execute_text_generation_task(task, agent_name)
+    else:
+        return {
+            "status": "success",
+            "agent": agent_name,
+            "message": f"Agent '{agent_name}' acknowledged query: {task.query}",
+            "capabilities": agent.capabilities,
+        }
+
+
+async def _execute_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any]:
+    """Execute a search task using the SearchService."""
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_runtime.search.service import SearchService
+
+    config = get_config(tenant_id=tenant_id, config_manager=_config_manager)
+    search_service = SearchService(
+        config=config,
+        config_manager=_config_manager,
+        schema_loader=_schema_loader,
     )
+
+    profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
+
+    results = search_service.search(
+        query=task.query,
+        profile=profile,
+        tenant_id=tenant_id,
+        top_k=task.top_k,
+        ranking_strategy="float_float",
+    )
+
+    result_list = [r.to_dict() for r in results]
+    result_count = len(result_list)
+
+    if result_count > 0:
+        message = f"Found {result_count} results for '{task.query}'"
+    else:
+        message = f"No results found for '{task.query}'"
+
+    return {
+        "status": "success",
+        "agent": "search_agent",
+        "message": message,
+        "results_count": result_count,
+        "results": result_list,
+        "profile": profile,
+    }
+
+
+def _execute_text_generation_task(
+    task: AgentTask, agent_name: str
+) -> Dict[str, Any]:
+    """Execute a text generation task (summarization, reports)."""
+    return {
+        "status": "success",
+        "agent": agent_name,
+        "message": (
+            f"Text generation via '{agent_name}' requires an LLM backend. "
+            f"Query received: {task.query}"
+        ),
+    }
+
+
+def _execute_text_analysis_task(
+    task: AgentTask, agent_name: str
+) -> Dict[str, Any]:
+    """Execute a text analysis task (sentiment, classification)."""
+    return {
+        "status": "success",
+        "agent": agent_name,
+        "message": (
+            f"Text analysis via '{agent_name}' requires an LLM backend. "
+            f"Query received: {task.query}"
+        ),
+    }
 
 
 @router.post("/{agent_name}/upload")

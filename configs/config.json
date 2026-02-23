@@ -3,17 +3,18 @@
   "default_tenant": "flywheel_org:production",
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
-    "orchestrator": {"url": "http://localhost:8013", "enabled": true},
-    "entity_extraction": {"url": "http://localhost:8010", "enabled": true},
-    "profile_selection": {"url": "http://localhost:8011", "enabled": true},
-    "query_enhancement": {"url": "http://localhost:8012", "enabled": true},
-    "search": {"url": "http://localhost:8002", "enabled": true},
-    "summarizer": {"url": "http://localhost:8003", "enabled": true},
-    "detailed_report": {"url": "http://localhost:8004", "enabled": true}
+    "routing_agent": {"url": "http://localhost:8001", "enabled": true},
+    "search_agent": {"url": "http://localhost:8002", "enabled": true},
+    "text_analysis_agent": {"url": "http://localhost:8003", "enabled": true},
+    "summarizer_agent": {"url": "http://localhost:8004", "enabled": true},
+    "detailed_report_agent": {"url": "http://localhost:8005", "enabled": true},
+    "image_search_agent": {"url": "http://localhost:8006", "enabled": true},
+    "audio_analysis_agent": {"url": "http://localhost:8007", "enabled": true},
+    "document_agent": {"url": "http://localhost:8008", "enabled": true}
   },
   "llm_config": {
     "primary": {
-      "model": "ollama/smollm3:3b",
+      "model": "ollama/qwen3:4b",
       "api_base": "http://localhost:11434",
       "api_key": null,
       "temperature": 0.1,
@@ -30,8 +31,8 @@
     },
     "overrides": {
       "routing_agent": { "temperature": 0.1, "max_tokens": 150 },
-      "summarizer_agent": { "model": "ollama/HuggingFaceTB/SmolLM3-3B" },
-      "detailed_report_agent": { "model": "ollama/HuggingFaceTB/SmolLM3-3B" },
+      "summarizer_agent": { "model": "ollama/qwen3:4b" },
+      "detailed_report_agent": { "model": "ollama/qwen3:4b" },
       "vlm_interface": { "model": "ollama/deepseek-r1:7b" },
       "query_analysis_module": null,
       "llm_auto_annotator": null

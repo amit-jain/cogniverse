@@ -243,15 +243,17 @@ def get_agent_config():
     config_manager = create_default_config_manager()
     system_config = config_manager.get_system_config()
 
-    # Return dict with agent URLs from SystemConfig only
+    # In unified runtime mode, all agents are served by the single runtime.
+    # Use ingestion_api_url (port 8000) as the base URL for all agent endpoints.
+    runtime_url = system_config.ingestion_api_url  # http://localhost:8000
     return {
-        "routing_agent_url": system_config.routing_agent_url,
-        "video_search_agent_url": system_config.video_agent_url,
-        "video_processing_agent_url": system_config.video_agent_url,
-        "summarizer_agent_url": system_config.summarizer_agent_url,
-        "detailed_report_agent_url": system_config.text_analysis_agent_url,
-        "tenant_manager_url": system_config.routing_agent_url,
-        "ingestion_api_url": system_config.ingestion_api_url,
+        "routing_agent_url": runtime_url,
+        "video_search_agent_url": runtime_url,
+        "video_processing_agent_url": runtime_url,
+        "summarizer_agent_url": runtime_url,
+        "detailed_report_agent_url": runtime_url,
+        "tenant_manager_url": runtime_url,
+        "ingestion_api_url": runtime_url,
         "phoenix_base_url": system_config.telemetry_url,
     }
 
@@ -536,7 +538,6 @@ st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_agent_connectivity():
     """Check if agents are reachable and return status"""
-    import asyncio
 
     import httpx
 
@@ -553,15 +554,55 @@ def check_agent_connectivity():
         except Exception as e:
             return {"name": name, "status": "error", "url": url, "message": str(e)}
 
-    async def check_all_agents():
-        agents = [
-            ("Routing Agent", agent_config["routing_agent_url"]),
-            ("Video Search Agent", agent_config["video_search_agent_url"]),
-            ("Video Processing Agent", agent_config["video_processing_agent_url"]),
-        ]
+    async def check_unified_runtime():
+        """Check agents via the unified runtime's /agents/ endpoint."""
+        runtime_url = agent_config.get("ingestion_api_url", "http://localhost:8000")
+        results = {}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{runtime_url}/agents/")
+                if response.status_code == 200:
+                    data = response.json()
+                    agent_names = data.get("agents", [])
+                    # Map registry names to display names
+                    display_map = {
+                        "routing_agent": "Routing Agent",
+                        "search_agent": "Video Search Agent",
+                        "text_analysis_agent": "Text Analysis Agent",
+                        "summarizer_agent": "Summarizer Agent",
+                        "detailed_report_agent": "Detailed Report Agent",
+                        "image_search_agent": "Image Search Agent",
+                        "audio_analysis_agent": "Audio Analysis Agent",
+                        "document_agent": "Document Agent",
+                    }
+                    # Also set legacy keys used by other tabs
+                    legacy_map = {
+                        "search_agent": "Video Processing Agent",
+                        "routing_agent": "Orchestrator Agent",
+                    }
+                    for agent_name in agent_names:
+                        display_name = display_map.get(agent_name, agent_name)
+                        results[display_name] = {
+                            "name": display_name,
+                            "status": "online",
+                            "url": runtime_url,
+                        }
+                        # Add legacy aliases
+                        if agent_name in legacy_map:
+                            alias = legacy_map[agent_name]
+                            results[alias] = {
+                                "name": alias,
+                                "status": "online",
+                                "url": runtime_url,
+                            }
+                    return results
+                else:
+                    return {"error": f"Runtime returned HTTP {response.status_code}"}
+        except httpx.RequestError as e:
+            return {"error": f"Runtime unreachable: {e}"}
 
-        results = await asyncio.gather(*[check_agent(name, url) for name, url in agents])
-        return {result["name"]: result for result in results}
+    async def check_all_agents():
+        return await check_unified_runtime()
 
     try:
         return run_async_in_streamlit(check_all_agents())
