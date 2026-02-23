@@ -341,21 +341,24 @@ class MyAgent(AgentBase[...], HealthCheckMixin):
 # self.setup_health_endpoint(app)  # Adds GET /health endpoint
 ```
 
-### DSPyIntegrationMixin
+### DynamicDSPyMixin
 
-Integrates DSPy modules for AI processing:
+Provides dynamic DSPy module creation and configuration at runtime:
 
 ```python
-from cogniverse_agents.dspy_integration_mixin import DSPyIntegrationMixin
+from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 import dspy
 
-class MyAgent(AgentBase[...], DSPyIntegrationMixin):
-    def setup_dspy(self):
-        class MySignature(dspy.Signature):
-            query = dspy.InputField()
-            answer = dspy.OutputField()
+class MyAgent(AgentBase[...], DynamicDSPyMixin):
+    def __init__(self, ...):
+        super().__init__(...)
+        # Register signatures for dynamic module creation
+        self.register_signature("my_task", MySignature)
 
-        self.dspy_module = dspy.ChainOfThought(MySignature)
+    def process(self, input_data):
+        # Get or create module based on current agent_config
+        module = self.get_or_create_module("my_task")
+        return module(query=input_data.query)
 ```
 
 ---

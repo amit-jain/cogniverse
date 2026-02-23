@@ -316,7 +316,7 @@ modal app list  # Note the general-inference-service endpoint
 # Set inference.modal_endpoint in config.json to your deployed endpoint
 
 # 4. Run DSPy optimization with teacher/student
-# Note: Orchestrator uses create_default_config_manager() - ensure config.json is properly configured
+# Note: Orchestrator requires config_manager injected at startup via llm_config
 uv run python -m cogniverse_agents.optimizer.orchestrator
 
 # 5. Run video ingestion with Modal VLM

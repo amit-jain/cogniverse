@@ -45,7 +45,7 @@ flowchart TB
         CreateClass["<span style='color:#000'>Create Agent Class<br/>extends A2AAgent</span>"] --> SetMetadata["<span style='color:#000'>Create A2AAgentConfig<br/>with name, capabilities</span>"]
         SetMetadata --> ChooseMixins{"<span style='color:#000'>Need Mixins?</span>"}
         ChooseMixins -->|Memory| AddMemory["<span style='color:#000'>Add MemoryAwareMixin</span>"]
-        ChooseMixins -->|DSPy| AddDSPy["<span style='color:#000'>Add DSPyIntegrationMixin</span>"]
+        ChooseMixins -->|DSPy| AddDSPy["<span style='color:#000'>Add DynamicDSPyMixin</span>"]
         ChooseMixins -->|Health| AddHealth["<span style='color:#000'>Add HealthCheckMixin</span>"]
         ChooseMixins -->|None| SkipMixins["<span style='color:#000'>Skip</span>"]
         AddMemory --> ImplementProcess

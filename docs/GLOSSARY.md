@@ -133,7 +133,7 @@ Evaluator that uses LLMs to score outputs. Supports reference-free, reference-ba
 Protocol for connecting LLMs to external tools and data. Enables agents to access databases, APIs, etc.
 
 ### Mixin
-Composable class that adds specific functionality to agents. Examples: `MemoryAwareMixin`, `TenantAwareAgentMixin`, `HealthCheckMixin`, `DSPyIntegrationMixin`.
+Composable class that adds specific functionality to agents. Examples: `MemoryAwareMixin`, `TenantAwareAgentMixin`, `HealthCheckMixin`, `DynamicDSPyMixin`.
 
 ### Modality
 Type of content defined by `ContentType` enum: `video`, `audio`, `image`, `text`, `dataframe`, `document`. Used for routing queries to appropriate agents.

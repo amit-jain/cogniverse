@@ -86,9 +86,11 @@ from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
+# backend_url and backend_port are read from SystemConfig via config_manager.
+# Override with BACKEND_URL / BACKEND_PORT env vars if needed.
 client = VespaVideoSearchClient(
     backend_url="http://localhost",
-    backend_port=8080,
+    backend_port=19071,  # Use your Vespa instance's actual port
     tenant_id="test_tenant",
     config_manager=config_manager
 )
