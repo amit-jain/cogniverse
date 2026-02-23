@@ -49,7 +49,6 @@ cogniverse_core/
 │   ├── tenant_aware_mixin.py    # Multi-tenancy mixin
 │   ├── health_mixin.py          # Health check mixin
 │   ├── a2a_mixin.py             # A2A communication mixin (also in common/)
-│   ├── dspy_integration_mixin.py # DSPy module support
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy loading
 │   └── rlm_options.py           # Remote LM configuration options
 ├── registries/                  # Component registries

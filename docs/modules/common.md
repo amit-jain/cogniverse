@@ -369,7 +369,7 @@ class TelemetryConfig:
 
     # Service identification
     service_name: str = "video-search"
-    service_version: str = field(default_factory=lambda: os.getenv("SERVICE_VERSION", "1.0.0"))
+    service_version: str = "1.0.0"
 
     # Resource attributes
     extra_resource_attributes: Dict[str, str] = field(default_factory=dict)

@@ -202,7 +202,7 @@ cogniverse_foundation/
 ```text
 cogniverse_core/
 ├── __init__.py
-├── agents/      # AgentBase, A2AAgent, mixins (memory_aware_mixin, health_mixin, tenant_aware_mixin, dspy_integration_mixin, a2a_mixin, dynamic_dspy_mixin, rlm_options)
+├── agents/      # AgentBase, A2AAgent, mixins (memory_aware_mixin, health_mixin, tenant_aware_mixin, a2a_mixin, dynamic_dspy_mixin, rlm_options)
 ├── backends/    # Backend implementations
 ├── common/      # Utilities, cache/, models/, utils/
 ├── config/      # Configuration utilities
@@ -224,7 +224,7 @@ cogniverse_core/
 
 #### Key Responsibilities
 
-- **Base Classes**: Abstract agent interfaces (AgentBase, AgentInput, AgentOutput, AgentDeps, A2AAgent) and mixins (MemoryAwareMixin, HealthCheckMixin, A2AEndpointsMixin, DSPyIntegrationMixin, TenantAwareAgentMixin)
+- **Base Classes**: Abstract agent interfaces (AgentBase, AgentInput, AgentOutput, AgentDeps, A2AAgent) and mixins (MemoryAwareMixin, HealthCheckMixin, A2AEndpointsMixin, TenantAwareAgentMixin, DynamicDSPyMixin)
 - **Registries**: Component registration and discovery for agents, backends, DSPy modules, schemas, adapters, workflows
 - **Memory**: Mem0MemoryManager with multi-tenant support and vector store backend
 - **Caching**: Pipeline and embedding caches with structured filesystem backend
