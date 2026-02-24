@@ -48,14 +48,17 @@ def vespa_instance():
     """
     manager = VespaDockerManager()
 
+    # Clear stale singleton state from other test modules so the test gets
+    # a fresh backend pointing at the isolated Vespa, not a cached one.
+    BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+
     try:
-        # Use default Vespa ports (8080/19071) so the merged config from
-        # configs/config.json (backend.port=8080) matches the test container.
+        # Use unique ports derived from module name hash to avoid collisions
+        # with a running Vespa instance on the default 8080/19071 ports.
         container_info = manager.start_container(
             module_name="runtime_integration_tests",
-            use_module_ports=False,
-            http_port=8080,
-            config_port=19071,
+            use_module_ports=True,
         )
 
         # Wait for config server

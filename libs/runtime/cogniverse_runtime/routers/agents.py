@@ -1,5 +1,6 @@
 """Agent endpoints - unified interface for all agent operations."""
 
+import dataclasses
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -217,15 +218,23 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     tenant_id = task.context.get("tenant_id", "default")
     capabilities = set(agent.capabilities)
 
-    # Route based on agent capabilities
+    # Route based on agent capabilities.
+    # Order matters: check specific capabilities before general ones.
+    # E.g. detailed_report before text_generation (DetailedReportAgent has both).
     if capabilities & {"search", "video_search", "retrieval", "routing"}:
         return await _execute_search_task(task, tenant_id)
+    elif capabilities & {"image_search", "visual_analysis"}:
+        return await _execute_image_search_task(task, tenant_id)
+    elif capabilities & {"audio_analysis", "transcription"}:
+        return await _execute_audio_search_task(task, tenant_id)
+    elif capabilities & {"document_analysis", "pdf_processing"}:
+        return await _execute_document_search_task(task, tenant_id)
+    elif capabilities & {"detailed_report"}:
+        return await _execute_detailed_report_task(task, tenant_id)
     elif capabilities & {"summarization", "text_generation"}:
-        return _execute_text_generation_task(task, agent_name)
+        return await _execute_summarization_task(task, tenant_id)
     elif capabilities & {"text_analysis", "sentiment", "classification"}:
-        return _execute_text_analysis_task(task, agent_name)
-    elif capabilities & {"detailed_report", "analysis"}:
-        return _execute_text_generation_task(task, agent_name)
+        return await _execute_text_analysis_task(task, tenant_id)
     else:
         raise HTTPException(
             status_code=501,
@@ -276,30 +285,182 @@ async def _execute_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any
     }
 
 
-def _execute_text_generation_task(
-    task: AgentTask, agent_name: str
-) -> Dict[str, Any]:
-    """Execute a text generation task (summarization, reports)."""
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            f"Agent '{agent_name}' text generation is not implemented in "
-            f"unified runtime mode. Requires LLM backend integration."
-        ),
-    )
+def _get_vespa_endpoint(tenant_id: str) -> str:
+    """Extract backend_url:backend_port from config for Vespa-backed agents."""
+    from cogniverse_foundation.config.utils import get_config
+
+    config = get_config(tenant_id=tenant_id, config_manager=_config_manager)
+    url = config.get("backend_url", "http://localhost")
+    port = config.get("backend_port", 8080)
+    return f"{url}:{port}"
 
 
-def _execute_text_analysis_task(
-    task: AgentTask, agent_name: str
+async def _execute_summarization_task(
+    task: AgentTask, tenant_id: str
 ) -> Dict[str, Any]:
-    """Execute a text analysis task (sentiment, classification)."""
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            f"Agent '{agent_name}' text analysis is not implemented in "
-            f"unified runtime mode. Requires LLM backend integration."
-        ),
+    """Execute a summarization task using SummarizerAgent."""
+    from cogniverse_agents.summarizer_agent import (
+        SummarizerAgent,
+        SummarizerDeps,
+        SummaryRequest,
     )
+
+    deps = SummarizerDeps(tenant_id=tenant_id)
+    agent = SummarizerAgent(deps=deps, config_manager=_config_manager)
+
+    request = SummaryRequest(
+        query=task.query,
+        search_results=[],
+        summary_type="general",
+    )
+    result = await agent.summarize(request)
+
+    return {
+        "status": "success",
+        "agent": "summarizer_agent",
+        "message": f"Generated summary for '{task.query}'",
+        "result": dataclasses.asdict(result),
+    }
+
+
+async def _execute_text_analysis_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute a text analysis task using TextAnalysisAgent."""
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    agent = TextAnalysisAgent(
+        tenant_id=tenant_id, config_manager=_config_manager
+    )
+
+    analysis_type = task.context.get("analysis_type", "summary")
+    # analyze_text is synchronous
+    result = agent.analyze_text(text=task.query, analysis_type=analysis_type)
+
+    return {
+        "status": "success",
+        "agent": "text_analysis_agent",
+        "message": f"Completed {analysis_type} analysis for '{task.query}'",
+        "result": result,
+    }
+
+
+async def _execute_detailed_report_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute a detailed report task using DetailedReportAgent."""
+    from cogniverse_agents.detailed_report_agent import (
+        DetailedReportAgent,
+        DetailedReportDeps,
+        ReportRequest,
+    )
+
+    deps = DetailedReportDeps(tenant_id=tenant_id)
+    agent = DetailedReportAgent(deps=deps, config_manager=_config_manager)
+
+    request = ReportRequest(
+        query=task.query,
+        search_results=[],
+        report_type="comprehensive",
+    )
+    result = await agent.generate_report(request)
+
+    return {
+        "status": "success",
+        "agent": "detailed_report_agent",
+        "message": f"Generated detailed report for '{task.query}'",
+        "result": dataclasses.asdict(result),
+    }
+
+
+async def _execute_image_search_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute an image search task using ImageSearchAgent."""
+    from cogniverse_agents.image_search_agent import (
+        ImageSearchAgent,
+        ImageSearchDeps,
+    )
+
+    vespa_endpoint = _get_vespa_endpoint(tenant_id)
+    deps = ImageSearchDeps(
+        vespa_endpoint=vespa_endpoint,
+        tenant_id=tenant_id,
+    )
+    agent = ImageSearchAgent(deps=deps)
+
+    results = await agent.search_images(
+        query=task.query, limit=task.top_k
+    )
+
+    result_list = [dataclasses.asdict(r) for r in results]
+    return {
+        "status": "success",
+        "agent": "image_search_agent",
+        "message": f"Found {len(result_list)} images for '{task.query}'",
+        "results_count": len(result_list),
+        "results": result_list,
+    }
+
+
+async def _execute_audio_search_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute an audio search task using AudioAnalysisAgent."""
+    from cogniverse_agents.audio_analysis_agent import (
+        AudioAnalysisAgent,
+        AudioAnalysisDeps,
+    )
+
+    vespa_endpoint = _get_vespa_endpoint(tenant_id)
+    deps = AudioAnalysisDeps(
+        vespa_endpoint=vespa_endpoint,
+        tenant_id=tenant_id,
+    )
+    agent = AudioAnalysisAgent(deps=deps)
+
+    results = await agent.search_audio(
+        query=task.query, limit=task.top_k
+    )
+
+    result_list = [dataclasses.asdict(r) for r in results]
+    return {
+        "status": "success",
+        "agent": "audio_analysis_agent",
+        "message": f"Found {len(result_list)} audio results for '{task.query}'",
+        "results_count": len(result_list),
+        "results": result_list,
+    }
+
+
+async def _execute_document_search_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute a document search task using DocumentAgent."""
+    from cogniverse_agents.document_agent import (
+        DocumentAgent,
+        DocumentAgentDeps,
+    )
+
+    vespa_endpoint = _get_vespa_endpoint(tenant_id)
+    deps = DocumentAgentDeps(
+        vespa_endpoint=vespa_endpoint,
+        tenant_id=tenant_id,
+    )
+    agent = DocumentAgent(deps=deps)
+
+    results = await agent.search_documents(
+        query=task.query, limit=task.top_k
+    )
+
+    result_list = [dataclasses.asdict(r) for r in results]
+    return {
+        "status": "success",
+        "agent": "document_agent",
+        "message": f"Found {len(result_list)} documents for '{task.query}'",
+        "results_count": len(result_list),
+        "results": result_list,
+    }
 
 
 @router.post("/{agent_name}/upload")

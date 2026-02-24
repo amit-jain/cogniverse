@@ -106,9 +106,9 @@ class SearchService:
 
         backend_section = self.config.get("backend", {})
         backend_config = {
-            "backend_url": self.config.get("backend_url")
+            "url": self.config.get("backend_url")
             or backend_section.get("url", "http://localhost"),
-            "backend_port": self.config.get("backend_port")
+            "port": self.config.get("backend_port")
             or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
