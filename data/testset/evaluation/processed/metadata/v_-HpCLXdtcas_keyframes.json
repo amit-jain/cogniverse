@@ -1,0 +1,78 @@
+{
+  "video_id": "v_-HpCLXdtcas",
+  "source_path": "data/videos/video_chatgpt_eval/sample_videos/v_-HpCLXdtcas.mkv",
+  "processing_timestamp": 1751805000.852603,
+  "processing_duration_seconds": 0.7693741321563721,
+  "keyframes": [
+    {
+      "frame_id": 0,
+      "filename": "frame_0000.jpg",
+      "start_time": 0.0,
+      "end_time": 0.13333333333333333,
+      "duration": 0.13333333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0000.jpg"
+    },
+    {
+      "frame_id": 1,
+      "filename": "frame_0001.jpg",
+      "start_time": 0.13333333333333333,
+      "end_time": 0.26666666666666666,
+      "duration": 0.13333333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0001.jpg"
+    },
+    {
+      "frame_id": 2,
+      "filename": "frame_0002.jpg",
+      "start_time": 0.26666666666666666,
+      "end_time": 8.0,
+      "duration": 7.733333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0002.jpg"
+    },
+    {
+      "frame_id": 3,
+      "filename": "frame_0003.jpg",
+      "start_time": 8.0,
+      "end_time": 23.133333333333333,
+      "duration": 15.133333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0003.jpg"
+    },
+    {
+      "frame_id": 4,
+      "filename": "frame_0004.jpg",
+      "start_time": 23.133333333333333,
+      "end_time": 23.166666666666668,
+      "duration": 0.03333333333333499,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0004.jpg"
+    },
+    {
+      "frame_id": 5,
+      "filename": "frame_0005.jpg",
+      "start_time": 23.166666666666668,
+      "end_time": 23.2,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0005.jpg"
+    },
+    {
+      "frame_id": 6,
+      "filename": "frame_0006.jpg",
+      "start_time": 23.2,
+      "end_time": 23.233333333333334,
+      "duration": 0.03333333333333499,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0006.jpg"
+    },
+    {
+      "frame_id": 7,
+      "filename": "frame_0007.jpg",
+      "start_time": 23.233333333333334,
+      "end_time": 23.333333333333332,
+      "duration": 0.09999999999999787,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-HpCLXdtcas/frame_0007.jpg"
+    }
+  ],
+  "stats": {
+    "total_keyframes": 8,
+    "video_duration_estimated": 23.333333333333332
+  },
+  "status": "keyframes_extracted",
+  "ready_for_vlm": true
+}

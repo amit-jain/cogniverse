@@ -1,0 +1,4943 @@
+{
+  "video_id": "v_-IMXSEIabMM",
+  "source_path": "data/videos/video_chatgpt_eval/sample_videos/v_-IMXSEIabMM.mp4",
+  "processing_timestamp": 1751804289.6165981,
+  "processing_duration_seconds": 20.316112756729126,
+  "keyframes": [
+    {
+      "frame_id": 0,
+      "filename": "frame_0000.jpg",
+      "start_time": 0.0,
+      "end_time": 0.3003,
+      "duration": 0.3003,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0000.jpg"
+    },
+    {
+      "frame_id": 1,
+      "filename": "frame_0001.jpg",
+      "start_time": 0.3003,
+      "end_time": 0.33366666666666667,
+      "duration": 0.033366666666666656,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0001.jpg"
+    },
+    {
+      "frame_id": 2,
+      "filename": "frame_0002.jpg",
+      "start_time": 0.33366666666666667,
+      "end_time": 0.3670333333333333,
+      "duration": 0.033366666666666656,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0002.jpg"
+    },
+    {
+      "frame_id": 3,
+      "filename": "frame_0003.jpg",
+      "start_time": 0.3670333333333333,
+      "end_time": 0.40040000000000003,
+      "duration": 0.03336666666666671,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0003.jpg"
+    },
+    {
+      "frame_id": 4,
+      "filename": "frame_0004.jpg",
+      "start_time": 0.40040000000000003,
+      "end_time": 0.4337666666666667,
+      "duration": 0.033366666666666656,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0004.jpg"
+    },
+    {
+      "frame_id": 5,
+      "filename": "frame_0005.jpg",
+      "start_time": 0.4337666666666667,
+      "end_time": 0.46713333333333334,
+      "duration": 0.033366666666666656,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0005.jpg"
+    },
+    {
+      "frame_id": 6,
+      "filename": "frame_0006.jpg",
+      "start_time": 0.46713333333333334,
+      "end_time": 0.5005000000000001,
+      "duration": 0.03336666666666671,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0006.jpg"
+    },
+    {
+      "frame_id": 7,
+      "filename": "frame_0007.jpg",
+      "start_time": 0.5005000000000001,
+      "end_time": 5.438766666666667,
+      "duration": 4.938266666666667,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0007.jpg"
+    },
+    {
+      "frame_id": 8,
+      "filename": "frame_0008.jpg",
+      "start_time": 5.438766666666667,
+      "end_time": 5.9726333333333335,
+      "duration": 0.5338666666666665,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0008.jpg"
+    },
+    {
+      "frame_id": 9,
+      "filename": "frame_0009.jpg",
+      "start_time": 5.9726333333333335,
+      "end_time": 7.240566666666667,
+      "duration": 1.2679333333333336,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0009.jpg"
+    },
+    {
+      "frame_id": 10,
+      "filename": "frame_0010.jpg",
+      "start_time": 7.240566666666667,
+      "end_time": 7.4741333333333335,
+      "duration": 0.23356666666666648,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0010.jpg"
+    },
+    {
+      "frame_id": 11,
+      "filename": "frame_0011.jpg",
+      "start_time": 7.4741333333333335,
+      "end_time": 7.5075,
+      "duration": 0.03336666666666677,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0011.jpg"
+    },
+    {
+      "frame_id": 12,
+      "filename": "frame_0012.jpg",
+      "start_time": 7.5075,
+      "end_time": 7.540866666666667,
+      "duration": 0.03336666666666677,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0012.jpg"
+    },
+    {
+      "frame_id": 13,
+      "filename": "frame_0013.jpg",
+      "start_time": 7.540866666666667,
+      "end_time": 7.574233333333334,
+      "duration": 0.03336666666666677,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0013.jpg"
+    },
+    {
+      "frame_id": 14,
+      "filename": "frame_0014.jpg",
+      "start_time": 7.574233333333334,
+      "end_time": 7.6076,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0014.jpg"
+    },
+    {
+      "frame_id": 15,
+      "filename": "frame_0015.jpg",
+      "start_time": 7.6076,
+      "end_time": 7.6409666666666665,
+      "duration": 0.03336666666666677,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0015.jpg"
+    },
+    {
+      "frame_id": 16,
+      "filename": "frame_0016.jpg",
+      "start_time": 7.6409666666666665,
+      "end_time": 8.375033333333333,
+      "duration": 0.7340666666666662,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0016.jpg"
+    },
+    {
+      "frame_id": 17,
+      "filename": "frame_0017.jpg",
+      "start_time": 8.375033333333333,
+      "end_time": 8.4084,
+      "duration": 0.033366666666667655,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0017.jpg"
+    },
+    {
+      "frame_id": 18,
+      "filename": "frame_0018.jpg",
+      "start_time": 8.4084,
+      "end_time": 8.441766666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0018.jpg"
+    },
+    {
+      "frame_id": 19,
+      "filename": "frame_0019.jpg",
+      "start_time": 8.441766666666666,
+      "end_time": 8.475133333333334,
+      "duration": 0.033366666666667655,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0019.jpg"
+    },
+    {
+      "frame_id": 20,
+      "filename": "frame_0020.jpg",
+      "start_time": 8.475133333333334,
+      "end_time": 8.575233333333333,
+      "duration": 0.10009999999999941,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0020.jpg"
+    },
+    {
+      "frame_id": 21,
+      "filename": "frame_0021.jpg",
+      "start_time": 8.575233333333333,
+      "end_time": 8.608600000000001,
+      "duration": 0.033366666666667655,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0021.jpg"
+    },
+    {
+      "frame_id": 22,
+      "filename": "frame_0022.jpg",
+      "start_time": 8.608600000000001,
+      "end_time": 8.641966666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0022.jpg"
+    },
+    {
+      "frame_id": 23,
+      "filename": "frame_0023.jpg",
+      "start_time": 8.641966666666667,
+      "end_time": 11.378033333333333,
+      "duration": 2.736066666666666,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0023.jpg"
+    },
+    {
+      "frame_id": 24,
+      "filename": "frame_0024.jpg",
+      "start_time": 11.378033333333333,
+      "end_time": 14.080733333333333,
+      "duration": 2.7027,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0024.jpg"
+    },
+    {
+      "frame_id": 25,
+      "filename": "frame_0025.jpg",
+      "start_time": 14.080733333333333,
+      "end_time": 14.147466666666666,
+      "duration": 0.06673333333333353,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0025.jpg"
+    },
+    {
+      "frame_id": 26,
+      "filename": "frame_0026.jpg",
+      "start_time": 14.147466666666666,
+      "end_time": 15.015,
+      "duration": 0.8675333333333342,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0026.jpg"
+    },
+    {
+      "frame_id": 27,
+      "filename": "frame_0027.jpg",
+      "start_time": 15.015,
+      "end_time": 18.118100000000002,
+      "duration": 3.1031000000000013,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0027.jpg"
+    },
+    {
+      "frame_id": 28,
+      "filename": "frame_0028.jpg",
+      "start_time": 18.118100000000002,
+      "end_time": 23.4234,
+      "duration": 5.305299999999999,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0028.jpg"
+    },
+    {
+      "frame_id": 29,
+      "filename": "frame_0029.jpg",
+      "start_time": 23.4234,
+      "end_time": 29.462766666666667,
+      "duration": 6.039366666666666,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0029.jpg"
+    },
+    {
+      "frame_id": 30,
+      "filename": "frame_0030.jpg",
+      "start_time": 29.462766666666667,
+      "end_time": 29.496133333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0030.jpg"
+    },
+    {
+      "frame_id": 31,
+      "filename": "frame_0031.jpg",
+      "start_time": 29.496133333333333,
+      "end_time": 29.529500000000002,
+      "duration": 0.03336666666666943,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0031.jpg"
+    },
+    {
+      "frame_id": 32,
+      "filename": "frame_0032.jpg",
+      "start_time": 29.529500000000002,
+      "end_time": 29.562866666666668,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0032.jpg"
+    },
+    {
+      "frame_id": 33,
+      "filename": "frame_0033.jpg",
+      "start_time": 29.562866666666668,
+      "end_time": 29.596233333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0033.jpg"
+    },
+    {
+      "frame_id": 34,
+      "filename": "frame_0034.jpg",
+      "start_time": 29.596233333333334,
+      "end_time": 29.696333333333335,
+      "duration": 0.10010000000000119,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0034.jpg"
+    },
+    {
+      "frame_id": 35,
+      "filename": "frame_0035.jpg",
+      "start_time": 29.696333333333335,
+      "end_time": 29.763066666666667,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0035.jpg"
+    },
+    {
+      "frame_id": 36,
+      "filename": "frame_0036.jpg",
+      "start_time": 29.763066666666667,
+      "end_time": 29.796433333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0036.jpg"
+    },
+    {
+      "frame_id": 37,
+      "filename": "frame_0037.jpg",
+      "start_time": 29.796433333333333,
+      "end_time": 29.863166666666668,
+      "duration": 0.06673333333333531,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0037.jpg"
+    },
+    {
+      "frame_id": 38,
+      "filename": "frame_0038.jpg",
+      "start_time": 29.863166666666668,
+      "end_time": 29.896533333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0038.jpg"
+    },
+    {
+      "frame_id": 39,
+      "filename": "frame_0039.jpg",
+      "start_time": 29.896533333333334,
+      "end_time": 29.9299,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0039.jpg"
+    },
+    {
+      "frame_id": 40,
+      "filename": "frame_0040.jpg",
+      "start_time": 29.9299,
+      "end_time": 30.03,
+      "duration": 0.10010000000000119,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0040.jpg"
+    },
+    {
+      "frame_id": 41,
+      "filename": "frame_0041.jpg",
+      "start_time": 30.03,
+      "end_time": 46.8468,
+      "duration": 16.8168,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0041.jpg"
+    },
+    {
+      "frame_id": 42,
+      "filename": "frame_0042.jpg",
+      "start_time": 46.8468,
+      "end_time": 47.5475,
+      "duration": 0.7006999999999977,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0042.jpg"
+    },
+    {
+      "frame_id": 43,
+      "filename": "frame_0043.jpg",
+      "start_time": 47.5475,
+      "end_time": 47.580866666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0043.jpg"
+    },
+    {
+      "frame_id": 44,
+      "filename": "frame_0044.jpg",
+      "start_time": 47.580866666666665,
+      "end_time": 47.61423333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0044.jpg"
+    },
+    {
+      "frame_id": 45,
+      "filename": "frame_0045.jpg",
+      "start_time": 47.61423333333333,
+      "end_time": 47.647600000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0045.jpg"
+    },
+    {
+      "frame_id": 46,
+      "filename": "frame_0046.jpg",
+      "start_time": 47.647600000000004,
+      "end_time": 47.68096666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0046.jpg"
+    },
+    {
+      "frame_id": 47,
+      "filename": "frame_0047.jpg",
+      "start_time": 47.68096666666667,
+      "end_time": 47.714333333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0047.jpg"
+    },
+    {
+      "frame_id": 48,
+      "filename": "frame_0048.jpg",
+      "start_time": 47.714333333333336,
+      "end_time": 47.7477,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0048.jpg"
+    },
+    {
+      "frame_id": 49,
+      "filename": "frame_0049.jpg",
+      "start_time": 47.7477,
+      "end_time": 47.78106666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0049.jpg"
+    },
+    {
+      "frame_id": 50,
+      "filename": "frame_0050.jpg",
+      "start_time": 47.78106666666667,
+      "end_time": 47.814433333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0050.jpg"
+    },
+    {
+      "frame_id": 51,
+      "filename": "frame_0051.jpg",
+      "start_time": 47.814433333333334,
+      "end_time": 47.8478,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0051.jpg"
+    },
+    {
+      "frame_id": 52,
+      "filename": "frame_0052.jpg",
+      "start_time": 47.8478,
+      "end_time": 47.881166666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0052.jpg"
+    },
+    {
+      "frame_id": 53,
+      "filename": "frame_0053.jpg",
+      "start_time": 47.881166666666665,
+      "end_time": 48.38166666666667,
+      "duration": 0.5005000000000024,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0053.jpg"
+    },
+    {
+      "frame_id": 54,
+      "filename": "frame_0054.jpg",
+      "start_time": 48.38166666666667,
+      "end_time": 48.415033333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0054.jpg"
+    },
+    {
+      "frame_id": 55,
+      "filename": "frame_0055.jpg",
+      "start_time": 48.415033333333334,
+      "end_time": 48.4484,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0055.jpg"
+    },
+    {
+      "frame_id": 56,
+      "filename": "frame_0056.jpg",
+      "start_time": 48.4484,
+      "end_time": 48.481766666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0056.jpg"
+    },
+    {
+      "frame_id": 57,
+      "filename": "frame_0057.jpg",
+      "start_time": 48.481766666666665,
+      "end_time": 48.51513333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0057.jpg"
+    },
+    {
+      "frame_id": 58,
+      "filename": "frame_0058.jpg",
+      "start_time": 48.51513333333333,
+      "end_time": 48.548500000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0058.jpg"
+    },
+    {
+      "frame_id": 59,
+      "filename": "frame_0059.jpg",
+      "start_time": 48.548500000000004,
+      "end_time": 48.58186666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0059.jpg"
+    },
+    {
+      "frame_id": 60,
+      "filename": "frame_0060.jpg",
+      "start_time": 48.58186666666667,
+      "end_time": 48.6486,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0060.jpg"
+    },
+    {
+      "frame_id": 61,
+      "filename": "frame_0061.jpg",
+      "start_time": 48.6486,
+      "end_time": 48.68196666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0061.jpg"
+    },
+    {
+      "frame_id": 62,
+      "filename": "frame_0062.jpg",
+      "start_time": 48.68196666666667,
+      "end_time": 48.88216666666667,
+      "duration": 0.20020000000000238,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0062.jpg"
+    },
+    {
+      "frame_id": 63,
+      "filename": "frame_0063.jpg",
+      "start_time": 48.88216666666667,
+      "end_time": 48.915533333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0063.jpg"
+    },
+    {
+      "frame_id": 64,
+      "filename": "frame_0064.jpg",
+      "start_time": 48.915533333333336,
+      "end_time": 49.382666666666665,
+      "duration": 0.4671333333333294,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0064.jpg"
+    },
+    {
+      "frame_id": 65,
+      "filename": "frame_0065.jpg",
+      "start_time": 49.382666666666665,
+      "end_time": 49.48276666666667,
+      "duration": 0.10010000000000474,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0065.jpg"
+    },
+    {
+      "frame_id": 66,
+      "filename": "frame_0066.jpg",
+      "start_time": 49.48276666666667,
+      "end_time": 49.9499,
+      "duration": 0.4671333333333294,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0066.jpg"
+    },
+    {
+      "frame_id": 67,
+      "filename": "frame_0067.jpg",
+      "start_time": 49.9499,
+      "end_time": 49.983266666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0067.jpg"
+    },
+    {
+      "frame_id": 68,
+      "filename": "frame_0068.jpg",
+      "start_time": 49.983266666666665,
+      "end_time": 50.050000000000004,
+      "duration": 0.06673333333333886,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0068.jpg"
+    },
+    {
+      "frame_id": 69,
+      "filename": "frame_0069.jpg",
+      "start_time": 50.050000000000004,
+      "end_time": 50.08336666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0069.jpg"
+    },
+    {
+      "frame_id": 70,
+      "filename": "frame_0070.jpg",
+      "start_time": 50.08336666666667,
+      "end_time": 50.1501,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0070.jpg"
+    },
+    {
+      "frame_id": 71,
+      "filename": "frame_0071.jpg",
+      "start_time": 50.1501,
+      "end_time": 50.18346666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0071.jpg"
+    },
+    {
+      "frame_id": 72,
+      "filename": "frame_0072.jpg",
+      "start_time": 50.18346666666667,
+      "end_time": 50.2502,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0072.jpg"
+    },
+    {
+      "frame_id": 73,
+      "filename": "frame_0073.jpg",
+      "start_time": 50.2502,
+      "end_time": 50.283566666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0073.jpg"
+    },
+    {
+      "frame_id": 74,
+      "filename": "frame_0074.jpg",
+      "start_time": 50.283566666666665,
+      "end_time": 50.31693333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0074.jpg"
+    },
+    {
+      "frame_id": 75,
+      "filename": "frame_0075.jpg",
+      "start_time": 50.31693333333333,
+      "end_time": 50.350300000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0075.jpg"
+    },
+    {
+      "frame_id": 76,
+      "filename": "frame_0076.jpg",
+      "start_time": 50.350300000000004,
+      "end_time": 50.38366666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0076.jpg"
+    },
+    {
+      "frame_id": 77,
+      "filename": "frame_0077.jpg",
+      "start_time": 50.38366666666667,
+      "end_time": 50.417033333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0077.jpg"
+    },
+    {
+      "frame_id": 78,
+      "filename": "frame_0078.jpg",
+      "start_time": 50.417033333333336,
+      "end_time": 50.4504,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0078.jpg"
+    },
+    {
+      "frame_id": 79,
+      "filename": "frame_0079.jpg",
+      "start_time": 50.4504,
+      "end_time": 50.48376666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0079.jpg"
+    },
+    {
+      "frame_id": 80,
+      "filename": "frame_0080.jpg",
+      "start_time": 50.48376666666667,
+      "end_time": 50.583866666666665,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0080.jpg"
+    },
+    {
+      "frame_id": 81,
+      "filename": "frame_0081.jpg",
+      "start_time": 50.583866666666665,
+      "end_time": 50.61723333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0081.jpg"
+    },
+    {
+      "frame_id": 82,
+      "filename": "frame_0082.jpg",
+      "start_time": 50.61723333333333,
+      "end_time": 50.650600000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0082.jpg"
+    },
+    {
+      "frame_id": 83,
+      "filename": "frame_0083.jpg",
+      "start_time": 50.650600000000004,
+      "end_time": 50.68396666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0083.jpg"
+    },
+    {
+      "frame_id": 84,
+      "filename": "frame_0084.jpg",
+      "start_time": 50.68396666666667,
+      "end_time": 50.717333333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0084.jpg"
+    },
+    {
+      "frame_id": 85,
+      "filename": "frame_0085.jpg",
+      "start_time": 50.717333333333336,
+      "end_time": 50.7507,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0085.jpg"
+    },
+    {
+      "frame_id": 86,
+      "filename": "frame_0086.jpg",
+      "start_time": 50.7507,
+      "end_time": 50.950900000000004,
+      "duration": 0.20020000000000238,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0086.jpg"
+    },
+    {
+      "frame_id": 87,
+      "filename": "frame_0087.jpg",
+      "start_time": 50.950900000000004,
+      "end_time": 51.017633333333336,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0087.jpg"
+    },
+    {
+      "frame_id": 88,
+      "filename": "frame_0088.jpg",
+      "start_time": 51.017633333333336,
+      "end_time": 51.051,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0088.jpg"
+    },
+    {
+      "frame_id": 89,
+      "filename": "frame_0089.jpg",
+      "start_time": 51.051,
+      "end_time": 51.117733333333334,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0089.jpg"
+    },
+    {
+      "frame_id": 90,
+      "filename": "frame_0090.jpg",
+      "start_time": 51.117733333333334,
+      "end_time": 51.1511,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0090.jpg"
+    },
+    {
+      "frame_id": 91,
+      "filename": "frame_0091.jpg",
+      "start_time": 51.1511,
+      "end_time": 51.184466666666665,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0091.jpg"
+    },
+    {
+      "frame_id": 92,
+      "filename": "frame_0092.jpg",
+      "start_time": 51.184466666666665,
+      "end_time": 51.21783333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0092.jpg"
+    },
+    {
+      "frame_id": 93,
+      "filename": "frame_0093.jpg",
+      "start_time": 51.21783333333333,
+      "end_time": 51.251200000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0093.jpg"
+    },
+    {
+      "frame_id": 94,
+      "filename": "frame_0094.jpg",
+      "start_time": 51.251200000000004,
+      "end_time": 51.28456666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0094.jpg"
+    },
+    {
+      "frame_id": 95,
+      "filename": "frame_0095.jpg",
+      "start_time": 51.28456666666667,
+      "end_time": 51.317933333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0095.jpg"
+    },
+    {
+      "frame_id": 96,
+      "filename": "frame_0096.jpg",
+      "start_time": 51.317933333333336,
+      "end_time": 51.3513,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0096.jpg"
+    },
+    {
+      "frame_id": 97,
+      "filename": "frame_0097.jpg",
+      "start_time": 51.3513,
+      "end_time": 51.418033333333334,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0097.jpg"
+    },
+    {
+      "frame_id": 98,
+      "filename": "frame_0098.jpg",
+      "start_time": 51.418033333333334,
+      "end_time": 51.58486666666667,
+      "duration": 0.1668333333333365,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0098.jpg"
+    },
+    {
+      "frame_id": 99,
+      "filename": "frame_0099.jpg",
+      "start_time": 51.58486666666667,
+      "end_time": 52.385666666666665,
+      "duration": 0.8007999999999953,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0099.jpg"
+    },
+    {
+      "frame_id": 100,
+      "filename": "frame_0100.jpg",
+      "start_time": 52.385666666666665,
+      "end_time": 52.41903333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0100.jpg"
+    },
+    {
+      "frame_id": 101,
+      "filename": "frame_0101.jpg",
+      "start_time": 52.41903333333333,
+      "end_time": 52.519133333333336,
+      "duration": 0.10010000000000474,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0101.jpg"
+    },
+    {
+      "frame_id": 102,
+      "filename": "frame_0102.jpg",
+      "start_time": 52.519133333333336,
+      "end_time": 52.5525,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0102.jpg"
+    },
+    {
+      "frame_id": 103,
+      "filename": "frame_0103.jpg",
+      "start_time": 52.5525,
+      "end_time": 52.58586666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0103.jpg"
+    },
+    {
+      "frame_id": 104,
+      "filename": "frame_0104.jpg",
+      "start_time": 52.58586666666667,
+      "end_time": 52.619233333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0104.jpg"
+    },
+    {
+      "frame_id": 105,
+      "filename": "frame_0105.jpg",
+      "start_time": 52.619233333333334,
+      "end_time": 52.6526,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0105.jpg"
+    },
+    {
+      "frame_id": 106,
+      "filename": "frame_0106.jpg",
+      "start_time": 52.6526,
+      "end_time": 52.685966666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0106.jpg"
+    },
+    {
+      "frame_id": 107,
+      "filename": "frame_0107.jpg",
+      "start_time": 52.685966666666666,
+      "end_time": 52.71933333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0107.jpg"
+    },
+    {
+      "frame_id": 108,
+      "filename": "frame_0108.jpg",
+      "start_time": 52.71933333333333,
+      "end_time": 52.752700000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0108.jpg"
+    },
+    {
+      "frame_id": 109,
+      "filename": "frame_0109.jpg",
+      "start_time": 52.752700000000004,
+      "end_time": 53.219833333333334,
+      "duration": 0.4671333333333294,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0109.jpg"
+    },
+    {
+      "frame_id": 110,
+      "filename": "frame_0110.jpg",
+      "start_time": 53.219833333333334,
+      "end_time": 53.2532,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0110.jpg"
+    },
+    {
+      "frame_id": 111,
+      "filename": "frame_0111.jpg",
+      "start_time": 53.2532,
+      "end_time": 53.286566666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0111.jpg"
+    },
+    {
+      "frame_id": 112,
+      "filename": "frame_0112.jpg",
+      "start_time": 53.286566666666666,
+      "end_time": 53.31993333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0112.jpg"
+    },
+    {
+      "frame_id": 113,
+      "filename": "frame_0113.jpg",
+      "start_time": 53.31993333333333,
+      "end_time": 53.353300000000004,
+      "duration": 0.033366666666672984,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0113.jpg"
+    },
+    {
+      "frame_id": 114,
+      "filename": "frame_0114.jpg",
+      "start_time": 53.353300000000004,
+      "end_time": 53.38666666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0114.jpg"
+    },
+    {
+      "frame_id": 115,
+      "filename": "frame_0115.jpg",
+      "start_time": 53.38666666666667,
+      "end_time": 53.420033333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0115.jpg"
+    },
+    {
+      "frame_id": 116,
+      "filename": "frame_0116.jpg",
+      "start_time": 53.420033333333336,
+      "end_time": 53.4534,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0116.jpg"
+    },
+    {
+      "frame_id": 117,
+      "filename": "frame_0117.jpg",
+      "start_time": 53.4534,
+      "end_time": 53.520133333333334,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0117.jpg"
+    },
+    {
+      "frame_id": 118,
+      "filename": "frame_0118.jpg",
+      "start_time": 53.520133333333334,
+      "end_time": 53.68696666666667,
+      "duration": 0.1668333333333365,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0118.jpg"
+    },
+    {
+      "frame_id": 119,
+      "filename": "frame_0119.jpg",
+      "start_time": 53.68696666666667,
+      "end_time": 53.720333333333336,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0119.jpg"
+    },
+    {
+      "frame_id": 120,
+      "filename": "frame_0120.jpg",
+      "start_time": 53.720333333333336,
+      "end_time": 53.78706666666667,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0120.jpg"
+    },
+    {
+      "frame_id": 121,
+      "filename": "frame_0121.jpg",
+      "start_time": 53.78706666666667,
+      "end_time": 53.820433333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0121.jpg"
+    },
+    {
+      "frame_id": 122,
+      "filename": "frame_0122.jpg",
+      "start_time": 53.820433333333334,
+      "end_time": 53.8538,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0122.jpg"
+    },
+    {
+      "frame_id": 123,
+      "filename": "frame_0123.jpg",
+      "start_time": 53.8538,
+      "end_time": 60.493766666666666,
+      "duration": 6.639966666666666,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0123.jpg"
+    },
+    {
+      "frame_id": 124,
+      "filename": "frame_0124.jpg",
+      "start_time": 60.493766666666666,
+      "end_time": 60.52713333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0124.jpg"
+    },
+    {
+      "frame_id": 125,
+      "filename": "frame_0125.jpg",
+      "start_time": 60.52713333333333,
+      "end_time": 60.69396666666667,
+      "duration": 0.1668333333333365,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0125.jpg"
+    },
+    {
+      "frame_id": 126,
+      "filename": "frame_0126.jpg",
+      "start_time": 60.69396666666667,
+      "end_time": 60.727333333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0126.jpg"
+    },
+    {
+      "frame_id": 127,
+      "filename": "frame_0127.jpg",
+      "start_time": 60.727333333333334,
+      "end_time": 61.79506666666667,
+      "duration": 1.0677333333333365,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0127.jpg"
+    },
+    {
+      "frame_id": 128,
+      "filename": "frame_0128.jpg",
+      "start_time": 61.79506666666667,
+      "end_time": 61.8618,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0128.jpg"
+    },
+    {
+      "frame_id": 129,
+      "filename": "frame_0129.jpg",
+      "start_time": 61.8618,
+      "end_time": 63.063,
+      "duration": 1.2012,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0129.jpg"
+    },
+    {
+      "frame_id": 130,
+      "filename": "frame_0130.jpg",
+      "start_time": 63.063,
+      "end_time": 63.2632,
+      "duration": 0.20019999999999527,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0130.jpg"
+    },
+    {
+      "frame_id": 131,
+      "filename": "frame_0131.jpg",
+      "start_time": 63.2632,
+      "end_time": 65.69896666666666,
+      "duration": 2.435766666666666,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0131.jpg"
+    },
+    {
+      "frame_id": 132,
+      "filename": "frame_0132.jpg",
+      "start_time": 65.69896666666666,
+      "end_time": 65.73233333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0132.jpg"
+    },
+    {
+      "frame_id": 133,
+      "filename": "frame_0133.jpg",
+      "start_time": 65.73233333333333,
+      "end_time": 66.19946666666667,
+      "duration": 0.4671333333333365,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0133.jpg"
+    },
+    {
+      "frame_id": 134,
+      "filename": "frame_0134.jpg",
+      "start_time": 66.19946666666667,
+      "end_time": 81.081,
+      "duration": 14.881533333333337,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0134.jpg"
+    },
+    {
+      "frame_id": 135,
+      "filename": "frame_0135.jpg",
+      "start_time": 81.081,
+      "end_time": 82.21546666666667,
+      "duration": 1.1344666666666683,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0135.jpg"
+    },
+    {
+      "frame_id": 136,
+      "filename": "frame_0136.jpg",
+      "start_time": 82.21546666666667,
+      "end_time": 82.2822,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0136.jpg"
+    },
+    {
+      "frame_id": 137,
+      "filename": "frame_0137.jpg",
+      "start_time": 82.2822,
+      "end_time": 82.31556666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0137.jpg"
+    },
+    {
+      "frame_id": 138,
+      "filename": "frame_0138.jpg",
+      "start_time": 82.31556666666667,
+      "end_time": 82.44903333333333,
+      "duration": 0.1334666666666635,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0138.jpg"
+    },
+    {
+      "frame_id": 139,
+      "filename": "frame_0139.jpg",
+      "start_time": 82.44903333333333,
+      "end_time": 82.4824,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0139.jpg"
+    },
+    {
+      "frame_id": 140,
+      "filename": "frame_0140.jpg",
+      "start_time": 82.4824,
+      "end_time": 82.51576666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0140.jpg"
+    },
+    {
+      "frame_id": 141,
+      "filename": "frame_0141.jpg",
+      "start_time": 82.51576666666666,
+      "end_time": 82.54913333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0141.jpg"
+    },
+    {
+      "frame_id": 142,
+      "filename": "frame_0142.jpg",
+      "start_time": 82.54913333333333,
+      "end_time": 82.5825,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0142.jpg"
+    },
+    {
+      "frame_id": 143,
+      "filename": "frame_0143.jpg",
+      "start_time": 82.5825,
+      "end_time": 82.61586666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0143.jpg"
+    },
+    {
+      "frame_id": 144,
+      "filename": "frame_0144.jpg",
+      "start_time": 82.61586666666666,
+      "end_time": 82.64923333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0144.jpg"
+    },
+    {
+      "frame_id": 145,
+      "filename": "frame_0145.jpg",
+      "start_time": 82.64923333333333,
+      "end_time": 82.68260000000001,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0145.jpg"
+    },
+    {
+      "frame_id": 146,
+      "filename": "frame_0146.jpg",
+      "start_time": 82.68260000000001,
+      "end_time": 82.71596666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0146.jpg"
+    },
+    {
+      "frame_id": 147,
+      "filename": "frame_0147.jpg",
+      "start_time": 82.71596666666667,
+      "end_time": 82.74933333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0147.jpg"
+    },
+    {
+      "frame_id": 148,
+      "filename": "frame_0148.jpg",
+      "start_time": 82.74933333333334,
+      "end_time": 82.7827,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0148.jpg"
+    },
+    {
+      "frame_id": 149,
+      "filename": "frame_0149.jpg",
+      "start_time": 82.7827,
+      "end_time": 82.81606666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0149.jpg"
+    },
+    {
+      "frame_id": 150,
+      "filename": "frame_0150.jpg",
+      "start_time": 82.81606666666667,
+      "end_time": 82.84943333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0150.jpg"
+    },
+    {
+      "frame_id": 151,
+      "filename": "frame_0151.jpg",
+      "start_time": 82.84943333333334,
+      "end_time": 82.8828,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0151.jpg"
+    },
+    {
+      "frame_id": 152,
+      "filename": "frame_0152.jpg",
+      "start_time": 82.8828,
+      "end_time": 82.91616666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0152.jpg"
+    },
+    {
+      "frame_id": 153,
+      "filename": "frame_0153.jpg",
+      "start_time": 82.91616666666667,
+      "end_time": 82.94953333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0153.jpg"
+    },
+    {
+      "frame_id": 154,
+      "filename": "frame_0154.jpg",
+      "start_time": 82.94953333333333,
+      "end_time": 82.9829,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0154.jpg"
+    },
+    {
+      "frame_id": 155,
+      "filename": "frame_0155.jpg",
+      "start_time": 82.9829,
+      "end_time": 83.01626666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0155.jpg"
+    },
+    {
+      "frame_id": 156,
+      "filename": "frame_0156.jpg",
+      "start_time": 83.01626666666667,
+      "end_time": 83.04963333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0156.jpg"
+    },
+    {
+      "frame_id": 157,
+      "filename": "frame_0157.jpg",
+      "start_time": 83.04963333333333,
+      "end_time": 83.083,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0157.jpg"
+    },
+    {
+      "frame_id": 158,
+      "filename": "frame_0158.jpg",
+      "start_time": 83.083,
+      "end_time": 83.11636666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0158.jpg"
+    },
+    {
+      "frame_id": 159,
+      "filename": "frame_0159.jpg",
+      "start_time": 83.11636666666666,
+      "end_time": 83.14973333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0159.jpg"
+    },
+    {
+      "frame_id": 160,
+      "filename": "frame_0160.jpg",
+      "start_time": 83.14973333333333,
+      "end_time": 83.1831,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0160.jpg"
+    },
+    {
+      "frame_id": 161,
+      "filename": "frame_0161.jpg",
+      "start_time": 83.1831,
+      "end_time": 86.45303333333334,
+      "duration": 3.2699333333333414,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0161.jpg"
+    },
+    {
+      "frame_id": 162,
+      "filename": "frame_0162.jpg",
+      "start_time": 86.45303333333334,
+      "end_time": 86.4864,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0162.jpg"
+    },
+    {
+      "frame_id": 163,
+      "filename": "frame_0163.jpg",
+      "start_time": 86.4864,
+      "end_time": 86.51976666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0163.jpg"
+    },
+    {
+      "frame_id": 164,
+      "filename": "frame_0164.jpg",
+      "start_time": 86.51976666666667,
+      "end_time": 88.52176666666666,
+      "duration": 2.0019999999999953,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0164.jpg"
+    },
+    {
+      "frame_id": 165,
+      "filename": "frame_0165.jpg",
+      "start_time": 88.52176666666666,
+      "end_time": 94.4944,
+      "duration": 5.972633333333334,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0165.jpg"
+    },
+    {
+      "frame_id": 166,
+      "filename": "frame_0166.jpg",
+      "start_time": 94.4944,
+      "end_time": 94.92816666666667,
+      "duration": 0.43376666666667063,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0166.jpg"
+    },
+    {
+      "frame_id": 167,
+      "filename": "frame_0167.jpg",
+      "start_time": 94.92816666666667,
+      "end_time": 94.96153333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0167.jpg"
+    },
+    {
+      "frame_id": 168,
+      "filename": "frame_0168.jpg",
+      "start_time": 94.96153333333334,
+      "end_time": 96.36293333333333,
+      "duration": 1.4013999999999953,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0168.jpg"
+    },
+    {
+      "frame_id": 169,
+      "filename": "frame_0169.jpg",
+      "start_time": 96.36293333333333,
+      "end_time": 98.26483333333333,
+      "duration": 1.9018999999999977,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0169.jpg"
+    },
+    {
+      "frame_id": 170,
+      "filename": "frame_0170.jpg",
+      "start_time": 98.26483333333333,
+      "end_time": 98.36493333333334,
+      "duration": 0.10010000000001185,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0170.jpg"
+    },
+    {
+      "frame_id": 171,
+      "filename": "frame_0171.jpg",
+      "start_time": 98.36493333333334,
+      "end_time": 98.3983,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0171.jpg"
+    },
+    {
+      "frame_id": 172,
+      "filename": "frame_0172.jpg",
+      "start_time": 98.3983,
+      "end_time": 98.46503333333334,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0172.jpg"
+    },
+    {
+      "frame_id": 173,
+      "filename": "frame_0173.jpg",
+      "start_time": 98.46503333333334,
+      "end_time": 98.4984,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0173.jpg"
+    },
+    {
+      "frame_id": 174,
+      "filename": "frame_0174.jpg",
+      "start_time": 98.4984,
+      "end_time": 98.83206666666666,
+      "duration": 0.3336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0174.jpg"
+    },
+    {
+      "frame_id": 175,
+      "filename": "frame_0175.jpg",
+      "start_time": 98.83206666666666,
+      "end_time": 98.86543333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0175.jpg"
+    },
+    {
+      "frame_id": 176,
+      "filename": "frame_0176.jpg",
+      "start_time": 98.86543333333333,
+      "end_time": 98.89880000000001,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0176.jpg"
+    },
+    {
+      "frame_id": 177,
+      "filename": "frame_0177.jpg",
+      "start_time": 98.89880000000001,
+      "end_time": 98.96553333333334,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0177.jpg"
+    },
+    {
+      "frame_id": 178,
+      "filename": "frame_0178.jpg",
+      "start_time": 98.96553333333334,
+      "end_time": 98.9989,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0178.jpg"
+    },
+    {
+      "frame_id": 179,
+      "filename": "frame_0179.jpg",
+      "start_time": 98.9989,
+      "end_time": 99.03226666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0179.jpg"
+    },
+    {
+      "frame_id": 180,
+      "filename": "frame_0180.jpg",
+      "start_time": 99.03226666666667,
+      "end_time": 99.6996,
+      "duration": 0.6673333333333318,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0180.jpg"
+    },
+    {
+      "frame_id": 181,
+      "filename": "frame_0181.jpg",
+      "start_time": 99.6996,
+      "end_time": 101.46803333333334,
+      "duration": 1.7684333333333342,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0181.jpg"
+    },
+    {
+      "frame_id": 182,
+      "filename": "frame_0182.jpg",
+      "start_time": 101.46803333333334,
+      "end_time": 117.55076666666668,
+      "duration": 16.082733333333337,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0182.jpg"
+    },
+    {
+      "frame_id": 183,
+      "filename": "frame_0183.jpg",
+      "start_time": 117.55076666666668,
+      "end_time": 117.65086666666667,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0183.jpg"
+    },
+    {
+      "frame_id": 184,
+      "filename": "frame_0184.jpg",
+      "start_time": 117.65086666666667,
+      "end_time": 117.7176,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0184.jpg"
+    },
+    {
+      "frame_id": 185,
+      "filename": "frame_0185.jpg",
+      "start_time": 117.7176,
+      "end_time": 117.75096666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0185.jpg"
+    },
+    {
+      "frame_id": 186,
+      "filename": "frame_0186.jpg",
+      "start_time": 117.75096666666667,
+      "end_time": 117.78433333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0186.jpg"
+    },
+    {
+      "frame_id": 187,
+      "filename": "frame_0187.jpg",
+      "start_time": 117.78433333333334,
+      "end_time": 117.85106666666667,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0187.jpg"
+    },
+    {
+      "frame_id": 188,
+      "filename": "frame_0188.jpg",
+      "start_time": 117.85106666666667,
+      "end_time": 117.88443333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0188.jpg"
+    },
+    {
+      "frame_id": 189,
+      "filename": "frame_0189.jpg",
+      "start_time": 117.88443333333333,
+      "end_time": 117.9178,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0189.jpg"
+    },
+    {
+      "frame_id": 190,
+      "filename": "frame_0190.jpg",
+      "start_time": 117.9178,
+      "end_time": 117.95116666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0190.jpg"
+    },
+    {
+      "frame_id": 191,
+      "filename": "frame_0191.jpg",
+      "start_time": 117.95116666666667,
+      "end_time": 118.05126666666666,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0191.jpg"
+    },
+    {
+      "frame_id": 192,
+      "filename": "frame_0192.jpg",
+      "start_time": 118.05126666666666,
+      "end_time": 118.11800000000001,
+      "duration": 0.06673333333334597,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0192.jpg"
+    },
+    {
+      "frame_id": 193,
+      "filename": "frame_0193.jpg",
+      "start_time": 118.11800000000001,
+      "end_time": 118.15136666666668,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0193.jpg"
+    },
+    {
+      "frame_id": 194,
+      "filename": "frame_0194.jpg",
+      "start_time": 118.15136666666668,
+      "end_time": 118.18473333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0194.jpg"
+    },
+    {
+      "frame_id": 195,
+      "filename": "frame_0195.jpg",
+      "start_time": 118.18473333333334,
+      "end_time": 118.2181,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0195.jpg"
+    },
+    {
+      "frame_id": 196,
+      "filename": "frame_0196.jpg",
+      "start_time": 118.2181,
+      "end_time": 118.25146666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0196.jpg"
+    },
+    {
+      "frame_id": 197,
+      "filename": "frame_0197.jpg",
+      "start_time": 118.25146666666667,
+      "end_time": 118.28483333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0197.jpg"
+    },
+    {
+      "frame_id": 198,
+      "filename": "frame_0198.jpg",
+      "start_time": 118.28483333333334,
+      "end_time": 118.3182,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0198.jpg"
+    },
+    {
+      "frame_id": 199,
+      "filename": "frame_0199.jpg",
+      "start_time": 118.3182,
+      "end_time": 118.35156666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0199.jpg"
+    },
+    {
+      "frame_id": 200,
+      "filename": "frame_0200.jpg",
+      "start_time": 118.35156666666667,
+      "end_time": 118.38493333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0200.jpg"
+    },
+    {
+      "frame_id": 201,
+      "filename": "frame_0201.jpg",
+      "start_time": 118.38493333333334,
+      "end_time": 118.4183,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0201.jpg"
+    },
+    {
+      "frame_id": 202,
+      "filename": "frame_0202.jpg",
+      "start_time": 118.4183,
+      "end_time": 118.45166666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0202.jpg"
+    },
+    {
+      "frame_id": 203,
+      "filename": "frame_0203.jpg",
+      "start_time": 118.45166666666667,
+      "end_time": 118.48503333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0203.jpg"
+    },
+    {
+      "frame_id": 204,
+      "filename": "frame_0204.jpg",
+      "start_time": 118.48503333333333,
+      "end_time": 118.5184,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0204.jpg"
+    },
+    {
+      "frame_id": 205,
+      "filename": "frame_0205.jpg",
+      "start_time": 118.5184,
+      "end_time": 118.55176666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0205.jpg"
+    },
+    {
+      "frame_id": 206,
+      "filename": "frame_0206.jpg",
+      "start_time": 118.55176666666667,
+      "end_time": 118.58513333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0206.jpg"
+    },
+    {
+      "frame_id": 207,
+      "filename": "frame_0207.jpg",
+      "start_time": 118.58513333333333,
+      "end_time": 118.6185,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0207.jpg"
+    },
+    {
+      "frame_id": 208,
+      "filename": "frame_0208.jpg",
+      "start_time": 118.6185,
+      "end_time": 118.65186666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0208.jpg"
+    },
+    {
+      "frame_id": 209,
+      "filename": "frame_0209.jpg",
+      "start_time": 118.65186666666666,
+      "end_time": 118.68523333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0209.jpg"
+    },
+    {
+      "frame_id": 210,
+      "filename": "frame_0210.jpg",
+      "start_time": 118.68523333333333,
+      "end_time": 118.71860000000001,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0210.jpg"
+    },
+    {
+      "frame_id": 211,
+      "filename": "frame_0211.jpg",
+      "start_time": 118.71860000000001,
+      "end_time": 118.75196666666668,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0211.jpg"
+    },
+    {
+      "frame_id": 212,
+      "filename": "frame_0212.jpg",
+      "start_time": 118.75196666666668,
+      "end_time": 118.78533333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0212.jpg"
+    },
+    {
+      "frame_id": 213,
+      "filename": "frame_0213.jpg",
+      "start_time": 118.78533333333334,
+      "end_time": 118.8187,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0213.jpg"
+    },
+    {
+      "frame_id": 214,
+      "filename": "frame_0214.jpg",
+      "start_time": 118.8187,
+      "end_time": 118.85206666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0214.jpg"
+    },
+    {
+      "frame_id": 215,
+      "filename": "frame_0215.jpg",
+      "start_time": 118.85206666666667,
+      "end_time": 118.9188,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0215.jpg"
+    },
+    {
+      "frame_id": 216,
+      "filename": "frame_0216.jpg",
+      "start_time": 118.9188,
+      "end_time": 118.95216666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0216.jpg"
+    },
+    {
+      "frame_id": 217,
+      "filename": "frame_0217.jpg",
+      "start_time": 118.95216666666667,
+      "end_time": 118.98553333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0217.jpg"
+    },
+    {
+      "frame_id": 218,
+      "filename": "frame_0218.jpg",
+      "start_time": 118.98553333333334,
+      "end_time": 119.0189,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0218.jpg"
+    },
+    {
+      "frame_id": 219,
+      "filename": "frame_0219.jpg",
+      "start_time": 119.0189,
+      "end_time": 119.05226666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0219.jpg"
+    },
+    {
+      "frame_id": 220,
+      "filename": "frame_0220.jpg",
+      "start_time": 119.05226666666667,
+      "end_time": 119.08563333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0220.jpg"
+    },
+    {
+      "frame_id": 221,
+      "filename": "frame_0221.jpg",
+      "start_time": 119.08563333333333,
+      "end_time": 119.119,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0221.jpg"
+    },
+    {
+      "frame_id": 222,
+      "filename": "frame_0222.jpg",
+      "start_time": 119.119,
+      "end_time": 119.15236666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0222.jpg"
+    },
+    {
+      "frame_id": 223,
+      "filename": "frame_0223.jpg",
+      "start_time": 119.15236666666667,
+      "end_time": 119.18573333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0223.jpg"
+    },
+    {
+      "frame_id": 224,
+      "filename": "frame_0224.jpg",
+      "start_time": 119.18573333333333,
+      "end_time": 119.3192,
+      "duration": 0.1334666666666635,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0224.jpg"
+    },
+    {
+      "frame_id": 225,
+      "filename": "frame_0225.jpg",
+      "start_time": 119.3192,
+      "end_time": 119.35256666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0225.jpg"
+    },
+    {
+      "frame_id": 226,
+      "filename": "frame_0226.jpg",
+      "start_time": 119.35256666666668,
+      "end_time": 119.38593333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0226.jpg"
+    },
+    {
+      "frame_id": 227,
+      "filename": "frame_0227.jpg",
+      "start_time": 119.38593333333334,
+      "end_time": 119.4193,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0227.jpg"
+    },
+    {
+      "frame_id": 228,
+      "filename": "frame_0228.jpg",
+      "start_time": 119.4193,
+      "end_time": 119.45266666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0228.jpg"
+    },
+    {
+      "frame_id": 229,
+      "filename": "frame_0229.jpg",
+      "start_time": 119.45266666666667,
+      "end_time": 119.48603333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0229.jpg"
+    },
+    {
+      "frame_id": 230,
+      "filename": "frame_0230.jpg",
+      "start_time": 119.48603333333334,
+      "end_time": 119.5194,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0230.jpg"
+    },
+    {
+      "frame_id": 231,
+      "filename": "frame_0231.jpg",
+      "start_time": 119.5194,
+      "end_time": 119.55276666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0231.jpg"
+    },
+    {
+      "frame_id": 232,
+      "filename": "frame_0232.jpg",
+      "start_time": 119.55276666666667,
+      "end_time": 119.58613333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0232.jpg"
+    },
+    {
+      "frame_id": 233,
+      "filename": "frame_0233.jpg",
+      "start_time": 119.58613333333334,
+      "end_time": 119.6195,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0233.jpg"
+    },
+    {
+      "frame_id": 234,
+      "filename": "frame_0234.jpg",
+      "start_time": 119.6195,
+      "end_time": 119.65286666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0234.jpg"
+    },
+    {
+      "frame_id": 235,
+      "filename": "frame_0235.jpg",
+      "start_time": 119.65286666666667,
+      "end_time": 119.68623333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0235.jpg"
+    },
+    {
+      "frame_id": 236,
+      "filename": "frame_0236.jpg",
+      "start_time": 119.68623333333333,
+      "end_time": 119.7196,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0236.jpg"
+    },
+    {
+      "frame_id": 237,
+      "filename": "frame_0237.jpg",
+      "start_time": 119.7196,
+      "end_time": 119.75296666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0237.jpg"
+    },
+    {
+      "frame_id": 238,
+      "filename": "frame_0238.jpg",
+      "start_time": 119.75296666666667,
+      "end_time": 119.78633333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0238.jpg"
+    },
+    {
+      "frame_id": 239,
+      "filename": "frame_0239.jpg",
+      "start_time": 119.78633333333333,
+      "end_time": 119.85306666666666,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0239.jpg"
+    },
+    {
+      "frame_id": 240,
+      "filename": "frame_0240.jpg",
+      "start_time": 119.85306666666666,
+      "end_time": 119.88643333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0240.jpg"
+    },
+    {
+      "frame_id": 241,
+      "filename": "frame_0241.jpg",
+      "start_time": 119.88643333333333,
+      "end_time": 119.9198,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0241.jpg"
+    },
+    {
+      "frame_id": 242,
+      "filename": "frame_0242.jpg",
+      "start_time": 119.9198,
+      "end_time": 119.95316666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0242.jpg"
+    },
+    {
+      "frame_id": 243,
+      "filename": "frame_0243.jpg",
+      "start_time": 119.95316666666668,
+      "end_time": 119.98653333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0243.jpg"
+    },
+    {
+      "frame_id": 244,
+      "filename": "frame_0244.jpg",
+      "start_time": 119.98653333333334,
+      "end_time": 120.0199,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0244.jpg"
+    },
+    {
+      "frame_id": 245,
+      "filename": "frame_0245.jpg",
+      "start_time": 120.0199,
+      "end_time": 120.05326666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0245.jpg"
+    },
+    {
+      "frame_id": 246,
+      "filename": "frame_0246.jpg",
+      "start_time": 120.05326666666667,
+      "end_time": 120.08663333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0246.jpg"
+    },
+    {
+      "frame_id": 247,
+      "filename": "frame_0247.jpg",
+      "start_time": 120.08663333333334,
+      "end_time": 120.12,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0247.jpg"
+    },
+    {
+      "frame_id": 248,
+      "filename": "frame_0248.jpg",
+      "start_time": 120.12,
+      "end_time": 120.15336666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0248.jpg"
+    },
+    {
+      "frame_id": 249,
+      "filename": "frame_0249.jpg",
+      "start_time": 120.15336666666667,
+      "end_time": 120.18673333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0249.jpg"
+    },
+    {
+      "frame_id": 250,
+      "filename": "frame_0250.jpg",
+      "start_time": 120.18673333333334,
+      "end_time": 120.2201,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0250.jpg"
+    },
+    {
+      "frame_id": 251,
+      "filename": "frame_0251.jpg",
+      "start_time": 120.2201,
+      "end_time": 120.25346666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0251.jpg"
+    },
+    {
+      "frame_id": 252,
+      "filename": "frame_0252.jpg",
+      "start_time": 120.25346666666667,
+      "end_time": 120.28683333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0252.jpg"
+    },
+    {
+      "frame_id": 253,
+      "filename": "frame_0253.jpg",
+      "start_time": 120.28683333333333,
+      "end_time": 120.3202,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0253.jpg"
+    },
+    {
+      "frame_id": 254,
+      "filename": "frame_0254.jpg",
+      "start_time": 120.3202,
+      "end_time": 120.35356666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0254.jpg"
+    },
+    {
+      "frame_id": 255,
+      "filename": "frame_0255.jpg",
+      "start_time": 120.35356666666667,
+      "end_time": 120.38693333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0255.jpg"
+    },
+    {
+      "frame_id": 256,
+      "filename": "frame_0256.jpg",
+      "start_time": 120.38693333333333,
+      "end_time": 120.4203,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0256.jpg"
+    },
+    {
+      "frame_id": 257,
+      "filename": "frame_0257.jpg",
+      "start_time": 120.4203,
+      "end_time": 120.45366666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0257.jpg"
+    },
+    {
+      "frame_id": 258,
+      "filename": "frame_0258.jpg",
+      "start_time": 120.45366666666666,
+      "end_time": 120.48703333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0258.jpg"
+    },
+    {
+      "frame_id": 259,
+      "filename": "frame_0259.jpg",
+      "start_time": 120.48703333333333,
+      "end_time": 120.5204,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0259.jpg"
+    },
+    {
+      "frame_id": 260,
+      "filename": "frame_0260.jpg",
+      "start_time": 120.5204,
+      "end_time": 120.55376666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0260.jpg"
+    },
+    {
+      "frame_id": 261,
+      "filename": "frame_0261.jpg",
+      "start_time": 120.55376666666668,
+      "end_time": 120.78733333333334,
+      "duration": 0.23356666666666115,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0261.jpg"
+    },
+    {
+      "frame_id": 262,
+      "filename": "frame_0262.jpg",
+      "start_time": 120.78733333333334,
+      "end_time": 120.8207,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0262.jpg"
+    },
+    {
+      "frame_id": 263,
+      "filename": "frame_0263.jpg",
+      "start_time": 120.8207,
+      "end_time": 120.85406666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0263.jpg"
+    },
+    {
+      "frame_id": 264,
+      "filename": "frame_0264.jpg",
+      "start_time": 120.85406666666667,
+      "end_time": 120.88743333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0264.jpg"
+    },
+    {
+      "frame_id": 265,
+      "filename": "frame_0265.jpg",
+      "start_time": 120.88743333333333,
+      "end_time": 120.9208,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0265.jpg"
+    },
+    {
+      "frame_id": 266,
+      "filename": "frame_0266.jpg",
+      "start_time": 120.9208,
+      "end_time": 120.95416666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0266.jpg"
+    },
+    {
+      "frame_id": 267,
+      "filename": "frame_0267.jpg",
+      "start_time": 120.95416666666667,
+      "end_time": 120.98753333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0267.jpg"
+    },
+    {
+      "frame_id": 268,
+      "filename": "frame_0268.jpg",
+      "start_time": 120.98753333333333,
+      "end_time": 121.0209,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0268.jpg"
+    },
+    {
+      "frame_id": 269,
+      "filename": "frame_0269.jpg",
+      "start_time": 121.0209,
+      "end_time": 121.05426666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0269.jpg"
+    },
+    {
+      "frame_id": 270,
+      "filename": "frame_0270.jpg",
+      "start_time": 121.05426666666666,
+      "end_time": 121.08763333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0270.jpg"
+    },
+    {
+      "frame_id": 271,
+      "filename": "frame_0271.jpg",
+      "start_time": 121.08763333333333,
+      "end_time": 121.121,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0271.jpg"
+    },
+    {
+      "frame_id": 272,
+      "filename": "frame_0272.jpg",
+      "start_time": 121.121,
+      "end_time": 121.15436666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0272.jpg"
+    },
+    {
+      "frame_id": 273,
+      "filename": "frame_0273.jpg",
+      "start_time": 121.15436666666668,
+      "end_time": 121.18773333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0273.jpg"
+    },
+    {
+      "frame_id": 274,
+      "filename": "frame_0274.jpg",
+      "start_time": 121.18773333333334,
+      "end_time": 121.28783333333334,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0274.jpg"
+    },
+    {
+      "frame_id": 275,
+      "filename": "frame_0275.jpg",
+      "start_time": 121.28783333333334,
+      "end_time": 121.35456666666667,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0275.jpg"
+    },
+    {
+      "frame_id": 276,
+      "filename": "frame_0276.jpg",
+      "start_time": 121.35456666666667,
+      "end_time": 121.38793333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0276.jpg"
+    },
+    {
+      "frame_id": 277,
+      "filename": "frame_0277.jpg",
+      "start_time": 121.38793333333334,
+      "end_time": 121.45466666666667,
+      "duration": 0.06673333333333176,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0277.jpg"
+    },
+    {
+      "frame_id": 278,
+      "filename": "frame_0278.jpg",
+      "start_time": 121.45466666666667,
+      "end_time": 121.48803333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0278.jpg"
+    },
+    {
+      "frame_id": 279,
+      "filename": "frame_0279.jpg",
+      "start_time": 121.48803333333333,
+      "end_time": 121.5214,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0279.jpg"
+    },
+    {
+      "frame_id": 280,
+      "filename": "frame_0280.jpg",
+      "start_time": 121.5214,
+      "end_time": 121.55476666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0280.jpg"
+    },
+    {
+      "frame_id": 281,
+      "filename": "frame_0281.jpg",
+      "start_time": 121.55476666666667,
+      "end_time": 121.58813333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0281.jpg"
+    },
+    {
+      "frame_id": 282,
+      "filename": "frame_0282.jpg",
+      "start_time": 121.58813333333333,
+      "end_time": 121.6215,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0282.jpg"
+    },
+    {
+      "frame_id": 283,
+      "filename": "frame_0283.jpg",
+      "start_time": 121.6215,
+      "end_time": 121.65486666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0283.jpg"
+    },
+    {
+      "frame_id": 284,
+      "filename": "frame_0284.jpg",
+      "start_time": 121.65486666666666,
+      "end_time": 121.68823333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0284.jpg"
+    },
+    {
+      "frame_id": 285,
+      "filename": "frame_0285.jpg",
+      "start_time": 121.68823333333333,
+      "end_time": 121.7216,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0285.jpg"
+    },
+    {
+      "frame_id": 286,
+      "filename": "frame_0286.jpg",
+      "start_time": 121.7216,
+      "end_time": 121.75496666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0286.jpg"
+    },
+    {
+      "frame_id": 287,
+      "filename": "frame_0287.jpg",
+      "start_time": 121.75496666666668,
+      "end_time": 121.78833333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0287.jpg"
+    },
+    {
+      "frame_id": 288,
+      "filename": "frame_0288.jpg",
+      "start_time": 121.78833333333334,
+      "end_time": 121.8217,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0288.jpg"
+    },
+    {
+      "frame_id": 289,
+      "filename": "frame_0289.jpg",
+      "start_time": 121.8217,
+      "end_time": 121.85506666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0289.jpg"
+    },
+    {
+      "frame_id": 290,
+      "filename": "frame_0290.jpg",
+      "start_time": 121.85506666666667,
+      "end_time": 121.88843333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0290.jpg"
+    },
+    {
+      "frame_id": 291,
+      "filename": "frame_0291.jpg",
+      "start_time": 121.88843333333334,
+      "end_time": 121.9218,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0291.jpg"
+    },
+    {
+      "frame_id": 292,
+      "filename": "frame_0292.jpg",
+      "start_time": 121.9218,
+      "end_time": 121.95516666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0292.jpg"
+    },
+    {
+      "frame_id": 293,
+      "filename": "frame_0293.jpg",
+      "start_time": 121.95516666666667,
+      "end_time": 121.98853333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0293.jpg"
+    },
+    {
+      "frame_id": 294,
+      "filename": "frame_0294.jpg",
+      "start_time": 121.98853333333334,
+      "end_time": 122.0219,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0294.jpg"
+    },
+    {
+      "frame_id": 295,
+      "filename": "frame_0295.jpg",
+      "start_time": 122.0219,
+      "end_time": 122.05526666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0295.jpg"
+    },
+    {
+      "frame_id": 296,
+      "filename": "frame_0296.jpg",
+      "start_time": 122.05526666666667,
+      "end_time": 122.08863333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0296.jpg"
+    },
+    {
+      "frame_id": 297,
+      "filename": "frame_0297.jpg",
+      "start_time": 122.08863333333333,
+      "end_time": 122.122,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0297.jpg"
+    },
+    {
+      "frame_id": 298,
+      "filename": "frame_0298.jpg",
+      "start_time": 122.122,
+      "end_time": 122.15536666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0298.jpg"
+    },
+    {
+      "frame_id": 299,
+      "filename": "frame_0299.jpg",
+      "start_time": 122.15536666666667,
+      "end_time": 122.18873333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0299.jpg"
+    },
+    {
+      "frame_id": 300,
+      "filename": "frame_0300.jpg",
+      "start_time": 122.18873333333333,
+      "end_time": 122.2221,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0300.jpg"
+    },
+    {
+      "frame_id": 301,
+      "filename": "frame_0301.jpg",
+      "start_time": 122.2221,
+      "end_time": 122.25546666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0301.jpg"
+    },
+    {
+      "frame_id": 302,
+      "filename": "frame_0302.jpg",
+      "start_time": 122.25546666666666,
+      "end_time": 122.28883333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0302.jpg"
+    },
+    {
+      "frame_id": 303,
+      "filename": "frame_0303.jpg",
+      "start_time": 122.28883333333333,
+      "end_time": 122.3222,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0303.jpg"
+    },
+    {
+      "frame_id": 304,
+      "filename": "frame_0304.jpg",
+      "start_time": 122.3222,
+      "end_time": 122.35556666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0304.jpg"
+    },
+    {
+      "frame_id": 305,
+      "filename": "frame_0305.jpg",
+      "start_time": 122.35556666666668,
+      "end_time": 122.38893333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0305.jpg"
+    },
+    {
+      "frame_id": 306,
+      "filename": "frame_0306.jpg",
+      "start_time": 122.38893333333334,
+      "end_time": 122.4223,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0306.jpg"
+    },
+    {
+      "frame_id": 307,
+      "filename": "frame_0307.jpg",
+      "start_time": 122.4223,
+      "end_time": 122.45566666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0307.jpg"
+    },
+    {
+      "frame_id": 308,
+      "filename": "frame_0308.jpg",
+      "start_time": 122.45566666666667,
+      "end_time": 122.48903333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0308.jpg"
+    },
+    {
+      "frame_id": 309,
+      "filename": "frame_0309.jpg",
+      "start_time": 122.48903333333334,
+      "end_time": 122.5224,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0309.jpg"
+    },
+    {
+      "frame_id": 310,
+      "filename": "frame_0310.jpg",
+      "start_time": 122.5224,
+      "end_time": 122.55576666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0310.jpg"
+    },
+    {
+      "frame_id": 311,
+      "filename": "frame_0311.jpg",
+      "start_time": 122.55576666666667,
+      "end_time": 122.58913333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0311.jpg"
+    },
+    {
+      "frame_id": 312,
+      "filename": "frame_0312.jpg",
+      "start_time": 122.58913333333334,
+      "end_time": 122.6225,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0312.jpg"
+    },
+    {
+      "frame_id": 313,
+      "filename": "frame_0313.jpg",
+      "start_time": 122.6225,
+      "end_time": 122.65586666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0313.jpg"
+    },
+    {
+      "frame_id": 314,
+      "filename": "frame_0314.jpg",
+      "start_time": 122.65586666666667,
+      "end_time": 122.68923333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0314.jpg"
+    },
+    {
+      "frame_id": 315,
+      "filename": "frame_0315.jpg",
+      "start_time": 122.68923333333333,
+      "end_time": 122.7226,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0315.jpg"
+    },
+    {
+      "frame_id": 316,
+      "filename": "frame_0316.jpg",
+      "start_time": 122.7226,
+      "end_time": 122.75596666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0316.jpg"
+    },
+    {
+      "frame_id": 317,
+      "filename": "frame_0317.jpg",
+      "start_time": 122.75596666666667,
+      "end_time": 122.78933333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0317.jpg"
+    },
+    {
+      "frame_id": 318,
+      "filename": "frame_0318.jpg",
+      "start_time": 122.78933333333333,
+      "end_time": 122.88943333333333,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0318.jpg"
+    },
+    {
+      "frame_id": 319,
+      "filename": "frame_0319.jpg",
+      "start_time": 122.88943333333333,
+      "end_time": 122.9228,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0319.jpg"
+    },
+    {
+      "frame_id": 320,
+      "filename": "frame_0320.jpg",
+      "start_time": 122.9228,
+      "end_time": 122.95616666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0320.jpg"
+    },
+    {
+      "frame_id": 321,
+      "filename": "frame_0321.jpg",
+      "start_time": 122.95616666666668,
+      "end_time": 122.98953333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0321.jpg"
+    },
+    {
+      "frame_id": 322,
+      "filename": "frame_0322.jpg",
+      "start_time": 122.98953333333334,
+      "end_time": 123.0229,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0322.jpg"
+    },
+    {
+      "frame_id": 323,
+      "filename": "frame_0323.jpg",
+      "start_time": 123.0229,
+      "end_time": 123.05626666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0323.jpg"
+    },
+    {
+      "frame_id": 324,
+      "filename": "frame_0324.jpg",
+      "start_time": 123.05626666666667,
+      "end_time": 123.08963333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0324.jpg"
+    },
+    {
+      "frame_id": 325,
+      "filename": "frame_0325.jpg",
+      "start_time": 123.08963333333334,
+      "end_time": 123.123,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0325.jpg"
+    },
+    {
+      "frame_id": 326,
+      "filename": "frame_0326.jpg",
+      "start_time": 123.123,
+      "end_time": 123.15636666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0326.jpg"
+    },
+    {
+      "frame_id": 327,
+      "filename": "frame_0327.jpg",
+      "start_time": 123.15636666666667,
+      "end_time": 123.18973333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0327.jpg"
+    },
+    {
+      "frame_id": 328,
+      "filename": "frame_0328.jpg",
+      "start_time": 123.18973333333334,
+      "end_time": 123.2231,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0328.jpg"
+    },
+    {
+      "frame_id": 329,
+      "filename": "frame_0329.jpg",
+      "start_time": 123.2231,
+      "end_time": 123.25646666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0329.jpg"
+    },
+    {
+      "frame_id": 330,
+      "filename": "frame_0330.jpg",
+      "start_time": 123.25646666666667,
+      "end_time": 123.28983333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0330.jpg"
+    },
+    {
+      "frame_id": 331,
+      "filename": "frame_0331.jpg",
+      "start_time": 123.28983333333333,
+      "end_time": 123.3232,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0331.jpg"
+    },
+    {
+      "frame_id": 332,
+      "filename": "frame_0332.jpg",
+      "start_time": 123.3232,
+      "end_time": 123.35656666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0332.jpg"
+    },
+    {
+      "frame_id": 333,
+      "filename": "frame_0333.jpg",
+      "start_time": 123.35656666666667,
+      "end_time": 123.38993333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0333.jpg"
+    },
+    {
+      "frame_id": 334,
+      "filename": "frame_0334.jpg",
+      "start_time": 123.38993333333333,
+      "end_time": 123.4233,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0334.jpg"
+    },
+    {
+      "frame_id": 335,
+      "filename": "frame_0335.jpg",
+      "start_time": 123.4233,
+      "end_time": 123.45666666666666,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0335.jpg"
+    },
+    {
+      "frame_id": 336,
+      "filename": "frame_0336.jpg",
+      "start_time": 123.45666666666666,
+      "end_time": 123.49003333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0336.jpg"
+    },
+    {
+      "frame_id": 337,
+      "filename": "frame_0337.jpg",
+      "start_time": 123.49003333333333,
+      "end_time": 123.5234,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0337.jpg"
+    },
+    {
+      "frame_id": 338,
+      "filename": "frame_0338.jpg",
+      "start_time": 123.5234,
+      "end_time": 123.55676666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0338.jpg"
+    },
+    {
+      "frame_id": 339,
+      "filename": "frame_0339.jpg",
+      "start_time": 123.55676666666668,
+      "end_time": 123.59013333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0339.jpg"
+    },
+    {
+      "frame_id": 340,
+      "filename": "frame_0340.jpg",
+      "start_time": 123.59013333333334,
+      "end_time": 123.6235,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0340.jpg"
+    },
+    {
+      "frame_id": 341,
+      "filename": "frame_0341.jpg",
+      "start_time": 123.6235,
+      "end_time": 123.7236,
+      "duration": 0.10009999999999764,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0341.jpg"
+    },
+    {
+      "frame_id": 342,
+      "filename": "frame_0342.jpg",
+      "start_time": 123.7236,
+      "end_time": 123.75696666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0342.jpg"
+    },
+    {
+      "frame_id": 343,
+      "filename": "frame_0343.jpg",
+      "start_time": 123.75696666666667,
+      "end_time": 123.79033333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0343.jpg"
+    },
+    {
+      "frame_id": 344,
+      "filename": "frame_0344.jpg",
+      "start_time": 123.79033333333334,
+      "end_time": 123.8237,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0344.jpg"
+    },
+    {
+      "frame_id": 345,
+      "filename": "frame_0345.jpg",
+      "start_time": 123.8237,
+      "end_time": 123.85706666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0345.jpg"
+    },
+    {
+      "frame_id": 346,
+      "filename": "frame_0346.jpg",
+      "start_time": 123.85706666666667,
+      "end_time": 123.89043333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0346.jpg"
+    },
+    {
+      "frame_id": 347,
+      "filename": "frame_0347.jpg",
+      "start_time": 123.89043333333333,
+      "end_time": 123.9238,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0347.jpg"
+    },
+    {
+      "frame_id": 348,
+      "filename": "frame_0348.jpg",
+      "start_time": 123.9238,
+      "end_time": 123.95716666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0348.jpg"
+    },
+    {
+      "frame_id": 349,
+      "filename": "frame_0349.jpg",
+      "start_time": 123.95716666666667,
+      "end_time": 123.99053333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0349.jpg"
+    },
+    {
+      "frame_id": 350,
+      "filename": "frame_0350.jpg",
+      "start_time": 123.99053333333333,
+      "end_time": 124.19073333333334,
+      "duration": 0.20020000000000948,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0350.jpg"
+    },
+    {
+      "frame_id": 351,
+      "filename": "frame_0351.jpg",
+      "start_time": 124.19073333333334,
+      "end_time": 124.2241,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0351.jpg"
+    },
+    {
+      "frame_id": 352,
+      "filename": "frame_0352.jpg",
+      "start_time": 124.2241,
+      "end_time": 125.29183333333333,
+      "duration": 1.0677333333333223,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0352.jpg"
+    },
+    {
+      "frame_id": 353,
+      "filename": "frame_0353.jpg",
+      "start_time": 125.29183333333333,
+      "end_time": 125.85906666666666,
+      "duration": 0.5672333333333341,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0353.jpg"
+    },
+    {
+      "frame_id": 354,
+      "filename": "frame_0354.jpg",
+      "start_time": 125.85906666666666,
+      "end_time": 125.89243333333333,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0354.jpg"
+    },
+    {
+      "frame_id": 355,
+      "filename": "frame_0355.jpg",
+      "start_time": 125.89243333333333,
+      "end_time": 125.9258,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0355.jpg"
+    },
+    {
+      "frame_id": 356,
+      "filename": "frame_0356.jpg",
+      "start_time": 125.9258,
+      "end_time": 125.95916666666668,
+      "duration": 0.03336666666668009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0356.jpg"
+    },
+    {
+      "frame_id": 357,
+      "filename": "frame_0357.jpg",
+      "start_time": 125.95916666666668,
+      "end_time": 125.99253333333334,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0357.jpg"
+    },
+    {
+      "frame_id": 358,
+      "filename": "frame_0358.jpg",
+      "start_time": 125.99253333333334,
+      "end_time": 126.02590000000001,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0358.jpg"
+    },
+    {
+      "frame_id": 359,
+      "filename": "frame_0359.jpg",
+      "start_time": 126.02590000000001,
+      "end_time": 126.05926666666667,
+      "duration": 0.03336666666666588,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0359.jpg"
+    },
+    {
+      "frame_id": 360,
+      "filename": "frame_0360.jpg",
+      "start_time": 126.05926666666667,
+      "end_time": 126.3262,
+      "duration": 0.266933333333327,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-IMXSEIabMM/frame_0360.jpg"
+    }
+  ],
+  "transcripts": [
+    {
+      "start": 1.1799999999999995,
+      "end": 5.98,
+      "text": " When a big snowstorm strikes at some point, we're going to have to dig out from under it.",
+      "words": [
+        {
+          "word": " When",
+          "start": 1.1799999999999995,
+          "end": 1.74
+        },
+        {
+          "word": " a",
+          "start": 1.74,
+          "end": 1.88
+        },
+        {
+          "word": " big",
+          "start": 1.88,
+          "end": 2.08
+        },
+        {
+          "word": " snowstorm",
+          "start": 2.08,
+          "end": 2.8
+        },
+        {
+          "word": " strikes",
+          "start": 2.8,
+          "end": 3.26
+        },
+        {
+          "word": " at",
+          "start": 3.26,
+          "end": 3.48
+        },
+        {
+          "word": " some",
+          "start": 3.48,
+          "end": 3.7
+        },
+        {
+          "word": " point,",
+          "start": 3.7,
+          "end": 4.04
+        },
+        {
+          "word": " we're",
+          "start": 4.04,
+          "end": 4.34
+        },
+        {
+          "word": " going",
+          "start": 4.34,
+          "end": 4.56
+        },
+        {
+          "word": " to",
+          "start": 4.56,
+          "end": 4.68
+        },
+        {
+          "word": " have",
+          "start": 4.68,
+          "end": 4.8
+        },
+        {
+          "word": " to",
+          "start": 4.8,
+          "end": 4.94
+        },
+        {
+          "word": " dig",
+          "start": 4.94,
+          "end": 5.1
+        },
+        {
+          "word": " out",
+          "start": 5.1,
+          "end": 5.28
+        },
+        {
+          "word": " from",
+          "start": 5.28,
+          "end": 5.5
+        },
+        {
+          "word": " under",
+          "start": 5.5,
+          "end": 5.78
+        },
+        {
+          "word": " it.",
+          "start": 5.78,
+          "end": 5.98
+        }
+      ]
+    },
+    {
+      "start": 6.26,
+      "end": 10.92,
+      "text": " But snow shoveling injuries land thousands of people in the emergency room each year.",
+      "words": [
+        {
+          "word": " But",
+          "start": 6.26,
+          "end": 6.4
+        },
+        {
+          "word": " snow",
+          "start": 6.4,
+          "end": 6.66
+        },
+        {
+          "word": " shoveling",
+          "start": 6.66,
+          "end": 7.2
+        },
+        {
+          "word": " injuries",
+          "start": 7.2,
+          "end": 7.56
+        },
+        {
+          "word": " land",
+          "start": 7.56,
+          "end": 7.88
+        },
+        {
+          "word": " thousands",
+          "start": 7.88,
+          "end": 8.44
+        },
+        {
+          "word": " of",
+          "start": 8.44,
+          "end": 8.66
+        },
+        {
+          "word": " people",
+          "start": 8.66,
+          "end": 9.02
+        },
+        {
+          "word": " in",
+          "start": 9.02,
+          "end": 9.22
+        },
+        {
+          "word": " the",
+          "start": 9.22,
+          "end": 9.34
+        },
+        {
+          "word": " emergency",
+          "start": 9.34,
+          "end": 9.72
+        },
+        {
+          "word": " room",
+          "start": 9.72,
+          "end": 10.16
+        },
+        {
+          "word": " each",
+          "start": 10.16,
+          "end": 10.56
+        },
+        {
+          "word": " year.",
+          "start": 10.56,
+          "end": 10.92
+        }
+      ]
+    },
+    {
+      "start": 11.4,
+      "end": 14.22,
+      "text": " And 96% of them happen at home.",
+      "words": [
+        {
+          "word": " And",
+          "start": 11.4,
+          "end": 11.5
+        },
+        {
+          "word": " 96",
+          "start": 11.5,
+          "end": 11.9
+        },
+        {
+          "word": "%",
+          "start": 11.9,
+          "end": 12.6
+        },
+        {
+          "word": " of",
+          "start": 12.6,
+          "end": 12.82
+        },
+        {
+          "word": " them",
+          "start": 12.82,
+          "end": 13.0
+        },
+        {
+          "word": " happen",
+          "start": 13.0,
+          "end": 13.5
+        },
+        {
+          "word": " at",
+          "start": 13.5,
+          "end": 13.84
+        },
+        {
+          "word": " home.",
+          "start": 13.84,
+          "end": 14.22
+        }
+      ]
+    },
+    {
+      "start": 14.8,
+      "end": 18.14,
+      "text": " Dr. James Souto is an emergency room doctor at Cleveland Clinic.",
+      "words": [
+        {
+          "word": " Dr.",
+          "start": 14.8,
+          "end": 14.98
+        },
+        {
+          "word": " James",
+          "start": 15.26,
+          "end": 15.3
+        },
+        {
+          "word": " Souto",
+          "start": 15.3,
+          "end": 15.78
+        },
+        {
+          "word": " is",
+          "start": 15.78,
+          "end": 15.98
+        },
+        {
+          "word": " an",
+          "start": 15.98,
+          "end": 16.1
+        },
+        {
+          "word": " emergency",
+          "start": 16.1,
+          "end": 16.48
+        },
+        {
+          "word": " room",
+          "start": 16.48,
+          "end": 16.88
+        },
+        {
+          "word": " doctor",
+          "start": 16.88,
+          "end": 17.32
+        },
+        {
+          "word": " at",
+          "start": 17.32,
+          "end": 17.48
+        },
+        {
+          "word": " Cleveland",
+          "start": 17.48,
+          "end": 17.76
+        },
+        {
+          "word": " Clinic.",
+          "start": 17.76,
+          "end": 18.14
+        }
+      ]
+    },
+    {
+      "start": 18.52,
+      "end": 22.12,
+      "text": " He says common injuries occur as the result of a slip and fall.",
+      "words": [
+        {
+          "word": " He",
+          "start": 18.52,
+          "end": 18.72
+        },
+        {
+          "word": " says",
+          "start": 18.72,
+          "end": 18.9
+        },
+        {
+          "word": " common",
+          "start": 18.9,
+          "end": 19.32
+        },
+        {
+          "word": " injuries",
+          "start": 19.32,
+          "end": 19.76
+        },
+        {
+          "word": " occur",
+          "start": 19.76,
+          "end": 20.16
+        },
+        {
+          "word": " as",
+          "start": 20.16,
+          "end": 20.4
+        },
+        {
+          "word": " the",
+          "start": 20.4,
+          "end": 20.5
+        },
+        {
+          "word": " result",
+          "start": 20.5,
+          "end": 20.86
+        },
+        {
+          "word": " of",
+          "start": 20.86,
+          "end": 21.2
+        },
+        {
+          "word": " a",
+          "start": 21.2,
+          "end": 21.28
+        },
+        {
+          "word": " slip",
+          "start": 21.28,
+          "end": 21.58
+        },
+        {
+          "word": " and",
+          "start": 21.58,
+          "end": 21.82
+        },
+        {
+          "word": " fall.",
+          "start": 21.82,
+          "end": 22.12
+        }
+      ]
+    },
+    {
+      "start": 22.84,
+      "end": 29.28,
+      "text": " Slipping and falling, hitting your hand, causing an injury, a break, a fracture, but at least",
+      "words": [
+        {
+          "word": " Slipping",
+          "start": 22.84,
+          "end": 23.24
+        },
+        {
+          "word": " and",
+          "start": 23.24,
+          "end": 23.46
+        },
+        {
+          "word": " falling,",
+          "start": 23.46,
+          "end": 23.8
+        },
+        {
+          "word": " hitting",
+          "start": 24.02,
+          "end": 24.28
+        },
+        {
+          "word": " your",
+          "start": 24.28,
+          "end": 24.48
+        },
+        {
+          "word": " hand,",
+          "start": 24.48,
+          "end": 24.94
+        },
+        {
+          "word": " causing",
+          "start": 25.16,
+          "end": 26.06
+        },
+        {
+          "word": " an",
+          "start": 26.06,
+          "end": 26.28
+        },
+        {
+          "word": " injury,",
+          "start": 26.28,
+          "end": 26.68
+        },
+        {
+          "word": " a",
+          "start": 26.94,
+          "end": 27.0
+        },
+        {
+          "word": " break,",
+          "start": 27.0,
+          "end": 27.48
+        },
+        {
+          "word": " a",
+          "start": 27.8,
+          "end": 27.9
+        },
+        {
+          "word": " fracture,",
+          "start": 27.9,
+          "end": 28.48
+        },
+        {
+          "word": " but",
+          "start": 28.86,
+          "end": 29.02
+        },
+        {
+          "word": " at",
+          "start": 29.02,
+          "end": 29.16
+        },
+        {
+          "word": " least",
+          "start": 29.16,
+          "end": 29.28
+        }
+      ]
+    },
+    {
+      "start": 29.28,
+      "end": 31.6,
+      "text": " you're protecting your head, that's the most important.",
+      "words": [
+        {
+          "word": " you're",
+          "start": 29.28,
+          "end": 29.52
+        },
+        {
+          "word": " protecting",
+          "start": 29.52,
+          "end": 29.92
+        },
+        {
+          "word": " your",
+          "start": 29.92,
+          "end": 30.18
+        },
+        {
+          "word": " head,",
+          "start": 30.18,
+          "end": 30.42
+        },
+        {
+          "word": " that's",
+          "start": 30.7,
+          "end": 30.72
+        },
+        {
+          "word": " the",
+          "start": 30.72,
+          "end": 30.82
+        },
+        {
+          "word": " most",
+          "start": 30.82,
+          "end": 31.04
+        },
+        {
+          "word": " important.",
+          "start": 31.04,
+          "end": 31.6
+        }
+      ]
+    },
+    {
+      "start": 32.54,
+      "end": 38.72,
+      "text": " Sacrificing a limb, hurting your hand, and saving your head, because having your head",
+      "words": [
+        {
+          "word": " Sacrificing",
+          "start": 32.54,
+          "end": 33.06
+        },
+        {
+          "word": " a",
+          "start": 33.06,
+          "end": 33.24
+        },
+        {
+          "word": " limb,",
+          "start": 33.24,
+          "end": 34.18
+        },
+        {
+          "word": " hurting",
+          "start": 34.96,
+          "end": 35.16
+        },
+        {
+          "word": " your",
+          "start": 35.16,
+          "end": 35.32
+        },
+        {
+          "word": " hand,",
+          "start": 35.32,
+          "end": 35.72
+        },
+        {
+          "word": " and",
+          "start": 36.16,
+          "end": 36.18
+        },
+        {
+          "word": " saving",
+          "start": 36.18,
+          "end": 36.44
+        },
+        {
+          "word": " your",
+          "start": 36.44,
+          "end": 36.68
+        },
+        {
+          "word": " head,",
+          "start": 36.68,
+          "end": 37.02
+        },
+        {
+          "word": " because",
+          "start": 37.24,
+          "end": 37.44
+        },
+        {
+          "word": " having",
+          "start": 37.44,
+          "end": 37.86
+        },
+        {
+          "word": " your",
+          "start": 37.86,
+          "end": 38.5
+        },
+        {
+          "word": " head",
+          "start": 38.5,
+          "end": 38.72
+        }
+      ]
+    },
+    {
+      "start": 38.72,
+      "end": 43.6,
+      "text": " hit the ice, especially when it comes black ice, and getting a subdural hematoma, blood",
+      "words": [
+        {
+          "word": " hit",
+          "start": 38.72,
+          "end": 38.96
+        },
+        {
+          "word": " the",
+          "start": 38.96,
+          "end": 39.14
+        },
+        {
+          "word": " ice,",
+          "start": 39.14,
+          "end": 39.38
+        },
+        {
+          "word": " especially",
+          "start": 39.48,
+          "end": 39.72
+        },
+        {
+          "word": " when",
+          "start": 39.72,
+          "end": 39.94
+        },
+        {
+          "word": " it",
+          "start": 39.94,
+          "end": 40.06
+        },
+        {
+          "word": " comes",
+          "start": 40.06,
+          "end": 40.24
+        },
+        {
+          "word": " black",
+          "start": 40.24,
+          "end": 40.52
+        },
+        {
+          "word": " ice,",
+          "start": 40.52,
+          "end": 40.92
+        },
+        {
+          "word": " and",
+          "start": 41.82,
+          "end": 41.86
+        },
+        {
+          "word": " getting",
+          "start": 41.86,
+          "end": 42.06
+        },
+        {
+          "word": " a",
+          "start": 42.06,
+          "end": 42.2
+        },
+        {
+          "word": " subdural",
+          "start": 42.2,
+          "end": 42.52
+        },
+        {
+          "word": " hematoma,",
+          "start": 42.52,
+          "end": 43.22
+        },
+        {
+          "word": " blood",
+          "start": 43.5,
+          "end": 43.6
+        }
+      ]
+    },
+    {
+      "start": 43.6,
+      "end": 46.7,
+      "text": " inside the brain, can be devastating for a lot of people.",
+      "words": [
+        {
+          "word": " inside",
+          "start": 43.6,
+          "end": 44.1
+        },
+        {
+          "word": " the",
+          "start": 44.1,
+          "end": 44.36
+        },
+        {
+          "word": " brain,",
+          "start": 44.36,
+          "end": 44.68
+        },
+        {
+          "word": " can",
+          "start": 45.14,
+          "end": 45.2
+        },
+        {
+          "word": " be",
+          "start": 45.2,
+          "end": 45.34
+        },
+        {
+          "word": " devastating",
+          "start": 45.34,
+          "end": 45.76
+        },
+        {
+          "word": " for",
+          "start": 45.76,
+          "end": 46.06
+        },
+        {
+          "word": " a",
+          "start": 46.06,
+          "end": 46.14
+        },
+        {
+          "word": " lot",
+          "start": 46.14,
+          "end": 46.26
+        },
+        {
+          "word": " of",
+          "start": 46.26,
+          "end": 46.38
+        },
+        {
+          "word": " people.",
+          "start": 46.38,
+          "end": 46.7
+        }
+      ]
+    },
+    {
+      "start": 47.53999999999999,
+      "end": 52.36,
+      "text": " Spraying strains and fractures are always near the top of the list of snow shoveling related",
+      "words": [
+        {
+          "word": " Spraying",
+          "start": 47.53999999999999,
+          "end": 48.059999999999995
+        },
+        {
+          "word": " strains",
+          "start": 48.059999999999995,
+          "end": 48.58
+        },
+        {
+          "word": " and",
+          "start": 48.58,
+          "end": 48.74
+        },
+        {
+          "word": " fractures",
+          "start": 48.74,
+          "end": 49.4
+        },
+        {
+          "word": " are",
+          "start": 49.4,
+          "end": 49.56
+        },
+        {
+          "word": " always",
+          "start": 49.56,
+          "end": 49.92
+        },
+        {
+          "word": " near",
+          "start": 49.92,
+          "end": 50.1
+        },
+        {
+          "word": " the",
+          "start": 50.1,
+          "end": 50.26
+        },
+        {
+          "word": " top",
+          "start": 50.26,
+          "end": 50.54
+        },
+        {
+          "word": " of",
+          "start": 50.54,
+          "end": 50.66
+        },
+        {
+          "word": " the",
+          "start": 50.66,
+          "end": 50.8
+        },
+        {
+          "word": " list",
+          "start": 50.8,
+          "end": 51.02
+        },
+        {
+          "word": " of",
+          "start": 51.02,
+          "end": 51.24
+        },
+        {
+          "word": " snow",
+          "start": 51.24,
+          "end": 51.52
+        },
+        {
+          "word": " shoveling",
+          "start": 51.52,
+          "end": 52.02
+        },
+        {
+          "word": " related",
+          "start": 52.02,
+          "end": 52.36
+        }
+      ]
+    },
+    {
+      "start": 52.36,
+      "end": 52.92,
+      "text": " injuries.",
+      "words": [
+        {
+          "word": " injuries.",
+          "start": 52.36,
+          "end": 52.92
+        }
+      ]
+    },
+    {
+      "start": 53.46,
+      "end": 55.46,
+      "text": " They're usually caused by slipping and twisting.",
+      "words": [
+        {
+          "word": " They're",
+          "start": 53.46,
+          "end": 53.58
+        },
+        {
+          "word": " usually",
+          "start": 53.58,
+          "end": 53.92
+        },
+        {
+          "word": " caused",
+          "start": 53.92,
+          "end": 54.22
+        },
+        {
+          "word": " by",
+          "start": 54.22,
+          "end": 54.44
+        },
+        {
+          "word": " slipping",
+          "start": 54.44,
+          "end": 54.8
+        },
+        {
+          "word": " and",
+          "start": 54.8,
+          "end": 55.12
+        },
+        {
+          "word": " twisting.",
+          "start": 55.12,
+          "end": 55.46
+        }
+      ]
+    },
+    {
+      "start": 56.36,
+      "end": 61.34,
+      "text": " Overexertion is also considered a common cause for emergency room visits after snow shoveling.",
+      "words": [
+        {
+          "word": " Overexertion",
+          "start": 56.36,
+          "end": 56.88
+        },
+        {
+          "word": " is",
+          "start": 56.88,
+          "end": 57.06
+        },
+        {
+          "word": " also",
+          "start": 57.06,
+          "end": 57.4
+        },
+        {
+          "word": " considered",
+          "start": 57.4,
+          "end": 57.9
+        },
+        {
+          "word": " a",
+          "start": 57.9,
+          "end": 58.06
+        },
+        {
+          "word": " common",
+          "start": 58.06,
+          "end": 58.34
+        },
+        {
+          "word": " cause",
+          "start": 58.34,
+          "end": 58.7
+        },
+        {
+          "word": " for",
+          "start": 58.7,
+          "end": 58.96
+        },
+        {
+          "word": " emergency",
+          "start": 58.96,
+          "end": 59.34
+        },
+        {
+          "word": " room",
+          "start": 59.34,
+          "end": 59.72
+        },
+        {
+          "word": " visits",
+          "start": 59.72,
+          "end": 59.98
+        },
+        {
+          "word": " after",
+          "start": 59.98,
+          "end": 60.4
+        },
+        {
+          "word": " snow",
+          "start": 60.4,
+          "end": 60.72
+        },
+        {
+          "word": " shoveling.",
+          "start": 60.72,
+          "end": 61.34
+        }
+      ]
+    },
+    {
+      "start": 61.72,
+      "end": 65.62,
+      "text": " It can cause dehydration, fatigue, and in some cases, heart attack.",
+      "words": [
+        {
+          "word": " It",
+          "start": 61.72,
+          "end": 61.78
+        },
+        {
+          "word": " can",
+          "start": 61.78,
+          "end": 61.92
+        },
+        {
+          "word": " cause",
+          "start": 61.92,
+          "end": 62.24
+        },
+        {
+          "word": " dehydration,",
+          "start": 62.24,
+          "end": 63.08
+        },
+        {
+          "word": " fatigue,",
+          "start": 63.3,
+          "end": 63.58
+        },
+        {
+          "word": " and",
+          "start": 63.88,
+          "end": 63.92
+        },
+        {
+          "word": " in",
+          "start": 63.92,
+          "end": 64.06
+        },
+        {
+          "word": " some",
+          "start": 64.06,
+          "end": 64.22
+        },
+        {
+          "word": " cases,",
+          "start": 64.22,
+          "end": 64.68
+        },
+        {
+          "word": " heart",
+          "start": 65.12,
+          "end": 65.26
+        },
+        {
+          "word": " attack.",
+          "start": 65.26,
+          "end": 65.62
+        }
+      ]
+    },
+    {
+      "start": 66.28,
+      "end": 70.72,
+      "text": " If you could do something that's light, moderate activity, it doesn't get yourself huffing",
+      "words": [
+        {
+          "word": " If",
+          "start": 66.28,
+          "end": 66.54
+        },
+        {
+          "word": " you",
+          "start": 66.54,
+          "end": 66.64
+        },
+        {
+          "word": " could",
+          "start": 66.64,
+          "end": 66.74
+        },
+        {
+          "word": " do",
+          "start": 66.74,
+          "end": 66.88
+        },
+        {
+          "word": " something",
+          "start": 66.88,
+          "end": 67.16
+        },
+        {
+          "word": " that's",
+          "start": 67.16,
+          "end": 67.5
+        },
+        {
+          "word": " light,",
+          "start": 67.5,
+          "end": 68.14
+        },
+        {
+          "word": " moderate",
+          "start": 68.42,
+          "end": 68.86
+        },
+        {
+          "word": " activity,",
+          "start": 68.86,
+          "end": 69.5
+        },
+        {
+          "word": " it",
+          "start": 69.74,
+          "end": 69.74
+        },
+        {
+          "word": " doesn't",
+          "start": 69.74,
+          "end": 69.92
+        },
+        {
+          "word": " get",
+          "start": 69.92,
+          "end": 70.02
+        },
+        {
+          "word": " yourself",
+          "start": 70.02,
+          "end": 70.32
+        },
+        {
+          "word": " huffing",
+          "start": 70.32,
+          "end": 70.72
+        }
+      ]
+    },
+    {
+      "start": 70.72,
+      "end": 72.66,
+      "text": " and puffing too much, that's fine.",
+      "words": [
+        {
+          "word": " and",
+          "start": 70.72,
+          "end": 70.84
+        },
+        {
+          "word": " puffing",
+          "start": 70.84,
+          "end": 71.16
+        },
+        {
+          "word": " too",
+          "start": 71.16,
+          "end": 71.34
+        },
+        {
+          "word": " much,",
+          "start": 71.34,
+          "end": 71.54
+        },
+        {
+          "word": " that's",
+          "start": 71.84,
+          "end": 72.4
+        },
+        {
+          "word": " fine.",
+          "start": 72.4,
+          "end": 72.66
+        }
+      ]
+    },
+    {
+      "start": 72.76,
+      "end": 77.76,
+      "text": " But if you have a heart problem, high blood pressure, chronic back problems, those are things",
+      "words": [
+        {
+          "word": " But",
+          "start": 72.76,
+          "end": 72.84
+        },
+        {
+          "word": " if",
+          "start": 72.84,
+          "end": 72.96
+        },
+        {
+          "word": " you",
+          "start": 72.96,
+          "end": 73.04
+        },
+        {
+          "word": " have",
+          "start": 73.04,
+          "end": 73.26
+        },
+        {
+          "word": " a",
+          "start": 73.26,
+          "end": 73.42
+        },
+        {
+          "word": " heart",
+          "start": 73.42,
+          "end": 73.66
+        },
+        {
+          "word": " problem,",
+          "start": 73.66,
+          "end": 74.24
+        },
+        {
+          "word": " high",
+          "start": 74.48,
+          "end": 74.6
+        },
+        {
+          "word": " blood",
+          "start": 74.6,
+          "end": 74.84
+        },
+        {
+          "word": " pressure,",
+          "start": 74.84,
+          "end": 75.32
+        },
+        {
+          "word": " chronic",
+          "start": 75.92,
+          "end": 76.06
+        },
+        {
+          "word": " back",
+          "start": 76.06,
+          "end": 76.3
+        },
+        {
+          "word": " problems,",
+          "start": 76.3,
+          "end": 76.92
+        },
+        {
+          "word": " those",
+          "start": 77.34,
+          "end": 77.44
+        },
+        {
+          "word": " are",
+          "start": 77.44,
+          "end": 77.56
+        },
+        {
+          "word": " things",
+          "start": 77.56,
+          "end": 77.76
+        }
+      ]
+    },
+    {
+      "start": 77.76,
+      "end": 80.88,
+      "text": " that it would be best deferred to somebody else to do for you.",
+      "words": [
+        {
+          "word": " that",
+          "start": 77.76,
+          "end": 77.96
+        },
+        {
+          "word": " it",
+          "start": 77.96,
+          "end": 78.08
+        },
+        {
+          "word": " would",
+          "start": 78.08,
+          "end": 78.2
+        },
+        {
+          "word": " be",
+          "start": 78.2,
+          "end": 78.34
+        },
+        {
+          "word": " best",
+          "start": 78.34,
+          "end": 78.6
+        },
+        {
+          "word": " deferred",
+          "start": 78.6,
+          "end": 78.98
+        },
+        {
+          "word": " to",
+          "start": 78.98,
+          "end": 79.06
+        },
+        {
+          "word": " somebody",
+          "start": 79.06,
+          "end": 79.4
+        },
+        {
+          "word": " else",
+          "start": 79.4,
+          "end": 79.76
+        },
+        {
+          "word": " to",
+          "start": 79.76,
+          "end": 80.06
+        },
+        {
+          "word": " do",
+          "start": 80.06,
+          "end": 80.22
+        },
+        {
+          "word": " for",
+          "start": 80.22,
+          "end": 80.58
+        },
+        {
+          "word": " you.",
+          "start": 80.58,
+          "end": 80.88
+        }
+      ]
+    },
+    {
+      "start": 81.6,
+      "end": 85.38,
+      "text": " You're also at an increased risk for lower back injuries when you're shoveling.",
+      "words": [
+        {
+          "word": " You're",
+          "start": 81.50999999999999,
+          "end": 81.74
+        },
+        {
+          "word": " also",
+          "start": 81.74,
+          "end": 82.02
+        },
+        {
+          "word": " at",
+          "start": 82.02,
+          "end": 82.22
+        },
+        {
+          "word": " an",
+          "start": 82.22,
+          "end": 82.38
+        },
+        {
+          "word": " increased",
+          "start": 82.38,
+          "end": 82.8
+        },
+        {
+          "word": " risk",
+          "start": 82.8,
+          "end": 83.16
+        },
+        {
+          "word": " for",
+          "start": 83.16,
+          "end": 83.34
+        },
+        {
+          "word": " lower",
+          "start": 83.34,
+          "end": 83.56
+        },
+        {
+          "word": " back",
+          "start": 83.56,
+          "end": 83.98
+        },
+        {
+          "word": " injuries",
+          "start": 83.98,
+          "end": 84.38
+        },
+        {
+          "word": " when",
+          "start": 84.38,
+          "end": 84.64
+        },
+        {
+          "word": " you're",
+          "start": 84.64,
+          "end": 84.8
+        },
+        {
+          "word": " shoveling.",
+          "start": 84.8,
+          "end": 85.38
+        }
+      ]
+    },
+    {
+      "start": 85.66,
+      "end": 90.1,
+      "text": " They're usually caused when you try to lift too much snow or you lift it improperly.",
+      "words": [
+        {
+          "word": " They're",
+          "start": 85.66,
+          "end": 85.86
+        },
+        {
+          "word": " usually",
+          "start": 85.86,
+          "end": 86.2
+        },
+        {
+          "word": " caused",
+          "start": 86.2,
+          "end": 86.6
+        },
+        {
+          "word": " when",
+          "start": 86.6,
+          "end": 86.82
+        },
+        {
+          "word": " you",
+          "start": 86.82,
+          "end": 86.96
+        },
+        {
+          "word": " try",
+          "start": 86.96,
+          "end": 87.18
+        },
+        {
+          "word": " to",
+          "start": 87.18,
+          "end": 87.3
+        },
+        {
+          "word": " lift",
+          "start": 87.3,
+          "end": 87.46
+        },
+        {
+          "word": " too",
+          "start": 87.46,
+          "end": 87.8
+        },
+        {
+          "word": " much",
+          "start": 87.8,
+          "end": 88.0
+        },
+        {
+          "word": " snow",
+          "start": 88.0,
+          "end": 88.4
+        },
+        {
+          "word": " or",
+          "start": 88.4,
+          "end": 88.8
+        },
+        {
+          "word": " you",
+          "start": 88.8,
+          "end": 88.92
+        },
+        {
+          "word": " lift",
+          "start": 88.92,
+          "end": 89.22
+        },
+        {
+          "word": " it",
+          "start": 89.22,
+          "end": 89.36
+        },
+        {
+          "word": " improperly.",
+          "start": 89.36,
+          "end": 90.1
+        }
+      ]
+    },
+    {
+      "start": 90.6,
+      "end": 95.48,
+      "text": " And lots of people end up in the ER after being hit by a shovel, usually after slipping.",
+      "words": [
+        {
+          "word": " And",
+          "start": 90.6,
+          "end": 90.68
+        },
+        {
+          "word": " lots",
+          "start": 90.68,
+          "end": 90.92
+        },
+        {
+          "word": " of",
+          "start": 90.92,
+          "end": 91.16
+        },
+        {
+          "word": " people",
+          "start": 91.16,
+          "end": 91.46
+        },
+        {
+          "word": " end",
+          "start": 91.46,
+          "end": 91.74
+        },
+        {
+          "word": " up",
+          "start": 91.74,
+          "end": 91.9
+        },
+        {
+          "word": " in",
+          "start": 91.9,
+          "end": 92.02
+        },
+        {
+          "word": " the",
+          "start": 92.02,
+          "end": 92.14
+        },
+        {
+          "word": " ER",
+          "start": 92.14,
+          "end": 92.44
+        },
+        {
+          "word": " after",
+          "start": 92.44,
+          "end": 92.78
+        },
+        {
+          "word": " being",
+          "start": 92.78,
+          "end": 93.02
+        },
+        {
+          "word": " hit",
+          "start": 93.02,
+          "end": 93.3
+        },
+        {
+          "word": " by",
+          "start": 93.3,
+          "end": 93.5
+        },
+        {
+          "word": " a",
+          "start": 93.5,
+          "end": 93.64
+        },
+        {
+          "word": " shovel,",
+          "start": 93.64,
+          "end": 93.98
+        },
+        {
+          "word": " usually",
+          "start": 94.4,
+          "end": 94.7
+        },
+        {
+          "word": " after",
+          "start": 94.7,
+          "end": 95.08
+        },
+        {
+          "word": " slipping.",
+          "start": 95.08,
+          "end": 95.48
+        }
+      ]
+    },
+    {
+      "start": 96.08,
+      "end": 100.94,
+      "text": " Dr. Soto says the other thing to remember is to dress properly to prevent hypothermia.",
+      "words": [
+        {
+          "word": " Dr.",
+          "start": 96.08,
+          "end": 96.28
+        },
+        {
+          "word": " Soto",
+          "start": 96.48,
+          "end": 96.66
+        },
+        {
+          "word": " says",
+          "start": 96.66,
+          "end": 96.96
+        },
+        {
+          "word": " the",
+          "start": 96.96,
+          "end": 97.16
+        },
+        {
+          "word": " other",
+          "start": 97.16,
+          "end": 97.44
+        },
+        {
+          "word": " thing",
+          "start": 97.44,
+          "end": 97.64
+        },
+        {
+          "word": " to",
+          "start": 97.64,
+          "end": 97.84
+        },
+        {
+          "word": " remember",
+          "start": 97.84,
+          "end": 98.24
+        },
+        {
+          "word": " is",
+          "start": 98.24,
+          "end": 98.5
+        },
+        {
+          "word": " to",
+          "start": 98.5,
+          "end": 98.66
+        },
+        {
+          "word": " dress",
+          "start": 98.66,
+          "end": 98.88
+        },
+        {
+          "word": " properly",
+          "start": 98.88,
+          "end": 99.5
+        },
+        {
+          "word": " to",
+          "start": 99.5,
+          "end": 99.74
+        },
+        {
+          "word": " prevent",
+          "start": 99.74,
+          "end": 100.08
+        },
+        {
+          "word": " hypothermia.",
+          "start": 100.08,
+          "end": 100.94
+        }
+      ]
+    },
+    {
+      "start": 101.52,
+      "end": 102.48,
+      "text": " Dress in layers.",
+      "words": [
+        {
+          "word": " Dress",
+          "start": 101.52,
+          "end": 101.92
+        },
+        {
+          "word": " in",
+          "start": 101.92,
+          "end": 102.22
+        },
+        {
+          "word": " layers.",
+          "start": 102.22,
+          "end": 102.48
+        }
+      ]
+    },
+    {
+      "start": 102.8,
+      "end": 106.94,
+      "text": " And as you start getting heated up, you take a top layer off to cool off a little bit.",
+      "words": [
+        {
+          "word": " And",
+          "start": 102.8,
+          "end": 102.88
+        },
+        {
+          "word": " as",
+          "start": 102.88,
+          "end": 103.04
+        },
+        {
+          "word": " you",
+          "start": 103.04,
+          "end": 103.14
+        },
+        {
+          "word": " start",
+          "start": 103.14,
+          "end": 103.38
+        },
+        {
+          "word": " getting",
+          "start": 103.38,
+          "end": 103.98
+        },
+        {
+          "word": " heated",
+          "start": 103.98,
+          "end": 104.26
+        },
+        {
+          "word": " up,",
+          "start": 104.26,
+          "end": 104.52
+        },
+        {
+          "word": " you",
+          "start": 104.76,
+          "end": 104.84
+        },
+        {
+          "word": " take",
+          "start": 104.84,
+          "end": 105.0
+        },
+        {
+          "word": " a",
+          "start": 105.0,
+          "end": 105.16
+        },
+        {
+          "word": " top",
+          "start": 105.16,
+          "end": 105.36
+        },
+        {
+          "word": " layer",
+          "start": 105.36,
+          "end": 105.56
+        },
+        {
+          "word": " off",
+          "start": 105.56,
+          "end": 105.88
+        },
+        {
+          "word": " to",
+          "start": 105.88,
+          "end": 106.06
+        },
+        {
+          "word": " cool",
+          "start": 106.06,
+          "end": 106.26
+        },
+        {
+          "word": " off",
+          "start": 106.26,
+          "end": 106.52
+        },
+        {
+          "word": " a",
+          "start": 106.52,
+          "end": 106.66
+        },
+        {
+          "word": " little",
+          "start": 106.66,
+          "end": 106.8
+        },
+        {
+          "word": " bit.",
+          "start": 106.8,
+          "end": 106.94
+        }
+      ]
+    },
+    {
+      "start": 107.18,
+      "end": 109.92,
+      "text": " If you're going to be out there for a long time, you start to break a sweat.",
+      "words": [
+        {
+          "word": " If",
+          "start": 107.18,
+          "end": 107.64
+        },
+        {
+          "word": " you're",
+          "start": 107.64,
+          "end": 107.78
+        },
+        {
+          "word": " going",
+          "start": 107.78,
+          "end": 107.94
+        },
+        {
+          "word": " to",
+          "start": 107.94,
+          "end": 108.04
+        },
+        {
+          "word": " be",
+          "start": 108.04,
+          "end": 108.12
+        },
+        {
+          "word": " out",
+          "start": 108.12,
+          "end": 108.28
+        },
+        {
+          "word": " there",
+          "start": 108.28,
+          "end": 108.36
+        },
+        {
+          "word": " for",
+          "start": 108.36,
+          "end": 108.5
+        },
+        {
+          "word": " a",
+          "start": 108.5,
+          "end": 108.58
+        },
+        {
+          "word": " long",
+          "start": 108.58,
+          "end": 108.7
+        },
+        {
+          "word": " time,",
+          "start": 108.7,
+          "end": 108.94
+        },
+        {
+          "word": " you",
+          "start": 109.02,
+          "end": 109.06
+        },
+        {
+          "word": " start",
+          "start": 109.06,
+          "end": 109.18
+        },
+        {
+          "word": " to",
+          "start": 109.18,
+          "end": 109.3
+        },
+        {
+          "word": " break",
+          "start": 109.3,
+          "end": 109.44
+        },
+        {
+          "word": " a",
+          "start": 109.44,
+          "end": 109.56
+        },
+        {
+          "word": " sweat.",
+          "start": 109.56,
+          "end": 109.92
+        }
+      ]
+    },
+    {
+      "start": 110.52,
+      "end": 114.72,
+      "text": " Then you calm down, the sweat wets your clothes, the clothes stay wet.",
+      "words": [
+        {
+          "word": " Then",
+          "start": 110.38,
+          "end": 110.66
+        },
+        {
+          "word": " you",
+          "start": 110.66,
+          "end": 110.82
+        },
+        {
+          "word": " calm",
+          "start": 110.82,
+          "end": 111.12
+        },
+        {
+          "word": " down,",
+          "start": 111.12,
+          "end": 111.5
+        },
+        {
+          "word": " the",
+          "start": 111.92,
+          "end": 112.02
+        },
+        {
+          "word": " sweat",
+          "start": 112.02,
+          "end": 112.3
+        },
+        {
+          "word": " wets",
+          "start": 112.3,
+          "end": 112.94
+        },
+        {
+          "word": " your",
+          "start": 112.94,
+          "end": 113.1
+        },
+        {
+          "word": " clothes,",
+          "start": 113.1,
+          "end": 113.34
+        },
+        {
+          "word": " the",
+          "start": 113.58,
+          "end": 113.7
+        },
+        {
+          "word": " clothes",
+          "start": 113.7,
+          "end": 114.04
+        },
+        {
+          "word": " stay",
+          "start": 114.04,
+          "end": 114.42
+        },
+        {
+          "word": " wet.",
+          "start": 114.42,
+          "end": 114.72
+        }
+      ]
+    },
+    {
+      "start": 114.92,
+      "end": 117.52,
+      "text": " Now they get cold and that's how you become hypothermic.",
+      "words": [
+        {
+          "word": " Now",
+          "start": 114.92,
+          "end": 115.06
+        },
+        {
+          "word": " they",
+          "start": 115.06,
+          "end": 115.24
+        },
+        {
+          "word": " get",
+          "start": 115.24,
+          "end": 115.36
+        },
+        {
+          "word": " cold",
+          "start": 115.36,
+          "end": 115.64
+        },
+        {
+          "word": " and",
+          "start": 115.64,
+          "end": 115.92
+        },
+        {
+          "word": " that's",
+          "start": 115.92,
+          "end": 116.26
+        },
+        {
+          "word": " how",
+          "start": 116.26,
+          "end": 116.4
+        },
+        {
+          "word": " you",
+          "start": 116.4,
+          "end": 116.52
+        },
+        {
+          "word": " become",
+          "start": 116.52,
+          "end": 116.8
+        },
+        {
+          "word": " hypothermic.",
+          "start": 116.8,
+          "end": 117.52
+        }
+      ]
+    },
+    {
+      "start": 118.16,
+      "end": 123.94,
+      "text": " Dr. Soto says to take frequent breaks and be sure to have proper footwear to prevent slipping.",
+      "words": [
+        {
+          "word": " Dr.",
+          "start": 118.16,
+          "end": 118.64
+        },
+        {
+          "word": " Soto",
+          "start": 118.86,
+          "end": 119.04
+        },
+        {
+          "word": " says",
+          "start": 119.04,
+          "end": 119.36
+        },
+        {
+          "word": " to",
+          "start": 119.36,
+          "end": 119.58
+        },
+        {
+          "word": " take",
+          "start": 119.58,
+          "end": 119.82
+        },
+        {
+          "word": " frequent",
+          "start": 119.82,
+          "end": 120.24
+        },
+        {
+          "word": " breaks",
+          "start": 120.24,
+          "end": 120.66
+        },
+        {
+          "word": " and",
+          "start": 120.66,
+          "end": 121.16
+        },
+        {
+          "word": " be",
+          "start": 121.16,
+          "end": 121.28
+        },
+        {
+          "word": " sure",
+          "start": 121.28,
+          "end": 121.52
+        },
+        {
+          "word": " to",
+          "start": 121.52,
+          "end": 121.7
+        },
+        {
+          "word": " have",
+          "start": 121.7,
+          "end": 121.86
+        },
+        {
+          "word": " proper",
+          "start": 121.86,
+          "end": 122.32
+        },
+        {
+          "word": " footwear",
+          "start": 122.32,
+          "end": 122.88
+        },
+        {
+          "word": " to",
+          "start": 122.88,
+          "end": 123.2
+        },
+        {
+          "word": " prevent",
+          "start": 123.2,
+          "end": 123.5
+        },
+        {
+          "word": " slipping.",
+          "start": 123.5,
+          "end": 123.94
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "total_keyframes": 361,
+    "total_transcript_segments": 29,
+    "video_duration_estimated": 126.3262,
+    "total_words": 366
+  },
+  "status": "completed"
+}

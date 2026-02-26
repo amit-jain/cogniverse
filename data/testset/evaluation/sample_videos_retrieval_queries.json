@@ -1,0 +1,1127 @@
+[
+  {
+    "query": "What is the man doing in the video and what is he wearing?",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head. He is wearing a black polo shirt and shorts.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man lifting",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head. He is wearing a black polo shirt and shorts.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "lifting",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head. He is wearing a black polo shirt and shorts.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What are the people doing behind the car at the beginning of the video?",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The people are shoveling snow from around the car.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "people shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The people are shoveling snow from around the car.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What direction did the man look after throwing the disk?",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The man looked towards the direction where he threw the disk.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What happens after the biker rides towards the middle of the dirt field?",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The biker tries to jump over a slight elevation but lands with the front wheel first and crashes. He lands in the dirt.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man wearing and what is his action in the beginning of the video?",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is wearing a yellow t-shirt and holding a knife in his right hand. He kneels down and lights a stack of firewood on fire with a fire starter.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a yellow t",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is wearing a yellow t-shirt and holding a knife in his right hand. He kneels down and lights a stack of firewood on fire with a fire starter.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is wearing a yellow t-shirt and holding a knife in his right hand. He kneels down and lights a stack of firewood on fire with a fire starter.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a fire starter",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is wearing a yellow t-shirt and holding a knife in his right hand. He kneels down and lights a stack of firewood on fire with a fire starter.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In this video, we see a man wearing a black polo shirt and shorts, standing indoors behind a barbell laid on the floor. Behind him, we can see a closed shutter, and a door is visible on his left side. There is a fan installed on the right wall, with pipes running near it. The barbell has multi-colored weights on it. The man bends down and squats to lift the barbell. Then, he lifts the barbell over his head and drops it to the floor. Later, he walks towards the side and turns back. The video ends with another man wearing a white t-shirt who comes into view on the right.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "pipes running near it",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In this video, we see a man wearing a black polo shirt and shorts, standing indoors behind a barbell laid on the floor. Behind him, we can see a closed shutter, and a door is visible on his left side. There is a fan installed on the right wall, with pipes running near it. The barbell has multi-colored weights on it. The man bends down and squats to lift the barbell. Then, he lifts the barbell over his head and drops it to the floor. Later, he walks towards the side and turns back. The video ends with another man wearing a white t-shirt who comes into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "running",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In this video, we see a man wearing a black polo shirt and shorts, standing indoors behind a barbell laid on the floor. Behind him, we can see a closed shutter, and a door is visible on his left side. There is a fan installed on the right wall, with pipes running near it. The barbell has multi-colored weights on it. The man bends down and squats to lift the barbell. Then, he lifts the barbell over his head and drops it to the floor. Later, he walks towards the side and turns back. The video ends with another man wearing a white t-shirt who comes into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In this video, we see a man wearing a black polo shirt and shorts, standing indoors behind a barbell laid on the floor. Behind him, we can see a closed shutter, and a door is visible on his left side. There is a fan installed on the right wall, with pipes running near it. The barbell has multi-colored weights on it. The man bends down and squats to lift the barbell. Then, he lifts the barbell over his head and drops it to the floor. Later, he walks towards the side and turns back. The video ends with another man wearing a white t-shirt who comes into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The video begins with two people who are wearing winter clothes and shoveling snow around a car parked in front of a garage. The car is covered in a layer of snow and a house with a red brick facade is visible behind them. At the beginning and end of the video, a man wearing suspenders and sunglasses is also seen shoveling snow from different locations. In another part of the video, a doctor wearing a white coat and a stethoscope is seen speaking to the camera from a clinic. The two people continue shoveling snow, with one of them shoveling from a distance behind the car while the other is next to the car. The shots of snow-shoveling during the daytime, the snow-covered plant next to the house and the doctor speaking from a clinic all create a wintry atmosphere. ",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing suspenders and sunglasses is also seen shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The video begins with two people who are wearing winter clothes and shoveling snow around a car parked in front of a garage. The car is covered in a layer of snow and a house with a red brick facade is visible behind them. At the beginning and end of the video, a man wearing suspenders and sunglasses is also seen shoveling snow from different locations. In another part of the video, a doctor wearing a white coat and a stethoscope is seen speaking to the camera from a clinic. The two people continue shoveling snow, with one of them shoveling from a distance behind the car while the other is next to the car. The shots of snow-shoveling during the daytime, the snow-covered plant next to the house and the doctor speaking from a clinic all create a wintry atmosphere. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "people who are wearing winter clothes and shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The video begins with two people who are wearing winter clothes and shoveling snow around a car parked in front of a garage. The car is covered in a layer of snow and a house with a red brick facade is visible behind them. At the beginning and end of the video, a man wearing suspenders and sunglasses is also seen shoveling snow from different locations. In another part of the video, a doctor wearing a white coat and a stethoscope is seen speaking to the camera from a clinic. The two people continue shoveling snow, with one of them shoveling from a distance behind the car while the other is next to the car. The shots of snow-shoveling during the daytime, the snow-covered plant next to the house and the doctor speaking from a clinic all create a wintry atmosphere. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "people continue shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The video begins with two people who are wearing winter clothes and shoveling snow around a car parked in front of a garage. The car is covered in a layer of snow and a house with a red brick facade is visible behind them. At the beginning and end of the video, a man wearing suspenders and sunglasses is also seen shoveling snow from different locations. In another part of the video, a doctor wearing a white coat and a stethoscope is seen speaking to the camera from a clinic. The two people continue shoveling snow, with one of them shoveling from a distance behind the car while the other is next to the car. The shots of snow-shoveling during the daytime, the snow-covered plant next to the house and the doctor speaking from a clinic all create a wintry atmosphere. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The video depicts a man dressed in athletic clothes standing in a net while holding a disk in his right hand. He looks towards the direction where he throws the disk after spinning a few times. The net has several people sitting and standing outside it while there are also several people sitting on bleachers in the background. The video was filmed on a sunny day with several hills visible in the distance. After throwing the disk, people can be seen applauding, indicating that the man has likely performed a successful display of his skills, possibly in a form of a frisbee game.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The video depicts a man dressed in athletic clothes standing in a net while holding a disk in his right hand. He looks towards the direction where he throws the disk after spinning a few times. The net has several people sitting and standing outside it while there are also several people sitting on bleachers in the background. The video was filmed on a sunny day with several hills visible in the distance. After throwing the disk, people can be seen applauding, indicating that the man has likely performed a successful display of his skills, possibly in a form of a frisbee game.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "throwing",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The video depicts a man dressed in athletic clothes standing in a net while holding a disk in his right hand. He looks towards the direction where he throws the disk after spinning a few times. The net has several people sitting and standing outside it while there are also several people sitting on bleachers in the background. The video was filmed on a sunny day with several hills visible in the distance. After throwing the disk, people can be seen applauding, indicating that the man has likely performed a successful display of his skills, possibly in a form of a frisbee game.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man dressed in athletic clothes standing in a net while holding",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The video depicts a man dressed in athletic clothes standing in a net while holding a disk in his right hand. He looks towards the direction where he throws the disk after spinning a few times. The net has several people sitting and standing outside it while there are also several people sitting on bleachers in the background. The video was filmed on a sunny day with several hills visible in the distance. After throwing the disk, people can be seen applauding, indicating that the man has likely performed a successful display of his skills, possibly in a form of a frisbee game.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The video begins with a man riding a dirt bike in a dirt field surrounded by houses during the daytime. He enters the field from outside and rides towards the center. As he approaches the middle, he tries to jump over a slight elevation but lands with the front wheel first and crashes into the dirt. A man wearing a black t-shirt walks past the camera as the biker crashes. The video ends with the man trying to get up. ",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a black t",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The video begins with a man riding a dirt bike in a dirt field surrounded by houses during the daytime. He enters the field from outside and rides towards the center. As he approaches the middle, he tries to jump over a slight elevation but lands with the front wheel first and crashes into the dirt. A man wearing a black t-shirt walks past the camera as the biker crashes. The video ends with the man trying to get up. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man trying",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The video begins with a man riding a dirt bike in a dirt field surrounded by houses during the daytime. He enters the field from outside and rides towards the center. As he approaches the middle, he tries to jump over a slight elevation but lands with the front wheel first and crashes into the dirt. A man wearing a black t-shirt walks past the camera as the biker crashes. The video ends with the man trying to get up. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The video begins with a man riding a dirt bike in a dirt field surrounded by houses during the daytime. He enters the field from outside and rides towards the center. As he approaches the middle, he tries to jump over a slight elevation but lands with the front wheel first and crashes into the dirt. A man wearing a black t-shirt walks past the camera as the biker crashes. The video ends with the man trying to get up. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "In the video, a man wearing a yellow t-shirt and glasses is seen holding a knife in his right hand while standing amidst weeds and plants in a wooded area. The sky is cloudy, and trees are visible in the distance. He then kneels down and strikes his knife against a fire starter, igniting a stack of firewood. The stack is comprised of heavy logs placed against each other and a few thinner sticks in the middle, with a green piece of paper visible there as well. The firewood stack is placed on an area with sand and pebbles, and the video concludes with the fire growing larger as the man celebrates.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a yellow t",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "In the video, a man wearing a yellow t-shirt and glasses is seen holding a knife in his right hand while standing amidst weeds and plants in a wooded area. The sky is cloudy, and trees are visible in the distance. He then kneels down and strikes his knife against a fire starter, igniting a stack of firewood. The stack is comprised of heavy logs placed against each other and a few thinner sticks in the middle, with a green piece of paper visible there as well. The firewood stack is placed on an area with sand and pebbles, and the video concludes with the fire growing larger as the man celebrates.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "In the video, a man wearing a yellow t-shirt and glasses is seen holding a knife in his right hand while standing amidst weeds and plants in a wooded area. The sky is cloudy, and trees are visible in the distance. He then kneels down and strikes his knife against a fire starter, igniting a stack of firewood. The stack is comprised of heavy logs placed against each other and a few thinner sticks in the middle, with a green piece of paper visible there as well. The firewood stack is placed on an area with sand and pebbles, and the video concludes with the fire growing larger as the man celebrates.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "In the video, a man wearing a yellow t-shirt and glasses is seen holding a knife in his right hand while standing amidst weeds and plants in a wooded area. The sky is cloudy, and trees are visible in the distance. He then kneels down and strikes his knife against a fire starter, igniting a stack of firewood. The stack is comprised of heavy logs placed against each other and a few thinner sticks in the middle, with a green piece of paper visible there as well. The firewood stack is placed on an area with sand and pebbles, and the video concludes with the fire growing larger as the man celebrates.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man doing in the video?",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head and dropping it to the floor.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man lifting a barbell over his head and dropping",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head and dropping it to the floor.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "lifting",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is lifting a barbell over his head and dropping it to the floor.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the setting of the video?",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The setting of the video is during the daytime outside a house with a red brick facade. Two people start by shoveling snow behind a car parked in front of a closed garage, while a snow-covered plant grows nearby. Later, a man wearing suspenders and sunglasses appears, shoveling snow from a different location. There is also a clip of a doctor talking to the camera inside a clinic wearing a white coat and a stethoscope around his shoulder.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "suspenders and sunglasses appears",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The setting of the video is during the daytime outside a house with a red brick facade. Two people start by shoveling snow behind a car parked in front of a closed garage, while a snow-covered plant grows nearby. Later, a man wearing suspenders and sunglasses appears, shoveling snow from a different location. There is also a clip of a doctor talking to the camera inside a clinic wearing a white coat and a stethoscope around his shoulder.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The setting of the video is during the daytime outside a house with a red brick facade. Two people start by shoveling snow behind a car parked in front of a closed garage, while a snow-covered plant grows nearby. Later, a man wearing suspenders and sunglasses appears, shoveling snow from a different location. There is also a clip of a doctor talking to the camera inside a clinic wearing a white coat and a stethoscope around his shoulder.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a red brick facade",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The setting of the video is during the daytime outside a house with a red brick facade. Two people start by shoveling snow behind a car parked in front of a closed garage, while a snow-covered plant grows nearby. Later, a man wearing suspenders and sunglasses appears, shoveling snow from a different location. There is also a clip of a doctor talking to the camera inside a clinic wearing a white coat and a stethoscope around his shoulder.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What was the man holding in his right hand?",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The man was holding a disk in his right hand.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man was holding",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The man was holding a disk in his right hand.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What caused the biker to crash in the dirt field?",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The biker tried to jump over a slight elevation in the middle of the field, but he landed with the front wheel first and crashed.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man lighting on fire in the video?",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is lighting a stack of firewood on fire using a knife and a fire starter.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man lighting a stack of firewood on fire using",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man is lighting a stack of firewood on fire using a knife and a fire starter.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man doing in the video?",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In the video, the man is lifting a barbell with multi-colored weights above his head and dropping it to the ground after squatting. He is wearing a black polo shirt and shorts and is seen standing indoors behind a barbell placed on the floor. Additionally, a door and a closed shutter can be seen in the background along with pipes running beside a fan mounted on the right wall. The video ends with another man wearing a white t-shirt coming into view on the right.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "running",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In the video, the man is lifting a barbell with multi-colored weights above his head and dropping it to the ground after squatting. He is wearing a black polo shirt and shorts and is seen standing indoors behind a barbell placed on the floor. Additionally, a door and a closed shutter can be seen in the background along with pipes running beside a fan mounted on the right wall. The video ends with another man wearing a white t-shirt coming into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man lifting",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In the video, the man is lifting a barbell with multi-colored weights above his head and dropping it to the ground after squatting. He is wearing a black polo shirt and shorts and is seen standing indoors behind a barbell placed on the floor. Additionally, a door and a closed shutter can be seen in the background along with pipes running beside a fan mounted on the right wall. The video ends with another man wearing a white t-shirt coming into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "In the video, the man is lifting a barbell with multi-colored weights above his head and dropping it to the ground after squatting. He is wearing a black polo shirt and shorts and is seen standing indoors behind a barbell placed on the floor. Additionally, a door and a closed shutter can be seen in the background along with pipes running beside a fan mounted on the right wall. The video ends with another man wearing a white t-shirt coming into view on the right.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is happening in the video?",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "In the video, two people are seen shoveling snow behind a car parked in front of a red brick house. A doctor in a white coat is talking to the camera in a clinic. The video ends with a man wearing suspenders shoveling snow.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing suspenders shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "In the video, two people are seen shoveling snow behind a car parked in front of a red brick house. A doctor in a white coat is talking to the camera in a clinic. The video ends with a man wearing suspenders shoveling snow.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "suspenders shoveling snow",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "In the video, two people are seen shoveling snow behind a car parked in front of a red brick house. A doctor in a white coat is talking to the camera in a clinic. The video ends with a man wearing suspenders shoveling snow.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "people seen shoveling",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "In the video, two people are seen shoveling snow behind a car parked in front of a red brick house. A doctor in a white coat is talking to the camera in a clinic. The video ends with a man wearing suspenders shoveling snow.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is happening in the video?",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "In the video, we can see a man in athletic clothes standing in a net and holding a disk in his right hand. He spins a few times and then throws the disk from the open end of the net towards a direction where he looks. People outside the net and on the bleachers applaude him.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "In the video, we can see a man in athletic clothes standing in a net and holding a disk in his right hand. He spins a few times and then throws the disk from the open end of the net towards a direction where he looks. People outside the net and on the bleachers applaude him.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man in athletic clothes standing in a net and holding",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "In the video, we can see a man in athletic clothes standing in a net and holding a disk in his right hand. He spins a few times and then throws the disk from the open end of the net towards a direction where he looks. People outside the net and on the bleachers applaude him.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What happens in the video?",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "In the video, a man is seen riding a dirt bike in a dirt field during the daytime. He attempts to jump over a slight elevation, but lands with his front wheel first and crashes. In the end, the man can be seen struggling to get up.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man can be seen struggling",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "In the video, a man is seen riding a dirt bike in a dirt field during the daytime. He attempts to jump over a slight elevation, but lands with his front wheel first and crashes. In the end, the man can be seen struggling to get up.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man seen riding a dirt bike in a dirt field during",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "In the video, a man is seen riding a dirt bike in a dirt field during the daytime. He attempts to jump over a slight elevation, but lands with his front wheel first and crashes. In the end, the man can be seen struggling to get up.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What actions does the man take in the video?",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man in the video starts by lighting a firewood stack in the woods using a knife and fire starter. He then celebrates as the fire grows.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man in the video starts by lighting a firewood stack in the woods using",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man in the video starts by lighting a firewood stack in the woods using a knife and fire starter. He then celebrates as the fire grows.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is happening in the video?",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows kids playing in a grassy field, throwing and kicking a ball to each other while someone catches the ball and bumps it into another kid. This happens throughout the entire video.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "throwing",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows kids playing in a grassy field, throwing and kicking a ball to each other while someone catches the ball and bumps it into another kid. This happens throughout the entire video.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man wearing and what is he doing in the video?",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is wearing winter weather clothing and holding a snow shovel. He speaks to the camera and demonstrates how to shovel snow by scooping a large pile of snow and throwing it to the side. He repeats this a few times and then walks over to the camera to shut it off.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "a snow shovel",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is wearing winter weather clothing and holding a snow shovel. He speaks to the camera and demonstrates how to shovel snow by scooping a large pile of snow and throwing it to the side. He repeats this a few times and then walks over to the camera to shut it off.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing winter weather clothing and holding",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is wearing winter weather clothing and holding a snow shovel. He speaks to the camera and demonstrates how to shovel snow by scooping a large pile of snow and throwing it to the side. He repeats this a few times and then walks over to the camera to shut it off.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "throwing",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is wearing winter weather clothing and holding a snow shovel. He speaks to the camera and demonstrates how to shovel snow by scooping a large pile of snow and throwing it to the side. He repeats this a few times and then walks over to the camera to shut it off.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What types of diving maneuvers does the man perform in the video?",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The man performs dives using tucks, twists, forwards dives, and other maneuvers from the diving board.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man performs dives using",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The man performs dives using tucks, twists, forwards dives, and other maneuvers from the diving board.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video content in detail?",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows a group of kids playing in a grassy field surrounded by a metal fence with towering light poles. The field is bordered by trees and there are cars parked outside. Throughout the video, the kids throw a ball to one another, with one child throwing the ball, another kicking it, and yet another catching it and bumping it into someone else. At one point, a kid kicks the ball far back where a girl is unable to catch it. This same pattern continues for the rest of the video. ",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "catching",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows a group of kids playing in a grassy field surrounded by a metal fence with towering light poles. The field is bordered by trees and there are cars parked outside. Throughout the video, the kids throw a ball to one another, with one child throwing the ball, another kicking it, and yet another catching it and bumping it into someone else. At one point, a kid kicks the ball far back where a girl is unable to catch it. This same pattern continues for the rest of the video. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "throwing",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows a group of kids playing in a grassy field surrounded by a metal fence with towering light poles. The field is bordered by trees and there are cars parked outside. Throughout the video, the kids throw a ball to one another, with one child throwing the ball, another kicking it, and yet another catching it and bumping it into someone else. At one point, a kid kicks the ball far back where a girl is unable to catch it. This same pattern continues for the rest of the video. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "towering light poles",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video shows a group of kids playing in a grassy field surrounded by a metal fence with towering light poles. The field is bordered by trees and there are cars parked outside. Throughout the video, the kids throw a ball to one another, with one child throwing the ball, another kicking it, and yet another catching it and bumping it into someone else. At one point, a kid kicks the ball far back where a girl is unable to catch it. This same pattern continues for the rest of the video. ",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe what happens in the video with the man holding a snow shovel?",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "In the video, a man dressed in winter clothing is outside standing next to a wall during the daytime. The camera captures him demonstrating how to shovel snow using a snow shovel. As the man speaks, snow can be seen falling around him. He then proceeds to scoop a large pile of snow and throws it aside repetitively. After a few shovels, the man walks to the camera and shuts it off, ending the demonstration.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "In the video, a man dressed in winter clothing is outside standing next to a wall during the daytime. The camera captures him demonstrating how to shovel snow using a snow shovel. As the man speaks, snow can be seen falling around him. He then proceeds to scoop a large pile of snow and throws it aside repetitively. After a few shovels, the man walks to the camera and shuts it off, ending the demonstration.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man dressed in winter clothing is outside standing next to a wall during",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "In the video, a man dressed in winter clothing is outside standing next to a wall during the daytime. The camera captures him demonstrating how to shovel snow using a snow shovel. As the man speaks, snow can be seen falling around him. He then proceeds to scoop a large pile of snow and throws it aside repetitively. After a few shovels, the man walks to the camera and shuts it off, ending the demonstration.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe Michal Navratil\u2019s diving maneuvers in detail from the provided video description?",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The video features Michal Navratil doing different diving maneuvers off a diving board. He begins with flips and moves on to execute tucks, twists, forward dives, among others. The pool where Navratil is diving in is both well-lit by lights inside the building and sunlight from outside. Other people are visible around the pool area and Navratil can be seen executing his dives with perfect form and control. The video concludes with Navratil executing a forward tuck dive while an image of him shirtless and in jeans doing a split is displayed on the screen.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "perfect form and control",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The video features Michal Navratil doing different diving maneuvers off a diving board. He begins with flips and moves on to execute tucks, twists, forward dives, among others. The pool where Navratil is diving in is both well-lit by lights inside the building and sunlight from outside. Other people are visible around the pool area and Navratil can be seen executing his dives with perfect form and control. The video concludes with Navratil executing a forward tuck dive while an image of him shirtless and in jeans doing a split is displayed on the screen.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "people visible around the pool area and navratil can be seen executing",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The video features Michal Navratil doing different diving maneuvers off a diving board. He begins with flips and moves on to execute tucks, twists, forward dives, among others. The pool where Navratil is diving in is both well-lit by lights inside the building and sunlight from outside. Other people are visible around the pool area and Navratil can be seen executing his dives with perfect form and control. The video concludes with Navratil executing a forward tuck dive while an image of him shirtless and in jeans doing a split is displayed on the screen.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What are the kids doing in the video?",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The kids in the video are playing with a ball in a grassy field.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man demonstrating in the video?",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow using the snow shovel.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man demonstrating how to shovel snow using",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow using the snow shovel.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What kind of dives did Michal Navratil perform in the video?",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "Michal Navratil performed different kinds of dives including tucks, twists, and forwards dives.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What's happening in the video?",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video starts with boys playing in a grassy field. One boy throws a ball and other kids kick it and run across the field while someone catches the ball and bumps it into another kid. This continues for the rest of the video.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man doing in the video?",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow while standing outdoors and wearing winter weather clothing. He scoops a large pile of snow and throws it to the side, repeating the process a few times before ending the demonstration.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "winter weather clothing",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow while standing outdoors and wearing winter weather clothing. He scoops a large pile of snow and throws it to the side, repeating the process a few times before ending the demonstration.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow while standing outdoors and wearing winter weather clothing. He scoops a large pile of snow and throws it to the side, repeating the process a few times before ending the demonstration.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man demonstrating how to shovel snow while standing outdoors and wearing winter weather clothing",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is demonstrating how to shovel snow while standing outdoors and wearing winter weather clothing. He scoops a large pile of snow and throws it to the side, repeating the process a few times before ending the demonstration.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What are some of the diving maneuvers that Michal Navratil performs in the video?",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The video shows Michal Navratil doing different diving maneuvers from the diving board, such as tucks, twists, and forwards dives.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the man doing in the video?",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "The man is washing dishes in a kitchen sink.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man washing",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "The man is washing dishes in a kitchen sink.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Who is shown standing in front of the platform in the video and what are they holding?",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video shows a man wearing a white lab coat standing in front of a platform and holding a can of furniture polish.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video shows a man wearing a white lab coat standing in front of a platform and holding a can of furniture polish.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing a white lab coat standing in front of a platform and holding",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video shows a man wearing a white lab coat standing in front of a platform and holding a can of furniture polish.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe what happens in the video?",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "In the video, a shirtless man is seen washing dishes in a kitchen sink while light streams through a window in front of him. Behind him, there is a visible curtain. Suddenly, a woman wearing an orange top walks up to the man and throws a few items into the sink, startles him, and he steps away. Unfortunately, without further information, it is difficult to ascertain the context of the video.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man seen washing",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "In the video, a shirtless man is seen washing dishes in a kitchen sink while light streams through a window in front of him. Behind him, there is a visible curtain. Suddenly, a woman wearing an orange top walks up to the man and throws a few items into the sink, startles him, and he steps away. Unfortunately, without further information, it is difficult to ascertain the context of the video.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "woman wearing",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "In the video, a shirtless man is seen washing dishes in a kitchen sink while light streams through a window in front of him. Behind him, there is a visible curtain. Suddenly, a woman wearing an orange top walks up to the man and throws a few items into the sink, startles him, and he steps away. Unfortunately, without further information, it is difficult to ascertain the context of the video.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you describe the video in detail?",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video starts by showing an advertisement for furniture polish and leather shine on a black screen with a clip of a can of polish on a tile floor. Next, a glass beaker filled with white liquid is placed next to it. The screen fades out to text on a black screen, followed by a man wearing a white lab coat standing in front of a platform, holding a can of furniture polish. The platform behind him contains bottles of chemicals. Cut to a wooden table, where a man pours liquid onto a cloth and starts wiping a wooden surface. A beaker with the polish is placed on the table, and the man proceeds to polish until the wooden surface shines. Next, different shots of the polished surface are shown. The video concludes with the advertisement for furniture polish and the display of company information on a black screen.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man pours liquid onto a cloth and starts wiping",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video starts by showing an advertisement for furniture polish and leather shine on a black screen with a clip of a can of polish on a tile floor. Next, a glass beaker filled with white liquid is placed next to it. The screen fades out to text on a black screen, followed by a man wearing a white lab coat standing in front of a platform, holding a can of furniture polish. The platform behind him contains bottles of chemicals. Cut to a wooden table, where a man pours liquid onto a cloth and starts wiping a wooden surface. A beaker with the polish is placed on the table, and the man proceeds to polish until the wooden surface shines. Next, different shots of the polished surface are shown. The video concludes with the advertisement for furniture polish and the display of company information on a black screen.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man wearing a white lab coat standing",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video starts by showing an advertisement for furniture polish and leather shine on a black screen with a clip of a can of polish on a tile floor. Next, a glass beaker filled with white liquid is placed next to it. The screen fades out to text on a black screen, followed by a man wearing a white lab coat standing in front of a platform, holding a can of furniture polish. The platform behind him contains bottles of chemicals. Cut to a wooden table, where a man pours liquid onto a cloth and starts wiping a wooden surface. A beaker with the polish is placed on the table, and the man proceeds to polish until the wooden surface shines. Next, different shots of the polished surface are shown. The video concludes with the advertisement for furniture polish and the display of company information on a black screen.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "standing",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video starts by showing an advertisement for furniture polish and leather shine on a black screen with a clip of a can of polish on a tile floor. Next, a glass beaker filled with white liquid is placed next to it. The screen fades out to text on a black screen, followed by a man wearing a white lab coat standing in front of a platform, holding a can of furniture polish. The platform behind him contains bottles of chemicals. Cut to a wooden table, where a man pours liquid onto a cloth and starts wiping a wooden surface. A beaker with the polish is placed on the table, and the man proceeds to polish until the wooden surface shines. Next, different shots of the polished surface are shown. The video concludes with the advertisement for furniture polish and the display of company information on a black screen.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is happening in the beginning of the video?",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "In the beginning of the video, a shirtless man is washing dishes in a kitchen sink while light streams through a window in front of him and a curtain is visible behind him.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man washing",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "In the beginning of the video, a shirtless man is washing dishes in a kitchen sink while light streams through a window in front of him and a curtain is visible behind him.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is being shown on the screen at the start of the video?",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "An advertisement for furniture polish and leather shine on a black screen is being shown at the start of the video. A clip of a can of polish on a tile floor is also displayed.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is happening in the kitchen sink in the video?",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "A shirtless man is washing dishes while a woman throws a few items into the sink. The man steps away startled when the woman walks up to him.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "man washing",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "A shirtless man is washing dishes while a woman throws a few items into the sink. The man steps away startled when the woman walks up to him.",
+    "query_type": "answer_phrase",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "Can you give a brief overview of the video?",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The video features an advertisement for furniture polish and leather shine. Different shots are shown of a wooden table being polished until it shines. Lastly, company information is displayed on a black screen.",
+    "query_type": "question",
+    "source": "generic_qa.json"
+  },
+  {
+    "query": "What is the sequence of events that occur in the video?",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "The video starts with a boy throwing a ball to some kids who are playing in a grassy field that is surrounded by a metal fence with huge light poles. Some cars are parked outside the field and there are also cars running outside the field. The sequence of events that occur is that the boy throws the ball to some other kid, the kid kicks the ball and another boy catches it. The boy again throws the ball, the kid kicks it and it goes far in the back where a girl was unable to catch it. The boy throws it again and the kid kicks it, a boy catches the ball and bumps the ball into another boy. This sequence continues for the rest of the video as someone throws the ball, another kid kicks it and runs across the field while someone catches the ball and bumps the ball into some other kid.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What is the temporal sequence of events in the video?",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The man is standing behind a barbell on the floor indoors. He bends down to lift the multi-colored barbell, squats and lifts it over his head, and drops it on the floor. He walks to the side and turns back before a man in a white t-shirt enters the scene on the right, ending the video.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What happens after the woman wearing an orange top walks up to the man in the kitchen?",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "After the woman in the orange top walks up to the man washing dishes in the kitchen and throws a few items into the sink, the man steps away startled.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What does the man do after he starts speaking to the camera in the snowy weather?",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "After the man starts speaking to the camera in the snowy weather, he shows how to shovel snow using the snow shovel. He scoops a large pile of snow and throws it to the side, repeating this a few times and demonstrating how to shovel snow. Finally, he ends his demonstration and walks over to the camera to shut it off.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What is the order of events depicted in the video?",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The video starts with two people shoveling snow behind a car parked in front of a red brick house during the daytime. They clear snow from around the car. Next, a doctor in a white coat and stethoscope speaks to the camera from a clinic. The video then switches back to the two people shoveling snow, with one of them doing so from a little distance behind the car while the other is next to the car. In the next clip, another man wearing suspenders is seen shoveling snow from a different location. Finally, the video ends with the man wearing suspenders shoveling snow.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What event occurs after the screen fades out to text on a black screen in the video?",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "After the screen fades out to text on a black screen, a man wearing a white lab coat is shown standing in front of a platform holding a can of furniture polish.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What are some diving maneuvers that Michal Navratil performs in the video?",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "In the video, Michal Navratil performs a range of diving maneuvers including tucks, twists, and forward dives. He does various flips from the diving board, showcasing his skills and control in the air. The video ends with him performing a forward tuck dive.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What did the man do after he spun a few times while standing in the net?",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "After the man spun a few times while standing in the net, he threw the disk from the open end of the net and looked toward the direction where he threw it. The people outside the net applauded.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "When does the biker ride the dirt bike in the field?",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "The biker rides the dirt bike in the field during the daytime.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "What does the man do after holding a knife in his right hand?",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "After holding a knife in his right hand, the man kneels down and strikes his knife on a fire starter to light a stack of firewood on fire. The firewood stack has heavy logs placed against each other and a few thinner sticks placed in the middle. A green piece of paper is visible in the middle. The stack is placed in an area with sand and pebbles, and the fire grows as the video ends with the man celebrating.",
+    "query_type": "question",
+    "source": "temporal_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-uJnucdW6DY"
+    ],
+    "ground_truth": "A group of kids are playing a game of soccer in the grassy field surrounded by a metal fence with light poles. They are passing the ball to each other, kicking it, and running across the field.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-pkfcMUIEMo"
+    ],
+    "ground_truth": "The man is wearing winter clothing and holding a snow shovel. He is demonstrating how to shovel snow by scooping and throwing it to the side.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-vnSFKJNB94"
+    ],
+    "ground_truth": "The video shows a man named Michal Navratil performing various diving maneuvers including tucks, twists, forwards dives, etc. in an indoor swimming pool with people visible walking around. He ends the video by doing a forward tuck dive.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-nl4G-00PtA"
+    ],
+    "ground_truth": "The man is washing dishes in a kitchen sink.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-MbZ-W0AbN0"
+    ],
+    "ground_truth": "The man is wearing a white lab coat in the video.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-HpCLXdtcas"
+    ],
+    "ground_truth": "The barbell in front of the man has multi-colored weights on it.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-IMXSEIabMM"
+    ],
+    "ground_truth": "The people in the beginning of the video are wearing winter clothes and shoveling snow around a car parked in front of a garage in the daytime.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-6dz6tBH77I"
+    ],
+    "ground_truth": "The man is holding a disk in his right hand.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-cAcA8dO7kA"
+    ],
+    "ground_truth": "A man is riding a dirt bike in a dirt field with houses visible beyond the field.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  },
+  {
+    "query": "",
+    "expected_videos": [
+      "v_-D1gdv_gQyw"
+    ],
+    "ground_truth": "The man lights the stack of firewood on fire by striking a fire starter with his knife.",
+    "query_type": "question",
+    "source": "consistency_qa.json"
+  }
+]

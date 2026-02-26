@@ -1,0 +1,3345 @@
+{
+  "video_id": "v_-MbZ-W0AbN0",
+  "source_path": "data/videos/video_chatgpt_eval/sample_videos/v_-MbZ-W0AbN0.mp4",
+  "processing_timestamp": 1751804324.661619,
+  "processing_duration_seconds": 16.265599012374878,
+  "keyframes": [
+    {
+      "frame_id": 0,
+      "filename": "frame_0000.jpg",
+      "start_time": 0.0,
+      "end_time": 0.13327626459143968,
+      "duration": 0.13327626459143968,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0000.jpg"
+    },
+    {
+      "frame_id": 1,
+      "filename": "frame_0001.jpg",
+      "start_time": 0.13327626459143968,
+      "end_time": 0.1665953307392996,
+      "duration": 0.03331906614785993,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0001.jpg"
+    },
+    {
+      "frame_id": 2,
+      "filename": "frame_0002.jpg",
+      "start_time": 0.1665953307392996,
+      "end_time": 0.23323346303501946,
+      "duration": 0.06663813229571985,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0002.jpg"
+    },
+    {
+      "frame_id": 3,
+      "filename": "frame_0003.jpg",
+      "start_time": 0.23323346303501946,
+      "end_time": 0.26655252918287936,
+      "duration": 0.0333190661478599,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0003.jpg"
+    },
+    {
+      "frame_id": 4,
+      "filename": "frame_0004.jpg",
+      "start_time": 0.26655252918287936,
+      "end_time": 0.2998715953307393,
+      "duration": 0.033319066147859955,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0004.jpg"
+    },
+    {
+      "frame_id": 5,
+      "filename": "frame_0005.jpg",
+      "start_time": 0.2998715953307393,
+      "end_time": 0.3331906614785992,
+      "duration": 0.0333190661478599,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0005.jpg"
+    },
+    {
+      "frame_id": 6,
+      "filename": "frame_0006.jpg",
+      "start_time": 0.3331906614785992,
+      "end_time": 0.39982879377431907,
+      "duration": 0.06663813229571985,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0006.jpg"
+    },
+    {
+      "frame_id": 7,
+      "filename": "frame_0007.jpg",
+      "start_time": 0.39982879377431907,
+      "end_time": 0.43314785992217897,
+      "duration": 0.0333190661478599,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0007.jpg"
+    },
+    {
+      "frame_id": 8,
+      "filename": "frame_0008.jpg",
+      "start_time": 0.43314785992217897,
+      "end_time": 2.3989727626459145,
+      "duration": 1.9658249027237356,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0008.jpg"
+    },
+    {
+      "frame_id": 9,
+      "filename": "frame_0009.jpg",
+      "start_time": 2.3989727626459145,
+      "end_time": 2.498929961089494,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0009.jpg"
+    },
+    {
+      "frame_id": 10,
+      "filename": "frame_0010.jpg",
+      "start_time": 2.498929961089494,
+      "end_time": 2.532249027237354,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0010.jpg"
+    },
+    {
+      "frame_id": 11,
+      "filename": "frame_0011.jpg",
+      "start_time": 2.532249027237354,
+      "end_time": 2.565568093385214,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0011.jpg"
+    },
+    {
+      "frame_id": 12,
+      "filename": "frame_0012.jpg",
+      "start_time": 2.565568093385214,
+      "end_time": 2.598887159533074,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0012.jpg"
+    },
+    {
+      "frame_id": 13,
+      "filename": "frame_0013.jpg",
+      "start_time": 2.598887159533074,
+      "end_time": 2.632206225680934,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0013.jpg"
+    },
+    {
+      "frame_id": 14,
+      "filename": "frame_0014.jpg",
+      "start_time": 2.632206225680934,
+      "end_time": 2.6655252918287937,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0014.jpg"
+    },
+    {
+      "frame_id": 15,
+      "filename": "frame_0015.jpg",
+      "start_time": 2.6655252918287937,
+      "end_time": 2.698844357976654,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0015.jpg"
+    },
+    {
+      "frame_id": 16,
+      "filename": "frame_0016.jpg",
+      "start_time": 2.698844357976654,
+      "end_time": 2.7321634241245136,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0016.jpg"
+    },
+    {
+      "frame_id": 17,
+      "filename": "frame_0017.jpg",
+      "start_time": 2.7321634241245136,
+      "end_time": 2.7654824902723734,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0017.jpg"
+    },
+    {
+      "frame_id": 18,
+      "filename": "frame_0018.jpg",
+      "start_time": 2.7654824902723734,
+      "end_time": 2.7988015564202335,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0018.jpg"
+    },
+    {
+      "frame_id": 19,
+      "filename": "frame_0019.jpg",
+      "start_time": 2.7988015564202335,
+      "end_time": 2.8321206225680933,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0019.jpg"
+    },
+    {
+      "frame_id": 20,
+      "filename": "frame_0020.jpg",
+      "start_time": 2.8321206225680933,
+      "end_time": 2.8654396887159534,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0020.jpg"
+    },
+    {
+      "frame_id": 21,
+      "filename": "frame_0021.jpg",
+      "start_time": 2.8654396887159534,
+      "end_time": 3.165311284046693,
+      "duration": 0.29987159533073937,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0021.jpg"
+    },
+    {
+      "frame_id": 22,
+      "filename": "frame_0022.jpg",
+      "start_time": 3.165311284046693,
+      "end_time": 3.1986303501945526,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0022.jpg"
+    },
+    {
+      "frame_id": 23,
+      "filename": "frame_0023.jpg",
+      "start_time": 3.1986303501945526,
+      "end_time": 3.2319494163424123,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0023.jpg"
+    },
+    {
+      "frame_id": 24,
+      "filename": "frame_0024.jpg",
+      "start_time": 3.2319494163424123,
+      "end_time": 3.2652684824902725,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0024.jpg"
+    },
+    {
+      "frame_id": 25,
+      "filename": "frame_0025.jpg",
+      "start_time": 3.2652684824902725,
+      "end_time": 3.298587548638132,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0025.jpg"
+    },
+    {
+      "frame_id": 26,
+      "filename": "frame_0026.jpg",
+      "start_time": 3.298587548638132,
+      "end_time": 3.3319066147859924,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0026.jpg"
+    },
+    {
+      "frame_id": 27,
+      "filename": "frame_0027.jpg",
+      "start_time": 3.3319066147859924,
+      "end_time": 3.365225680933852,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0027.jpg"
+    },
+    {
+      "frame_id": 28,
+      "filename": "frame_0028.jpg",
+      "start_time": 3.365225680933852,
+      "end_time": 3.3985447470817123,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0028.jpg"
+    },
+    {
+      "frame_id": 29,
+      "filename": "frame_0029.jpg",
+      "start_time": 3.3985447470817123,
+      "end_time": 3.431863813229572,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0029.jpg"
+    },
+    {
+      "frame_id": 30,
+      "filename": "frame_0030.jpg",
+      "start_time": 3.431863813229572,
+      "end_time": 3.4651828793774317,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0030.jpg"
+    },
+    {
+      "frame_id": 31,
+      "filename": "frame_0031.jpg",
+      "start_time": 3.4651828793774317,
+      "end_time": 3.498501945525292,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0031.jpg"
+    },
+    {
+      "frame_id": 32,
+      "filename": "frame_0032.jpg",
+      "start_time": 3.498501945525292,
+      "end_time": 3.5318210116731517,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0032.jpg"
+    },
+    {
+      "frame_id": 33,
+      "filename": "frame_0033.jpg",
+      "start_time": 3.5318210116731517,
+      "end_time": 3.565140077821012,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0033.jpg"
+    },
+    {
+      "frame_id": 34,
+      "filename": "frame_0034.jpg",
+      "start_time": 3.565140077821012,
+      "end_time": 3.5984591439688716,
+      "duration": 0.03331906614785973,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0034.jpg"
+    },
+    {
+      "frame_id": 35,
+      "filename": "frame_0035.jpg",
+      "start_time": 3.5984591439688716,
+      "end_time": 3.6317782101167317,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0035.jpg"
+    },
+    {
+      "frame_id": 36,
+      "filename": "frame_0036.jpg",
+      "start_time": 3.6317782101167317,
+      "end_time": 5.197774319066148,
+      "duration": 1.5659961089494159,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0036.jpg"
+    },
+    {
+      "frame_id": 37,
+      "filename": "frame_0037.jpg",
+      "start_time": 5.197774319066148,
+      "end_time": 5.231093385214008,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0037.jpg"
+    },
+    {
+      "frame_id": 38,
+      "filename": "frame_0038.jpg",
+      "start_time": 5.231093385214008,
+      "end_time": 5.264412451361868,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0038.jpg"
+    },
+    {
+      "frame_id": 39,
+      "filename": "frame_0039.jpg",
+      "start_time": 5.264412451361868,
+      "end_time": 5.297731517509727,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0039.jpg"
+    },
+    {
+      "frame_id": 40,
+      "filename": "frame_0040.jpg",
+      "start_time": 5.297731517509727,
+      "end_time": 5.331050583657587,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0040.jpg"
+    },
+    {
+      "frame_id": 41,
+      "filename": "frame_0041.jpg",
+      "start_time": 5.331050583657587,
+      "end_time": 5.364369649805448,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0041.jpg"
+    },
+    {
+      "frame_id": 42,
+      "filename": "frame_0042.jpg",
+      "start_time": 5.364369649805448,
+      "end_time": 5.397688715953308,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0042.jpg"
+    },
+    {
+      "frame_id": 43,
+      "filename": "frame_0043.jpg",
+      "start_time": 5.397688715953308,
+      "end_time": 5.431007782101167,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0043.jpg"
+    },
+    {
+      "frame_id": 44,
+      "filename": "frame_0044.jpg",
+      "start_time": 5.431007782101167,
+      "end_time": 5.464326848249027,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0044.jpg"
+    },
+    {
+      "frame_id": 45,
+      "filename": "frame_0045.jpg",
+      "start_time": 5.464326848249027,
+      "end_time": 5.497645914396887,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0045.jpg"
+    },
+    {
+      "frame_id": 46,
+      "filename": "frame_0046.jpg",
+      "start_time": 5.497645914396887,
+      "end_time": 5.530964980544747,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0046.jpg"
+    },
+    {
+      "frame_id": 47,
+      "filename": "frame_0047.jpg",
+      "start_time": 5.530964980544747,
+      "end_time": 5.564284046692607,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0047.jpg"
+    },
+    {
+      "frame_id": 48,
+      "filename": "frame_0048.jpg",
+      "start_time": 5.564284046692607,
+      "end_time": 5.597603112840467,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0048.jpg"
+    },
+    {
+      "frame_id": 49,
+      "filename": "frame_0049.jpg",
+      "start_time": 5.597603112840467,
+      "end_time": 5.630922178988327,
+      "duration": 0.03331906614786018,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0049.jpg"
+    },
+    {
+      "frame_id": 50,
+      "filename": "frame_0050.jpg",
+      "start_time": 5.630922178988327,
+      "end_time": 5.6642412451361865,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0050.jpg"
+    },
+    {
+      "frame_id": 51,
+      "filename": "frame_0051.jpg",
+      "start_time": 5.6642412451361865,
+      "end_time": 9.929081712062256,
+      "duration": 4.26484046692607,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0051.jpg"
+    },
+    {
+      "frame_id": 52,
+      "filename": "frame_0052.jpg",
+      "start_time": 9.929081712062256,
+      "end_time": 9.962400778210117,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0052.jpg"
+    },
+    {
+      "frame_id": 53,
+      "filename": "frame_0053.jpg",
+      "start_time": 9.962400778210117,
+      "end_time": 9.995719844357977,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0053.jpg"
+    },
+    {
+      "frame_id": 54,
+      "filename": "frame_0054.jpg",
+      "start_time": 9.995719844357977,
+      "end_time": 10.062357976653697,
+      "duration": 0.06663813229572035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0054.jpg"
+    },
+    {
+      "frame_id": 55,
+      "filename": "frame_0055.jpg",
+      "start_time": 10.062357976653697,
+      "end_time": 10.095677042801556,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0055.jpg"
+    },
+    {
+      "frame_id": 56,
+      "filename": "frame_0056.jpg",
+      "start_time": 10.095677042801556,
+      "end_time": 10.128996108949416,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0056.jpg"
+    },
+    {
+      "frame_id": 57,
+      "filename": "frame_0057.jpg",
+      "start_time": 10.128996108949416,
+      "end_time": 10.162315175097277,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0057.jpg"
+    },
+    {
+      "frame_id": 58,
+      "filename": "frame_0058.jpg",
+      "start_time": 10.162315175097277,
+      "end_time": 10.195634241245136,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0058.jpg"
+    },
+    {
+      "frame_id": 59,
+      "filename": "frame_0059.jpg",
+      "start_time": 10.195634241245136,
+      "end_time": 10.228953307392997,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0059.jpg"
+    },
+    {
+      "frame_id": 60,
+      "filename": "frame_0060.jpg",
+      "start_time": 10.228953307392997,
+      "end_time": 10.262272373540856,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0060.jpg"
+    },
+    {
+      "frame_id": 61,
+      "filename": "frame_0061.jpg",
+      "start_time": 10.262272373540856,
+      "end_time": 10.295591439688716,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0061.jpg"
+    },
+    {
+      "frame_id": 62,
+      "filename": "frame_0062.jpg",
+      "start_time": 10.295591439688716,
+      "end_time": 10.328910505836577,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0062.jpg"
+    },
+    {
+      "frame_id": 63,
+      "filename": "frame_0063.jpg",
+      "start_time": 10.328910505836577,
+      "end_time": 10.362229571984436,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0063.jpg"
+    },
+    {
+      "frame_id": 64,
+      "filename": "frame_0064.jpg",
+      "start_time": 10.362229571984436,
+      "end_time": 11.428439688715953,
+      "duration": 1.0662101167315168,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0064.jpg"
+    },
+    {
+      "frame_id": 65,
+      "filename": "frame_0065.jpg",
+      "start_time": 11.428439688715953,
+      "end_time": 11.461758754863814,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0065.jpg"
+    },
+    {
+      "frame_id": 66,
+      "filename": "frame_0066.jpg",
+      "start_time": 11.461758754863814,
+      "end_time": 11.495077821011673,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0066.jpg"
+    },
+    {
+      "frame_id": 67,
+      "filename": "frame_0067.jpg",
+      "start_time": 11.495077821011673,
+      "end_time": 11.528396887159532,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0067.jpg"
+    },
+    {
+      "frame_id": 68,
+      "filename": "frame_0068.jpg",
+      "start_time": 11.528396887159532,
+      "end_time": 11.561715953307393,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0068.jpg"
+    },
+    {
+      "frame_id": 69,
+      "filename": "frame_0069.jpg",
+      "start_time": 11.561715953307393,
+      "end_time": 11.595035019455253,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0069.jpg"
+    },
+    {
+      "frame_id": 70,
+      "filename": "frame_0070.jpg",
+      "start_time": 11.595035019455253,
+      "end_time": 11.628354085603114,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0070.jpg"
+    },
+    {
+      "frame_id": 71,
+      "filename": "frame_0071.jpg",
+      "start_time": 11.628354085603114,
+      "end_time": 11.661673151750973,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0071.jpg"
+    },
+    {
+      "frame_id": 72,
+      "filename": "frame_0072.jpg",
+      "start_time": 11.661673151750973,
+      "end_time": 11.694992217898832,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0072.jpg"
+    },
+    {
+      "frame_id": 73,
+      "filename": "frame_0073.jpg",
+      "start_time": 11.694992217898832,
+      "end_time": 11.728311284046693,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0073.jpg"
+    },
+    {
+      "frame_id": 74,
+      "filename": "frame_0074.jpg",
+      "start_time": 11.728311284046693,
+      "end_time": 11.794949416342412,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0074.jpg"
+    },
+    {
+      "frame_id": 75,
+      "filename": "frame_0075.jpg",
+      "start_time": 11.794949416342412,
+      "end_time": 11.828268482490273,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0075.jpg"
+    },
+    {
+      "frame_id": 76,
+      "filename": "frame_0076.jpg",
+      "start_time": 11.828268482490273,
+      "end_time": 11.861587548638132,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0076.jpg"
+    },
+    {
+      "frame_id": 77,
+      "filename": "frame_0077.jpg",
+      "start_time": 11.861587548638132,
+      "end_time": 11.894906614785992,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0077.jpg"
+    },
+    {
+      "frame_id": 78,
+      "filename": "frame_0078.jpg",
+      "start_time": 11.894906614785992,
+      "end_time": 12.228097276264592,
+      "duration": 0.3331906614786,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0078.jpg"
+    },
+    {
+      "frame_id": 79,
+      "filename": "frame_0079.jpg",
+      "start_time": 12.228097276264592,
+      "end_time": 12.261416342412451,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0079.jpg"
+    },
+    {
+      "frame_id": 80,
+      "filename": "frame_0080.jpg",
+      "start_time": 12.261416342412451,
+      "end_time": 12.294735408560312,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0080.jpg"
+    },
+    {
+      "frame_id": 81,
+      "filename": "frame_0081.jpg",
+      "start_time": 12.294735408560312,
+      "end_time": 12.328054474708171,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0081.jpg"
+    },
+    {
+      "frame_id": 82,
+      "filename": "frame_0082.jpg",
+      "start_time": 12.328054474708171,
+      "end_time": 12.36137354085603,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0082.jpg"
+    },
+    {
+      "frame_id": 83,
+      "filename": "frame_0083.jpg",
+      "start_time": 12.36137354085603,
+      "end_time": 12.394692607003892,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0083.jpg"
+    },
+    {
+      "frame_id": 84,
+      "filename": "frame_0084.jpg",
+      "start_time": 12.394692607003892,
+      "end_time": 12.428011673151751,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0084.jpg"
+    },
+    {
+      "frame_id": 85,
+      "filename": "frame_0085.jpg",
+      "start_time": 12.428011673151751,
+      "end_time": 12.46133073929961,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0085.jpg"
+    },
+    {
+      "frame_id": 86,
+      "filename": "frame_0086.jpg",
+      "start_time": 12.46133073929961,
+      "end_time": 12.494649805447471,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0086.jpg"
+    },
+    {
+      "frame_id": 87,
+      "filename": "frame_0087.jpg",
+      "start_time": 12.494649805447471,
+      "end_time": 12.52796887159533,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0087.jpg"
+    },
+    {
+      "frame_id": 88,
+      "filename": "frame_0088.jpg",
+      "start_time": 12.52796887159533,
+      "end_time": 12.561287937743192,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0088.jpg"
+    },
+    {
+      "frame_id": 89,
+      "filename": "frame_0089.jpg",
+      "start_time": 12.561287937743192,
+      "end_time": 12.594607003891051,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0089.jpg"
+    },
+    {
+      "frame_id": 90,
+      "filename": "frame_0090.jpg",
+      "start_time": 12.594607003891051,
+      "end_time": 12.62792607003891,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0090.jpg"
+    },
+    {
+      "frame_id": 91,
+      "filename": "frame_0091.jpg",
+      "start_time": 12.62792607003891,
+      "end_time": 12.661245136186771,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0091.jpg"
+    },
+    {
+      "frame_id": 92,
+      "filename": "frame_0092.jpg",
+      "start_time": 12.661245136186771,
+      "end_time": 12.69456420233463,
+      "duration": 0.03331906614785929,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0092.jpg"
+    },
+    {
+      "frame_id": 93,
+      "filename": "frame_0093.jpg",
+      "start_time": 12.69456420233463,
+      "end_time": 16.492937743190662,
+      "duration": 3.7983735408560317,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0093.jpg"
+    },
+    {
+      "frame_id": 94,
+      "filename": "frame_0094.jpg",
+      "start_time": 16.492937743190662,
+      "end_time": 16.52625680933852,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0094.jpg"
+    },
+    {
+      "frame_id": 95,
+      "filename": "frame_0095.jpg",
+      "start_time": 16.52625680933852,
+      "end_time": 16.55957587548638,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0095.jpg"
+    },
+    {
+      "frame_id": 96,
+      "filename": "frame_0096.jpg",
+      "start_time": 16.55957587548638,
+      "end_time": 16.592894941634242,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0096.jpg"
+    },
+    {
+      "frame_id": 97,
+      "filename": "frame_0097.jpg",
+      "start_time": 16.592894941634242,
+      "end_time": 16.626214007782103,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0097.jpg"
+    },
+    {
+      "frame_id": 98,
+      "filename": "frame_0098.jpg",
+      "start_time": 16.626214007782103,
+      "end_time": 16.65953307392996,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0098.jpg"
+    },
+    {
+      "frame_id": 99,
+      "filename": "frame_0099.jpg",
+      "start_time": 16.65953307392996,
+      "end_time": 16.69285214007782,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0099.jpg"
+    },
+    {
+      "frame_id": 100,
+      "filename": "frame_0100.jpg",
+      "start_time": 16.69285214007782,
+      "end_time": 16.726171206225683,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0100.jpg"
+    },
+    {
+      "frame_id": 101,
+      "filename": "frame_0101.jpg",
+      "start_time": 16.726171206225683,
+      "end_time": 16.75949027237354,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0101.jpg"
+    },
+    {
+      "frame_id": 102,
+      "filename": "frame_0102.jpg",
+      "start_time": 16.75949027237354,
+      "end_time": 16.7928093385214,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0102.jpg"
+    },
+    {
+      "frame_id": 103,
+      "filename": "frame_0103.jpg",
+      "start_time": 16.7928093385214,
+      "end_time": 16.826128404669262,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0103.jpg"
+    },
+    {
+      "frame_id": 104,
+      "filename": "frame_0104.jpg",
+      "start_time": 16.826128404669262,
+      "end_time": 16.85944747081712,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0104.jpg"
+    },
+    {
+      "frame_id": 105,
+      "filename": "frame_0105.jpg",
+      "start_time": 16.85944747081712,
+      "end_time": 16.89276653696498,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0105.jpg"
+    },
+    {
+      "frame_id": 106,
+      "filename": "frame_0106.jpg",
+      "start_time": 16.89276653696498,
+      "end_time": 16.926085603112842,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0106.jpg"
+    },
+    {
+      "frame_id": 107,
+      "filename": "frame_0107.jpg",
+      "start_time": 16.926085603112842,
+      "end_time": 16.9594046692607,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0107.jpg"
+    },
+    {
+      "frame_id": 108,
+      "filename": "frame_0108.jpg",
+      "start_time": 16.9594046692607,
+      "end_time": 17.22595719844358,
+      "duration": 0.2665525291828814,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0108.jpg"
+    },
+    {
+      "frame_id": 109,
+      "filename": "frame_0109.jpg",
+      "start_time": 17.22595719844358,
+      "end_time": 17.25927626459144,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0109.jpg"
+    },
+    {
+      "frame_id": 110,
+      "filename": "frame_0110.jpg",
+      "start_time": 17.25927626459144,
+      "end_time": 17.32591439688716,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0110.jpg"
+    },
+    {
+      "frame_id": 111,
+      "filename": "frame_0111.jpg",
+      "start_time": 17.32591439688716,
+      "end_time": 17.359233463035018,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0111.jpg"
+    },
+    {
+      "frame_id": 112,
+      "filename": "frame_0112.jpg",
+      "start_time": 17.359233463035018,
+      "end_time": 17.39255252918288,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0112.jpg"
+    },
+    {
+      "frame_id": 113,
+      "filename": "frame_0113.jpg",
+      "start_time": 17.39255252918288,
+      "end_time": 17.42587159533074,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0113.jpg"
+    },
+    {
+      "frame_id": 114,
+      "filename": "frame_0114.jpg",
+      "start_time": 17.42587159533074,
+      "end_time": 17.459190661478598,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0114.jpg"
+    },
+    {
+      "frame_id": 115,
+      "filename": "frame_0115.jpg",
+      "start_time": 17.459190661478598,
+      "end_time": 17.49250972762646,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0115.jpg"
+    },
+    {
+      "frame_id": 116,
+      "filename": "frame_0116.jpg",
+      "start_time": 17.49250972762646,
+      "end_time": 17.52582879377432,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0116.jpg"
+    },
+    {
+      "frame_id": 117,
+      "filename": "frame_0117.jpg",
+      "start_time": 17.52582879377432,
+      "end_time": 17.55914785992218,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0117.jpg"
+    },
+    {
+      "frame_id": 118,
+      "filename": "frame_0118.jpg",
+      "start_time": 17.55914785992218,
+      "end_time": 17.59246692607004,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0118.jpg"
+    },
+    {
+      "frame_id": 119,
+      "filename": "frame_0119.jpg",
+      "start_time": 17.59246692607004,
+      "end_time": 17.6257859922179,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0119.jpg"
+    },
+    {
+      "frame_id": 120,
+      "filename": "frame_0120.jpg",
+      "start_time": 17.6257859922179,
+      "end_time": 17.65910505836576,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0120.jpg"
+    },
+    {
+      "frame_id": 121,
+      "filename": "frame_0121.jpg",
+      "start_time": 17.65910505836576,
+      "end_time": 17.692424124513618,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0121.jpg"
+    },
+    {
+      "frame_id": 122,
+      "filename": "frame_0122.jpg",
+      "start_time": 17.692424124513618,
+      "end_time": 17.72574319066148,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0122.jpg"
+    },
+    {
+      "frame_id": 123,
+      "filename": "frame_0123.jpg",
+      "start_time": 17.72574319066148,
+      "end_time": 17.75906225680934,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0123.jpg"
+    },
+    {
+      "frame_id": 124,
+      "filename": "frame_0124.jpg",
+      "start_time": 17.75906225680934,
+      "end_time": 19.325058365758753,
+      "duration": 1.5659961089494132,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0124.jpg"
+    },
+    {
+      "frame_id": 125,
+      "filename": "frame_0125.jpg",
+      "start_time": 19.325058365758753,
+      "end_time": 19.358377431906614,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0125.jpg"
+    },
+    {
+      "frame_id": 126,
+      "filename": "frame_0126.jpg",
+      "start_time": 19.358377431906614,
+      "end_time": 19.391696498054475,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0126.jpg"
+    },
+    {
+      "frame_id": 127,
+      "filename": "frame_0127.jpg",
+      "start_time": 19.391696498054475,
+      "end_time": 19.425015564202337,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0127.jpg"
+    },
+    {
+      "frame_id": 128,
+      "filename": "frame_0128.jpg",
+      "start_time": 19.425015564202337,
+      "end_time": 19.458334630350194,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0128.jpg"
+    },
+    {
+      "frame_id": 129,
+      "filename": "frame_0129.jpg",
+      "start_time": 19.458334630350194,
+      "end_time": 19.491653696498055,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0129.jpg"
+    },
+    {
+      "frame_id": 130,
+      "filename": "frame_0130.jpg",
+      "start_time": 19.491653696498055,
+      "end_time": 19.524972762645916,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0130.jpg"
+    },
+    {
+      "frame_id": 131,
+      "filename": "frame_0131.jpg",
+      "start_time": 19.524972762645916,
+      "end_time": 19.558291828793774,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0131.jpg"
+    },
+    {
+      "frame_id": 132,
+      "filename": "frame_0132.jpg",
+      "start_time": 19.558291828793774,
+      "end_time": 19.591610894941635,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0132.jpg"
+    },
+    {
+      "frame_id": 133,
+      "filename": "frame_0133.jpg",
+      "start_time": 19.591610894941635,
+      "end_time": 19.624929961089496,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0133.jpg"
+    },
+    {
+      "frame_id": 134,
+      "filename": "frame_0134.jpg",
+      "start_time": 19.624929961089496,
+      "end_time": 19.658249027237353,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0134.jpg"
+    },
+    {
+      "frame_id": 135,
+      "filename": "frame_0135.jpg",
+      "start_time": 19.658249027237353,
+      "end_time": 19.691568093385214,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0135.jpg"
+    },
+    {
+      "frame_id": 136,
+      "filename": "frame_0136.jpg",
+      "start_time": 19.691568093385214,
+      "end_time": 19.724887159533075,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0136.jpg"
+    },
+    {
+      "frame_id": 137,
+      "filename": "frame_0137.jpg",
+      "start_time": 19.724887159533075,
+      "end_time": 19.758206225680933,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0137.jpg"
+    },
+    {
+      "frame_id": 138,
+      "filename": "frame_0138.jpg",
+      "start_time": 19.758206225680933,
+      "end_time": 19.824844357976655,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0138.jpg"
+    },
+    {
+      "frame_id": 139,
+      "filename": "frame_0139.jpg",
+      "start_time": 19.824844357976655,
+      "end_time": 19.858163424124513,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0139.jpg"
+    },
+    {
+      "frame_id": 140,
+      "filename": "frame_0140.jpg",
+      "start_time": 19.858163424124513,
+      "end_time": 20.091396887159533,
+      "duration": 0.23323346303502035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0140.jpg"
+    },
+    {
+      "frame_id": 141,
+      "filename": "frame_0141.jpg",
+      "start_time": 20.091396887159533,
+      "end_time": 20.124715953307394,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0141.jpg"
+    },
+    {
+      "frame_id": 142,
+      "filename": "frame_0142.jpg",
+      "start_time": 20.124715953307394,
+      "end_time": 20.224673151750974,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0142.jpg"
+    },
+    {
+      "frame_id": 143,
+      "filename": "frame_0143.jpg",
+      "start_time": 20.224673151750974,
+      "end_time": 20.25799221789883,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0143.jpg"
+    },
+    {
+      "frame_id": 144,
+      "filename": "frame_0144.jpg",
+      "start_time": 20.25799221789883,
+      "end_time": 20.291311284046692,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0144.jpg"
+    },
+    {
+      "frame_id": 145,
+      "filename": "frame_0145.jpg",
+      "start_time": 20.291311284046692,
+      "end_time": 20.324630350194553,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0145.jpg"
+    },
+    {
+      "frame_id": 146,
+      "filename": "frame_0146.jpg",
+      "start_time": 20.324630350194553,
+      "end_time": 20.357949416342414,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0146.jpg"
+    },
+    {
+      "frame_id": 147,
+      "filename": "frame_0147.jpg",
+      "start_time": 20.357949416342414,
+      "end_time": 20.391268482490272,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0147.jpg"
+    },
+    {
+      "frame_id": 148,
+      "filename": "frame_0148.jpg",
+      "start_time": 20.391268482490272,
+      "end_time": 20.424587548638133,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0148.jpg"
+    },
+    {
+      "frame_id": 149,
+      "filename": "frame_0149.jpg",
+      "start_time": 20.424587548638133,
+      "end_time": 20.457906614785994,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0149.jpg"
+    },
+    {
+      "frame_id": 150,
+      "filename": "frame_0150.jpg",
+      "start_time": 20.457906614785994,
+      "end_time": 20.49122568093385,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0150.jpg"
+    },
+    {
+      "frame_id": 151,
+      "filename": "frame_0151.jpg",
+      "start_time": 20.49122568093385,
+      "end_time": 20.524544747081713,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0151.jpg"
+    },
+    {
+      "frame_id": 152,
+      "filename": "frame_0152.jpg",
+      "start_time": 20.524544747081713,
+      "end_time": 20.557863813229574,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0152.jpg"
+    },
+    {
+      "frame_id": 153,
+      "filename": "frame_0153.jpg",
+      "start_time": 20.557863813229574,
+      "end_time": 20.59118287937743,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0153.jpg"
+    },
+    {
+      "frame_id": 154,
+      "filename": "frame_0154.jpg",
+      "start_time": 20.59118287937743,
+      "end_time": 24.023046692607004,
+      "duration": 3.4318638132295725,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0154.jpg"
+    },
+    {
+      "frame_id": 155,
+      "filename": "frame_0155.jpg",
+      "start_time": 24.023046692607004,
+      "end_time": 24.056365758754865,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0155.jpg"
+    },
+    {
+      "frame_id": 156,
+      "filename": "frame_0156.jpg",
+      "start_time": 24.056365758754865,
+      "end_time": 24.089684824902722,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0156.jpg"
+    },
+    {
+      "frame_id": 157,
+      "filename": "frame_0157.jpg",
+      "start_time": 24.089684824902722,
+      "end_time": 24.123003891050583,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0157.jpg"
+    },
+    {
+      "frame_id": 158,
+      "filename": "frame_0158.jpg",
+      "start_time": 24.123003891050583,
+      "end_time": 24.156322957198444,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0158.jpg"
+    },
+    {
+      "frame_id": 159,
+      "filename": "frame_0159.jpg",
+      "start_time": 24.156322957198444,
+      "end_time": 24.189642023346305,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0159.jpg"
+    },
+    {
+      "frame_id": 160,
+      "filename": "frame_0160.jpg",
+      "start_time": 24.189642023346305,
+      "end_time": 24.222961089494163,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0160.jpg"
+    },
+    {
+      "frame_id": 161,
+      "filename": "frame_0161.jpg",
+      "start_time": 24.222961089494163,
+      "end_time": 24.256280155642024,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0161.jpg"
+    },
+    {
+      "frame_id": 162,
+      "filename": "frame_0162.jpg",
+      "start_time": 24.256280155642024,
+      "end_time": 24.289599221789885,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0162.jpg"
+    },
+    {
+      "frame_id": 163,
+      "filename": "frame_0163.jpg",
+      "start_time": 24.289599221789885,
+      "end_time": 24.322918287937743,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0163.jpg"
+    },
+    {
+      "frame_id": 164,
+      "filename": "frame_0164.jpg",
+      "start_time": 24.322918287937743,
+      "end_time": 24.356237354085604,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0164.jpg"
+    },
+    {
+      "frame_id": 165,
+      "filename": "frame_0165.jpg",
+      "start_time": 24.356237354085604,
+      "end_time": 24.389556420233465,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0165.jpg"
+    },
+    {
+      "frame_id": 166,
+      "filename": "frame_0166.jpg",
+      "start_time": 24.389556420233465,
+      "end_time": 24.456194552529183,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0166.jpg"
+    },
+    {
+      "frame_id": 167,
+      "filename": "frame_0167.jpg",
+      "start_time": 24.456194552529183,
+      "end_time": 24.489513618677044,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0167.jpg"
+    },
+    {
+      "frame_id": 168,
+      "filename": "frame_0168.jpg",
+      "start_time": 24.489513618677044,
+      "end_time": 24.522832684824902,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0168.jpg"
+    },
+    {
+      "frame_id": 169,
+      "filename": "frame_0169.jpg",
+      "start_time": 24.522832684824902,
+      "end_time": 24.789385214007783,
+      "duration": 0.2665525291828814,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0169.jpg"
+    },
+    {
+      "frame_id": 170,
+      "filename": "frame_0170.jpg",
+      "start_time": 24.789385214007783,
+      "end_time": 24.82270428015564,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0170.jpg"
+    },
+    {
+      "frame_id": 171,
+      "filename": "frame_0171.jpg",
+      "start_time": 24.82270428015564,
+      "end_time": 24.889342412451363,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0171.jpg"
+    },
+    {
+      "frame_id": 172,
+      "filename": "frame_0172.jpg",
+      "start_time": 24.889342412451363,
+      "end_time": 24.92266147859922,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0172.jpg"
+    },
+    {
+      "frame_id": 173,
+      "filename": "frame_0173.jpg",
+      "start_time": 24.92266147859922,
+      "end_time": 24.95598054474708,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0173.jpg"
+    },
+    {
+      "frame_id": 174,
+      "filename": "frame_0174.jpg",
+      "start_time": 24.95598054474708,
+      "end_time": 24.989299610894943,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0174.jpg"
+    },
+    {
+      "frame_id": 175,
+      "filename": "frame_0175.jpg",
+      "start_time": 24.989299610894943,
+      "end_time": 25.0226186770428,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0175.jpg"
+    },
+    {
+      "frame_id": 176,
+      "filename": "frame_0176.jpg",
+      "start_time": 25.0226186770428,
+      "end_time": 25.05593774319066,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0176.jpg"
+    },
+    {
+      "frame_id": 177,
+      "filename": "frame_0177.jpg",
+      "start_time": 25.05593774319066,
+      "end_time": 25.089256809338522,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0177.jpg"
+    },
+    {
+      "frame_id": 178,
+      "filename": "frame_0178.jpg",
+      "start_time": 25.089256809338522,
+      "end_time": 25.122575875486383,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0178.jpg"
+    },
+    {
+      "frame_id": 179,
+      "filename": "frame_0179.jpg",
+      "start_time": 25.122575875486383,
+      "end_time": 25.15589494163424,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0179.jpg"
+    },
+    {
+      "frame_id": 180,
+      "filename": "frame_0180.jpg",
+      "start_time": 25.15589494163424,
+      "end_time": 25.189214007782102,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0180.jpg"
+    },
+    {
+      "frame_id": 181,
+      "filename": "frame_0181.jpg",
+      "start_time": 25.189214007782102,
+      "end_time": 25.222533073929963,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0181.jpg"
+    },
+    {
+      "frame_id": 182,
+      "filename": "frame_0182.jpg",
+      "start_time": 25.222533073929963,
+      "end_time": 25.25585214007782,
+      "duration": 0.03331906614785751,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0182.jpg"
+    },
+    {
+      "frame_id": 183,
+      "filename": "frame_0183.jpg",
+      "start_time": 25.25585214007782,
+      "end_time": 25.28917120622568,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0183.jpg"
+    },
+    {
+      "frame_id": 184,
+      "filename": "frame_0184.jpg",
+      "start_time": 25.28917120622568,
+      "end_time": 27.554867704280156,
+      "duration": 2.2656964980544743,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0184.jpg"
+    },
+    {
+      "frame_id": 185,
+      "filename": "frame_0185.jpg",
+      "start_time": 27.554867704280156,
+      "end_time": 27.621505836575874,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0185.jpg"
+    },
+    {
+      "frame_id": 186,
+      "filename": "frame_0186.jpg",
+      "start_time": 27.621505836575874,
+      "end_time": 27.721463035019454,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0186.jpg"
+    },
+    {
+      "frame_id": 187,
+      "filename": "frame_0187.jpg",
+      "start_time": 27.721463035019454,
+      "end_time": 27.788101167315176,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0187.jpg"
+    },
+    {
+      "frame_id": 188,
+      "filename": "frame_0188.jpg",
+      "start_time": 27.788101167315176,
+      "end_time": 28.354525291828793,
+      "duration": 0.5664241245136168,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0188.jpg"
+    },
+    {
+      "frame_id": 189,
+      "filename": "frame_0189.jpg",
+      "start_time": 28.354525291828793,
+      "end_time": 28.421163424124515,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0189.jpg"
+    },
+    {
+      "frame_id": 190,
+      "filename": "frame_0190.jpg",
+      "start_time": 28.421163424124515,
+      "end_time": 28.521120622568095,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0190.jpg"
+    },
+    {
+      "frame_id": 191,
+      "filename": "frame_0191.jpg",
+      "start_time": 28.521120622568095,
+      "end_time": 28.587758754863813,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0191.jpg"
+    },
+    {
+      "frame_id": 192,
+      "filename": "frame_0192.jpg",
+      "start_time": 28.587758754863813,
+      "end_time": 28.687715953307393,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0192.jpg"
+    },
+    {
+      "frame_id": 193,
+      "filename": "frame_0193.jpg",
+      "start_time": 28.687715953307393,
+      "end_time": 28.75435408560311,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0193.jpg"
+    },
+    {
+      "frame_id": 194,
+      "filename": "frame_0194.jpg",
+      "start_time": 28.75435408560311,
+      "end_time": 28.820992217898834,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0194.jpg"
+    },
+    {
+      "frame_id": 195,
+      "filename": "frame_0195.jpg",
+      "start_time": 28.820992217898834,
+      "end_time": 29.154182879377434,
+      "duration": 0.3331906614786,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0195.jpg"
+    },
+    {
+      "frame_id": 196,
+      "filename": "frame_0196.jpg",
+      "start_time": 29.154182879377434,
+      "end_time": 29.220821011673152,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0196.jpg"
+    },
+    {
+      "frame_id": 197,
+      "filename": "frame_0197.jpg",
+      "start_time": 29.220821011673152,
+      "end_time": 29.48737354085603,
+      "duration": 0.26655252918287786,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0197.jpg"
+    },
+    {
+      "frame_id": 198,
+      "filename": "frame_0198.jpg",
+      "start_time": 29.48737354085603,
+      "end_time": 29.95384046692607,
+      "duration": 0.4664669260700407,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0198.jpg"
+    },
+    {
+      "frame_id": 199,
+      "filename": "frame_0199.jpg",
+      "start_time": 29.95384046692607,
+      "end_time": 30.02047859922179,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0199.jpg"
+    },
+    {
+      "frame_id": 200,
+      "filename": "frame_0200.jpg",
+      "start_time": 30.02047859922179,
+      "end_time": 30.12043579766537,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0200.jpg"
+    },
+    {
+      "frame_id": 201,
+      "filename": "frame_0201.jpg",
+      "start_time": 30.12043579766537,
+      "end_time": 30.18707392996109,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0201.jpg"
+    },
+    {
+      "frame_id": 202,
+      "filename": "frame_0202.jpg",
+      "start_time": 30.18707392996109,
+      "end_time": 30.35366926070039,
+      "duration": 0.16659533073929822,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0202.jpg"
+    },
+    {
+      "frame_id": 203,
+      "filename": "frame_0203.jpg",
+      "start_time": 30.35366926070039,
+      "end_time": 30.420307392996108,
+      "duration": 0.06663813229571858,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0203.jpg"
+    },
+    {
+      "frame_id": 204,
+      "filename": "frame_0204.jpg",
+      "start_time": 30.420307392996108,
+      "end_time": 30.520264591439688,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0204.jpg"
+    },
+    {
+      "frame_id": 205,
+      "filename": "frame_0205.jpg",
+      "start_time": 30.520264591439688,
+      "end_time": 30.58690272373541,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0205.jpg"
+    },
+    {
+      "frame_id": 206,
+      "filename": "frame_0206.jpg",
+      "start_time": 30.58690272373541,
+      "end_time": 30.68685992217899,
+      "duration": 0.09995719844357964,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0206.jpg"
+    },
+    {
+      "frame_id": 207,
+      "filename": "frame_0207.jpg",
+      "start_time": 30.68685992217899,
+      "end_time": 31.486517509727626,
+      "duration": 0.7996575875486371,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0207.jpg"
+    },
+    {
+      "frame_id": 208,
+      "filename": "frame_0208.jpg",
+      "start_time": 31.486517509727626,
+      "end_time": 33.38570428015564,
+      "duration": 1.8991867704280168,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0208.jpg"
+    },
+    {
+      "frame_id": 209,
+      "filename": "frame_0209.jpg",
+      "start_time": 33.38570428015564,
+      "end_time": 33.48566147859922,
+      "duration": 0.09995719844357609,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0209.jpg"
+    },
+    {
+      "frame_id": 210,
+      "filename": "frame_0210.jpg",
+      "start_time": 33.48566147859922,
+      "end_time": 33.61893774319066,
+      "duration": 0.13327626459144426,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0210.jpg"
+    },
+    {
+      "frame_id": 211,
+      "filename": "frame_0211.jpg",
+      "start_time": 33.61893774319066,
+      "end_time": 34.918381322957195,
+      "duration": 1.2994435797665318,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0211.jpg"
+    },
+    {
+      "frame_id": 212,
+      "filename": "frame_0212.jpg",
+      "start_time": 34.918381322957195,
+      "end_time": 36.017910505836575,
+      "duration": 1.0995291828793796,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0212.jpg"
+    },
+    {
+      "frame_id": 213,
+      "filename": "frame_0213.jpg",
+      "start_time": 36.017910505836575,
+      "end_time": 36.35110116731518,
+      "duration": 0.33319066147860354,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0213.jpg"
+    },
+    {
+      "frame_id": 214,
+      "filename": "frame_0214.jpg",
+      "start_time": 36.35110116731518,
+      "end_time": 36.38442023346303,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0214.jpg"
+    },
+    {
+      "frame_id": 215,
+      "filename": "frame_0215.jpg",
+      "start_time": 36.38442023346303,
+      "end_time": 36.41773929961089,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0215.jpg"
+    },
+    {
+      "frame_id": 216,
+      "filename": "frame_0216.jpg",
+      "start_time": 36.41773929961089,
+      "end_time": 36.451058365758755,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0216.jpg"
+    },
+    {
+      "frame_id": 217,
+      "filename": "frame_0217.jpg",
+      "start_time": 36.451058365758755,
+      "end_time": 36.484377431906616,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0217.jpg"
+    },
+    {
+      "frame_id": 218,
+      "filename": "frame_0218.jpg",
+      "start_time": 36.484377431906616,
+      "end_time": 36.51769649805448,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0218.jpg"
+    },
+    {
+      "frame_id": 219,
+      "filename": "frame_0219.jpg",
+      "start_time": 36.51769649805448,
+      "end_time": 36.55101556420234,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0219.jpg"
+    },
+    {
+      "frame_id": 220,
+      "filename": "frame_0220.jpg",
+      "start_time": 36.55101556420234,
+      "end_time": 36.58433463035019,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0220.jpg"
+    },
+    {
+      "frame_id": 221,
+      "filename": "frame_0221.jpg",
+      "start_time": 36.58433463035019,
+      "end_time": 36.61765369649805,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0221.jpg"
+    },
+    {
+      "frame_id": 222,
+      "filename": "frame_0222.jpg",
+      "start_time": 36.61765369649805,
+      "end_time": 36.650972762645914,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0222.jpg"
+    },
+    {
+      "frame_id": 223,
+      "filename": "frame_0223.jpg",
+      "start_time": 36.650972762645914,
+      "end_time": 36.684291828793775,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0223.jpg"
+    },
+    {
+      "frame_id": 224,
+      "filename": "frame_0224.jpg",
+      "start_time": 36.684291828793775,
+      "end_time": 36.717610894941636,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0224.jpg"
+    },
+    {
+      "frame_id": 225,
+      "filename": "frame_0225.jpg",
+      "start_time": 36.717610894941636,
+      "end_time": 36.7509299610895,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0225.jpg"
+    },
+    {
+      "frame_id": 226,
+      "filename": "frame_0226.jpg",
+      "start_time": 36.7509299610895,
+      "end_time": 36.85088715953307,
+      "duration": 0.09995719844357609,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0226.jpg"
+    },
+    {
+      "frame_id": 227,
+      "filename": "frame_0227.jpg",
+      "start_time": 36.85088715953307,
+      "end_time": 36.884206225680934,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0227.jpg"
+    },
+    {
+      "frame_id": 228,
+      "filename": "frame_0228.jpg",
+      "start_time": 36.884206225680934,
+      "end_time": 37.117439688715955,
+      "duration": 0.23323346303502035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0228.jpg"
+    },
+    {
+      "frame_id": 229,
+      "filename": "frame_0229.jpg",
+      "start_time": 37.117439688715955,
+      "end_time": 37.150758754863816,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0229.jpg"
+    },
+    {
+      "frame_id": 230,
+      "filename": "frame_0230.jpg",
+      "start_time": 37.150758754863816,
+      "end_time": 37.18407782101168,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0230.jpg"
+    },
+    {
+      "frame_id": 231,
+      "filename": "frame_0231.jpg",
+      "start_time": 37.18407782101168,
+      "end_time": 37.21739688715953,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0231.jpg"
+    },
+    {
+      "frame_id": 232,
+      "filename": "frame_0232.jpg",
+      "start_time": 37.21739688715953,
+      "end_time": 37.25071595330739,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0232.jpg"
+    },
+    {
+      "frame_id": 233,
+      "filename": "frame_0233.jpg",
+      "start_time": 37.25071595330739,
+      "end_time": 37.28403501945525,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0233.jpg"
+    },
+    {
+      "frame_id": 234,
+      "filename": "frame_0234.jpg",
+      "start_time": 37.28403501945525,
+      "end_time": 37.317354085603114,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0234.jpg"
+    },
+    {
+      "frame_id": 235,
+      "filename": "frame_0235.jpg",
+      "start_time": 37.317354085603114,
+      "end_time": 37.350673151750975,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0235.jpg"
+    },
+    {
+      "frame_id": 236,
+      "filename": "frame_0236.jpg",
+      "start_time": 37.350673151750975,
+      "end_time": 37.383992217898836,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0236.jpg"
+    },
+    {
+      "frame_id": 237,
+      "filename": "frame_0237.jpg",
+      "start_time": 37.383992217898836,
+      "end_time": 37.41731128404669,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0237.jpg"
+    },
+    {
+      "frame_id": 238,
+      "filename": "frame_0238.jpg",
+      "start_time": 37.41731128404669,
+      "end_time": 37.45063035019455,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0238.jpg"
+    },
+    {
+      "frame_id": 239,
+      "filename": "frame_0239.jpg",
+      "start_time": 37.45063035019455,
+      "end_time": 37.48394941634241,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0239.jpg"
+    },
+    {
+      "frame_id": 240,
+      "filename": "frame_0240.jpg",
+      "start_time": 37.48394941634241,
+      "end_time": 37.51726848249027,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0240.jpg"
+    },
+    {
+      "frame_id": 241,
+      "filename": "frame_0241.jpg",
+      "start_time": 37.51726848249027,
+      "end_time": 37.550587548638134,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0241.jpg"
+    },
+    {
+      "frame_id": 242,
+      "filename": "frame_0242.jpg",
+      "start_time": 37.550587548638134,
+      "end_time": 37.583906614785995,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0242.jpg"
+    },
+    {
+      "frame_id": 243,
+      "filename": "frame_0243.jpg",
+      "start_time": 37.583906614785995,
+      "end_time": 37.61722568093385,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0243.jpg"
+    },
+    {
+      "frame_id": 244,
+      "filename": "frame_0244.jpg",
+      "start_time": 37.61722568093385,
+      "end_time": 42.348533073929964,
+      "duration": 4.731307392996115,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0244.jpg"
+    },
+    {
+      "frame_id": 245,
+      "filename": "frame_0245.jpg",
+      "start_time": 42.348533073929964,
+      "end_time": 42.348533073929964,
+      "duration": 0.0,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0245.jpg"
+    },
+    {
+      "frame_id": 246,
+      "filename": "frame_0246.jpg",
+      "start_time": 42.348533073929964,
+      "end_time": 42.38185214007782,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0246.jpg"
+    },
+    {
+      "frame_id": 247,
+      "filename": "frame_0247.jpg",
+      "start_time": 42.38185214007782,
+      "end_time": 42.41517120622568,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0247.jpg"
+    },
+    {
+      "frame_id": 248,
+      "filename": "frame_0248.jpg",
+      "start_time": 42.41517120622568,
+      "end_time": 42.44849027237354,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0248.jpg"
+    },
+    {
+      "frame_id": 249,
+      "filename": "frame_0249.jpg",
+      "start_time": 42.44849027237354,
+      "end_time": 42.4818093385214,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0249.jpg"
+    },
+    {
+      "frame_id": 250,
+      "filename": "frame_0250.jpg",
+      "start_time": 42.4818093385214,
+      "end_time": 42.51512840466926,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0250.jpg"
+    },
+    {
+      "frame_id": 251,
+      "filename": "frame_0251.jpg",
+      "start_time": 42.51512840466926,
+      "end_time": 42.54844747081712,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0251.jpg"
+    },
+    {
+      "frame_id": 252,
+      "filename": "frame_0252.jpg",
+      "start_time": 42.54844747081712,
+      "end_time": 42.581766536964984,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0252.jpg"
+    },
+    {
+      "frame_id": 253,
+      "filename": "frame_0253.jpg",
+      "start_time": 42.581766536964984,
+      "end_time": 42.61508560311284,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0253.jpg"
+    },
+    {
+      "frame_id": 254,
+      "filename": "frame_0254.jpg",
+      "start_time": 42.61508560311284,
+      "end_time": 42.6484046692607,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0254.jpg"
+    },
+    {
+      "frame_id": 255,
+      "filename": "frame_0255.jpg",
+      "start_time": 42.6484046692607,
+      "end_time": 42.68172373540856,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0255.jpg"
+    },
+    {
+      "frame_id": 256,
+      "filename": "frame_0256.jpg",
+      "start_time": 42.68172373540856,
+      "end_time": 42.71504280155642,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0256.jpg"
+    },
+    {
+      "frame_id": 257,
+      "filename": "frame_0257.jpg",
+      "start_time": 42.71504280155642,
+      "end_time": 42.74836186770428,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0257.jpg"
+    },
+    {
+      "frame_id": 258,
+      "filename": "frame_0258.jpg",
+      "start_time": 42.74836186770428,
+      "end_time": 42.781680933852144,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0258.jpg"
+    },
+    {
+      "frame_id": 259,
+      "filename": "frame_0259.jpg",
+      "start_time": 42.781680933852144,
+      "end_time": 43.1481906614786,
+      "duration": 0.3665097276264575,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0259.jpg"
+    },
+    {
+      "frame_id": 260,
+      "filename": "frame_0260.jpg",
+      "start_time": 43.1481906614786,
+      "end_time": 43.18150972762646,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0260.jpg"
+    },
+    {
+      "frame_id": 261,
+      "filename": "frame_0261.jpg",
+      "start_time": 43.18150972762646,
+      "end_time": 43.214828793774316,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0261.jpg"
+    },
+    {
+      "frame_id": 262,
+      "filename": "frame_0262.jpg",
+      "start_time": 43.214828793774316,
+      "end_time": 43.24814785992218,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0262.jpg"
+    },
+    {
+      "frame_id": 263,
+      "filename": "frame_0263.jpg",
+      "start_time": 43.24814785992218,
+      "end_time": 43.28146692607004,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0263.jpg"
+    },
+    {
+      "frame_id": 264,
+      "filename": "frame_0264.jpg",
+      "start_time": 43.28146692607004,
+      "end_time": 43.3147859922179,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0264.jpg"
+    },
+    {
+      "frame_id": 265,
+      "filename": "frame_0265.jpg",
+      "start_time": 43.3147859922179,
+      "end_time": 43.34810505836576,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0265.jpg"
+    },
+    {
+      "frame_id": 266,
+      "filename": "frame_0266.jpg",
+      "start_time": 43.34810505836576,
+      "end_time": 43.38142412451362,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0266.jpg"
+    },
+    {
+      "frame_id": 267,
+      "filename": "frame_0267.jpg",
+      "start_time": 43.38142412451362,
+      "end_time": 43.414743190661476,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0267.jpg"
+    },
+    {
+      "frame_id": 268,
+      "filename": "frame_0268.jpg",
+      "start_time": 43.414743190661476,
+      "end_time": 43.44806225680934,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0268.jpg"
+    },
+    {
+      "frame_id": 269,
+      "filename": "frame_0269.jpg",
+      "start_time": 43.44806225680934,
+      "end_time": 43.4813813229572,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0269.jpg"
+    },
+    {
+      "frame_id": 270,
+      "filename": "frame_0270.jpg",
+      "start_time": 43.4813813229572,
+      "end_time": 43.51470038910506,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0270.jpg"
+    },
+    {
+      "frame_id": 271,
+      "filename": "frame_0271.jpg",
+      "start_time": 43.51470038910506,
+      "end_time": 43.54801945525292,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0271.jpg"
+    },
+    {
+      "frame_id": 272,
+      "filename": "frame_0272.jpg",
+      "start_time": 43.54801945525292,
+      "end_time": 43.58133852140078,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0272.jpg"
+    },
+    {
+      "frame_id": 273,
+      "filename": "frame_0273.jpg",
+      "start_time": 43.58133852140078,
+      "end_time": 43.61465758754864,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0273.jpg"
+    },
+    {
+      "frame_id": 274,
+      "filename": "frame_0274.jpg",
+      "start_time": 43.61465758754864,
+      "end_time": 43.647976653696496,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0274.jpg"
+    },
+    {
+      "frame_id": 275,
+      "filename": "frame_0275.jpg",
+      "start_time": 43.647976653696496,
+      "end_time": 47.11315953307393,
+      "duration": 3.465182879377437,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0275.jpg"
+    },
+    {
+      "frame_id": 276,
+      "filename": "frame_0276.jpg",
+      "start_time": 47.11315953307393,
+      "end_time": 47.14647859922179,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0276.jpg"
+    },
+    {
+      "frame_id": 277,
+      "filename": "frame_0277.jpg",
+      "start_time": 47.14647859922179,
+      "end_time": 47.17979766536965,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0277.jpg"
+    },
+    {
+      "frame_id": 278,
+      "filename": "frame_0278.jpg",
+      "start_time": 47.17979766536965,
+      "end_time": 47.21311673151751,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0278.jpg"
+    },
+    {
+      "frame_id": 279,
+      "filename": "frame_0279.jpg",
+      "start_time": 47.21311673151751,
+      "end_time": 47.24643579766537,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0279.jpg"
+    },
+    {
+      "frame_id": 280,
+      "filename": "frame_0280.jpg",
+      "start_time": 47.24643579766537,
+      "end_time": 47.27975486381323,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0280.jpg"
+    },
+    {
+      "frame_id": 281,
+      "filename": "frame_0281.jpg",
+      "start_time": 47.27975486381323,
+      "end_time": 47.31307392996109,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0281.jpg"
+    },
+    {
+      "frame_id": 282,
+      "filename": "frame_0282.jpg",
+      "start_time": 47.31307392996109,
+      "end_time": 47.34639299610895,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0282.jpg"
+    },
+    {
+      "frame_id": 283,
+      "filename": "frame_0283.jpg",
+      "start_time": 47.34639299610895,
+      "end_time": 47.37971206225681,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0283.jpg"
+    },
+    {
+      "frame_id": 284,
+      "filename": "frame_0284.jpg",
+      "start_time": 47.37971206225681,
+      "end_time": 47.41303112840467,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0284.jpg"
+    },
+    {
+      "frame_id": 285,
+      "filename": "frame_0285.jpg",
+      "start_time": 47.41303112840467,
+      "end_time": 47.44635019455253,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0285.jpg"
+    },
+    {
+      "frame_id": 286,
+      "filename": "frame_0286.jpg",
+      "start_time": 47.44635019455253,
+      "end_time": 47.47966926070039,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0286.jpg"
+    },
+    {
+      "frame_id": 287,
+      "filename": "frame_0287.jpg",
+      "start_time": 47.47966926070039,
+      "end_time": 47.51298832684825,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0287.jpg"
+    },
+    {
+      "frame_id": 288,
+      "filename": "frame_0288.jpg",
+      "start_time": 47.51298832684825,
+      "end_time": 47.54630739299611,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0288.jpg"
+    },
+    {
+      "frame_id": 289,
+      "filename": "frame_0289.jpg",
+      "start_time": 47.54630739299611,
+      "end_time": 47.57962645914397,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0289.jpg"
+    },
+    {
+      "frame_id": 290,
+      "filename": "frame_0290.jpg",
+      "start_time": 47.57962645914397,
+      "end_time": 47.61294552529183,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0290.jpg"
+    },
+    {
+      "frame_id": 291,
+      "filename": "frame_0291.jpg",
+      "start_time": 47.61294552529183,
+      "end_time": 47.84617898832685,
+      "duration": 0.23323346303502035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0291.jpg"
+    },
+    {
+      "frame_id": 292,
+      "filename": "frame_0292.jpg",
+      "start_time": 47.84617898832685,
+      "end_time": 47.87949805447471,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0292.jpg"
+    },
+    {
+      "frame_id": 293,
+      "filename": "frame_0293.jpg",
+      "start_time": 47.87949805447471,
+      "end_time": 47.91281712062257,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0293.jpg"
+    },
+    {
+      "frame_id": 294,
+      "filename": "frame_0294.jpg",
+      "start_time": 47.91281712062257,
+      "end_time": 47.94613618677043,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0294.jpg"
+    },
+    {
+      "frame_id": 295,
+      "filename": "frame_0295.jpg",
+      "start_time": 47.94613618677043,
+      "end_time": 47.979455252918285,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0295.jpg"
+    },
+    {
+      "frame_id": 296,
+      "filename": "frame_0296.jpg",
+      "start_time": 47.979455252918285,
+      "end_time": 48.012774319066146,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0296.jpg"
+    },
+    {
+      "frame_id": 297,
+      "filename": "frame_0297.jpg",
+      "start_time": 48.012774319066146,
+      "end_time": 48.04609338521401,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0297.jpg"
+    },
+    {
+      "frame_id": 298,
+      "filename": "frame_0298.jpg",
+      "start_time": 48.04609338521401,
+      "end_time": 48.07941245136187,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0298.jpg"
+    },
+    {
+      "frame_id": 299,
+      "filename": "frame_0299.jpg",
+      "start_time": 48.07941245136187,
+      "end_time": 48.11273151750973,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0299.jpg"
+    },
+    {
+      "frame_id": 300,
+      "filename": "frame_0300.jpg",
+      "start_time": 48.11273151750973,
+      "end_time": 48.14605058365759,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0300.jpg"
+    },
+    {
+      "frame_id": 301,
+      "filename": "frame_0301.jpg",
+      "start_time": 48.14605058365759,
+      "end_time": 48.179369649805444,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0301.jpg"
+    },
+    {
+      "frame_id": 302,
+      "filename": "frame_0302.jpg",
+      "start_time": 48.179369649805444,
+      "end_time": 48.212688715953306,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0302.jpg"
+    },
+    {
+      "frame_id": 303,
+      "filename": "frame_0303.jpg",
+      "start_time": 48.212688715953306,
+      "end_time": 48.24600778210117,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0303.jpg"
+    },
+    {
+      "frame_id": 304,
+      "filename": "frame_0304.jpg",
+      "start_time": 48.24600778210117,
+      "end_time": 48.27932684824903,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0304.jpg"
+    },
+    {
+      "frame_id": 305,
+      "filename": "frame_0305.jpg",
+      "start_time": 48.27932684824903,
+      "end_time": 48.31264591439689,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0305.jpg"
+    },
+    {
+      "frame_id": 306,
+      "filename": "frame_0306.jpg",
+      "start_time": 48.31264591439689,
+      "end_time": 48.34596498054475,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0306.jpg"
+    },
+    {
+      "frame_id": 307,
+      "filename": "frame_0307.jpg",
+      "start_time": 48.34596498054475,
+      "end_time": 48.37928404669261,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0307.jpg"
+    },
+    {
+      "frame_id": 308,
+      "filename": "frame_0308.jpg",
+      "start_time": 48.37928404669261,
+      "end_time": 52.2109766536965,
+      "duration": 3.8316926070038875,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0308.jpg"
+    },
+    {
+      "frame_id": 309,
+      "filename": "frame_0309.jpg",
+      "start_time": 52.2109766536965,
+      "end_time": 52.24429571984436,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0309.jpg"
+    },
+    {
+      "frame_id": 310,
+      "filename": "frame_0310.jpg",
+      "start_time": 52.24429571984436,
+      "end_time": 52.27761478599222,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0310.jpg"
+    },
+    {
+      "frame_id": 311,
+      "filename": "frame_0311.jpg",
+      "start_time": 52.27761478599222,
+      "end_time": 52.31093385214008,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0311.jpg"
+    },
+    {
+      "frame_id": 312,
+      "filename": "frame_0312.jpg",
+      "start_time": 52.31093385214008,
+      "end_time": 52.344252918287935,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0312.jpg"
+    },
+    {
+      "frame_id": 313,
+      "filename": "frame_0313.jpg",
+      "start_time": 52.344252918287935,
+      "end_time": 52.3775719844358,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0313.jpg"
+    },
+    {
+      "frame_id": 314,
+      "filename": "frame_0314.jpg",
+      "start_time": 52.3775719844358,
+      "end_time": 52.41089105058366,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0314.jpg"
+    },
+    {
+      "frame_id": 315,
+      "filename": "frame_0315.jpg",
+      "start_time": 52.41089105058366,
+      "end_time": 52.44421011673152,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0315.jpg"
+    },
+    {
+      "frame_id": 316,
+      "filename": "frame_0316.jpg",
+      "start_time": 52.44421011673152,
+      "end_time": 52.47752918287938,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0316.jpg"
+    },
+    {
+      "frame_id": 317,
+      "filename": "frame_0317.jpg",
+      "start_time": 52.47752918287938,
+      "end_time": 52.51084824902724,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0317.jpg"
+    },
+    {
+      "frame_id": 318,
+      "filename": "frame_0318.jpg",
+      "start_time": 52.51084824902724,
+      "end_time": 52.544167315175095,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0318.jpg"
+    },
+    {
+      "frame_id": 319,
+      "filename": "frame_0319.jpg",
+      "start_time": 52.544167315175095,
+      "end_time": 52.577486381322956,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0319.jpg"
+    },
+    {
+      "frame_id": 320,
+      "filename": "frame_0320.jpg",
+      "start_time": 52.577486381322956,
+      "end_time": 52.61080544747082,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0320.jpg"
+    },
+    {
+      "frame_id": 321,
+      "filename": "frame_0321.jpg",
+      "start_time": 52.61080544747082,
+      "end_time": 52.64412451361868,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0321.jpg"
+    },
+    {
+      "frame_id": 322,
+      "filename": "frame_0322.jpg",
+      "start_time": 52.64412451361868,
+      "end_time": 52.67744357976654,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0322.jpg"
+    },
+    {
+      "frame_id": 323,
+      "filename": "frame_0323.jpg",
+      "start_time": 52.67744357976654,
+      "end_time": 52.7107626459144,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0323.jpg"
+    },
+    {
+      "frame_id": 324,
+      "filename": "frame_0324.jpg",
+      "start_time": 52.7107626459144,
+      "end_time": 52.744081712062254,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0324.jpg"
+    },
+    {
+      "frame_id": 325,
+      "filename": "frame_0325.jpg",
+      "start_time": 52.744081712062254,
+      "end_time": 53.010634241245135,
+      "duration": 0.2665525291828814,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0325.jpg"
+    },
+    {
+      "frame_id": 326,
+      "filename": "frame_0326.jpg",
+      "start_time": 53.010634241245135,
+      "end_time": 53.043953307393,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0326.jpg"
+    },
+    {
+      "frame_id": 327,
+      "filename": "frame_0327.jpg",
+      "start_time": 53.043953307393,
+      "end_time": 53.07727237354086,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0327.jpg"
+    },
+    {
+      "frame_id": 328,
+      "filename": "frame_0328.jpg",
+      "start_time": 53.07727237354086,
+      "end_time": 53.11059143968872,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0328.jpg"
+    },
+    {
+      "frame_id": 329,
+      "filename": "frame_0329.jpg",
+      "start_time": 53.11059143968872,
+      "end_time": 53.14391050583658,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0329.jpg"
+    },
+    {
+      "frame_id": 330,
+      "filename": "frame_0330.jpg",
+      "start_time": 53.14391050583658,
+      "end_time": 53.177229571984434,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0330.jpg"
+    },
+    {
+      "frame_id": 331,
+      "filename": "frame_0331.jpg",
+      "start_time": 53.177229571984434,
+      "end_time": 53.210548638132295,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0331.jpg"
+    },
+    {
+      "frame_id": 332,
+      "filename": "frame_0332.jpg",
+      "start_time": 53.210548638132295,
+      "end_time": 53.243867704280156,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0332.jpg"
+    },
+    {
+      "frame_id": 333,
+      "filename": "frame_0333.jpg",
+      "start_time": 53.243867704280156,
+      "end_time": 53.27718677042802,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0333.jpg"
+    },
+    {
+      "frame_id": 334,
+      "filename": "frame_0334.jpg",
+      "start_time": 53.27718677042802,
+      "end_time": 53.31050583657588,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0334.jpg"
+    },
+    {
+      "frame_id": 335,
+      "filename": "frame_0335.jpg",
+      "start_time": 53.31050583657588,
+      "end_time": 53.34382490272374,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0335.jpg"
+    },
+    {
+      "frame_id": 336,
+      "filename": "frame_0336.jpg",
+      "start_time": 53.34382490272374,
+      "end_time": 53.37714396887159,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0336.jpg"
+    },
+    {
+      "frame_id": 337,
+      "filename": "frame_0337.jpg",
+      "start_time": 53.37714396887159,
+      "end_time": 53.410463035019454,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0337.jpg"
+    },
+    {
+      "frame_id": 338,
+      "filename": "frame_0338.jpg",
+      "start_time": 53.410463035019454,
+      "end_time": 53.443782101167315,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0338.jpg"
+    },
+    {
+      "frame_id": 339,
+      "filename": "frame_0339.jpg",
+      "start_time": 53.443782101167315,
+      "end_time": 53.477101167315176,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0339.jpg"
+    },
+    {
+      "frame_id": 340,
+      "filename": "frame_0340.jpg",
+      "start_time": 53.477101167315176,
+      "end_time": 57.90853696498055,
+      "duration": 4.431435797665372,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0340.jpg"
+    },
+    {
+      "frame_id": 341,
+      "filename": "frame_0341.jpg",
+      "start_time": 57.90853696498055,
+      "end_time": 57.9418560311284,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0341.jpg"
+    },
+    {
+      "frame_id": 342,
+      "filename": "frame_0342.jpg",
+      "start_time": 57.9418560311284,
+      "end_time": 57.975175097276264,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0342.jpg"
+    },
+    {
+      "frame_id": 343,
+      "filename": "frame_0343.jpg",
+      "start_time": 57.975175097276264,
+      "end_time": 58.008494163424125,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0343.jpg"
+    },
+    {
+      "frame_id": 344,
+      "filename": "frame_0344.jpg",
+      "start_time": 58.008494163424125,
+      "end_time": 58.041813229571986,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0344.jpg"
+    },
+    {
+      "frame_id": 345,
+      "filename": "frame_0345.jpg",
+      "start_time": 58.041813229571986,
+      "end_time": 58.07513229571985,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0345.jpg"
+    },
+    {
+      "frame_id": 346,
+      "filename": "frame_0346.jpg",
+      "start_time": 58.07513229571985,
+      "end_time": 58.10845136186771,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0346.jpg"
+    },
+    {
+      "frame_id": 347,
+      "filename": "frame_0347.jpg",
+      "start_time": 58.10845136186771,
+      "end_time": 58.14177042801556,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0347.jpg"
+    },
+    {
+      "frame_id": 348,
+      "filename": "frame_0348.jpg",
+      "start_time": 58.14177042801556,
+      "end_time": 58.17508949416342,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0348.jpg"
+    },
+    {
+      "frame_id": 349,
+      "filename": "frame_0349.jpg",
+      "start_time": 58.17508949416342,
+      "end_time": 58.208408560311284,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0349.jpg"
+    },
+    {
+      "frame_id": 350,
+      "filename": "frame_0350.jpg",
+      "start_time": 58.208408560311284,
+      "end_time": 58.241727626459145,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0350.jpg"
+    },
+    {
+      "frame_id": 351,
+      "filename": "frame_0351.jpg",
+      "start_time": 58.241727626459145,
+      "end_time": 58.275046692607006,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0351.jpg"
+    },
+    {
+      "frame_id": 352,
+      "filename": "frame_0352.jpg",
+      "start_time": 58.275046692607006,
+      "end_time": 58.30836575875487,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0352.jpg"
+    },
+    {
+      "frame_id": 353,
+      "filename": "frame_0353.jpg",
+      "start_time": 58.30836575875487,
+      "end_time": 58.34168482490272,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0353.jpg"
+    },
+    {
+      "frame_id": 354,
+      "filename": "frame_0354.jpg",
+      "start_time": 58.34168482490272,
+      "end_time": 58.37500389105058,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0354.jpg"
+    },
+    {
+      "frame_id": 355,
+      "filename": "frame_0355.jpg",
+      "start_time": 58.37500389105058,
+      "end_time": 58.40832295719844,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0355.jpg"
+    },
+    {
+      "frame_id": 356,
+      "filename": "frame_0356.jpg",
+      "start_time": 58.40832295719844,
+      "end_time": 58.641556420233464,
+      "duration": 0.23323346303502035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0356.jpg"
+    },
+    {
+      "frame_id": 357,
+      "filename": "frame_0357.jpg",
+      "start_time": 58.641556420233464,
+      "end_time": 58.708194552529186,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0357.jpg"
+    },
+    {
+      "frame_id": 358,
+      "filename": "frame_0358.jpg",
+      "start_time": 58.708194552529186,
+      "end_time": 58.74151361867705,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0358.jpg"
+    },
+    {
+      "frame_id": 359,
+      "filename": "frame_0359.jpg",
+      "start_time": 58.74151361867705,
+      "end_time": 58.7748326848249,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0359.jpg"
+    },
+    {
+      "frame_id": 360,
+      "filename": "frame_0360.jpg",
+      "start_time": 58.7748326848249,
+      "end_time": 58.80815175097276,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0360.jpg"
+    },
+    {
+      "frame_id": 361,
+      "filename": "frame_0361.jpg",
+      "start_time": 58.80815175097276,
+      "end_time": 58.84147081712062,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0361.jpg"
+    },
+    {
+      "frame_id": 362,
+      "filename": "frame_0362.jpg",
+      "start_time": 58.84147081712062,
+      "end_time": 58.874789883268484,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0362.jpg"
+    },
+    {
+      "frame_id": 363,
+      "filename": "frame_0363.jpg",
+      "start_time": 58.874789883268484,
+      "end_time": 58.908108949416345,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0363.jpg"
+    },
+    {
+      "frame_id": 364,
+      "filename": "frame_0364.jpg",
+      "start_time": 58.908108949416345,
+      "end_time": 58.941428015564206,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0364.jpg"
+    },
+    {
+      "frame_id": 365,
+      "filename": "frame_0365.jpg",
+      "start_time": 58.941428015564206,
+      "end_time": 58.97474708171206,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0365.jpg"
+    },
+    {
+      "frame_id": 366,
+      "filename": "frame_0366.jpg",
+      "start_time": 58.97474708171206,
+      "end_time": 59.00806614785992,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0366.jpg"
+    },
+    {
+      "frame_id": 367,
+      "filename": "frame_0367.jpg",
+      "start_time": 59.00806614785992,
+      "end_time": 59.04138521400778,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0367.jpg"
+    },
+    {
+      "frame_id": 368,
+      "filename": "frame_0368.jpg",
+      "start_time": 59.04138521400778,
+      "end_time": 59.07470428015564,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0368.jpg"
+    },
+    {
+      "frame_id": 369,
+      "filename": "frame_0369.jpg",
+      "start_time": 59.07470428015564,
+      "end_time": 59.108023346303504,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0369.jpg"
+    },
+    {
+      "frame_id": 370,
+      "filename": "frame_0370.jpg",
+      "start_time": 59.108023346303504,
+      "end_time": 59.141342412451365,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0370.jpg"
+    },
+    {
+      "frame_id": 371,
+      "filename": "frame_0371.jpg",
+      "start_time": 59.141342412451365,
+      "end_time": 59.17466147859922,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0371.jpg"
+    },
+    {
+      "frame_id": 372,
+      "filename": "frame_0372.jpg",
+      "start_time": 59.17466147859922,
+      "end_time": 62.373291828793775,
+      "duration": 3.1986303501945557,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0372.jpg"
+    },
+    {
+      "frame_id": 373,
+      "filename": "frame_0373.jpg",
+      "start_time": 62.373291828793775,
+      "end_time": 62.406610894941636,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0373.jpg"
+    },
+    {
+      "frame_id": 374,
+      "filename": "frame_0374.jpg",
+      "start_time": 62.406610894941636,
+      "end_time": 62.4399299610895,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0374.jpg"
+    },
+    {
+      "frame_id": 375,
+      "filename": "frame_0375.jpg",
+      "start_time": 62.4399299610895,
+      "end_time": 62.47324902723736,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0375.jpg"
+    },
+    {
+      "frame_id": 376,
+      "filename": "frame_0376.jpg",
+      "start_time": 62.47324902723736,
+      "end_time": 62.50656809338521,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0376.jpg"
+    },
+    {
+      "frame_id": 377,
+      "filename": "frame_0377.jpg",
+      "start_time": 62.50656809338521,
+      "end_time": 62.53988715953307,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0377.jpg"
+    },
+    {
+      "frame_id": 378,
+      "filename": "frame_0378.jpg",
+      "start_time": 62.53988715953307,
+      "end_time": 62.573206225680934,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0378.jpg"
+    },
+    {
+      "frame_id": 379,
+      "filename": "frame_0379.jpg",
+      "start_time": 62.573206225680934,
+      "end_time": 62.606525291828795,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0379.jpg"
+    },
+    {
+      "frame_id": 380,
+      "filename": "frame_0380.jpg",
+      "start_time": 62.606525291828795,
+      "end_time": 62.639844357976656,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0380.jpg"
+    },
+    {
+      "frame_id": 381,
+      "filename": "frame_0381.jpg",
+      "start_time": 62.639844357976656,
+      "end_time": 62.67316342412452,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0381.jpg"
+    },
+    {
+      "frame_id": 382,
+      "filename": "frame_0382.jpg",
+      "start_time": 62.67316342412452,
+      "end_time": 62.70648249027237,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0382.jpg"
+    },
+    {
+      "frame_id": 383,
+      "filename": "frame_0383.jpg",
+      "start_time": 62.70648249027237,
+      "end_time": 62.73980155642023,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0383.jpg"
+    },
+    {
+      "frame_id": 384,
+      "filename": "frame_0384.jpg",
+      "start_time": 62.73980155642023,
+      "end_time": 62.77312062256809,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0384.jpg"
+    },
+    {
+      "frame_id": 385,
+      "filename": "frame_0385.jpg",
+      "start_time": 62.77312062256809,
+      "end_time": 62.806439688715955,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0385.jpg"
+    },
+    {
+      "frame_id": 386,
+      "filename": "frame_0386.jpg",
+      "start_time": 62.806439688715955,
+      "end_time": 62.839758754863816,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0386.jpg"
+    },
+    {
+      "frame_id": 387,
+      "filename": "frame_0387.jpg",
+      "start_time": 62.839758754863816,
+      "end_time": 62.90639688715953,
+      "duration": 0.06663813229571502,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0387.jpg"
+    },
+    {
+      "frame_id": 388,
+      "filename": "frame_0388.jpg",
+      "start_time": 62.90639688715953,
+      "end_time": 63.13963035019455,
+      "duration": 0.23323346303502035,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0388.jpg"
+    },
+    {
+      "frame_id": 389,
+      "filename": "frame_0389.jpg",
+      "start_time": 63.13963035019455,
+      "end_time": 63.17294941634241,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0389.jpg"
+    },
+    {
+      "frame_id": 390,
+      "filename": "frame_0390.jpg",
+      "start_time": 63.17294941634241,
+      "end_time": 63.20626848249027,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0390.jpg"
+    },
+    {
+      "frame_id": 391,
+      "filename": "frame_0391.jpg",
+      "start_time": 63.20626848249027,
+      "end_time": 63.239587548638134,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0391.jpg"
+    },
+    {
+      "frame_id": 392,
+      "filename": "frame_0392.jpg",
+      "start_time": 63.239587548638134,
+      "end_time": 63.272906614785995,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0392.jpg"
+    },
+    {
+      "frame_id": 393,
+      "filename": "frame_0393.jpg",
+      "start_time": 63.272906614785995,
+      "end_time": 63.30622568093385,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0393.jpg"
+    },
+    {
+      "frame_id": 394,
+      "filename": "frame_0394.jpg",
+      "start_time": 63.30622568093385,
+      "end_time": 63.33954474708171,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0394.jpg"
+    },
+    {
+      "frame_id": 395,
+      "filename": "frame_0395.jpg",
+      "start_time": 63.33954474708171,
+      "end_time": 63.37286381322957,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0395.jpg"
+    },
+    {
+      "frame_id": 396,
+      "filename": "frame_0396.jpg",
+      "start_time": 63.37286381322957,
+      "end_time": 63.40618287937743,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0396.jpg"
+    },
+    {
+      "frame_id": 397,
+      "filename": "frame_0397.jpg",
+      "start_time": 63.40618287937743,
+      "end_time": 63.43950194552529,
+      "duration": 0.033319066147861065,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0397.jpg"
+    },
+    {
+      "frame_id": 398,
+      "filename": "frame_0398.jpg",
+      "start_time": 63.43950194552529,
+      "end_time": 63.506140077821016,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0398.jpg"
+    },
+    {
+      "frame_id": 399,
+      "filename": "frame_0399.jpg",
+      "start_time": 63.506140077821016,
+      "end_time": 63.53945914396887,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0399.jpg"
+    },
+    {
+      "frame_id": 400,
+      "filename": "frame_0400.jpg",
+      "start_time": 63.53945914396887,
+      "end_time": 63.60609727626459,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0400.jpg"
+    },
+    {
+      "frame_id": 401,
+      "filename": "frame_0401.jpg",
+      "start_time": 63.60609727626459,
+      "end_time": 67.5044280155642,
+      "duration": 3.8983307392996096,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0401.jpg"
+    },
+    {
+      "frame_id": 402,
+      "filename": "frame_0402.jpg",
+      "start_time": 67.5044280155642,
+      "end_time": 67.57106614785992,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0402.jpg"
+    },
+    {
+      "frame_id": 403,
+      "filename": "frame_0403.jpg",
+      "start_time": 67.57106614785992,
+      "end_time": 67.60438521400778,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0403.jpg"
+    },
+    {
+      "frame_id": 404,
+      "filename": "frame_0404.jpg",
+      "start_time": 67.60438521400778,
+      "end_time": 67.6710233463035,
+      "duration": 0.06663813229572213,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0404.jpg"
+    },
+    {
+      "frame_id": 405,
+      "filename": "frame_0405.jpg",
+      "start_time": 67.6710233463035,
+      "end_time": 67.70434241245137,
+      "duration": 0.03331906614786817,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0405.jpg"
+    },
+    {
+      "frame_id": 406,
+      "filename": "frame_0406.jpg",
+      "start_time": 67.70434241245137,
+      "end_time": 67.73766147859922,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0406.jpg"
+    },
+    {
+      "frame_id": 407,
+      "filename": "frame_0407.jpg",
+      "start_time": 67.73766147859922,
+      "end_time": 67.77098054474708,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0407.jpg"
+    },
+    {
+      "frame_id": 408,
+      "filename": "frame_0408.jpg",
+      "start_time": 67.77098054474708,
+      "end_time": 67.80429961089494,
+      "duration": 0.03331906614786817,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0408.jpg"
+    },
+    {
+      "frame_id": 409,
+      "filename": "frame_0409.jpg",
+      "start_time": 67.80429961089494,
+      "end_time": 67.8376186770428,
+      "duration": 0.03331906614785396,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0409.jpg"
+    },
+    {
+      "frame_id": 410,
+      "filename": "frame_0410.jpg",
+      "start_time": 67.8376186770428,
+      "end_time": 67.87093774319067,
+      "duration": 0.03331906614786817,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0410.jpg"
+    },
+    {
+      "frame_id": 411,
+      "filename": "frame_0411.jpg",
+      "start_time": 67.87093774319067,
+      "end_time": 73.83505058365759,
+      "duration": 5.964112840466925,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0411.jpg"
+    },
+    {
+      "frame_id": 412,
+      "filename": "frame_0412.jpg",
+      "start_time": 73.83505058365759,
+      "end_time": 77.06700000000001,
+      "duration": 3.2319494163424167,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-MbZ-W0AbN0/frame_0412.jpg"
+    }
+  ],
+  "transcripts": [
+    {
+      "start": 23.12,
+      "end": 24.52,
+      "text": " Music",
+      "words": [
+        {
+          "word": " Music",
+          "start": 23.12,
+          "end": 24.52
+        }
+      ]
+    },
+    {
+      "start": 24.52,
+      "end": 24.54,
+      "text": " Music",
+      "words": [
+        {
+          "word": " Music",
+          "start": 24.52,
+          "end": 24.54
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "total_keyframes": 413,
+    "total_transcript_segments": 2,
+    "video_duration_estimated": 77.06700000000001,
+    "total_words": 2
+  },
+  "status": "completed"
+}

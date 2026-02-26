@@ -27,9 +27,24 @@ wheels/
 Thumbs.db
 
 # Project specific
-/data*
+/data/*
 !**/dataset/
 !libs/**/data/
+
+# Testset: only track our authored evaluation artifacts
+# Third-party data is fetched by scripts/download_test_data.sh
+!/data/testset/
+/data/testset/*
+!/data/testset/dataset_summary.md
+!/data/testset/evaluation/
+/data/testset/evaluation/*
+!/data/testset/evaluation/extract_sample_video_queries.py
+!/data/testset/evaluation/sample_videos_retrieval_queries.json
+!/data/testset/evaluation/processed/
+/data/testset/evaluation/processed/*
+!/data/testset/evaluation/processed/descriptions/
+!/data/testset/evaluation/processed/transcripts/
+!/data/testset/evaluation/processed/metadata/
 archive*
 poc*
 *.log
@@ -74,9 +89,10 @@ coverage.xml
 htmlcov/
 htmlcov_*/
 
-# Claude configuration
-CLAUDE.md
-.claude/
+# Claude configuration (agents and rules are committed, settings are not)
+.claude/*
+!.claude/agents/
+!.claude/rules/
 
 # Generated files
 configs/schemas/ranking_strategies.json

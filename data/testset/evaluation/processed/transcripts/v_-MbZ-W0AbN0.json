@@ -1,0 +1,26 @@
+[
+  {
+    "start": 23.12,
+    "end": 24.52,
+    "text": " Music",
+    "words": [
+      {
+        "word": " Music",
+        "start": 23.12,
+        "end": 24.52
+      }
+    ]
+  },
+  {
+    "start": 24.52,
+    "end": 24.54,
+    "text": " Music",
+    "words": [
+      {
+        "word": " Music",
+        "start": 24.52,
+        "end": 24.54
+      }
+    ]
+  }
+]

@@ -1,0 +1,2163 @@
+{
+  "video_id": "v_-pkfcMUIEMo",
+  "source_path": "data/videos/video_chatgpt_eval/sample_videos/v_-pkfcMUIEMo.mp4",
+  "processing_timestamp": 1751804308.36948,
+  "processing_duration_seconds": 14.465000867843628,
+  "keyframes": [
+    {
+      "frame_id": 0,
+      "filename": "frame_0000.jpg",
+      "start_time": 0.0,
+      "end_time": 1.0666666666666667,
+      "duration": 1.0666666666666667,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0000.jpg"
+    },
+    {
+      "frame_id": 1,
+      "filename": "frame_0001.jpg",
+      "start_time": 1.0666666666666667,
+      "end_time": 1.1,
+      "duration": 0.03333333333333344,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0001.jpg"
+    },
+    {
+      "frame_id": 2,
+      "filename": "frame_0002.jpg",
+      "start_time": 1.1,
+      "end_time": 1.1666666666666667,
+      "duration": 0.06666666666666665,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0002.jpg"
+    },
+    {
+      "frame_id": 3,
+      "filename": "frame_0003.jpg",
+      "start_time": 1.1666666666666667,
+      "end_time": 1.2,
+      "duration": 0.033333333333333215,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0003.jpg"
+    },
+    {
+      "frame_id": 4,
+      "filename": "frame_0004.jpg",
+      "start_time": 1.2,
+      "end_time": 1.4333333333333333,
+      "duration": 0.2333333333333334,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0004.jpg"
+    },
+    {
+      "frame_id": 5,
+      "filename": "frame_0005.jpg",
+      "start_time": 1.4333333333333333,
+      "end_time": 1.4666666666666666,
+      "duration": 0.033333333333333215,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0005.jpg"
+    },
+    {
+      "frame_id": 6,
+      "filename": "frame_0006.jpg",
+      "start_time": 1.4666666666666666,
+      "end_time": 1.5,
+      "duration": 0.03333333333333344,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0006.jpg"
+    },
+    {
+      "frame_id": 7,
+      "filename": "frame_0007.jpg",
+      "start_time": 1.5,
+      "end_time": 1.5333333333333334,
+      "duration": 0.03333333333333344,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0007.jpg"
+    },
+    {
+      "frame_id": 8,
+      "filename": "frame_0008.jpg",
+      "start_time": 1.5333333333333334,
+      "end_time": 1.5666666666666667,
+      "duration": 0.033333333333333215,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0008.jpg"
+    },
+    {
+      "frame_id": 9,
+      "filename": "frame_0009.jpg",
+      "start_time": 1.5666666666666667,
+      "end_time": 1.6666666666666667,
+      "duration": 0.10000000000000009,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0009.jpg"
+    },
+    {
+      "frame_id": 10,
+      "filename": "frame_0010.jpg",
+      "start_time": 1.6666666666666667,
+      "end_time": 1.7,
+      "duration": 0.033333333333333215,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0010.jpg"
+    },
+    {
+      "frame_id": 11,
+      "filename": "frame_0011.jpg",
+      "start_time": 1.7,
+      "end_time": 1.7666666666666666,
+      "duration": 0.06666666666666665,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0011.jpg"
+    },
+    {
+      "frame_id": 12,
+      "filename": "frame_0012.jpg",
+      "start_time": 1.7666666666666666,
+      "end_time": 2.4,
+      "duration": 0.6333333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0012.jpg"
+    },
+    {
+      "frame_id": 13,
+      "filename": "frame_0013.jpg",
+      "start_time": 2.4,
+      "end_time": 30.5,
+      "duration": 28.1,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0013.jpg"
+    },
+    {
+      "frame_id": 14,
+      "filename": "frame_0014.jpg",
+      "start_time": 30.5,
+      "end_time": 30.8,
+      "duration": 0.3000000000000007,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0014.jpg"
+    },
+    {
+      "frame_id": 15,
+      "filename": "frame_0015.jpg",
+      "start_time": 30.8,
+      "end_time": 31.166666666666668,
+      "duration": 0.36666666666666714,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0015.jpg"
+    },
+    {
+      "frame_id": 16,
+      "filename": "frame_0016.jpg",
+      "start_time": 31.166666666666668,
+      "end_time": 32.766666666666666,
+      "duration": 1.5999999999999979,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0016.jpg"
+    },
+    {
+      "frame_id": 17,
+      "filename": "frame_0017.jpg",
+      "start_time": 32.766666666666666,
+      "end_time": 32.833333333333336,
+      "duration": 0.06666666666666998,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0017.jpg"
+    },
+    {
+      "frame_id": 18,
+      "filename": "frame_0018.jpg",
+      "start_time": 32.833333333333336,
+      "end_time": 32.9,
+      "duration": 0.06666666666666288,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0018.jpg"
+    },
+    {
+      "frame_id": 19,
+      "filename": "frame_0019.jpg",
+      "start_time": 32.9,
+      "end_time": 32.93333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0019.jpg"
+    },
+    {
+      "frame_id": 20,
+      "filename": "frame_0020.jpg",
+      "start_time": 32.93333333333333,
+      "end_time": 33.06666666666667,
+      "duration": 0.13333333333333997,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0020.jpg"
+    },
+    {
+      "frame_id": 21,
+      "filename": "frame_0021.jpg",
+      "start_time": 33.06666666666667,
+      "end_time": 33.2,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0021.jpg"
+    },
+    {
+      "frame_id": 22,
+      "filename": "frame_0022.jpg",
+      "start_time": 33.2,
+      "end_time": 33.333333333333336,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0022.jpg"
+    },
+    {
+      "frame_id": 23,
+      "filename": "frame_0023.jpg",
+      "start_time": 33.333333333333336,
+      "end_time": 35.0,
+      "duration": 1.6666666666666643,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0023.jpg"
+    },
+    {
+      "frame_id": 24,
+      "filename": "frame_0024.jpg",
+      "start_time": 35.0,
+      "end_time": 36.0,
+      "duration": 1.0,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0024.jpg"
+    },
+    {
+      "frame_id": 25,
+      "filename": "frame_0025.jpg",
+      "start_time": 36.0,
+      "end_time": 36.03333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0025.jpg"
+    },
+    {
+      "frame_id": 26,
+      "filename": "frame_0026.jpg",
+      "start_time": 36.03333333333333,
+      "end_time": 36.1,
+      "duration": 0.06666666666666998,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0026.jpg"
+    },
+    {
+      "frame_id": 27,
+      "filename": "frame_0027.jpg",
+      "start_time": 36.1,
+      "end_time": 37.36666666666667,
+      "duration": 1.2666666666666657,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0027.jpg"
+    },
+    {
+      "frame_id": 28,
+      "filename": "frame_0028.jpg",
+      "start_time": 37.36666666666667,
+      "end_time": 40.0,
+      "duration": 2.633333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0028.jpg"
+    },
+    {
+      "frame_id": 29,
+      "filename": "frame_0029.jpg",
+      "start_time": 40.0,
+      "end_time": 40.13333333333333,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0029.jpg"
+    },
+    {
+      "frame_id": 30,
+      "filename": "frame_0030.jpg",
+      "start_time": 40.13333333333333,
+      "end_time": 40.166666666666664,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0030.jpg"
+    },
+    {
+      "frame_id": 31,
+      "filename": "frame_0031.jpg",
+      "start_time": 40.166666666666664,
+      "end_time": 41.266666666666666,
+      "duration": 1.1000000000000014,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0031.jpg"
+    },
+    {
+      "frame_id": 32,
+      "filename": "frame_0032.jpg",
+      "start_time": 41.266666666666666,
+      "end_time": 44.6,
+      "duration": 3.3333333333333357,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0032.jpg"
+    },
+    {
+      "frame_id": 33,
+      "filename": "frame_0033.jpg",
+      "start_time": 44.6,
+      "end_time": 45.6,
+      "duration": 1.0,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0033.jpg"
+    },
+    {
+      "frame_id": 34,
+      "filename": "frame_0034.jpg",
+      "start_time": 45.6,
+      "end_time": 45.63333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0034.jpg"
+    },
+    {
+      "frame_id": 35,
+      "filename": "frame_0035.jpg",
+      "start_time": 45.63333333333333,
+      "end_time": 45.7,
+      "duration": 0.06666666666666998,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0035.jpg"
+    },
+    {
+      "frame_id": 36,
+      "filename": "frame_0036.jpg",
+      "start_time": 45.7,
+      "end_time": 45.8,
+      "duration": 0.09999999999999432,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0036.jpg"
+    },
+    {
+      "frame_id": 37,
+      "filename": "frame_0037.jpg",
+      "start_time": 45.8,
+      "end_time": 45.833333333333336,
+      "duration": 0.033333333333338544,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0037.jpg"
+    },
+    {
+      "frame_id": 38,
+      "filename": "frame_0038.jpg",
+      "start_time": 45.833333333333336,
+      "end_time": 45.96666666666667,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0038.jpg"
+    },
+    {
+      "frame_id": 39,
+      "filename": "frame_0039.jpg",
+      "start_time": 45.96666666666667,
+      "end_time": 46.03333333333333,
+      "duration": 0.06666666666666288,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0039.jpg"
+    },
+    {
+      "frame_id": 40,
+      "filename": "frame_0040.jpg",
+      "start_time": 46.03333333333333,
+      "end_time": 46.333333333333336,
+      "duration": 0.30000000000000426,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0040.jpg"
+    },
+    {
+      "frame_id": 41,
+      "filename": "frame_0041.jpg",
+      "start_time": 46.333333333333336,
+      "end_time": 46.56666666666667,
+      "duration": 0.23333333333333428,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0041.jpg"
+    },
+    {
+      "frame_id": 42,
+      "filename": "frame_0042.jpg",
+      "start_time": 46.56666666666667,
+      "end_time": 46.6,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0042.jpg"
+    },
+    {
+      "frame_id": 43,
+      "filename": "frame_0043.jpg",
+      "start_time": 46.6,
+      "end_time": 46.733333333333334,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0043.jpg"
+    },
+    {
+      "frame_id": 44,
+      "filename": "frame_0044.jpg",
+      "start_time": 46.733333333333334,
+      "end_time": 47.8,
+      "duration": 1.0666666666666629,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0044.jpg"
+    },
+    {
+      "frame_id": 45,
+      "filename": "frame_0045.jpg",
+      "start_time": 47.8,
+      "end_time": 47.9,
+      "duration": 0.10000000000000142,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0045.jpg"
+    },
+    {
+      "frame_id": 46,
+      "filename": "frame_0046.jpg",
+      "start_time": 47.9,
+      "end_time": 51.233333333333334,
+      "duration": 3.3333333333333357,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0046.jpg"
+    },
+    {
+      "frame_id": 47,
+      "filename": "frame_0047.jpg",
+      "start_time": 51.233333333333334,
+      "end_time": 51.46666666666667,
+      "duration": 0.23333333333333428,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0047.jpg"
+    },
+    {
+      "frame_id": 48,
+      "filename": "frame_0048.jpg",
+      "start_time": 51.46666666666667,
+      "end_time": 51.9,
+      "duration": 0.43333333333333,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0048.jpg"
+    },
+    {
+      "frame_id": 49,
+      "filename": "frame_0049.jpg",
+      "start_time": 51.9,
+      "end_time": 51.93333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0049.jpg"
+    },
+    {
+      "frame_id": 50,
+      "filename": "frame_0050.jpg",
+      "start_time": 51.93333333333333,
+      "end_time": 51.96666666666667,
+      "duration": 0.033333333333338544,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0050.jpg"
+    },
+    {
+      "frame_id": 51,
+      "filename": "frame_0051.jpg",
+      "start_time": 51.96666666666667,
+      "end_time": 52.13333333333333,
+      "duration": 0.1666666666666643,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0051.jpg"
+    },
+    {
+      "frame_id": 52,
+      "filename": "frame_0052.jpg",
+      "start_time": 52.13333333333333,
+      "end_time": 52.4,
+      "duration": 0.2666666666666657,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0052.jpg"
+    },
+    {
+      "frame_id": 53,
+      "filename": "frame_0053.jpg",
+      "start_time": 52.4,
+      "end_time": 52.43333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0053.jpg"
+    },
+    {
+      "frame_id": 54,
+      "filename": "frame_0054.jpg",
+      "start_time": 52.43333333333333,
+      "end_time": 52.56666666666667,
+      "duration": 0.13333333333333997,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0054.jpg"
+    },
+    {
+      "frame_id": 55,
+      "filename": "frame_0055.jpg",
+      "start_time": 52.56666666666667,
+      "end_time": 52.833333333333336,
+      "duration": 0.2666666666666657,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0055.jpg"
+    },
+    {
+      "frame_id": 56,
+      "filename": "frame_0056.jpg",
+      "start_time": 52.833333333333336,
+      "end_time": 52.86666666666667,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0056.jpg"
+    },
+    {
+      "frame_id": 57,
+      "filename": "frame_0057.jpg",
+      "start_time": 52.86666666666667,
+      "end_time": 53.266666666666666,
+      "duration": 0.3999999999999986,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0057.jpg"
+    },
+    {
+      "frame_id": 58,
+      "filename": "frame_0058.jpg",
+      "start_time": 53.266666666666666,
+      "end_time": 53.3,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0058.jpg"
+    },
+    {
+      "frame_id": 59,
+      "filename": "frame_0059.jpg",
+      "start_time": 53.3,
+      "end_time": 53.333333333333336,
+      "duration": 0.033333333333338544,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0059.jpg"
+    },
+    {
+      "frame_id": 60,
+      "filename": "frame_0060.jpg",
+      "start_time": 53.333333333333336,
+      "end_time": 53.4,
+      "duration": 0.06666666666666288,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0060.jpg"
+    },
+    {
+      "frame_id": 61,
+      "filename": "frame_0061.jpg",
+      "start_time": 53.4,
+      "end_time": 53.46666666666667,
+      "duration": 0.06666666666666998,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0061.jpg"
+    },
+    {
+      "frame_id": 62,
+      "filename": "frame_0062.jpg",
+      "start_time": 53.46666666666667,
+      "end_time": 53.733333333333334,
+      "duration": 0.2666666666666657,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0062.jpg"
+    },
+    {
+      "frame_id": 63,
+      "filename": "frame_0063.jpg",
+      "start_time": 53.733333333333334,
+      "end_time": 54.1,
+      "duration": 0.36666666666666714,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0063.jpg"
+    },
+    {
+      "frame_id": 64,
+      "filename": "frame_0064.jpg",
+      "start_time": 54.1,
+      "end_time": 54.6,
+      "duration": 0.5,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0064.jpg"
+    },
+    {
+      "frame_id": 65,
+      "filename": "frame_0065.jpg",
+      "start_time": 54.6,
+      "end_time": 54.8,
+      "duration": 0.19999999999999574,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0065.jpg"
+    },
+    {
+      "frame_id": 66,
+      "filename": "frame_0066.jpg",
+      "start_time": 54.8,
+      "end_time": 54.833333333333336,
+      "duration": 0.033333333333338544,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0066.jpg"
+    },
+    {
+      "frame_id": 67,
+      "filename": "frame_0067.jpg",
+      "start_time": 54.833333333333336,
+      "end_time": 55.0,
+      "duration": 0.1666666666666643,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0067.jpg"
+    },
+    {
+      "frame_id": 68,
+      "filename": "frame_0068.jpg",
+      "start_time": 55.0,
+      "end_time": 55.03333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0068.jpg"
+    },
+    {
+      "frame_id": 69,
+      "filename": "frame_0069.jpg",
+      "start_time": 55.03333333333333,
+      "end_time": 55.266666666666666,
+      "duration": 0.23333333333333428,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0069.jpg"
+    },
+    {
+      "frame_id": 70,
+      "filename": "frame_0070.jpg",
+      "start_time": 55.266666666666666,
+      "end_time": 55.6,
+      "duration": 0.3333333333333357,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0070.jpg"
+    },
+    {
+      "frame_id": 71,
+      "filename": "frame_0071.jpg",
+      "start_time": 55.6,
+      "end_time": 55.63333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0071.jpg"
+    },
+    {
+      "frame_id": 72,
+      "filename": "frame_0072.jpg",
+      "start_time": 55.63333333333333,
+      "end_time": 56.0,
+      "duration": 0.36666666666666714,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0072.jpg"
+    },
+    {
+      "frame_id": 73,
+      "filename": "frame_0073.jpg",
+      "start_time": 56.0,
+      "end_time": 56.4,
+      "duration": 0.3999999999999986,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0073.jpg"
+    },
+    {
+      "frame_id": 74,
+      "filename": "frame_0074.jpg",
+      "start_time": 56.4,
+      "end_time": 56.43333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0074.jpg"
+    },
+    {
+      "frame_id": 75,
+      "filename": "frame_0075.jpg",
+      "start_time": 56.43333333333333,
+      "end_time": 58.5,
+      "duration": 2.06666666666667,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0075.jpg"
+    },
+    {
+      "frame_id": 76,
+      "filename": "frame_0076.jpg",
+      "start_time": 58.5,
+      "end_time": 58.63333333333333,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0076.jpg"
+    },
+    {
+      "frame_id": 77,
+      "filename": "frame_0077.jpg",
+      "start_time": 58.63333333333333,
+      "end_time": 58.7,
+      "duration": 0.06666666666666998,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0077.jpg"
+    },
+    {
+      "frame_id": 78,
+      "filename": "frame_0078.jpg",
+      "start_time": 58.7,
+      "end_time": 58.8,
+      "duration": 0.09999999999999432,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0078.jpg"
+    },
+    {
+      "frame_id": 79,
+      "filename": "frame_0079.jpg",
+      "start_time": 58.8,
+      "end_time": 58.93333333333333,
+      "duration": 0.13333333333333286,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0079.jpg"
+    },
+    {
+      "frame_id": 80,
+      "filename": "frame_0080.jpg",
+      "start_time": 58.93333333333333,
+      "end_time": 60.0,
+      "duration": 1.06666666666667,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0080.jpg"
+    },
+    {
+      "frame_id": 81,
+      "filename": "frame_0081.jpg",
+      "start_time": 60.0,
+      "end_time": 60.733333333333334,
+      "duration": 0.7333333333333343,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0081.jpg"
+    },
+    {
+      "frame_id": 82,
+      "filename": "frame_0082.jpg",
+      "start_time": 60.733333333333334,
+      "end_time": 60.766666666666666,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0082.jpg"
+    },
+    {
+      "frame_id": 83,
+      "filename": "frame_0083.jpg",
+      "start_time": 60.766666666666666,
+      "end_time": 60.8,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0083.jpg"
+    },
+    {
+      "frame_id": 84,
+      "filename": "frame_0084.jpg",
+      "start_time": 60.8,
+      "end_time": 60.833333333333336,
+      "duration": 0.033333333333338544,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0084.jpg"
+    },
+    {
+      "frame_id": 85,
+      "filename": "frame_0085.jpg",
+      "start_time": 60.833333333333336,
+      "end_time": 64.93333333333334,
+      "duration": 4.100000000000001,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0085.jpg"
+    },
+    {
+      "frame_id": 86,
+      "filename": "frame_0086.jpg",
+      "start_time": 64.93333333333334,
+      "end_time": 64.96666666666667,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0086.jpg"
+    },
+    {
+      "frame_id": 87,
+      "filename": "frame_0087.jpg",
+      "start_time": 64.96666666666667,
+      "end_time": 65.0,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0087.jpg"
+    },
+    {
+      "frame_id": 88,
+      "filename": "frame_0088.jpg",
+      "start_time": 65.0,
+      "end_time": 65.1,
+      "duration": 0.09999999999999432,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0088.jpg"
+    },
+    {
+      "frame_id": 89,
+      "filename": "frame_0089.jpg",
+      "start_time": 65.1,
+      "end_time": 69.9,
+      "duration": 4.800000000000011,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0089.jpg"
+    },
+    {
+      "frame_id": 90,
+      "filename": "frame_0090.jpg",
+      "start_time": 69.9,
+      "end_time": 70.0,
+      "duration": 0.09999999999999432,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0090.jpg"
+    },
+    {
+      "frame_id": 91,
+      "filename": "frame_0091.jpg",
+      "start_time": 70.0,
+      "end_time": 86.93333333333334,
+      "duration": 16.933333333333337,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0091.jpg"
+    },
+    {
+      "frame_id": 92,
+      "filename": "frame_0092.jpg",
+      "start_time": 86.93333333333334,
+      "end_time": 87.0,
+      "duration": 0.06666666666666288,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0092.jpg"
+    },
+    {
+      "frame_id": 93,
+      "filename": "frame_0093.jpg",
+      "start_time": 87.0,
+      "end_time": 89.4,
+      "duration": 2.4000000000000057,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0093.jpg"
+    },
+    {
+      "frame_id": 94,
+      "filename": "frame_0094.jpg",
+      "start_time": 89.4,
+      "end_time": 91.3,
+      "duration": 1.8999999999999915,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0094.jpg"
+    },
+    {
+      "frame_id": 95,
+      "filename": "frame_0095.jpg",
+      "start_time": 91.3,
+      "end_time": 91.33333333333333,
+      "duration": 0.03333333333333144,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0095.jpg"
+    },
+    {
+      "frame_id": 96,
+      "filename": "frame_0096.jpg",
+      "start_time": 91.33333333333333,
+      "end_time": 100.56666666666666,
+      "duration": 9.233333333333334,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0096.jpg"
+    },
+    {
+      "frame_id": 97,
+      "filename": "frame_0097.jpg",
+      "start_time": 100.56666666666666,
+      "end_time": 104.43333333333334,
+      "duration": 3.8666666666666742,
+      "path": "data/videos/video_chatgpt_eval/processed/keyframes/v_-pkfcMUIEMo/frame_0097.jpg"
+    }
+  ],
+  "transcripts": [
+    {
+      "start": 1.9199999999999924,
+      "end": 8.18,
+      "text": " Okay we're here today. I should do a little live snow-shoveling drill. Most of",
+      "words": [
+        {
+          "word": " Okay",
+          "start": 1.9199999999999924,
+          "end": 2.2799999999999963
+        },
+        {
+          "word": " we're",
+          "start": 2.2799999999999963,
+          "end": 2.64
+        },
+        {
+          "word": " here",
+          "start": 2.64,
+          "end": 2.8
+        },
+        {
+          "word": " today.",
+          "start": 2.8,
+          "end": 3.2
+        },
+        {
+          "word": " I",
+          "start": 3.92,
+          "end": 4.28
+        },
+        {
+          "word": " should",
+          "start": 4.28,
+          "end": 4.4
+        },
+        {
+          "word": " do",
+          "start": 4.4,
+          "end": 4.58
+        },
+        {
+          "word": " a",
+          "start": 4.58,
+          "end": 4.64
+        },
+        {
+          "word": " little",
+          "start": 4.64,
+          "end": 4.82
+        },
+        {
+          "word": " live",
+          "start": 4.82,
+          "end": 5.3
+        },
+        {
+          "word": " snow",
+          "start": 5.3,
+          "end": 5.9
+        },
+        {
+          "word": "-shoveling",
+          "start": 5.9,
+          "end": 6.76
+        },
+        {
+          "word": " drill.",
+          "start": 6.76,
+          "end": 7.5
+        },
+        {
+          "word": " Most",
+          "start": 7.8,
+          "end": 8.04
+        },
+        {
+          "word": " of",
+          "start": 8.04,
+          "end": 8.18
+        }
+      ]
+    },
+    {
+      "start": 8.18,
+      "end": 12.6,
+      "text": " time you'll see on the news. I'll be telling you how to do it. I figured it would",
+      "words": [
+        {
+          "word": " time",
+          "start": 8.18,
+          "end": 8.46
+        },
+        {
+          "word": " you'll",
+          "start": 8.46,
+          "end": 8.72
+        },
+        {
+          "word": " see",
+          "start": 8.72,
+          "end": 8.88
+        },
+        {
+          "word": " on",
+          "start": 8.88,
+          "end": 9.02
+        },
+        {
+          "word": " the",
+          "start": 9.02,
+          "end": 9.12
+        },
+        {
+          "word": " news.",
+          "start": 9.12,
+          "end": 9.46
+        },
+        {
+          "word": " I'll",
+          "start": 10.58,
+          "end": 10.86
+        },
+        {
+          "word": " be",
+          "start": 10.86,
+          "end": 10.92
+        },
+        {
+          "word": " telling",
+          "start": 10.92,
+          "end": 11.2
+        },
+        {
+          "word": " you",
+          "start": 11.2,
+          "end": 11.34
+        },
+        {
+          "word": " how",
+          "start": 11.34,
+          "end": 11.46
+        },
+        {
+          "word": " to",
+          "start": 11.46,
+          "end": 11.54
+        },
+        {
+          "word": " do",
+          "start": 11.54,
+          "end": 11.7
+        },
+        {
+          "word": " it.",
+          "start": 11.7,
+          "end": 11.9
+        },
+        {
+          "word": " I",
+          "start": 12.12,
+          "end": 12.26
+        },
+        {
+          "word": " figured",
+          "start": 12.26,
+          "end": 12.44
+        },
+        {
+          "word": " it",
+          "start": 12.44,
+          "end": 12.6
+        },
+        {
+          "word": " would",
+          "start": 12.6,
+          "end": 12.6
+        }
+      ]
+    },
+    {
+      "start": 12.6,
+      "end": 16.42,
+      "text": " be a nice 20 inch snowfall today out here on Long Island. This would be a good",
+      "words": [
+        {
+          "word": " be",
+          "start": 12.6,
+          "end": 12.6
+        },
+        {
+          "word": " a",
+          "start": 12.6,
+          "end": 12.7
+        },
+        {
+          "word": " nice",
+          "start": 12.7,
+          "end": 12.84
+        },
+        {
+          "word": " 20",
+          "start": 12.84,
+          "end": 13.2
+        },
+        {
+          "word": " inch",
+          "start": 13.2,
+          "end": 13.44
+        },
+        {
+          "word": " snowfall",
+          "start": 13.44,
+          "end": 13.88
+        },
+        {
+          "word": " today",
+          "start": 13.88,
+          "end": 14.22
+        },
+        {
+          "word": " out",
+          "start": 14.22,
+          "end": 14.4
+        },
+        {
+          "word": " here",
+          "start": 14.4,
+          "end": 14.56
+        },
+        {
+          "word": " on",
+          "start": 14.56,
+          "end": 14.7
+        },
+        {
+          "word": " Long",
+          "start": 14.7,
+          "end": 14.78
+        },
+        {
+          "word": " Island.",
+          "start": 14.78,
+          "end": 15.06
+        },
+        {
+          "word": " This",
+          "start": 15.68,
+          "end": 16.04
+        },
+        {
+          "word": " would",
+          "start": 16.04,
+          "end": 16.12
+        },
+        {
+          "word": " be",
+          "start": 16.12,
+          "end": 16.22
+        },
+        {
+          "word": " a",
+          "start": 16.22,
+          "end": 16.3
+        },
+        {
+          "word": " good",
+          "start": 16.3,
+          "end": 16.42
+        }
+      ]
+    },
+    {
+      "start": 16.42,
+      "end": 20.12,
+      "text": " time to show you how it should be done. My name is Dr. Craig Rubenstein. I'm a",
+      "words": [
+        {
+          "word": " time",
+          "start": 16.42,
+          "end": 16.62
+        },
+        {
+          "word": " to",
+          "start": 16.62,
+          "end": 16.76
+        },
+        {
+          "word": " show",
+          "start": 16.76,
+          "end": 16.98
+        },
+        {
+          "word": " you",
+          "start": 16.98,
+          "end": 17.12
+        },
+        {
+          "word": " how",
+          "start": 17.12,
+          "end": 17.24
+        },
+        {
+          "word": " it",
+          "start": 17.24,
+          "end": 17.36
+        },
+        {
+          "word": " should",
+          "start": 17.36,
+          "end": 17.52
+        },
+        {
+          "word": " be",
+          "start": 17.52,
+          "end": 17.7
+        },
+        {
+          "word": " done.",
+          "start": 17.7,
+          "end": 17.92
+        },
+        {
+          "word": " My",
+          "start": 18.26,
+          "end": 18.38
+        },
+        {
+          "word": " name",
+          "start": 18.38,
+          "end": 18.5
+        },
+        {
+          "word": " is",
+          "start": 18.5,
+          "end": 18.64
+        },
+        {
+          "word": " Dr.",
+          "start": 18.64,
+          "end": 18.84
+        },
+        {
+          "word": " Craig",
+          "start": 19.12,
+          "end": 19.16
+        },
+        {
+          "word": " Rubenstein.",
+          "start": 19.16,
+          "end": 19.7
+        },
+        {
+          "word": " I'm",
+          "start": 19.94,
+          "end": 20.02
+        },
+        {
+          "word": " a",
+          "start": 20.02,
+          "end": 20.12
+        }
+      ]
+    },
+    {
+      "start": 20.12,
+      "end": 24.24,
+      "text": " chiropractic here in Medford, Long Island. And one of the big things is to make",
+      "words": [
+        {
+          "word": " chiropractic",
+          "start": 20.12,
+          "end": 20.64
+        },
+        {
+          "word": " here",
+          "start": 20.64,
+          "end": 20.82
+        },
+        {
+          "word": " in",
+          "start": 20.82,
+          "end": 20.96
+        },
+        {
+          "word": " Medford,",
+          "start": 20.96,
+          "end": 21.24
+        },
+        {
+          "word": " Long",
+          "start": 21.24,
+          "end": 21.46
+        },
+        {
+          "word": " Island.",
+          "start": 21.46,
+          "end": 21.76
+        },
+        {
+          "word": " And",
+          "start": 22.68,
+          "end": 23.04
+        },
+        {
+          "word": " one",
+          "start": 23.04,
+          "end": 23.22
+        },
+        {
+          "word": " of",
+          "start": 23.22,
+          "end": 23.3
+        },
+        {
+          "word": " the",
+          "start": 23.3,
+          "end": 23.36
+        },
+        {
+          "word": " big",
+          "start": 23.36,
+          "end": 23.52
+        },
+        {
+          "word": " things",
+          "start": 23.52,
+          "end": 23.74
+        },
+        {
+          "word": " is",
+          "start": 23.74,
+          "end": 23.98
+        },
+        {
+          "word": " to",
+          "start": 23.98,
+          "end": 24.12
+        },
+        {
+          "word": " make",
+          "start": 24.12,
+          "end": 24.24
+        }
+      ]
+    },
+    {
+      "start": 24.24,
+      "end": 28.24,
+      "text": " sure you use your knees, but the second most important thing is not to twist.",
+      "words": [
+        {
+          "word": " sure",
+          "start": 24.24,
+          "end": 24.44
+        },
+        {
+          "word": " you",
+          "start": 24.44,
+          "end": 24.58
+        },
+        {
+          "word": " use",
+          "start": 24.58,
+          "end": 24.76
+        },
+        {
+          "word": " your",
+          "start": 24.76,
+          "end": 24.9
+        },
+        {
+          "word": " knees,",
+          "start": 24.9,
+          "end": 25.16
+        },
+        {
+          "word": " but",
+          "start": 25.88,
+          "end": 26.18
+        },
+        {
+          "word": " the",
+          "start": 26.18,
+          "end": 26.32
+        },
+        {
+          "word": " second",
+          "start": 26.32,
+          "end": 26.62
+        },
+        {
+          "word": " most",
+          "start": 26.62,
+          "end": 26.84
+        },
+        {
+          "word": " important",
+          "start": 26.84,
+          "end": 27.08
+        },
+        {
+          "word": " thing",
+          "start": 27.08,
+          "end": 27.42
+        },
+        {
+          "word": " is",
+          "start": 27.42,
+          "end": 27.56
+        },
+        {
+          "word": " not",
+          "start": 27.56,
+          "end": 27.74
+        },
+        {
+          "word": " to",
+          "start": 27.74,
+          "end": 27.88
+        },
+        {
+          "word": " twist.",
+          "start": 27.88,
+          "end": 28.24
+        }
+      ]
+    },
+    {
+      "start": 28.96,
+      "end": 35.26,
+      "text": " So the proper way to shovel, bend the knees, shovel, but instead of twisting,",
+      "words": [
+        {
+          "word": " So",
+          "start": 28.96,
+          "end": 29.46
+        },
+        {
+          "word": " the",
+          "start": 29.46,
+          "end": 29.76
+        },
+        {
+          "word": " proper",
+          "start": 29.76,
+          "end": 29.84
+        },
+        {
+          "word": " way",
+          "start": 29.84,
+          "end": 30.18
+        },
+        {
+          "word": " to",
+          "start": 30.18,
+          "end": 30.3
+        },
+        {
+          "word": " shovel,",
+          "start": 30.3,
+          "end": 30.62
+        },
+        {
+          "word": " bend",
+          "start": 31.1,
+          "end": 31.56
+        },
+        {
+          "word": " the",
+          "start": 31.56,
+          "end": 31.72
+        },
+        {
+          "word": " knees,",
+          "start": 31.72,
+          "end": 32.02
+        },
+        {
+          "word": " shovel,",
+          "start": 32.6,
+          "end": 33.86
+        },
+        {
+          "word": " but",
+          "start": 34.3,
+          "end": 34.36
+        },
+        {
+          "word": " instead",
+          "start": 34.36,
+          "end": 34.62
+        },
+        {
+          "word": " of",
+          "start": 34.62,
+          "end": 34.82
+        },
+        {
+          "word": " twisting,",
+          "start": 34.82,
+          "end": 35.26
+        }
+      ]
+    },
+    {
+      "start": 35.7,
+      "end": 42.04,
+      "text": " to throw the snow, you should turn and drop it. If you have a large pile of snow",
+      "words": [
+        {
+          "word": " to",
+          "start": 35.7,
+          "end": 35.74
+        },
+        {
+          "word": " throw",
+          "start": 35.74,
+          "end": 36.0
+        },
+        {
+          "word": " the",
+          "start": 36.0,
+          "end": 36.24
+        },
+        {
+          "word": " snow,",
+          "start": 36.24,
+          "end": 36.46
+        },
+        {
+          "word": " you",
+          "start": 37.0,
+          "end": 37.14
+        },
+        {
+          "word": " should",
+          "start": 37.14,
+          "end": 37.32
+        },
+        {
+          "word": " turn",
+          "start": 37.32,
+          "end": 37.72
+        },
+        {
+          "word": " and",
+          "start": 37.72,
+          "end": 39.46
+        },
+        {
+          "word": " drop",
+          "start": 39.46,
+          "end": 39.78
+        },
+        {
+          "word": " it.",
+          "start": 39.78,
+          "end": 40.08
+        },
+        {
+          "word": " If",
+          "start": 40.6,
+          "end": 40.72
+        },
+        {
+          "word": " you",
+          "start": 40.72,
+          "end": 40.8
+        },
+        {
+          "word": " have",
+          "start": 40.8,
+          "end": 40.92
+        },
+        {
+          "word": " a",
+          "start": 40.92,
+          "end": 41.0
+        },
+        {
+          "word": " large",
+          "start": 41.0,
+          "end": 41.4
+        },
+        {
+          "word": " pile",
+          "start": 41.4,
+          "end": 41.66
+        },
+        {
+          "word": " of",
+          "start": 41.66,
+          "end": 41.9
+        },
+        {
+          "word": " snow",
+          "start": 41.9,
+          "end": 42.04
+        }
+      ]
+    },
+    {
+      "start": 42.04,
+      "end": 47.38,
+      "text": " like this, please do not try to get on the roll of it. Take the top piece, bend the",
+      "words": [
+        {
+          "word": " like",
+          "start": 42.04,
+          "end": 42.28
+        },
+        {
+          "word": " this,",
+          "start": 42.28,
+          "end": 42.52
+        },
+        {
+          "word": " please",
+          "start": 42.84,
+          "end": 43.02
+        },
+        {
+          "word": " do",
+          "start": 43.02,
+          "end": 43.28
+        },
+        {
+          "word": " not",
+          "start": 43.28,
+          "end": 43.42
+        },
+        {
+          "word": " try",
+          "start": 43.42,
+          "end": 43.62
+        },
+        {
+          "word": " to",
+          "start": 43.62,
+          "end": 43.7
+        },
+        {
+          "word": " get",
+          "start": 43.7,
+          "end": 43.82
+        },
+        {
+          "word": " on",
+          "start": 43.82,
+          "end": 43.96
+        },
+        {
+          "word": " the",
+          "start": 43.96,
+          "end": 44.08
+        },
+        {
+          "word": " roll",
+          "start": 44.08,
+          "end": 44.2
+        },
+        {
+          "word": " of",
+          "start": 44.2,
+          "end": 44.4
+        },
+        {
+          "word": " it.",
+          "start": 44.4,
+          "end": 44.52
+        },
+        {
+          "word": " Take",
+          "start": 45.02,
+          "end": 45.18
+        },
+        {
+          "word": " the",
+          "start": 45.18,
+          "end": 45.34
+        },
+        {
+          "word": " top",
+          "start": 45.34,
+          "end": 45.56
+        },
+        {
+          "word": " piece,",
+          "start": 45.56,
+          "end": 45.9
+        },
+        {
+          "word": " bend",
+          "start": 46.5,
+          "end": 47.2
+        },
+        {
+          "word": " the",
+          "start": 47.2,
+          "end": 47.38
+        }
+      ]
+    },
+    {
+      "start": 47.38,
+      "end": 57.8,
+      "text": " knees, lift, do not twist, put the turn, and dump the snow. Bend the knees, lift",
+      "words": [
+        {
+          "word": " knees,",
+          "start": 47.38,
+          "end": 47.68
+        },
+        {
+          "word": " lift,",
+          "start": 48.5,
+          "end": 48.68
+        },
+        {
+          "word": " do",
+          "start": 49.58,
+          "end": 49.84
+        },
+        {
+          "word": " not",
+          "start": 49.84,
+          "end": 50.06
+        },
+        {
+          "word": " twist,",
+          "start": 50.06,
+          "end": 50.5
+        },
+        {
+          "word": " put",
+          "start": 50.96,
+          "end": 51.06
+        },
+        {
+          "word": " the",
+          "start": 51.06,
+          "end": 51.22
+        },
+        {
+          "word": " turn,",
+          "start": 51.22,
+          "end": 51.58
+        },
+        {
+          "word": " and",
+          "start": 53.18,
+          "end": 53.3
+        },
+        {
+          "word": " dump",
+          "start": 53.3,
+          "end": 53.52
+        },
+        {
+          "word": " the",
+          "start": 53.52,
+          "end": 53.72
+        },
+        {
+          "word": " snow.",
+          "start": 53.72,
+          "end": 53.98
+        },
+        {
+          "word": " Bend",
+          "start": 55.4,
+          "end": 55.64
+        },
+        {
+          "word": " the",
+          "start": 55.64,
+          "end": 55.82
+        },
+        {
+          "word": " knees,",
+          "start": 55.82,
+          "end": 56.2
+        },
+        {
+          "word": " lift",
+          "start": 57.52,
+          "end": 57.8
+        }
+      ]
+    },
+    {
+      "start": 57.8,
+      "end": 64.48,
+      "text": " with the knees, do not twist, turn your body, and throw the snow. If it's very",
+      "words": [
+        {
+          "word": " with",
+          "start": 57.8,
+          "end": 58.04
+        },
+        {
+          "word": " the",
+          "start": 58.04,
+          "end": 58.26
+        },
+        {
+          "word": " knees,",
+          "start": 58.26,
+          "end": 58.54
+        },
+        {
+          "word": " do",
+          "start": 59.06,
+          "end": 59.48
+        },
+        {
+          "word": " not",
+          "start": 59.48,
+          "end": 59.64
+        },
+        {
+          "word": " twist,",
+          "start": 59.64,
+          "end": 59.98
+        },
+        {
+          "word": " turn",
+          "start": 60.36,
+          "end": 60.62
+        },
+        {
+          "word": " your",
+          "start": 60.62,
+          "end": 60.8
+        },
+        {
+          "word": " body,",
+          "start": 60.8,
+          "end": 61.12
+        },
+        {
+          "word": " and",
+          "start": 61.76,
+          "end": 62.38
+        },
+        {
+          "word": " throw",
+          "start": 62.38,
+          "end": 62.62
+        },
+        {
+          "word": " the",
+          "start": 62.62,
+          "end": 62.82
+        },
+        {
+          "word": " snow.",
+          "start": 62.82,
+          "end": 63.06
+        },
+        {
+          "word": " If",
+          "start": 63.82,
+          "end": 64.1
+        },
+        {
+          "word": " it's",
+          "start": 64.1,
+          "end": 64.26
+        },
+        {
+          "word": " very",
+          "start": 64.26,
+          "end": 64.48
+        }
+      ]
+    },
+    {
+      "start": 64.48,
+      "end": 73.86,
+      "text": " heavy, do not even throw the snow. Turn, walk, and dump the snow. Believe me,",
+      "words": [
+        {
+          "word": " heavy,",
+          "start": 64.48,
+          "end": 64.86
+        },
+        {
+          "word": " do",
+          "start": 65.98,
+          "end": 66.34
+        },
+        {
+          "word": " not",
+          "start": 66.34,
+          "end": 66.52
+        },
+        {
+          "word": " even",
+          "start": 66.52,
+          "end": 66.72
+        },
+        {
+          "word": " throw",
+          "start": 66.72,
+          "end": 67.02
+        },
+        {
+          "word": " the",
+          "start": 67.02,
+          "end": 67.26
+        },
+        {
+          "word": " snow.",
+          "start": 67.26,
+          "end": 67.54
+        },
+        {
+          "word": " Turn,",
+          "start": 68.16,
+          "end": 68.4
+        },
+        {
+          "word": " walk,",
+          "start": 69.12,
+          "end": 69.62
+        },
+        {
+          "word": " and",
+          "start": 70.52,
+          "end": 71.64
+        },
+        {
+          "word": " dump",
+          "start": 71.64,
+          "end": 71.9
+        },
+        {
+          "word": " the",
+          "start": 71.9,
+          "end": 72.14
+        },
+        {
+          "word": " snow.",
+          "start": 72.14,
+          "end": 72.42
+        },
+        {
+          "word": " Believe",
+          "start": 73.16,
+          "end": 73.52
+        },
+        {
+          "word": " me,",
+          "start": 73.52,
+          "end": 73.86
+        }
+      ]
+    },
+    {
+      "start": 74.22,
+      "end": 78.28,
+      "text": " after a snowstorm, I see plenty of people coming in here because they've",
+      "words": [
+        {
+          "word": " after",
+          "start": 74.22,
+          "end": 74.62
+        },
+        {
+          "word": " a",
+          "start": 74.62,
+          "end": 74.76
+        },
+        {
+          "word": " snowstorm,",
+          "start": 74.76,
+          "end": 75.28
+        },
+        {
+          "word": " I",
+          "start": 76.04,
+          "end": 76.14
+        },
+        {
+          "word": " see",
+          "start": 76.14,
+          "end": 76.32
+        },
+        {
+          "word": " plenty",
+          "start": 76.32,
+          "end": 76.66
+        },
+        {
+          "word": " of",
+          "start": 76.66,
+          "end": 76.8
+        },
+        {
+          "word": " people",
+          "start": 76.8,
+          "end": 77.02
+        },
+        {
+          "word": " coming",
+          "start": 77.02,
+          "end": 77.32
+        },
+        {
+          "word": " in",
+          "start": 77.32,
+          "end": 77.54
+        },
+        {
+          "word": " here",
+          "start": 77.54,
+          "end": 77.7
+        },
+        {
+          "word": " because",
+          "start": 77.7,
+          "end": 78.0
+        },
+        {
+          "word": " they've",
+          "start": 78.0,
+          "end": 78.28
+        }
+      ]
+    },
+    {
+      "start": 78.28,
+      "end": 82.82,
+      "text": " shoveled improperly. Especially when you get tired, the tired of you are, and",
+      "words": [
+        {
+          "word": " shoveled",
+          "start": 78.28,
+          "end": 78.66
+        },
+        {
+          "word": " improperly.",
+          "start": 78.66,
+          "end": 79.32
+        },
+        {
+          "word": " Especially",
+          "start": 79.98,
+          "end": 80.32
+        },
+        {
+          "word": " when",
+          "start": 80.32,
+          "end": 80.56
+        },
+        {
+          "word": " you",
+          "start": 80.56,
+          "end": 80.64
+        },
+        {
+          "word": " get",
+          "start": 80.64,
+          "end": 80.74
+        },
+        {
+          "word": " tired,",
+          "start": 80.74,
+          "end": 81.14
+        },
+        {
+          "word": " the",
+          "start": 81.3,
+          "end": 81.32
+        },
+        {
+          "word": " tired",
+          "start": 81.32,
+          "end": 81.6
+        },
+        {
+          "word": " of",
+          "start": 81.6,
+          "end": 81.74
+        },
+        {
+          "word": " you",
+          "start": 81.74,
+          "end": 81.86
+        },
+        {
+          "word": " are,",
+          "start": 81.86,
+          "end": 82.12
+        },
+        {
+          "word": " and",
+          "start": 82.68,
+          "end": 82.82
+        }
+      ]
+    },
+    {
+      "start": 82.82,
+      "end": 90.16,
+      "text": " well likely you are to be sloppy and make mistakes. Bend the knees, lift with the",
+      "words": [
+        {
+          "word": " well",
+          "start": 82.82,
+          "end": 82.92
+        },
+        {
+          "word": " likely",
+          "start": 82.92,
+          "end": 83.2
+        },
+        {
+          "word": " you",
+          "start": 83.2,
+          "end": 83.46
+        },
+        {
+          "word": " are",
+          "start": 83.46,
+          "end": 83.58
+        },
+        {
+          "word": " to",
+          "start": 83.58,
+          "end": 83.74
+        },
+        {
+          "word": " be",
+          "start": 83.74,
+          "end": 83.88
+        },
+        {
+          "word": " sloppy",
+          "start": 83.88,
+          "end": 84.18
+        },
+        {
+          "word": " and",
+          "start": 84.18,
+          "end": 84.46
+        },
+        {
+          "word": " make",
+          "start": 84.46,
+          "end": 84.58
+        },
+        {
+          "word": " mistakes.",
+          "start": 84.58,
+          "end": 85.12
+        },
+        {
+          "word": " Bend",
+          "start": 85.84,
+          "end": 86.42
+        },
+        {
+          "word": " the",
+          "start": 86.42,
+          "end": 86.58
+        },
+        {
+          "word": " knees,",
+          "start": 86.58,
+          "end": 86.86
+        },
+        {
+          "word": " lift",
+          "start": 87.24,
+          "end": 89.4
+        },
+        {
+          "word": " with",
+          "start": 89.4,
+          "end": 90.0
+        },
+        {
+          "word": " the",
+          "start": 90.0,
+          "end": 90.16
+        }
+      ]
+    },
+    {
+      "start": 90.16,
+      "end": 98.54,
+      "text": " knees, turn, throw, or drop the snow at that point. Alrighty folks, happy",
+      "words": [
+        {
+          "word": " knees,",
+          "start": 90.16,
+          "end": 90.44
+        },
+        {
+          "word": " turn,",
+          "start": 90.96,
+          "end": 91.34
+        },
+        {
+          "word": " throw,",
+          "start": 92.06,
+          "end": 93.14
+        },
+        {
+          "word": " or",
+          "start": 93.48,
+          "end": 93.54
+        },
+        {
+          "word": " drop",
+          "start": 93.54,
+          "end": 93.8
+        },
+        {
+          "word": " the",
+          "start": 93.8,
+          "end": 94.04
+        },
+        {
+          "word": " snow",
+          "start": 94.04,
+          "end": 94.24
+        },
+        {
+          "word": " at",
+          "start": 94.24,
+          "end": 94.42
+        },
+        {
+          "word": " that",
+          "start": 94.42,
+          "end": 94.56
+        },
+        {
+          "word": " point.",
+          "start": 94.56,
+          "end": 94.9
+        },
+        {
+          "word": " Alrighty",
+          "start": 96.4,
+          "end": 96.98
+        },
+        {
+          "word": " folks,",
+          "start": 96.98,
+          "end": 97.28
+        },
+        {
+          "word": " happy",
+          "start": 97.88,
+          "end": 98.54
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "total_keyframes": 98,
+    "total_transcript_segments": 16,
+    "video_duration_estimated": 104.43333333333334,
+    "total_words": 249
+  },
+  "status": "completed"
+}

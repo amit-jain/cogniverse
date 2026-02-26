@@ -1,0 +1,26 @@
+{
+  "keyframe_extraction_date": "2025-07-06T17:00:00",
+  "total_videos_found": 13,
+  "total_videos_processed": 13,
+  "total_videos_failed": 0,
+  "total_keyframes_extracted": 6889,
+  "processed_videos": [
+    "big_buck_bunny_clip",
+    "elephant_dream_clip",
+    "for_bigger_blazes",
+    "v_-6dz6tBH77I",
+    "v_-D1gdv_gQyw",
+    "v_-HpCLXdtcas",
+    "v_-IMXSEIabMM",
+    "v_-MbZ-W0AbN0",
+    "v_-cAcA8dO7kA",
+    "v_-nl4G-00PtA",
+    "v_-pkfcMUIEMo",
+    "v_-uJnucdW6DY",
+    "v_-vnSFKJNB94"
+  ],
+  "failed_videos": [],
+  "status": "keyframes_ready_for_vlm",
+  "next_step": "VLM description generation",
+  "note": "Removed duplicate test_ prefixed videos - using only unique videos from sample_videos"
+}

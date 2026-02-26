@@ -1,0 +1,79 @@
+{
+  "description_generation_date": 1751861781.787725,
+  "total_videos_processed": 13,
+  "total_videos_failed": 0,
+  "total_keyframes": 6889,
+  "total_descriptions_generated": 6889,
+  "total_processing_time_seconds": 2629.690263032913,
+  "average_time_per_frame": 0.38172307490679536,
+  "processed_videos": [
+    {
+      "video_id": "for_bigger_blazes",
+      "descriptions_generated": 133,
+      "total_keyframes": 133
+    },
+    {
+      "video_id": "v_-nl4G-00PtA",
+      "descriptions_generated": 106,
+      "total_keyframes": 106
+    },
+    {
+      "video_id": "big_buck_bunny_clip",
+      "descriptions_generated": 2150,
+      "total_keyframes": 2150
+    },
+    {
+      "video_id": "v_-6dz6tBH77I",
+      "descriptions_generated": 3,
+      "total_keyframes": 3
+    },
+    {
+      "video_id": "v_-IMXSEIabMM",
+      "descriptions_generated": 361,
+      "total_keyframes": 361
+    },
+    {
+      "video_id": "v_-D1gdv_gQyw",
+      "descriptions_generated": 106,
+      "total_keyframes": 106
+    },
+    {
+      "video_id": "v_-uJnucdW6DY",
+      "descriptions_generated": 1172,
+      "total_keyframes": 1172
+    },
+    {
+      "video_id": "v_-vnSFKJNB94",
+      "descriptions_generated": 224,
+      "total_keyframes": 224
+    },
+    {
+      "video_id": "v_-MbZ-W0AbN0",
+      "descriptions_generated": 413,
+      "total_keyframes": 413
+    },
+    {
+      "video_id": "elephant_dream_clip",
+      "descriptions_generated": 2009,
+      "total_keyframes": 2009
+    },
+    {
+      "video_id": "v_-pkfcMUIEMo",
+      "descriptions_generated": 98,
+      "total_keyframes": 98
+    },
+    {
+      "video_id": "v_-cAcA8dO7kA",
+      "descriptions_generated": 106,
+      "total_keyframes": 106
+    },
+    {
+      "video_id": "v_-HpCLXdtcas",
+      "descriptions_generated": 8,
+      "total_keyframes": 8
+    }
+  ],
+  "failed_videos": [],
+  "vlm_endpoint": "https://amit-jain--congniverse-vlm-vlmmodel-generate-description.modal.run/",
+  "status": "completed"
+}

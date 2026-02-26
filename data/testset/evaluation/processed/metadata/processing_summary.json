@@ -1,0 +1,26 @@
+{
+  "processing_date": 1751804338.048171,
+  "total_videos_found": 13,
+  "total_videos_processed": 13,
+  "total_videos_failed": 0,
+  "total_keyframes": 6889,
+  "total_transcript_segments": 259,
+  "total_words": 1316,
+  "processed_videos": [
+    "v_-uJnucdW6DY",
+    "v_-vnSFKJNB94",
+    "big_buck_bunny_clip",
+    "v_-6dz6tBH77I",
+    "elephant_dream_clip",
+    "v_-D1gdv_gQyw",
+    "for_bigger_blazes",
+    "v_-IMXSEIabMM",
+    "v_-nl4G-00PtA",
+    "v_-pkfcMUIEMo",
+    "v_-MbZ-W0AbN0",
+    "v_-cAcA8dO7kA",
+    "v_-HpCLXdtcas"
+  ],
+  "failed_videos": [],
+  "status": "completed"
+}

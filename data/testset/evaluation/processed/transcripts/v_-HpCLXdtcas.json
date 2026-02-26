@@ -1,0 +1,41 @@
+[
+  {
+    "start": 0.0,
+    "end": 0.56,
+    "text": " Tad du?",
+    "words": [
+      {
+        "word": " Tad",
+        "start": 0.0,
+        "end": 0.32
+      },
+      {
+        "word": " du?",
+        "start": 0.32,
+        "end": 0.56
+      }
+    ]
+  },
+  {
+    "start": 16.92,
+    "end": 19.98,
+    "text": " Det var v\u00e4l?",
+    "words": [
+      {
+        "word": " Det",
+        "start": 16.92,
+        "end": 18.32
+      },
+      {
+        "word": " var",
+        "start": 18.32,
+        "end": 19.72
+      },
+      {
+        "word": " v\u00e4l?",
+        "start": 19.72,
+        "end": 19.98
+      }
+    ]
+  }
+]
