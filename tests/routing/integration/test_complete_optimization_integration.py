@@ -20,6 +20,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -31,6 +32,28 @@ from cogniverse_foundation.telemetry.config import (
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.fixture
@@ -141,6 +164,7 @@ class TestCompleteOptimizationIntegration:
                 model="ollama_chat/smollm3:3b",
                 api_base="http://localhost:11434",
             ),
+            telemetry_provider=_make_mock_telemetry_provider(),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,
             min_annotations_for_optimization=1,  # Low threshold for testing
@@ -268,6 +292,7 @@ class TestCompleteOptimizationIntegration:
                 model="ollama_chat/smollm3:3b",
                 api_base="http://localhost:11434",
             ),
+            telemetry_provider=_make_mock_telemetry_provider(),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,  # All test spans are below this
             min_annotations_for_optimization=1,
@@ -373,6 +398,7 @@ class TestCompleteOptimizationIntegration:
                 model="ollama_chat/smollm3:3b",
                 api_base="http://localhost:11434",
             ),
+            telemetry_provider=_make_mock_telemetry_provider(),
             tenant_id=test_tenant_id,
             confidence_threshold=0.7,  # Many spans below this
             min_annotations_for_optimization=5,  # Low threshold for testing
@@ -441,6 +467,7 @@ class TestCompleteOptimizationIntegration:
                 model="ollama_chat/smollm3:3b",
                 api_base="http://localhost:11434",
             ),
+            telemetry_provider=_make_mock_telemetry_provider(),
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,
             min_annotations_for_optimization=5,

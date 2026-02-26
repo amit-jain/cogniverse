@@ -14,6 +14,7 @@ import os
 import subprocess
 import tempfile
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import requests
@@ -24,6 +25,28 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -270,7 +293,9 @@ async def routing_agent_with_spans(phoenix_container):
 def optimizer():
     """Create AdvancedRoutingOptimizer for testing - fresh for each test"""
     return AdvancedRoutingOptimizer(
-        tenant_id="test-tenant", llm_config=LLMEndpointConfig(model="ollama/test-model")
+        tenant_id="test-tenant",
+        llm_config=LLMEndpointConfig(model="ollama/test-model"),
+        telemetry_provider=_make_mock_telemetry_provider(),
     )
 
 
@@ -379,11 +404,11 @@ class TestRoutingSpanEvaluatorIntegration:
         await asyncio.sleep(2)
 
         # Create optimizer with temporary storage to avoid loading existing data
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory() as _:
             optimizer = AdvancedRoutingOptimizer(
                 tenant_id="test-tenant",
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
-                base_storage_dir=temp_dir,
+                telemetry_provider=_make_mock_telemetry_provider(),
             )
 
             # Verify optimizer starts empty (no loaded data)

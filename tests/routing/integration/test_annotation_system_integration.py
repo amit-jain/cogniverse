@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import requests
@@ -46,6 +47,28 @@ from tests.utils.async_polling import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -460,6 +483,7 @@ class TestAnnotationSystemIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
@@ -678,6 +702,7 @@ class TestAnnotationSystemIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
         initial_experience_count = len(optimizer.experiences)
 

@@ -37,6 +37,7 @@ from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import get_config
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -145,7 +146,12 @@ async def optimize_routing(
     logger.info(f"🎯 Optimizing ROUTING (entity-based) for tenant '{tenant_id}'")
 
     llm_config = _get_llm_config(tenant_id)
-    optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id, llm_config=llm_config)
+    telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+    optimizer = AdvancedRoutingOptimizer(
+        tenant_id=tenant_id,
+        llm_config=llm_config,
+        telemetry_provider=telemetry_provider,
+    )
     results = await optimizer.optimize_routing_policy()
 
     return {
@@ -172,13 +178,10 @@ async def optimize_workflow(
     """
     logger.info(f"🎯 Optimizing WORKFLOW orchestration for tenant '{tenant_id}'")
 
-    # Placeholder - WorkflowOptimizer not yet implemented
-    return {
-        "module": "workflow",
-        "tenant_id": tenant_id,
-        "status": "not_implemented",
-        "message": "WorkflowOptimizer implementation pending"
-    }
+    raise NotImplementedError(
+        "WorkflowOptimizer is not yet implemented. "
+        "Implement the workflow optimization module before calling this function."
+    )
 
 
 async def optimize_unified(
@@ -198,13 +201,10 @@ async def optimize_unified(
     """
     logger.info(f"🎯 Optimizing UNIFIED routing+workflow for tenant '{tenant_id}'")
 
-    # Placeholder - UnifiedOptimizer not yet implemented
-    return {
-        "module": "unified",
-        "tenant_id": tenant_id,
-        "status": "not_implemented",
-        "message": "UnifiedOptimizer implementation pending"
-    }
+    raise NotImplementedError(
+        "UnifiedOptimizer is not yet implemented. "
+        "Implement the unified routing+workflow optimization module before calling this function."
+    )
 
 
 async def optimize_all_modules(
@@ -273,7 +273,6 @@ async def optimize_all_modules(
         "total_modules": len(results),
         "successful": sum(1 for r in results.values() if r.get("status") != "error"),
         "failed": sum(1 for r in results.values() if r.get("status") == "error"),
-        "not_implemented": sum(1 for r in results.values() if r.get("status") == "not_implemented")
     }
 
     return {

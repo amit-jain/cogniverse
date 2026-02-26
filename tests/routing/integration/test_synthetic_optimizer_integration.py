@@ -4,12 +4,36 @@ End-to-End Integration Tests for Synthetic Data + Optimizers
 Tests that synthetic data generation integrates correctly with all optimizers.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 class TestCrossModalOptimizerIntegration:
@@ -71,6 +95,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
         assert optimizer is not None
         assert isinstance(optimizer.experiences, list)
@@ -81,6 +106,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Clear any existing experiences
@@ -100,6 +126,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         await optimizer.generate_synthetic_training_data(
@@ -122,6 +149,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         await optimizer.generate_synthetic_training_data(
@@ -211,6 +239,7 @@ class TestMultiOptimizerIntegration:
         routing = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
         workflow = WorkflowIntelligence()
 
@@ -232,6 +261,7 @@ class TestMultiOptimizerIntegration:
         routing = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Clear state before testing

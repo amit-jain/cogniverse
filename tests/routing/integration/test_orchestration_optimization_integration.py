@@ -9,7 +9,7 @@ Tests the complete flow with REAL components (no mocks):
 5. Trigger unified optimization
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -33,6 +33,28 @@ from cogniverse_agents.workflow_intelligence import (
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
+
+
 @pytest.mark.integration
 class TestOrchestrationOptimizationIntegration:
     """Integration tests for orchestration optimization with REAL components"""
@@ -51,7 +73,7 @@ class TestOrchestrationOptimizationIntegration:
         return AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            base_storage_dir="/tmp/test_routing_optimizer",
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
     @pytest.mark.asyncio

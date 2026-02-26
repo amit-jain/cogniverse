@@ -388,6 +388,8 @@ class LLMRoutingStrategy(RoutingStrategy):
     Integrates with DSPy optimization system for improved prompts.
     """
 
+    AGENT_TYPE = "router"
+
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         cfg = config or {}
@@ -397,50 +399,69 @@ class LLMRoutingStrategy(RoutingStrategy):
         self.temperature = cfg.get("temperature", 0.1)
         self.max_tokens = cfg.get("max_tokens", 150)
 
-        # DSPy optimization support
+        # DSPy optimization support via ArtifactManager
         self.dspy_enabled = cfg.get("enable_dspy_optimization", False)
-        self.optimized_prompts = {}
-        self._load_optimized_prompts()
+        self.optimized_prompts: dict[str, str] = {}
+
+        # Tenant + telemetry wiring (required when dspy_enabled)
+        self._tenant_id: str | None = cfg.get("tenant_id")
+        self._telemetry_provider = cfg.get("telemetry_provider")
+
+        if self.dspy_enabled:
+            if not self._tenant_id or not self._telemetry_provider:
+                raise ValueError(
+                    "tenant_id and telemetry_provider are required when "
+                    "enable_dspy_optimization is True"
+                )
+            self._load_optimized_prompts()
 
         # Fallback to base prompt if no optimization available
         self.system_prompt = self._get_system_prompt()
 
-    def _load_optimized_prompts(self):
-        """Load DSPy-optimized prompts if available."""
-        if not self.dspy_enabled:
-            return
+    def _load_optimized_prompts(self) -> None:
+        """Load DSPy-optimized prompts from telemetry DatasetStore."""
+        import asyncio
+
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        artifact_mgr = ArtifactManager(self._telemetry_provider, self._tenant_id)
+
+        async def _load() -> dict[str, str] | None:
+            return await artifact_mgr.load_prompts(self.AGENT_TYPE)
 
         try:
-            import json
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                future = asyncio.ensure_future(_load())
+                future.add_done_callback(self._on_prompts_loaded)
+                return
+        except RuntimeError:
+            pass
 
-            from cogniverse_core.common.utils.output_manager import get_output_manager
-
-            # Look for optimized prompts in output manager's optimization dir
-            optimization_dir = get_output_manager().get_optimization_dir()
-            search_paths = [
-                optimization_dir / "routing_prompts.json",
-            ]
-
-            for prompt_file in search_paths:
-                if prompt_file.exists():
-                    with open(prompt_file, "r") as f:
-                        self.optimized_prompts = json.load(f)
-
-                    logger.info(f"Loaded DSPy optimized prompts from {prompt_file}")
-                    return
-
+        prompts = asyncio.run(_load())
+        if prompts:
+            self.optimized_prompts = prompts
+            logger.info("Loaded DSPy optimized routing prompts from telemetry")
+        else:
             logger.info("No DSPy optimized routing prompts found, using default prompt")
 
-        except Exception as e:
-            logger.warning(f"Failed to load DSPy optimized prompts: {e}")
+    def _on_prompts_loaded(self, future: asyncio.Future) -> None:
+        """Callback for async prompt load."""
+        exc = future.exception()
+        if exc is not None:
+            logger.error("Failed to load DSPy optimized routing prompts: %s", exc)
+            raise exc
+        prompts = future.result()
+        if prompts:
+            self.optimized_prompts = prompts
+            logger.info("Loaded DSPy optimized routing prompts from telemetry (async)")
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for routing, using DSPy optimization if available."""
-        # Use optimized prompt if available
+        # Use optimized prompt if available (flat key from ArtifactManager)
         if self.dspy_enabled and "system_prompt" in self.optimized_prompts:
-            optimized_prompt = self.optimized_prompts["system_prompt"]
             logger.debug("Using DSPy-optimized routing prompt")
-            return optimized_prompt
+            return self.optimized_prompts["system_prompt"]
 
         # Fallback to manually improved prompt (better than the original)
         return """You are a precise routing agent for a multi-modal search system.

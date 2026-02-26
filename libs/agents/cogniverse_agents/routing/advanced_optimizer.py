@@ -15,10 +15,10 @@ Key Features:
 - Multi-stage optimization pipeline
 """
 
+import asyncio
 import json
 import logging
-import pickle
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -27,9 +27,10 @@ import dspy
 import numpy as np
 from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
 
-from cogniverse_core.common.tenant_utils import get_tenant_storage_path
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +153,8 @@ class AdvancedRoutingOptimizer:
         self,
         tenant_id: str,
         llm_config: LLMEndpointConfig,
+        telemetry_provider: TelemetryProvider,
         config: Optional[AdvancedOptimizerConfig] = None,
-        base_storage_dir: str = "data/optimization",
     ):
         """
         Initialize advanced routing optimizer
@@ -161,8 +162,8 @@ class AdvancedRoutingOptimizer:
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
             llm_config: LLM endpoint configuration (REQUIRED)
+            telemetry_provider: Telemetry provider for artifact persistence.
             config: Optimizer configuration
-            base_storage_dir: Base directory for storage
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -173,10 +174,7 @@ class AdvancedRoutingOptimizer:
         self.tenant_id = tenant_id
         self.llm_config = llm_config
         self.config = config or AdvancedOptimizerConfig()
-
-        # Tenant-specific storage directory with org/tenant structure
-        self.storage_dir = get_tenant_storage_path(base_storage_dir, tenant_id)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # Experience storage
         self.experiences: List[RoutingExperience] = []
@@ -1088,95 +1086,138 @@ class AdvancedRoutingOptimizer:
         return exploration
 
     async def _persist_data(self):
-        """Persist experiences and metrics to disk"""
+        """Persist experiences and metrics via ArtifactManager."""
         try:
-            # Save experiences
-            experience_file = self.storage_dir / self.config.experience_file
-            with open(experience_file, "wb") as f:
-                pickle.dump(self.experiences, f)
+            # Save experiences as demonstrations
+            if self.experiences:
+                demos = []
+                for exp in self.experiences:
+                    exp_dict = asdict(exp)
+                    # Serialize datetime for JSON
+                    exp_dict["timestamp"] = exp_dict["timestamp"].isoformat()
+                    demos.append(
+                        {
+                            "input": json.dumps(
+                                {
+                                    "query": exp_dict["query"],
+                                    "entities": exp_dict["entities"],
+                                    "relationships": exp_dict["relationships"],
+                                    "enhanced_query": exp_dict["enhanced_query"],
+                                },
+                                default=str,
+                            ),
+                            "output": json.dumps(
+                                {
+                                    "chosen_agent": exp_dict["chosen_agent"],
+                                    "routing_confidence": exp_dict[
+                                        "routing_confidence"
+                                    ],
+                                    "reward": exp_dict["reward"],
+                                },
+                                default=str,
+                            ),
+                            "metadata": json.dumps(
+                                {
+                                    "search_quality": exp_dict["search_quality"],
+                                    "agent_success": exp_dict["agent_success"],
+                                    "timestamp": exp_dict["timestamp"],
+                                },
+                                default=str,
+                            ),
+                        }
+                    )
+                await self._artifact_manager.save_demonstrations(
+                    "routing_optimizer", demos
+                )
 
             # Save metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
             metrics_dict = {
                 "total_experiences": self.metrics.total_experiences,
-                "avg_reward": self.metrics.avg_reward,
+                "avg_reward": float(self.metrics.avg_reward),
                 "successful_routes": self.metrics.successful_routes,
                 "failed_routes": self.metrics.failed_routes,
-                "confidence_accuracy": self.metrics.confidence_accuracy,
+                "confidence_accuracy": float(self.metrics.confidence_accuracy),
                 "agent_preferences": self.metrics.agent_preferences,
                 "query_type_accuracy": self.metrics.query_type_accuracy,
-                "improvement_rate": self.metrics.improvement_rate,
-                "last_updated": self.metrics.last_updated.isoformat(),
+                "improvement_rate": float(self.metrics.improvement_rate),
                 "training_step": self.training_step,
-                "current_epsilon": self.current_epsilon,
+                "current_epsilon": float(self.current_epsilon),
             }
+            await self._artifact_manager.log_optimization_run(
+                "routing_optimizer", metrics_dict
+            )
 
-            with open(metrics_file, "w") as f:
-                json.dump(metrics_dict, f, indent=2)
-
-            logger.debug(f"Persisted {len(self.experiences)} experiences and metrics")
+            logger.debug("Persisted %d experiences and metrics", len(self.experiences))
 
         except Exception as e:
-            logger.error(f"Failed to persist optimization data: {e}")
+            logger.error("Failed to persist optimization data: %s", e)
 
     def _load_stored_data(self):
-        """Load previously stored experiences and metrics if persistence enabled"""
+        """Load previously stored experiences and metrics from telemetry."""
         if not self.config.enable_persistence:
             logger.info("Persistence disabled, skipping data loading")
             return
 
         try:
-            # Load experiences
-            experience_file = self.storage_dir / self.config.experience_file
-            if experience_file.exists():
-                with open(experience_file, "rb") as f:
-                    self.experiences = pickle.load(f)
-                    self.experience_replay = self.experiences[
-                        -self.config.experience_replay_size :
-                    ]
-                logger.info(f"Loaded {len(self.experiences)} routing experiences")
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-            # Load metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
-            if metrics_file.exists():
-                with open(metrics_file, "r") as f:
-                    metrics_dict = json.load(f)
+        if loop is not None and loop.is_running():
+            # Inside an async context — schedule and apply when ready
+            task = asyncio.ensure_future(
+                self._artifact_manager.load_demonstrations("routing_optimizer")
+            )
+            task.add_done_callback(self._on_demos_loaded)
+        else:
+            try:
+                demos = asyncio.run(
+                    self._artifact_manager.load_demonstrations("routing_optimizer")
+                )
+                self._apply_loaded_demos(demos)
+            except Exception as e:
+                logger.error("Failed to load stored optimization data: %s", e)
 
-                self.metrics.total_experiences = metrics_dict.get(
-                    "total_experiences", 0
-                )
-                self.metrics.avg_reward = metrics_dict.get("avg_reward", 0.0)
-                self.metrics.successful_routes = metrics_dict.get(
-                    "successful_routes", 0
-                )
-                self.metrics.failed_routes = metrics_dict.get("failed_routes", 0)
-                self.metrics.confidence_accuracy = metrics_dict.get(
-                    "confidence_accuracy", 0.0
-                )
-                self.metrics.agent_preferences = metrics_dict.get(
-                    "agent_preferences", {}
-                )
-                self.metrics.query_type_accuracy = metrics_dict.get(
-                    "query_type_accuracy", {}
-                )
-                self.metrics.improvement_rate = metrics_dict.get(
-                    "improvement_rate", 0.0
-                )
-
-                if "last_updated" in metrics_dict:
-                    self.metrics.last_updated = datetime.fromisoformat(
-                        metrics_dict["last_updated"]
-                    )
-
-                self.training_step = metrics_dict.get("training_step", 0)
-                self.current_epsilon = metrics_dict.get(
-                    "current_epsilon", self.config.exploration_epsilon
-                )
-
-                logger.info("Loaded optimization metrics")
-
+    def _on_demos_loaded(self, future: asyncio.Future):
+        """Callback for async demo loading."""
+        try:
+            demos = future.result()
+            self._apply_loaded_demos(demos)
         except Exception as e:
-            logger.error(f"Failed to load stored optimization data: {e}")
+            logger.error("Failed to load stored optimization data: %s", e)
+
+    def _apply_loaded_demos(self, demos):
+        """Apply loaded demos to experience buffer."""
+        if not demos:
+            return
+        for demo in demos:
+            inp = json.loads(demo.get("input", "{}"))
+            out = json.loads(demo.get("output", "{}"))
+            meta = json.loads(demo.get("metadata", "{}"))
+            exp = RoutingExperience(
+                query=inp.get("query", ""),
+                entities=inp.get("entities", []),
+                relationships=inp.get("relationships", []),
+                enhanced_query=inp.get("enhanced_query", ""),
+                chosen_agent=out.get("chosen_agent", ""),
+                routing_confidence=float(
+                    out.get("routing_confidence", 0.0)
+                ),
+                search_quality=float(meta.get("search_quality", 0.0)),
+                agent_success=bool(meta.get("agent_success", False)),
+                reward=float(out.get("reward", 0.0))
+                if out.get("reward") is not None
+                else None,
+                timestamp=datetime.fromisoformat(meta["timestamp"])
+                if "timestamp" in meta
+                else datetime.now(),
+            )
+            self.experiences.append(exp)
+
+        self.experience_replay = self.experiences[
+            -self.config.experience_replay_size :
+        ]
+        logger.info("Loaded %d routing experiences", len(self.experiences))
 
     def get_optimization_status(self) -> Dict[str, Any]:
         """Get current optimization status and metrics"""

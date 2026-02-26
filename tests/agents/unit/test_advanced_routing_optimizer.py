@@ -6,8 +6,9 @@ reward computation, and multi-stage DSPy optimization.
 """
 
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pandas as pd
 import pytest
 
 # Import components to test
@@ -17,6 +18,41 @@ from cogniverse_agents.routing.advanced_optimizer import (
     RoutingExperience,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory DatasetStore and ExperimentStore."""
+    provider = MagicMock()
+
+    # In-memory dataset storage
+    datasets: dict[str, pd.DataFrame] = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    async def append_to_dataset(name, data):
+        if name in datasets:
+            datasets[name] = pd.concat([datasets[name], data], ignore_index=True)
+        else:
+            datasets[name] = data
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.datasets.append_to_dataset = AsyncMock(side_effect=append_to_dataset)
+
+    # In-memory experiment storage
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+
+    return provider
 
 
 class TestAdvancedRoutingOptimizerCore:
@@ -77,6 +113,7 @@ class TestAdvancedRoutingOptimizerCore:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 
@@ -97,6 +134,7 @@ class TestAdvancedRoutingOptimizerCore:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 
@@ -128,6 +166,7 @@ class TestAdvancedRoutingOptimizerCore:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 
@@ -161,6 +200,7 @@ class TestAdvancedRoutingOptimizerCore:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 
@@ -195,6 +235,7 @@ class TestAdvancedRoutingOptimizerCore:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 
@@ -337,6 +378,7 @@ class TestAdvancedRoutingOptimizerIntegration:
             optimizer = AdvancedRoutingOptimizer(
                 tenant_id="test_tenant",
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_make_mock_telemetry_provider(),
                 config=config,
             )
 
@@ -458,6 +500,7 @@ class TestAdvancedRoutingOptimizerIntegration:
             optimizer = AdvancedRoutingOptimizer(
                 tenant_id="test_tenant",
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_make_mock_telemetry_provider(),
                 config=config,
             )
 
@@ -503,6 +546,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
         )
 

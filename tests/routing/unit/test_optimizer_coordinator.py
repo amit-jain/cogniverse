@@ -2,7 +2,7 @@
 Unit tests for OptimizerCoordinator facade.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,6 +13,28 @@ from cogniverse_agents.routing.optimizer_coordinator import (
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
+
+
 class TestOptimizerCoordinator:
     """Test OptimizerCoordinator facade pattern and lazy loading."""
 
@@ -21,6 +43,7 @@ class TestOptimizerCoordinator:
         """Create coordinator with temp optimization dir."""
         return OptimizerCoordinator(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             optimization_dir=str(tmp_path / "optimization"),
             tenant_id="test_tenant",
         )
@@ -53,7 +76,7 @@ class TestOptimizerCoordinator:
         mock_cls.assert_called_once_with(
             tenant_id="test_tenant",
             llm_config=coordinator.llm_config,
-            base_storage_dir=coordinator.optimization_dir,
+            telemetry_provider=coordinator.telemetry_provider,
         )
 
     @patch(

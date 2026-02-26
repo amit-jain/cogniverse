@@ -8,6 +8,7 @@ This optimizer implements the design specified in NEW_PROPOSAL.md:
 - Outputs portable prompt artifacts for agent integration
 """
 
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -16,13 +17,13 @@ from typing import Dict, List, Optional
 import dspy
 from dspy.teleprompt import MIPROv2
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Import schemas from the new location
 from .schemas import AgenticRouter, RoutingDecision
-
-# ==================== DSPy Module ====================
 
 
 class RouterModule(dspy.Module):
@@ -46,9 +47,6 @@ class RouterModule(dspy.Module):
             print(f"📊 Response dict: {response._asdict()}")
 
         return response.routing_decision
-
-
-# ==================== Dataset Generation ====================
 
 
 def generate_training_examples() -> List[dspy.Example]:
@@ -345,9 +343,6 @@ def generate_teacher_examples(
         return examples
 
 
-# ==================== Evaluation Metrics ====================
-
-
 def evaluate_routing_accuracy(
     module: RouterModule, test_set: List[dspy.Example]
 ) -> Dict[str, float]:
@@ -397,11 +392,10 @@ def evaluate_routing_accuracy(
     }
 
 
-# ==================== Main Optimization Function ====================
-
-
 def optimize_router(
     student_config: LLMEndpointConfig,
+    tenant_id: str,
+    telemetry_provider: TelemetryProvider,
     teacher_config: Optional[LLMEndpointConfig] = None,
     use_manual_examples: bool = True,
     num_teacher_examples: int = 50,
@@ -411,6 +405,8 @@ def optimize_router(
 
     Args:
         student_config: LLM endpoint config for the student model
+        tenant_id: Tenant identifier for artifact isolation.
+        telemetry_provider: Provider for artifact persistence.
         teacher_config: Optional LLM endpoint config for the teacher model
         use_manual_examples: Whether to use manually crafted examples
         num_teacher_examples: Number of examples to generate with teacher
@@ -418,12 +414,6 @@ def optimize_router(
     Returns:
         Dictionary with optimization results
     """
-    # Use OutputManager for organized output
-    from cogniverse_core.common.utils.output_manager import get_output_manager
-
-    output_manager = get_output_manager()
-    output_path = output_manager.get_optimization_dir()
-
     # Initialize student model via centralized factory
     print(f"Initializing student model: {student_config.model}")
     student_lm = create_dspy_lm(student_config)
@@ -563,57 +553,74 @@ def optimize_router(
                 }
             )
 
-    # Save artifacts
-    output_file = (
-        output_path
-        / f"router_optimization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
-    with open(output_file, "w") as f:
-        json.dump(artifacts, f, indent=2)
+    # Save artifacts via ArtifactManager (telemetry-backed)
+    artifact_mgr = ArtifactManager(telemetry_provider, tenant_id)
 
-    print(f"\nOptimization complete! Results saved to: {output_file}")
+    # Prompts dataset: system_prompt key (matches LLMRoutingStrategy.AGENT_TYPE)
+    prompts_dict = {"system_prompt": artifacts["instructions"]}
+    asyncio.run(artifact_mgr.save_prompts("router", prompts_dict))
 
-    # Save a separate file for easy integration
-    integration_file = output_path / "router_prompt_artifact.json"
-    integration_data = {
-        "system_prompt": artifacts["instructions"],
-        "few_shot_examples": artifacts["demonstrations"],
-        "model_config": artifacts["model_config"],
-    }
-    with open(integration_file, "w") as f:
-        json.dump(integration_data, f, indent=2)
+    # Demos dataset
+    if artifacts["demonstrations"]:
+        demos = [
+            {
+                "input": json.dumps(
+                    {
+                        "conversation_history": d.get("conversation_history", ""),
+                        "user_query": d.get("user_query", ""),
+                    }
+                ),
+                "output": json.dumps(d.get("routing_decision", {})),
+                "metadata": json.dumps(artifacts.get("model_config", {})),
+            }
+            for d in artifacts["demonstrations"]
+        ]
+        asyncio.run(artifact_mgr.save_demonstrations("router", demos))
 
-    print(f"Integration artifact saved to: {integration_file}")
+    # Metrics
+    asyncio.run(artifact_mgr.log_optimization_run("router", artifacts["metrics"]))
+
+    print(f"\nOptimization complete! Artifacts saved for tenant '{tenant_id}'")
 
     return artifacts
 
 
-# ==================== Integration Helpers ====================
-
-
 class OptimizedRouter:
     """
-    Production-ready router using the optimized artifacts.
-    This can be integrated with Letta and ADK/A2A.
+    Production-ready router using optimized artifacts from telemetry store.
     """
 
-    def __init__(self, artifact_path: str):
-        """Load the optimized artifacts."""
-        with open(artifact_path, "r") as f:
-            self.artifacts = json.load(f)
+    def __init__(
+        self,
+        tenant_id: str,
+        telemetry_provider: TelemetryProvider,
+        lm_config: LLMEndpointConfig,
+    ):
+        """Load the optimized artifacts from telemetry.
 
-        # Initialize the LM with optimized config via centralized factory
-        config = self.artifacts["model_config"]
-        endpoint_config = LLMEndpointConfig(
-            model=config["student_model"],
-            temperature=config["temperature"],
-            max_tokens=config["max_tokens"],
-        )
-        self.lm = create_dspy_lm(endpoint_config)
+        Args:
+            tenant_id: Tenant identifier.
+            telemetry_provider: Provider for dataset access.
+            lm_config: LLM endpoint config for inference.
+        """
+        self._artifact_mgr = ArtifactManager(telemetry_provider, tenant_id)
+        self.lm = create_dspy_lm(lm_config)
 
-        # Build the prompt template
-        self.system_prompt = self.artifacts["system_prompt"]
-        self.examples = self.artifacts["few_shot_examples"]
+        # Load prompts and demos synchronously at init
+        self.system_prompt = ""
+        self.examples: list[dict] = []
+        asyncio.run(self._load_artifacts())
+
+    async def _load_artifacts(self) -> None:
+        """Load prompts and demos from telemetry."""
+        prompts = await self._artifact_mgr.load_prompts("router")
+        if prompts is None:
+            raise RuntimeError("No optimized router prompts found in telemetry store")
+        self.system_prompt = prompts.get("system_prompt", "")
+
+        demos = await self._artifact_mgr.load_demonstrations("router")
+        if demos:
+            self.examples = demos
 
     def route(self, user_query: str, conversation_history: str = "") -> RoutingDecision:
         """
@@ -626,45 +633,34 @@ class OptimizedRouter:
         Returns:
             RoutingDecision object
         """
-        # Build the full prompt with few-shot examples
+        import re
+
         prompt = self.system_prompt + "\n\n"
 
-        # Add few-shot examples
         if self.examples:
             prompt += "Examples:\n"
-            for ex in self.examples[:3]:  # Use top 3 examples
-                prompt += f"\nConversation History: {ex['conversation_history']}\n"
-                prompt += f"User Query: {ex['user_query']}\n"
-                prompt += f"Output: {json.dumps(ex['routing_decision'])}\n"
+            for ex in self.examples[:3]:
+                inp = json.loads(ex.get("input", "{}"))
+                out = ex.get("output", "{}")
+                prompt += f"\nConversation History: {inp.get('conversation_history', '')}\n"
+                prompt += f"User Query: {inp.get('user_query', '')}\n"
+                prompt += f"Output: {out}\n"
 
-        # Add the current query
         prompt += f"\nConversation History: {conversation_history}\n"
         prompt += f"User Query: {user_query}\n"
         prompt += "Output: "
 
-        # Get response from LM
         response = self.lm(prompt)
 
-        # Parse JSON response
         try:
-            # Extract JSON from response
-            import re
-
             json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 decision_dict = json.loads(json_match.group())
                 return RoutingDecision(**decision_dict)
-            else:
-                raise ValueError("No JSON found in response")
+            raise ValueError("No JSON found in response")
         except Exception as e:
-            print(f"Error parsing response: {e}")
-            # Fallback to sensible defaults
-            return RoutingDecision(
-                search_modality="text", generation_type="raw_results"
-            )
+            raise RuntimeError(f"Failed to parse routing response: {e}") from e
 
-
-# ==================== CLI Interface ====================
 
 if __name__ == "__main__":
     import argparse
@@ -692,6 +688,7 @@ if __name__ == "__main__":
     # Load LLM config from centralized config.json
     from cogniverse_foundation.config import create_default_config_manager
     from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.telemetry import get_telemetry_manager
 
     config_manager = create_default_config_manager()
     config_utils = get_config(config_manager=config_manager)
@@ -701,9 +698,14 @@ if __name__ == "__main__":
     student_config = llm_config.primary
     teacher_config = llm_config.teacher if args.use_teacher else None
 
+    tenant_id = "default"
+    telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+
     # Run optimization
     results = optimize_router(
         student_config=student_config,
+        tenant_id=tenant_id,
+        telemetry_provider=telemetry_provider,
         teacher_config=teacher_config,
         use_manual_examples=not args.no_manual_examples,
         num_teacher_examples=args.num_examples,

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class OptimizerCoordinator:
     def __init__(
         self,
         llm_config: LLMEndpointConfig,
+        telemetry_provider: TelemetryProvider,
         optimization_dir: str = "optimization_results",
         tenant_id: str = "default",
     ):
@@ -60,10 +62,12 @@ class OptimizerCoordinator:
 
         Args:
             llm_config: LLM endpoint configuration for optimizers
-            optimization_dir: Directory for optimization artifacts
+            telemetry_provider: Telemetry provider for artifact persistence
+            optimization_dir: Directory for optimization artifacts (used by modality/cross-modal)
             tenant_id: Tenant identifier for multi-tenant setups
         """
         self.llm_config = llm_config
+        self.telemetry_provider = telemetry_provider
         self.optimization_dir = optimization_dir
         self.tenant_id = tenant_id
 
@@ -87,7 +91,7 @@ class OptimizerCoordinator:
             self._routing_optimizer = AdvancedRoutingOptimizer(
                 tenant_id=self.tenant_id,
                 llm_config=self.llm_config,
-                base_storage_dir=self.optimization_dir,
+                telemetry_provider=self.telemetry_provider,
             )
         return self._routing_optimizer
 

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-DSPy Integration Mixin - Provides DSPy optimization capabilities to existing agents
+DSPy Integration Mixin - Provides DSPy optimization capabilities to existing agents.
 
-This mixin can be added to existing agents to enable DSPy prompt optimization
-without requiring major refactoring of existing code.
+Loads optimized prompts via ArtifactManager (telemetry-backed), providing
+tenant-isolated, versioned artifact access.
 """
 
-import json
+import asyncio
 import logging
 from typing import Any, Dict
 
-from cogniverse_core.common.utils.output_manager import get_output_manager
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -19,76 +20,97 @@ class DSPyIntegrationMixin:
     """
     Mixin class that adds DSPy optimization capabilities to existing agents.
 
-    This mixin provides:
-    - Loading optimized prompts from DSPy optimization runs
-    - Fallback to original prompts if optimized ones aren't available
+    Requires explicit ``tenant_id``, ``agent_type``, and ``telemetry_provider``
+    so that artifacts are loaded from the correct tenant-scoped dataset.
+
+    Provides:
+    - Loading optimized prompts from telemetry DatasetStore
+    - Fallback to original prompts when no artifacts exist
     - Dynamic prompt selection based on optimization results
-    - Integration with existing agent architectures
     """
 
-    def __init__(self, *args, **kwargs):
-        """Initialize DSPy integration."""
+    def __init__(
+        self,
+        *args,
+        tenant_id: str,
+        agent_type: str,
+        telemetry_provider: TelemetryProvider,
+        **kwargs,
+    ):
+        """Initialize DSPy integration.
+
+        Args:
+            tenant_id: Tenant identifier (required, no default).
+            agent_type: DSPy module name (e.g. ``agent_routing``, ``query_analysis``).
+            telemetry_provider: Telemetry provider for artifact access.
+        """
         super().__init__(*args, **kwargs)
-        self.dspy_optimized_prompts = {}
+        if not tenant_id:
+            raise ValueError("tenant_id is required for DSPy integration")
+        if not agent_type:
+            raise ValueError("agent_type is required for DSPy integration")
+
+        self._dspy_tenant_id = tenant_id
+        self._dspy_agent_type = agent_type
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+
+        self.dspy_optimized_prompts: Dict[str, str] = {}
         self.dspy_enabled = False
-        self.optimization_cache = {}
+        self.optimization_cache: Dict[str, Any] = {}
+
         self._load_optimized_prompts()
 
-    def _load_optimized_prompts(self):
-        """Load DSPy-optimized prompts if available."""
+    def _load_optimized_prompts(self) -> None:
+        """Load DSPy-optimized prompts from telemetry DatasetStore."""
         try:
-            # Determine agent type from class name
-            agent_type = self._get_agent_type()
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule as a task — will be awaited later; for now mark not-loaded
+                future = asyncio.ensure_future(self._async_load_prompts())
+                future.add_done_callback(self._on_prompts_loaded)
+                return
+        except RuntimeError:
+            pass
 
-            # Look for optimized prompts in output manager's optimization dir
-            optimization_dir = get_output_manager().get_optimization_dir()
-            search_paths = [
-                optimization_dir / f"{agent_type}_prompts.json",
-            ]
+        # No running loop — run synchronously
+        asyncio.run(self._async_load_prompts())
 
-            for prompt_file in search_paths:
-                if prompt_file.exists():
-                    with open(prompt_file, "r") as f:
-                        self.dspy_optimized_prompts = json.load(f)
+    async def _async_load_prompts(self) -> None:
+        """Async implementation of prompt loading."""
+        prompts = await self._artifact_manager.load_prompts(self._dspy_agent_type)
+        if prompts is not None:
+            self.dspy_optimized_prompts = prompts
+            self.dspy_enabled = True
+            logger.info(
+                "Loaded DSPy optimized prompts for %s/%s (%d keys)",
+                self._dspy_tenant_id,
+                self._dspy_agent_type,
+                len(prompts),
+            )
+        else:
+            logger.info(
+                "No DSPy optimized prompts found for %s/%s, using original prompts",
+                self._dspy_tenant_id,
+                self._dspy_agent_type,
+            )
 
-                    self.dspy_enabled = True
-                    logger.info(
-                        f"Loaded DSPy optimized prompts for {agent_type} from {prompt_file}"
-                    )
-                    break
-            else:
-                logger.info(
-                    f"No DSPy optimized prompts found for {agent_type}, using original prompts"
-                )
-
-        except Exception as e:
-            logger.warning(f"Failed to load DSPy optimized prompts: {e}")
-            self.dspy_enabled = False
-
-    def _get_agent_type(self) -> str:
-        """Determine agent type from class name."""
-        class_name = self.__class__.__name__.lower()
-
-        # Map class names to DSPy module names
-        type_mapping = {
-            "routingagent": "agent_routing",
-            "a2aroutingagent": "agent_routing",
-            "summarizeragent": "summary_generation",
-            "detailedreportagent": "detailed_report",
-            "queryanalysistoolv3": "query_analysis",
-            "enhancedvideosearchagent": "query_analysis",  # Uses query analysis for search optimization
-            "testroutingagent": "agent_routing",  # For testing
-            "testsummarizeragent": "summary_generation",  # For testing
-        }
-
-        return type_mapping.get(class_name, "query_analysis")
+    def _on_prompts_loaded(self, future: asyncio.Future) -> None:
+        """Callback when async prompt loading completes."""
+        exc = future.exception()
+        if exc is not None:
+            logger.error(
+                "Failed to load DSPy optimized prompts for %s/%s: %s",
+                self._dspy_tenant_id,
+                self._dspy_agent_type,
+                exc,
+            )
 
     def get_optimized_prompt(self, prompt_key: str, default_prompt: str = "") -> str:
         """
         Get optimized prompt if available, otherwise return default.
 
         Args:
-            prompt_key: Key identifying the specific prompt (e.g., 'system', 'analysis', 'routing')
+            prompt_key: Key identifying the specific prompt (e.g., 'system', 'analysis')
             default_prompt: Default prompt to use if optimized version not available
 
         Returns:
@@ -97,73 +119,20 @@ class DSPyIntegrationMixin:
         if not self.dspy_enabled:
             return default_prompt
 
-        try:
-            # Look for prompt in optimized prompts
-            compiled_prompts = self.dspy_optimized_prompts.get("compiled_prompts", {})
+        # Try direct key match in flat prompt dict
+        if prompt_key in self.dspy_optimized_prompts:
+            return self.dspy_optimized_prompts[prompt_key]
 
-            # Try exact key match first
-            if prompt_key in compiled_prompts:
-                return compiled_prompts[prompt_key]
-
-            # Try signature extraction if available
-            if "signature" in compiled_prompts:
-                signature_text = compiled_prompts["signature"]
-                # Extract relevant parts based on prompt_key
-                return self._extract_prompt_from_signature(
-                    signature_text, prompt_key, default_prompt
-                )
-
-            # Try few-shot examples
-            if "few_shot_examples" in compiled_prompts and prompt_key == "examples":
-                return "\n".join(compiled_prompts["few_shot_examples"][:3])
-
-            return default_prompt
-
-        except Exception as e:
-            logger.warning(f"Error getting optimized prompt for {prompt_key}: {e}")
-            return default_prompt
-
-    def _extract_prompt_from_signature(
-        self, signature_text: str, prompt_key: str, default_prompt: str
-    ) -> str:
-        """Extract specific prompt from DSPy signature text."""
-        try:
-            # Basic extraction logic - can be enhanced based on actual DSPy signature format
-            if prompt_key == "system":
-                # Look for docstring or description
-                lines = signature_text.split("\n")
-                for line in lines:
-                    if '"""' in line or "desc=" in line:
-                        # Extract description text
-                        if "desc=" in line:
-                            start = line.find('desc="') + 6
-                            end = line.find('"', start)
-                            if start > 5 and end > start:
-                                return line[start:end]
-                        elif '"""' in line:
-                            return line.strip().replace('"""', "").strip()
-
-            # Return default if no specific extraction possible
-            return default_prompt
-
-        except Exception:
-            return default_prompt
+        return default_prompt
 
     def get_dspy_metadata(self) -> Dict[str, Any]:
         """Get metadata about loaded DSPy optimizations."""
-        metadata = {"enabled": self.dspy_enabled}
-
-        if self.dspy_enabled:
-            optimization_metadata = self.dspy_optimized_prompts.get("metadata", {})
-            metadata.update(optimization_metadata)
-            metadata["prompt_keys"] = list(
-                self.dspy_optimized_prompts.get("compiled_prompts", {}).keys()
-            )
-
-        # Always include agent_type
-        metadata["agent_type"] = self._get_agent_type()
-
-        return metadata
+        return {
+            "enabled": self.dspy_enabled,
+            "agent_type": self._dspy_agent_type,
+            "tenant_id": self._dspy_tenant_id,
+            "prompt_keys": list(self.dspy_optimized_prompts.keys()),
+        }
 
     def apply_dspy_optimization(
         self, prompt_template: str, context: Dict[str, Any]
@@ -181,16 +150,8 @@ class DSPyIntegrationMixin:
         if not self.dspy_enabled:
             return prompt_template.format(**context)
 
-        try:
-            # Get optimized version of the template
-            optimized_template = self.get_optimized_prompt("template", prompt_template)
-
-            # Apply context formatting
-            return optimized_template.format(**context)
-
-        except Exception as e:
-            logger.warning(f"DSPy optimization failed, using original: {e}")
-            return prompt_template.format(**context)
+        optimized_template = self.get_optimized_prompt("template", prompt_template)
+        return optimized_template.format(**context)
 
     async def test_dspy_optimization(
         self, sample_input: Dict[str, Any]
@@ -207,30 +168,24 @@ class DSPyIntegrationMixin:
         if not self.dspy_enabled:
             return {"error": "DSPy optimization not enabled"}
 
-        results = {
+        results: Dict[str, Any] = {
             "dspy_enabled": True,
-            "agent_type": self._get_agent_type(),
+            "agent_type": self._dspy_agent_type,
             "metadata": self.get_dspy_metadata(),
             "test_completed": True,
         }
 
-        try:
-            # Basic test - just verify prompts can be retrieved
-            sample_prompts = {}
-            for prompt_key in ["system", "analysis", "routing", "summary"]:
-                optimized = self.get_optimized_prompt(
-                    prompt_key, f"default_{prompt_key}_prompt"
-                )
-                sample_prompts[prompt_key] = {
-                    "length": len(optimized),
-                    "is_optimized": optimized != f"default_{prompt_key}_prompt",
-                }
+        sample_prompts = {}
+        for prompt_key in ["system", "analysis", "routing", "summary"]:
+            optimized = self.get_optimized_prompt(
+                prompt_key, f"default_{prompt_key}_prompt"
+            )
+            sample_prompts[prompt_key] = {
+                "length": len(optimized),
+                "is_optimized": optimized != f"default_{prompt_key}_prompt",
+            }
 
-            results["prompt_analysis"] = sample_prompts
-
-        except Exception as e:
-            results["error"] = str(e)
-
+        results["prompt_analysis"] = sample_prompts
         return results
 
 
@@ -246,7 +201,7 @@ Context: {context}
 
 Determine:
 1. Primary intent
-2. Complexity level  
+2. Complexity level
 3. Search requirements
 4. Content type needs"""
 
@@ -322,7 +277,7 @@ Include executive summary, detailed findings, and recommendations."""
             default_prompt,
             {
                 "search_results_count": len(search_results),
-                "search_results": str(search_results[:3]),  # Truncate for prompt
+                "search_results": str(search_results[:3]),
                 "query_context": query_context,
                 "analysis_depth": analysis_depth,
             },

@@ -5,6 +5,9 @@ Tests the routing-specific DSPy components including relationship extraction,
 query enhancement, adaptive threshold learning, and advanced optimization.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
+import pandas as pd
 import pytest
 
 from cogniverse_agents.routing.adaptive_threshold_learner import (
@@ -29,6 +32,29 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory stores."""
+    provider = MagicMock()
+    datasets: dict[str, pd.DataFrame] = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 class TestDSPyRoutingSignatures:
@@ -142,11 +168,6 @@ class TestAdaptiveThresholdLearner:
 class TestAdvancedRoutingOptimizer:
     """Test advanced routing optimizer"""
 
-    @pytest.fixture
-    def temp_storage(self, tmp_path):
-        """Provide temporary storage directory for optimizer"""
-        return str(tmp_path / "test_optimizer")
-
     def test_config_creation(self):
         """Test optimizer configuration"""
         config = AdvancedOptimizerConfig()
@@ -154,14 +175,14 @@ class TestAdvancedRoutingOptimizer:
         assert config.batch_size > 0
         assert config.optimizer_strategy is not None
 
-    def test_optimizer_initialization(self, temp_storage):
+    def test_optimizer_initialization(self):
         """Test optimizer initialization"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
-            base_storage_dir=temp_storage,
         )
 
         assert optimizer.config == config
@@ -169,14 +190,14 @@ class TestAdvancedRoutingOptimizer:
         assert optimizer.training_step == 0
 
     @pytest.mark.asyncio
-    async def test_record_experience(self, temp_storage):
+    async def test_record_experience(self):
         """Test recording routing experience"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
-            base_storage_dir=temp_storage,
         )
 
         reward = await optimizer.record_routing_experience(
@@ -194,14 +215,14 @@ class TestAdvancedRoutingOptimizer:
         assert 0 <= reward <= 1
         assert len(optimizer.experiences) == 1
 
-    def test_get_optimization_status(self, temp_storage):
+    def test_get_optimization_status(self):
         """Test getting optimization status"""
         config = AdvancedOptimizerConfig()
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=config,
-            base_storage_dir=temp_storage,
         )
 
         status = optimizer.get_optimization_status()
@@ -238,8 +259,8 @@ class TestDSPyRoutingIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
             config=AdvancedOptimizerConfig(min_experiences_for_training=10),
-            base_storage_dir=str(tmp_path / "test_optimizer"),
         )
 
         # Test real interactions (components handle missing models gracefully)

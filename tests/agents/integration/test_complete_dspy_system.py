@@ -10,7 +10,7 @@ This tests the real end-to-end functionality:
 6. ComposableQueryAnalysisModule Path A/B selection with real Ollama + GLiNER
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import dspy
 import pytest
@@ -19,6 +19,28 @@ from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 from .conftest import skip_if_no_ollama
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.mark.integration
@@ -723,7 +745,7 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
-            base_storage_dir=str(tmp_path / "optimization"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
     @pytest.mark.asyncio
@@ -1109,7 +1131,7 @@ class TestFullLearningPipelineIntegration:
                 batch_size=3,
                 enable_persistence=False,
             ),
-            base_storage_dir=str(tmp_path / "optimizer"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Step 1: Analyze query with real Ollama + GLiNER
@@ -1445,7 +1467,7 @@ class TestForceOptimizerSelection:
             tenant_id=f"test_force_{force_optimizer_name}",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
-            base_storage_dir=str(tmp_path / f"force_{force_optimizer_name}"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Record enough experiences to trigger lazy init of advanced_optimizer
@@ -1528,7 +1550,7 @@ class TestForceOptimizerSelection:
             tenant_id="test_adaptive",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
-            base_storage_dir=str(tmp_path / "adaptive"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Record enough to trigger lazy init
@@ -1583,7 +1605,7 @@ class TestForceOptimizerSelection:
             tenant_id="test_compile_e2e",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
             config=config,
-            base_storage_dir=str(tmp_path / "compile_e2e"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         assert optimizer.routing_policy is not None

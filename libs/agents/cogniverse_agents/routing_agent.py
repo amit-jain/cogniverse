@@ -268,7 +268,7 @@ class RoutingDeps(AgentDeps):
         None, description="GRPO optimizer config"
     )
     optimization_storage_dir: str = Field(
-        "data/optimization", description="Optimization storage dir"
+        "data/optimization", description="Storage dir for MLflow artifacts"
     )
 
     # MLflow integration configuration
@@ -464,7 +464,6 @@ class RoutingAgent(
     def _initialize_advanced_optimizer(self, deps: RoutingDeps) -> None:
         """Configure advanced optimization (lazy per-tenant init)."""
         self._optimizer_config = deps.optimizer_config or AdvancedOptimizerConfig()
-        self._optimization_storage_dir = deps.optimization_storage_dir
         self._enable_advanced_optimization = deps.enable_advanced_optimization
         # Per-tenant optimizers created lazily in _get_optimizer(tenant_id)
         self._tenant_optimizers: Dict[str, AdvancedRoutingOptimizer] = {}
@@ -476,11 +475,12 @@ class RoutingAgent(
             return None
         if tenant_id not in self._tenant_optimizers:
             try:
+                telemetry_provider = self._get_telemetry_provider(tenant_id)
                 self._tenant_optimizers[tenant_id] = AdvancedRoutingOptimizer(
                     tenant_id=tenant_id,
                     llm_config=self.deps.llm_config,
+                    telemetry_provider=telemetry_provider,
                     config=self._optimizer_config,
-                    base_storage_dir=self._optimization_storage_dir,
                 )
                 self.logger.info(
                     f"Advanced routing optimizer initialized for tenant: {tenant_id}"
@@ -489,6 +489,14 @@ class RoutingAgent(
                 self.logger.error(f"Failed to initialize advanced optimizer: {e}")
                 return None
         return self._tenant_optimizers[tenant_id]
+
+    def _get_telemetry_provider(self, tenant_id: str):
+        """Get telemetry provider for a tenant."""
+        if self.telemetry_manager is not None:
+            return self.telemetry_manager.get_provider(tenant_id=tenant_id)
+        raise RuntimeError(
+            "Telemetry manager not initialized — cannot create artifact storage"
+        )
 
     def _get_cross_modal_optimizer(
         self, tenant_id: str

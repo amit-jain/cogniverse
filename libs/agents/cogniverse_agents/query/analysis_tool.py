@@ -16,6 +16,7 @@ from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,7 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         self,
         tenant_id: str = "default",
         config_manager: "ConfigManager" = None,
+        telemetry_provider: "TelemetryProvider" = None,
         **kwargs,
     ):
         """Initialize the enhanced query analysis tool
@@ -149,10 +151,17 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         Args:
             tenant_id: Tenant identifier for multi-tenancy support
             config_manager: ConfigManager instance for configuration access
+            telemetry_provider: Telemetry provider for DSPy artifact access
             **kwargs: Additional configuration options
         """
+        if telemetry_provider is None:
+            raise ValueError("telemetry_provider is required for QueryAnalysisToolV3")
         logger.info("Initializing QueryAnalysisToolV3...")
-        super().__init__()  # Initialize DSPy mixin
+        super().__init__(
+            tenant_id=tenant_id,
+            agent_type="query_analysis",
+            telemetry_provider=telemetry_provider,
+        )
 
         if config_manager is None:
             raise ValueError("config_manager is required for QueryAnalysisToolV3")

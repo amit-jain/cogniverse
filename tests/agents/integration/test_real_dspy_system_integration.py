@@ -6,6 +6,7 @@ WITHOUT extensive mocking. This validates real functionality.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,6 +28,28 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.mark.integration
@@ -110,11 +133,12 @@ class TestDSPySystemIntegration:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Should have required components
         assert hasattr(optimizer, "config")
-        assert hasattr(optimizer, "storage_dir")
+        assert hasattr(optimizer, "_artifact_manager")
         assert hasattr(optimizer, "experiences")
         assert hasattr(optimizer, "metrics")
 
@@ -201,6 +225,7 @@ class TestDSPySystemIntegration:
             components["optimizer"] = AdvancedRoutingOptimizer(
                 tenant_id="test_tenant",
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_make_mock_telemetry_provider(),
             )
             components["learner"] = AdaptiveThresholdLearner(tenant_id="test_tenant")
 

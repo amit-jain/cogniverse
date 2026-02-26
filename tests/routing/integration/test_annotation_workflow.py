@@ -9,7 +9,7 @@ Tests the complete flow:
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
@@ -26,6 +26,28 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     LLMAutoAnnotator,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.fixture
@@ -375,6 +397,7 @@ class TestAnnotationFeedbackLoop:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
@@ -422,6 +445,7 @@ class TestAnnotationFeedbackLoop:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
@@ -529,6 +553,7 @@ class TestEndToEndAnnotationWorkflow:
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id="test", min_annotations_for_update=1

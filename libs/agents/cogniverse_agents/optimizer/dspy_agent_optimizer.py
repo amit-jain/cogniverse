@@ -7,17 +7,17 @@ It optimizes prompts for RoutingAgent, SummarizerAgent, DetailedReportAgent, and
 """
 
 import asyncio
-import json
 import logging
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import dspy
 from dspy.teleprompt import BootstrapFewShot
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,6 @@ class DSPyAgentPromptOptimizer:
         self.optimized_prompts = {}
         self.lm = None
 
-        # Default optimization settings
         self.optimization_settings = {
             "max_bootstrapped_demos": 8,
             "max_labeled_demos": 16,
@@ -50,7 +49,6 @@ class DSPyAgentPromptOptimizer:
             "stop_at_score": 0.95,
         }
 
-        # Update with user config
         if "optimization" in self.config:
             self.optimization_settings.update(self.config["optimization"])
 
@@ -299,22 +297,17 @@ class DSPyAgentOptimizerPipeline:
 
     def initialize_modules(self):
         """Initialize all DSPy modules for optimization."""
-        # Get LM from optimizer if available
         lm = getattr(self.optimizer, "lm", None)
 
-        # Query Analysis Module
         qa_signature = self.optimizer.create_query_analysis_signature()
         self.modules["query_analysis"] = DSPyQueryAnalysisOptimizer(qa_signature, lm=lm)
 
-        # Agent Routing Module
         ar_signature = self.optimizer.create_agent_routing_signature()
         self.modules["agent_routing"] = DSPyAgentRoutingOptimizer(ar_signature, lm=lm)
 
-        # Summary Generation Module
         sg_signature = self.optimizer.create_summary_generation_signature()
         self.modules["summary_generation"] = DSPySummaryOptimizer(sg_signature, lm=lm)
 
-        # Detailed Report Module
         dr_signature = self.optimizer.create_detailed_report_signature()
         self.modules["detailed_report"] = DSPyDetailedReportOptimizer(
             dr_signature, lm=lm
@@ -326,7 +319,6 @@ class DSPyAgentOptimizerPipeline:
         """Load training data for each module type."""
         training_data = {}
 
-        # Query Analysis Training Data (simplified for DSPy compatibility)
         training_data["query_analysis"] = [
             dspy.Example(
                 query="Show me videos of robots from yesterday",
@@ -360,7 +352,6 @@ class DSPyAgentOptimizerPipeline:
             ).with_inputs("query", "context"),
         ]
 
-        # Agent Routing Training Data (simplified)
         training_data["agent_routing"] = [
             dspy.Example(
                 query="Show me videos",
@@ -388,7 +379,6 @@ class DSPyAgentOptimizerPipeline:
             ).with_inputs("query", "analysis_result", "available_agents"),
         ]
 
-        # Summary Generation Training Data (simplified)
         training_data["summary_generation"] = [
             dspy.Example(
                 content="ML research progress...",
@@ -402,7 +392,6 @@ class DSPyAgentOptimizerPipeline:
             ).with_inputs("content", "summary_type", "target_audience"),
         ]
 
-        # Detailed Report Training Data (simplified)
         training_data["detailed_report"] = [
             dspy.Example(
                 search_results="[AI project data]",
@@ -426,7 +415,6 @@ class DSPyAgentOptimizerPipeline:
 
         module = self.modules[module_name]
 
-        # Create optimizer (only use supported parameters)
         optimizer_config = {
             "metric": self._create_metric_for_module(module_name),
             "max_bootstrapped_demos": self.optimizer.optimization_settings[
@@ -440,11 +428,8 @@ class DSPyAgentOptimizerPipeline:
         }
 
         try:
-            # Create teleprompter first
             teleprompter = BootstrapFewShot(**optimizer_config)
 
-            # For optimization, we need DSPy to have access to the LM
-            # Use context if available, otherwise fall back to basic compilation
             if (
                 hasattr(self.optimizer, "lm")
                 and self.optimizer.lm
@@ -455,7 +440,6 @@ class DSPyAgentOptimizerPipeline:
                         module, trainset=training_examples
                     )
             else:
-                # For tests or when LM is mocked, still call compile but expect it to be mocked
                 compiled_module = teleprompter.compile(
                     module, trainset=training_examples
                 )
@@ -465,10 +449,9 @@ class DSPyAgentOptimizerPipeline:
             return compiled_module
 
         except Exception as e:
-            logger.error(f"Failed to optimize module {module_name}: {e}")
-            # Return original module as fallback
-            self.compiled_modules[module_name] = module
-            return module
+            raise RuntimeError(
+                f"Failed to optimize module '{module_name}': {e}"
+            ) from e
 
     def _create_metric_for_module(self, module_name: str):
         """Create evaluation metric for specific module type."""
@@ -593,20 +576,16 @@ class DSPyAgentOptimizerPipeline:
         """Optimize all modules in the pipeline."""
         logger.info("Starting DSPy optimization for all agent modules")
 
-        # Initialize modules
         self.initialize_modules()
 
-        # Load training data
         training_data = self.load_training_data()
 
-        # Optimize each module
         optimized_modules = {}
 
         for module_name in self.modules.keys():
             if module_name in training_data:
                 logger.info(f"Optimizing module: {module_name}")
 
-                # Split training data
                 examples = training_data[module_name]
                 train_size = int(0.8 * len(examples))
                 train_examples = examples[:train_size]
@@ -614,108 +593,96 @@ class DSPyAgentOptimizerPipeline:
                     examples[train_size:] if len(examples) > train_size else None
                 )
 
-                # Optimize module
                 optimized_module = self.optimize_module(
                     module_name, train_examples, val_examples
                 )
                 optimized_modules[module_name] = optimized_module
 
-                # Brief pause between optimizations
                 await asyncio.sleep(1)
 
         logger.info("Completed DSPy optimization for all modules")
         return optimized_modules
 
-    def save_optimized_prompts(self, output_dir: Optional[str] = None):
-        """Save optimized prompts to files for integration."""
-        if output_dir is None:
-            from cogniverse_core.common.utils.output_manager import get_output_manager
+    async def save_optimized_prompts(
+        self,
+        tenant_id: str,
+        telemetry_provider: TelemetryProvider,
+    ) -> None:
+        """Save optimized prompts via ArtifactManager (telemetry-backed).
 
-            output_path = get_output_manager().get_optimization_dir()
-        else:
-            output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+        Args:
+            tenant_id: Tenant identifier for artifact isolation.
+            telemetry_provider: Provider for dataset/experiment stores.
+        """
+        artifact_mgr = ArtifactManager(telemetry_provider, tenant_id)
 
         for module_name, compiled_module in self.compiled_modules.items():
-            try:
-                # Extract prompts from compiled module
-                prompts = self._extract_prompts_from_module(compiled_module)
+            prompts, demos, metrics = self._extract_artifacts_from_module(
+                compiled_module, module_name
+            )
 
-                # Save to JSON file
-                prompt_file = output_path / f"{module_name}_prompts.json"
-                with open(prompt_file, "w") as f:
-                    json.dump(prompts, f, indent=2)
+            await artifact_mgr.save_prompts(module_name, prompts)
 
-                logger.info(
-                    f"Saved optimized prompts for {module_name} to {prompt_file}"
-                )
+            if demos:
+                await artifact_mgr.save_demonstrations(module_name, demos)
 
-            except Exception as e:
-                logger.error(f"Failed to save prompts for {module_name}: {e}")
+            await artifact_mgr.log_optimization_run(module_name, metrics)
 
-    def _extract_prompts_from_module(self, module: dspy.Module) -> Dict[str, Any]:
-        """Extract optimized prompts from a DSPy module."""
-        prompts = {
+            logger.info("Saved artifacts for %s/%s", tenant_id, module_name)
+
+    def _extract_artifacts_from_module(
+        self, module: dspy.Module, module_name: str
+    ) -> tuple[Dict[str, str], List[Dict[str, Any]], Dict[str, Any]]:
+        """Extract prompts, demos, and metrics from a compiled DSPy module.
+
+        Returns:
+            (prompts_dict, demos_list, metrics_dict)
+        """
+        prompts: Dict[str, str] = {}
+        demos: List[Dict[str, Any]] = []
+        metrics: Dict[str, Any] = {
             "module_type": type(module).__name__,
-            "compiled_prompts": {},
-            "metadata": {
-                "optimization_timestamp": time.time(),
-                "dspy_version": (
-                    dspy.__version__ if hasattr(dspy, "__version__") else "unknown"
-                ),
-            },
+            "optimization_timestamp": time.time(),
+            "dspy_version": (
+                dspy.__version__ if hasattr(dspy, "__version__") else "unknown"
+            ),
         }
 
-        try:
-            # Try to extract internal prompts from the module
-            if hasattr(module, "generate_analysis"):
-                component = module.generate_analysis
-                if hasattr(component, "signature"):
-                    prompts["compiled_prompts"]["signature"] = str(component.signature)
-                if hasattr(component, "extended_signature"):
-                    prompts["compiled_prompts"]["extended_signature"] = str(
-                        component.extended_signature
-                    )
+        # Extract prompts from the module's ChainOfThought component
+        component_names = [
+            "generate_analysis",
+            "generate_routing",
+            "generate_summary",
+            "generate_report",
+        ]
+        for comp_name in component_names:
+            component = getattr(module, comp_name, None)
+            if component is None:
+                continue
+            if hasattr(component, "signature"):
+                prompts["signature"] = str(component.signature)
+            if hasattr(component, "extended_signature"):
+                prompts["extended_signature"] = str(component.extended_signature)
+            break
 
-            elif hasattr(module, "generate_routing"):
-                component = module.generate_routing
-                if hasattr(component, "signature"):
-                    prompts["compiled_prompts"]["signature"] = str(component.signature)
+        # Extract few-shot demonstrations
+        if hasattr(module, "demos") and module.demos:
+            for demo in module.demos:
+                demos.append({"input": str(demo), "output": "", "metadata": "{}"})
 
-            elif hasattr(module, "generate_summary"):
-                component = module.generate_summary
-                if hasattr(component, "signature"):
-                    prompts["compiled_prompts"]["signature"] = str(component.signature)
-
-            elif hasattr(module, "generate_report"):
-                component = module.generate_report
-                if hasattr(component, "signature"):
-                    prompts["compiled_prompts"]["signature"] = str(component.signature)
-
-            # Try to get few-shot examples if available
-            if hasattr(module, "demos") and module.demos:
-                prompts["compiled_prompts"]["few_shot_examples"] = [
-                    str(demo) for demo in module.demos[:3]  # First 3 examples
-                ]
-
-        except Exception as e:
-            logger.warning(f"Could not extract all prompts from module: {e}")
-            prompts["extraction_error"] = str(e)
-
-        return prompts
+        return prompts, demos, metrics
 
 
 async def main():
     """Example usage of DSPy agent optimizer."""
-    print("🚀 DSPy Agent Prompt Optimization")
+    print("DSPy Agent Prompt Optimization")
     print("=" * 50)
 
-    # Initialize optimizer
     optimizer = DSPyAgentPromptOptimizer()
 
-    # Initialize language model from centralized config
     from cogniverse_foundation.config import create_default_config_manager
     from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.telemetry import get_telemetry_manager
 
     config_manager = create_default_config_manager()
     config_utils = get_config(config_manager=config_manager)
@@ -723,29 +690,29 @@ async def main():
     endpoint_config = llm_config.primary
 
     if not optimizer.initialize_language_model(endpoint_config):
-        print("❌ Failed to initialize language model")
+        print("Failed to initialize language model")
         return
 
-    # Create pipeline
     pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
+    tenant_id = "default"
+    telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+
     try:
-        # Run optimization
         optimized_modules = await pipeline.optimize_all_modules()
 
-        print(f"\n✅ Successfully optimized {len(optimized_modules)} modules:")
+        print(f"\nSuccessfully optimized {len(optimized_modules)} modules:")
         for module_name in optimized_modules:
-            print(f"   • {module_name}")
+            print(f"   - {module_name}")
 
-        # Save optimized prompts
-        pipeline.save_optimized_prompts()
-        from cogniverse_core.common.utils.output_manager import get_output_manager
-
-        opt_dir = get_output_manager().get_optimization_dir()
-        print(f"\n💾 Saved optimized prompts to '{opt_dir}' directory")
+        await pipeline.save_optimized_prompts(
+            tenant_id=tenant_id,
+            telemetry_provider=telemetry_provider,
+        )
+        print(f"\nSaved optimized prompts for tenant '{tenant_id}' to telemetry store")
 
     except Exception as e:
-        print(f"❌ Optimization failed: {e}")
+        print(f"Optimization failed: {e}")
         logger.error(f"DSPy optimization error: {e}")
 
 

@@ -6,6 +6,7 @@ performance monitoring, and automatic adaptation strategies.
 """
 
 import tempfile
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -18,6 +19,28 @@ from cogniverse_agents.routing.adaptive_threshold_learner import (
     ThresholdParameter,
     ThresholdState,
 )
+
+
+def _make_mock_telemetry_provider():
+    provider = MagicMock()
+    datasets = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 class TestThresholdParameter:

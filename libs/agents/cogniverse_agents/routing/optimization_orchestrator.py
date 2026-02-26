@@ -24,6 +24,7 @@ from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorag
 from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class OptimizationOrchestrator:
     def __init__(
         self,
         llm_config: LLMEndpointConfig,
+        telemetry_provider: TelemetryProvider,
         tenant_id: str = "default",
         span_eval_interval_minutes: int = 15,
         annotation_interval_minutes: int = 30,
@@ -75,7 +77,9 @@ class OptimizationOrchestrator:
 
         # Initialize core components
         self.optimizer = AdvancedRoutingOptimizer(
-            tenant_id=tenant_id, llm_config=llm_config
+            tenant_id=tenant_id,
+            llm_config=llm_config,
+            telemetry_provider=telemetry_provider,
         )
 
         # Span evaluation component
