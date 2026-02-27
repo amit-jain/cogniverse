@@ -450,10 +450,11 @@ class LLMRoutingStrategy(RoutingStrategy):
         exc = future.exception()
         if exc is not None:
             logger.error("Failed to load DSPy optimized routing prompts: %s", exc)
-            raise exc
+            return
         prompts = future.result()
         if prompts:
             self.optimized_prompts = prompts
+            self.system_prompt = self._get_system_prompt()
             logger.info("Loaded DSPy optimized routing prompts from telemetry (async)")
 
     def _get_system_prompt(self) -> str:
