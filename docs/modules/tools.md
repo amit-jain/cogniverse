@@ -46,8 +46,7 @@ libs/agents/cogniverse_agents/tools/
 ├── a2a_utils.py                      # A2A protocol client and utilities
 ├── video_player_tool.py              # Interactive video player tool
 ├── temporal_extractor.py             # Temporal pattern recognition
-├── video_file_server.py              # HTTP server for video file serving
-└── apply_miprov2_optimization.py     # MIPROv2 optimization utilities
+└── video_file_server.py              # HTTP server for video file serving
 ```
 
 ---

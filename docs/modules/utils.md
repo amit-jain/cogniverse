@@ -380,7 +380,7 @@ def benchmark_all_strategies(
     query_text: str = "",
     num_tokens: int = 2,
     hits: int = 5,
-    backend_url: str = "http://localhost:8080"
+    vespa_url: str = "http://localhost:8080"
 ) -> Dict[str, Any]:
     """
     Benchmark all 9 ranking strategies with a single query.
@@ -481,23 +481,17 @@ class PromptManager:
     """Manages routing prompts and few-shot examples"""
 
     def __init__(self,
-                 artifacts_path: Optional[str] = None,
                  config_manager: "ConfigManager" = None,
                  tenant_id: str = "default"):
         """
-        Initialize with optional optimization artifacts.
+        Initialize the prompt manager.
 
         Args:
-            artifacts_path: Optional path to optimization artifacts
             config_manager: ConfigManager instance for dependency injection (required)
             tenant_id: Tenant identifier for config retrieval
 
-        Priority order for artifact loading:
-        1. Provided artifacts_path
-        2. Path from config
-        3. Modal volume mount point (/artifacts/)
-        4. Local optimization results
-        5. None (use defaults)
+        Artifacts are loaded via telemetry storage (ArtifactManager),
+        not local filesystem. self.artifacts starts as None.
         """
 ```
 
@@ -505,8 +499,7 @@ class PromptManager:
 
 1. **get_routing_prompt(user_query, conversation_history)**: Build complete routing prompt
 2. **get_model_config()**: Get model configuration from artifacts or defaults
-3. **reload_artifacts()**: Hot-reload artifacts from disk
-4. **get_status()**: Get current status (artifacts loaded, num examples, etc.)
+3. **get_status()**: Get current status (artifacts loaded, num examples, etc.)
 
 **Artifact Format:**
 ```json
@@ -530,7 +523,7 @@ class PromptManager:
 }
 ```
 
-**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:18-244`
+**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:17-155`
 
 ---
 
@@ -802,11 +795,10 @@ prompt = pm.get_routing_prompt(
 print("\nGenerated Prompt:")
 print(prompt)
 
-# Reload artifacts after optimization
-if pm.reload_artifacts("/artifacts/new_optimized_prompts.json"):
-    print("✅ Reloaded new artifacts")
-else:
-    print("⚠️ Failed to reload, using existing artifacts")
+# Check artifact status
+status = pm.get_status()
+print(f"Artifacts loaded: {status['artifacts_loaded']}")
+print(f"Using defaults: {status['using_defaults']}")
 ```
 
 **Generated Prompt Example:**
@@ -896,7 +888,7 @@ Optimization results: outputs/optimization/grpo_checkpoint.pt
 
 - ✅ Retry with real services: HTTP retry behavior
 
-- ✅ Prompt optimization: Artifact hot-reload
+- ✅ Prompt optimization: Artifact loading via telemetry storage (ArtifactManager)
 
 ### Key Test Files
 
@@ -956,7 +948,7 @@ results = benchmark_all_strategies(
     query_text='fire',
     num_tokens=2,
     hits=5,
-    backend_url='http://localhost:8080'
+    vespa_url='http://localhost:8080'
 )
 
 print_benchmark_results(results)
@@ -1040,14 +1032,13 @@ except KeyError as e:
     query_params = build_query_params("float_float", float_tensors=float_tensors)
 ```
 
-**Prompt Manager Fallback:**
+**Prompt Manager Defaults:**
 ```python
-# Always have a fallback when artifacts fail to load
-pm = PromptManager(artifacts_path="/path/to/optimized/artifacts.json")
+# Artifacts loaded via telemetry storage, not local filesystem
+pm = PromptManager(config_manager=config_manager, tenant_id="acme")
 
 if not pm.artifacts:
-    logger.warning("Failed to load artifacts, using defaults")
-    # System will automatically use default prompts from config
+    logger.info("No artifacts loaded, using default prompts from config")
 ```
 
 ### 3. Monitoring Points
@@ -1168,28 +1159,21 @@ def validate_query_inputs(ranking_profile, float_tensors, binary_tensors):
 
 **Issue 4: Prompt Artifacts Not Loading**
 - **Symptom**: PromptManager falls back to defaults every time
-- **Cause**: Incorrect artifact path or malformed JSON
-- **Solution**: Verify artifact format and path
+- **Cause**: Artifacts not yet stored via ArtifactManager (DSPy optimizer has not run) or telemetry connectivity issue
+- **Solution**: Verify the DSPy optimizer has run and stored artifacts via ArtifactManager, then populate `manager.artifacts` before use
 
-```bash
-# Verify artifact exists
-ls -lh /artifacts/unified_router_prompt_artifact.json
+```python
+# Artifacts are loaded via telemetry storage (ArtifactManager), not local files.
+# manager.artifacts starts as None; the DSPy optimization pipeline populates it.
+pm = PromptManager(config_manager=config_manager, tenant_id="acme")
 
-# Validate JSON format
-python -m json.tool /artifacts/unified_router_prompt_artifact.json
+# Check status before use
+status = pm.get_status()
+if status["using_defaults"]:
+    logger.info("No artifacts available; using default prompts from config")
 
-# Check required fields
-python -c "
-import json
-with open('/artifacts/unified_router_prompt_artifact.json') as f:
-    artifacts = json.load(f)
-    required = ['system_prompt', 'few_shot_examples', 'model_config']
-    missing = [f for f in required if f not in artifacts]
-    if missing:
-        print(f'Missing fields: {missing}')
-    else:
-        print('✅ Artifact format valid')
-"
+# To use optimized artifacts, populate manager.artifacts after loading from ArtifactManager:
+# pm.artifacts = artifact_manager.load_latest_artifact(tenant_id="acme")
 ```
 
 ---
@@ -1203,7 +1187,7 @@ The Utils Module provides production-ready utilities that support the entire Cog
 1. **Retry System**: Exponential backoff with jitter prevents thundering herd and handles transient failures gracefully
 2. **Logging**: Dual output (file + console) with structured formats supports debugging and production monitoring
 3. **Query Building**: Comprehensive support for all 9 Vespa ranking strategies with automatic parameter assembly
-4. **Prompt Management**: Hot-reloadable artifacts enable continuous prompt optimization without system restarts
+4. **Prompt Management**: Artifacts loaded via telemetry storage (ArtifactManager) enable continuous prompt optimization
 5. **Output Management**: Centralized directory structure keeps outputs organized and prevents main directory pollution
 
 ### Best Practices

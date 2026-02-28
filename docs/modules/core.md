@@ -178,12 +178,11 @@ class AgentOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 class AgentDeps(BaseModel):
-    """Base class for agent dependencies. tenant_id is required."""
-    tenant_id: str
-    model_config = ConfigDict(extra="allow")  # Dependencies can have extra fields
+    """Base class for agent dependencies. Agents are tenant-agnostic at startup — tenant_id arrives per-request."""
+    model_config = ConfigDict(extra="allow")  # Dependencies can have additional fields
 ```
 
-**Important:** `tenant_id` is **required** in all AgentDeps - this enforces multi-tenancy.
+**Important:** `tenant_id` is **not** a constructor parameter — it arrives per-request via the A2A task payload, not at agent startup. This is how multi-tenancy is enforced without coupling the agent to a specific tenant at construction time.
 
 ### A2AAgent
 
@@ -255,6 +254,7 @@ def initialize_memory(
     llm_base_url: str,               # Required - e.g. "http://localhost:11434/v1"
     config_manager,                  # Required for schema deployment
     schema_loader,                   # Required for schema templates
+    provider: str = "ollama",        # LLM provider type
     backend_config_port: Optional[int] = None,
     auto_create_schema: bool = True,
 ) -> bool:
@@ -894,7 +894,6 @@ from cogniverse_core.common.utils.prompt_manager import PromptManager
 manager = PromptManager(
     config_manager=config_manager,
     tenant_id="acme",
-    artifacts_path="/artifacts/unified_router_prompt_artifact.json"
 )
 
 # Get routing prompt with context
@@ -906,15 +905,9 @@ prompt = manager.get_routing_prompt(
 # Get model configuration
 model_config = manager.get_model_config()
 
-# Reload artifacts
-success = manager.reload_artifacts(artifacts_path="/new/path/artifact.json")
-
-# Artifact loading priority:
-# 1. Provided artifacts_path
-# 2. Path from config
-# 3. Modal volume mount (/artifacts/...)
-# 4. Local optimization results
-# 5. Default prompts from config
+# Artifacts are loaded via telemetry storage (ArtifactManager),
+# not local filesystem. manager.artifacts starts as None and can
+# be populated by the telemetry pipeline.
 ```
 
 ### Other Utilities
