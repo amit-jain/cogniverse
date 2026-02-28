@@ -8,12 +8,13 @@ Part of Phase 11: Multi-Modal Optimization.
 import logging
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
 from cogniverse_agents.routing.xgboost_meta_models import FusionBenefitModel
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,17 @@ class CrossModalOptimizer:
             pass
     """
 
-    def __init__(self, tenant_id: str, model_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+    ):
         """
         Initialize cross-modal optimizer
 
         Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
             tenant_id: Tenant identifier for multi-tenancy (REQUIRED)
-            model_dir: Directory for saving models (defaults to outputs/models/cross_modal)
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -61,12 +66,12 @@ class CrossModalOptimizer:
             )
 
         self.tenant_id = tenant_id
-        self.model_dir = model_dir or Path("outputs/models/cross_modal")
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
-        # Initialize fusion benefit model
-        self.fusion_model = FusionBenefitModel(model_dir=self.model_dir)
-        self.fusion_model.load()
+        # Initialize fusion benefit model (telemetry-backed)
+        self.fusion_model = FusionBenefitModel(
+            telemetry_provider=telemetry_provider, tenant_id=tenant_id
+        )
 
         # Initialize span collector for pattern discovery
         self.span_collector = ModalitySpanCollector(tenant_id=tenant_id)
@@ -76,7 +81,7 @@ class CrossModalOptimizer:
         self.fusion_success_rates: Dict[Tuple[QueryModality, QueryModality], float] = {}
 
         logger.info(
-            f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir}, tenant: {tenant_id})"
+            f"Initialized CrossModalOptimizer (tenant: {tenant_id})"
         )
 
     def predict_fusion_benefit(
@@ -356,10 +361,16 @@ class CrossModalOptimizer:
         result = self.fusion_model.train(contexts, benefits)
 
         if result["status"] == "success":
-            # Save trained model
-            self.fusion_model.save()
+            # Save trained model to telemetry
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self.fusion_model.save_to_telemetry())
+            finally:
+                loop.close()
             logger.info(
-                f"✅ Trained fusion model on {len(self.fusion_history)} examples "
+                f"Trained fusion model on {len(self.fusion_history)} examples "
                 f"(MAE: {result.get('mae', 0):.3f})"
             )
 
@@ -559,44 +570,25 @@ class CrossModalOptimizer:
         self.fusion_success_rates = {}
         logger.info("🗑️ Cleared fusion history")
 
-    def export_fusion_data(self, filepath: Path) -> bool:
-        """
-        Export fusion history to file
+    async def save_fusion_history(self):
+        """Persist fusion history to telemetry as demonstrations."""
+        if not self.fusion_history:
+            return
 
-        Args:
-            filepath: Path to export file
-
-        Returns:
-            Success status
-        """
         import json
 
-        try:
-            # Convert history to JSON-serializable format
-            export_data = {
-                "fusion_history": [
-                    {
-                        **record,
-                        "timestamp": record["timestamp"].isoformat(),
-                    }
-                    for record in self.fusion_history
-                ],
-                "fusion_success_rates": {
-                    f"{k[0].value}+{k[1].value}": v
-                    for k, v in self.fusion_success_rates.items()
-                },
-                "export_timestamp": datetime.now().isoformat(),
+        history_dicts = []
+        for record in self.fusion_history:
+            serializable = {
+                **record,
+                "timestamp": record["timestamp"].isoformat(),
             }
+            history_dicts.append(
+                {"input": json.dumps(serializable), "output": "fusion"}
+            )
 
-            with open(filepath, "w") as f:
-                json.dump(export_data, f, indent=2)
-
-            logger.info(f"💾 Exported fusion data to {filepath}")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error exporting fusion data: {e}")
-            return False
+        await self._artifact_manager.save_demonstrations("cross_modal", history_dicts)
+        logger.info(f"Saved {len(history_dicts)} fusion history records to telemetry")
 
     async def discover_fusion_patterns(
         self,

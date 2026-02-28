@@ -7,7 +7,6 @@ specialized optimizer without requiring callers to know which optimizer to use.
 
 import logging
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -54,7 +53,6 @@ class OptimizerCoordinator:
         self,
         llm_config: LLMEndpointConfig,
         telemetry_provider: TelemetryProvider,
-        optimization_dir: str = "optimization_results",
         tenant_id: str = "default",
     ):
         """
@@ -63,12 +61,10 @@ class OptimizerCoordinator:
         Args:
             llm_config: LLM endpoint configuration for optimizers
             telemetry_provider: Telemetry provider for artifact persistence
-            optimization_dir: Directory for optimization artifacts (used by modality/cross-modal)
             tenant_id: Tenant identifier for multi-tenant setups
         """
         self.llm_config = llm_config
         self.telemetry_provider = telemetry_provider
-        self.optimization_dir = optimization_dir
         self.tenant_id = tenant_id
 
         # Lazy-load optimizers on demand
@@ -78,7 +74,7 @@ class OptimizerCoordinator:
         self._unified_optimizer = None
 
         logger.info(
-            f"Initialized OptimizerCoordinator (dir={optimization_dir}, tenant={tenant_id})"
+            f"Initialized OptimizerCoordinator (tenant={tenant_id})"
         )
 
     def _get_routing_optimizer(self):
@@ -102,8 +98,8 @@ class OptimizerCoordinator:
 
             self._modality_optimizer = ModalityOptimizer(
                 llm_config=self.llm_config,
+                telemetry_provider=self.telemetry_provider,
                 tenant_id=self.tenant_id,
-                model_dir=Path(self.optimization_dir) / "modality_models",
             )
         return self._modality_optimizer
 
@@ -115,8 +111,8 @@ class OptimizerCoordinator:
             )
 
             self._cross_modal_optimizer = CrossModalOptimizer(
+                telemetry_provider=self.telemetry_provider,
                 tenant_id=self.tenant_id,
-                model_dir=Path(self.optimization_dir) / "cross_modal_models",
             )
         return self._cross_modal_optimizer
 
@@ -124,11 +120,14 @@ class OptimizerCoordinator:
         """Lazy-load UnifiedOptimizer"""
         if self._unified_optimizer is None:
             from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-            from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+            from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
             # UnifiedOptimizer requires routing_optimizer and workflow_intelligence
             routing_optimizer = self._get_routing_optimizer()
-            workflow_intelligence = WorkflowIntelligence()
+            workflow_intelligence = WorkflowIntelligence(
+                telemetry_provider=self.telemetry_provider,
+                tenant_id=self.tenant_id,
+            )
 
             self._unified_optimizer = UnifiedOptimizer(
                 routing_optimizer=routing_optimizer,
@@ -214,7 +213,6 @@ class OptimizerCoordinator:
         """Get status of all loaded optimizers"""
         status = {
             "tenant_id": self.tenant_id,
-            "optimization_dir": self.optimization_dir,
             "loaded_optimizers": [],
         }
 

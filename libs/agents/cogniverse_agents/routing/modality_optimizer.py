@@ -7,6 +7,7 @@ Part of Phase 11: Multi-Modal Optimization.
 
 import json
 import logging
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from dspy.teleprompt import BootstrapFewShot, MIPROv2
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.routing.modality_evaluator import ModalityEvaluator
 from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
@@ -26,6 +28,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from cogniverse_synthetic import (
     ModalityExampleSchema,
     SyntheticDataRequest,
@@ -96,8 +99,8 @@ class ModalityOptimizer:
     def __init__(
         self,
         llm_config: LLMEndpointConfig,
-        tenant_id: str = "default",
-        model_dir: Optional[Path] = None,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
         vespa_client=None,
         backend_config: Optional[Dict[str, Any]] = None,
     ):
@@ -106,29 +109,30 @@ class ModalityOptimizer:
 
         Args:
             llm_config: LLM endpoint configuration (REQUIRED)
-            tenant_id: Tenant identifier for multi-tenancy
-            model_dir: Directory for saving models (defaults to outputs/models/modality)
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenancy (REQUIRED).
             vespa_client: Optional Vespa client for synthetic data generation
             backend_config: Optional backend configuration for synthetic data generation
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for ModalityOptimizer")
         self.llm_config = llm_config
         self.tenant_id = tenant_id
-        self.model_dir = model_dir or Path("outputs/models/modality")
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # Initialize components
         self.span_collector = ModalitySpanCollector(tenant_id)
         self.evaluator = ModalityEvaluator(self.span_collector, tenant_id)
-        self.vespa_client = vespa_client  # Store for synthetic data generation
-        self.backend_config = backend_config  # Store for synthetic data generation
+        self.vespa_client = vespa_client
+        self.backend_config = backend_config
 
-        # Initialize XGBoost meta-models
-        self.training_decision_model = TrainingDecisionModel(model_dir=self.model_dir)
-        self.training_strategy_model = TrainingStrategyModel(model_dir=self.model_dir)
-
-        # Load existing meta-models if available
-        self.training_decision_model.load()
-        self.training_strategy_model.load()
+        # Initialize XGBoost meta-models (telemetry-backed)
+        self.training_decision_model = TrainingDecisionModel(
+            telemetry_provider=telemetry_provider, tenant_id=tenant_id
+        )
+        self.training_strategy_model = TrainingStrategyModel(
+            telemetry_provider=telemetry_provider, tenant_id=tenant_id
+        )
 
         # Training history per modality
         self.training_history: Dict[QueryModality, List[Dict[str, Any]]] = {}
@@ -136,12 +140,8 @@ class ModalityOptimizer:
         # Trained DSPy models per modality
         self.modality_models: Dict[QueryModality, ModalityRoutingModule] = {}
 
-        # Load existing trained models if available
-        self._load_trained_models()
-
         logger.info(
-            f"🔧 Initialized ModalityOptimizer for tenant '{tenant_id}' "
-            f"(model_dir: {self.model_dir})"
+            f"Initialized ModalityOptimizer for tenant '{tenant_id}'"
         )
 
     async def optimize_all_modalities(
@@ -565,11 +565,25 @@ class ModalityOptimizer:
             # Store in memory
             self.modality_models[modality] = optimized_module
 
-            # Save to disk using DSPy's save mechanism
-            model_path = self.model_dir / f"{modality.value}_routing_module.json"
-            optimized_module.save(str(model_path))
+            # Save to telemetry via ArtifactManager
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = Path(tmpdir) / f"{modality.value}_routing_module.json"
+                optimized_module.save(str(model_path))
+                model_json = model_path.read_text()
 
-            logger.info(f"✅ Saved {modality.value} model to {model_path}")
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    self._artifact_manager.save_blob(
+                        "modality_model", modality.value, model_json
+                    )
+                )
+            finally:
+                loop.close()
+
+            logger.info(f"Saved {modality.value} model to telemetry")
 
             # Calculate accuracy on training set (as upper bound estimate)
             correct = 0
@@ -599,7 +613,6 @@ class ModalityOptimizer:
                     "MIPROv2" if len(dspy_examples) >= 50 else "BootstrapFewShot"
                 ),
                 "validation_accuracy": validation_accuracy,
-                "model_path": str(model_path),
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -654,19 +667,24 @@ class ModalityOptimizer:
             "feature_diversity": context.feature_diversity,
         }
 
-    def _load_trained_models(self):
-        """Load existing trained models from disk"""
+    async def load_trained_models(self):
+        """Load existing trained models from telemetry."""
         for modality in QueryModality:
-            model_path = self.model_dir / f"{modality.value}_routing_module.json"
-            if model_path.exists():
-                try:
-                    # Create new module and load state
-                    model = ModalityRoutingModule()
-                    model.load(str(model_path))
+            try:
+                model_json = await self._artifact_manager.load_blob(
+                    "modality_model", modality.value
+                )
+                if model_json:
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        model_path = Path(tmpdir) / f"{modality.value}_routing_module.json"
+                        model_path.write_text(model_json)
+                        model = ModalityRoutingModule()
+                        model.load(str(model_path))
+
                     self.modality_models[modality] = model
-                    logger.info(f"✅ Loaded {modality.value} model from {model_path}")
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load {modality.value} model: {e}")
+                    logger.info(f"Loaded {modality.value} model from telemetry")
+            except Exception as e:
+                logger.warning(f"Failed to load {modality.value} model: {e}")
 
     def get_training_history(
         self, modality: Optional[QueryModality] = None

@@ -16,16 +16,17 @@ Key Features:
 
 import json
 import logging
-import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
 import numpy as np
 from dspy.teleprompt import SIMBA
+
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Embedding and similarity imports
 try:
@@ -106,11 +107,6 @@ class SIMBAConfig:
     embedding_model_name: str = "all-MiniLM-L6-v2"
     embedding_batch_size: int = 32
 
-    # Storage
-    memory_file: str = "simba_memory.pkl"
-    metrics_file: str = "simba_metrics.json"
-    embedding_cache_file: str = "simba_embeddings.pkl"
-
     # Minimum patterns before starting SIMBA optimization
     min_patterns_for_optimization: int = 20
 
@@ -128,13 +124,21 @@ class SIMBAQueryEnhancer:
 
     def __init__(
         self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
         config: Optional[SIMBAConfig] = None,
-        storage_dir: str = "data/enhancement",
     ):
-        """Initialize SIMBA query enhancer"""
+        """Initialize SIMBA query enhancer.
+
+        Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
+            config: Optional SIMBA configuration.
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for SIMBAQueryEnhancer")
         self.config = config or SIMBAConfig()
-        self.storage_dir = Path(storage_dir)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # Memory storage
         self.enhancement_patterns: List[QueryEnhancementPattern] = []
@@ -158,14 +162,11 @@ class SIMBAQueryEnhancer:
 
         # Embedding model
         self.embedding_model = None
-        self.embedding_cache = {}
+        self.embedding_cache: Dict[str, Any] = {}
 
         # State
         self.operation_count = 0
         self.last_cleanup = datetime.now()
-
-        # Load existing data
-        self._load_stored_data()
 
         # Initialize components
         self._initialize_embedding_model()
@@ -871,43 +872,61 @@ class SIMBAQueryEnhancer:
             logger.error(f"Memory pruning failed: {e}")
 
     async def _persist_data(self):
-        """Persist enhancement patterns and metrics"""
+        """Persist enhancement patterns, embedding cache, and metrics via telemetry."""
         try:
-            # Save patterns (without embeddings to save space)
-            patterns_for_storage = []
+            # Save patterns as demonstrations (without embeddings)
+            pattern_dicts = []
             for pattern in self.enhancement_patterns:
-                storage_pattern = pattern.__dict__.copy()
-                # Remove heavy embedding data
-                storage_pattern.pop("query_embedding", None)
-                storage_pattern.pop("entity_embedding", None)
-                storage_pattern.pop("relationship_embedding", None)
-                patterns_for_storage.append(storage_pattern)
+                storage_pattern = {
+                    "original_query": pattern.original_query,
+                    "enhanced_query": pattern.enhanced_query,
+                    "entities": json.dumps(pattern.entities, default=str),
+                    "relationships": json.dumps(pattern.relationships, default=str),
+                    "enhancement_strategy": pattern.enhancement_strategy,
+                    "search_quality_improvement": pattern.search_quality_improvement,
+                    "routing_confidence_improvement": pattern.routing_confidence_improvement,
+                    "user_satisfaction": pattern.user_satisfaction,
+                    "success_rate": pattern.success_rate,
+                    "usage_count": pattern.usage_count,
+                    "avg_improvement": pattern.avg_improvement,
+                    "pattern_confidence": pattern.pattern_confidence,
+                    "created_at": pattern.created_at.isoformat(),
+                    "last_used": pattern.last_used.isoformat(),
+                }
+                pattern_dicts.append(
+                    {"input": json.dumps(storage_pattern), "output": "pattern"}
+                )
 
-            memory_file = self.storage_dir / self.config.memory_file
-            with open(memory_file, "wb") as f:
-                pickle.dump(patterns_for_storage, f)
+            if pattern_dicts:
+                await self._artifact_manager.save_demonstrations(
+                    "simba_enhancer", pattern_dicts
+                )
 
-            # Save embeddings separately
-            embedding_cache_file = self.storage_dir / self.config.embedding_cache_file
-            with open(embedding_cache_file, "wb") as f:
-                pickle.dump(self.embedding_cache, f)
+            # Save embedding cache as blob (numpy arrays → lists for JSON)
+            serializable_cache = {}
+            for k, v in self.embedding_cache.items():
+                if isinstance(v, np.ndarray):
+                    serializable_cache[k] = v.tolist()
+                else:
+                    serializable_cache[k] = v
+            await self._artifact_manager.save_blob(
+                "embeddings", "simba_cache", json.dumps(serializable_cache)
+            )
 
-            # Save metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
+            # Log metrics
             metrics_dict = {
                 "total_patterns": self.metrics.total_patterns,
-                "avg_pattern_quality": self.metrics.avg_pattern_quality,
+                "avg_pattern_quality": float(self.metrics.avg_pattern_quality),
                 "successful_enhancements": self.metrics.successful_enhancements,
                 "failed_enhancements": self.metrics.failed_enhancements,
-                "memory_hit_rate": self.metrics.memory_hit_rate,
-                "similarity_threshold": self.metrics.similarity_threshold,
-                "improvement_rate": self.metrics.improvement_rate,
-                "pattern_diversity": self.metrics.pattern_diversity,
-                "last_updated": self.metrics.last_updated.isoformat(),
+                "memory_hit_rate": float(self.metrics.memory_hit_rate),
+                "similarity_threshold": float(self.metrics.similarity_threshold),
+                "improvement_rate": float(self.metrics.improvement_rate),
+                "pattern_diversity": float(self.metrics.pattern_diversity),
             }
-
-            with open(metrics_file, "w") as f:
-                json.dump(metrics_dict, f, indent=2)
+            await self._artifact_manager.log_optimization_run(
+                "simba_enhancer", metrics_dict
+            )
 
             logger.debug(
                 f"Persisted {len(self.enhancement_patterns)} patterns and metrics"
@@ -916,64 +935,45 @@ class SIMBAQueryEnhancer:
         except Exception as e:
             logger.error(f"Failed to persist SIMBA data: {e}")
 
-    def _load_stored_data(self):
-        """Load previously stored patterns and metrics"""
+    async def load_stored_data(self):
+        """Load previously stored patterns and embedding cache from telemetry."""
         try:
-            # Load patterns
-            memory_file = self.storage_dir / self.config.memory_file
-            if memory_file.exists():
-                with open(memory_file, "rb") as f:
-                    stored_patterns = pickle.load(f)
-
-                # Convert stored patterns back to objects
-                for stored in stored_patterns:
-                    pattern = QueryEnhancementPattern(**stored)
-                    self.enhancement_patterns.append(pattern)
+            # Load patterns from demonstrations
+            demos = await self._artifact_manager.load_demonstrations("simba_enhancer")
+            if demos:
+                for demo in demos:
+                    try:
+                        stored = json.loads(demo["input"])
+                        # Re-parse nested JSON fields
+                        stored["entities"] = json.loads(stored["entities"])
+                        stored["relationships"] = json.loads(stored["relationships"])
+                        stored["created_at"] = datetime.fromisoformat(
+                            stored["created_at"]
+                        )
+                        stored["last_used"] = datetime.fromisoformat(
+                            stored["last_used"]
+                        )
+                        pattern = QueryEnhancementPattern(**stored)
+                        self.enhancement_patterns.append(pattern)
+                    except Exception as e:
+                        logger.warning(f"Skipping malformed pattern: {e}")
 
                 logger.info(
                     f"Loaded {len(self.enhancement_patterns)} enhancement patterns"
                 )
 
-            # Load embedding cache
-            cache_file = self.storage_dir / self.config.embedding_cache_file
-            if cache_file.exists():
-                with open(cache_file, "rb") as f:
-                    self.embedding_cache = pickle.load(f)
+            # Load embedding cache from blob
+            cache_json = await self._artifact_manager.load_blob(
+                "embeddings", "simba_cache"
+            )
+            if cache_json:
+                raw_cache = json.loads(cache_json)
+                for k, v in raw_cache.items():
+                    if isinstance(v, list):
+                        self.embedding_cache[k] = np.array(v)
+                    else:
+                        self.embedding_cache[k] = v
                 logger.info(f"Loaded {len(self.embedding_cache)} cached embeddings")
-
-            # Load metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
-            if metrics_file.exists():
-                with open(metrics_file, "r") as f:
-                    metrics_dict = json.load(f)
-
-                self.metrics.total_patterns = metrics_dict.get("total_patterns", 0)
-                self.metrics.avg_pattern_quality = metrics_dict.get(
-                    "avg_pattern_quality", 0.0
-                )
-                self.metrics.successful_enhancements = metrics_dict.get(
-                    "successful_enhancements", 0
-                )
-                self.metrics.failed_enhancements = metrics_dict.get(
-                    "failed_enhancements", 0
-                )
-                self.metrics.memory_hit_rate = metrics_dict.get("memory_hit_rate", 0.0)
-                self.metrics.similarity_threshold = metrics_dict.get(
-                    "similarity_threshold", self.config.similarity_threshold
-                )
-                self.metrics.improvement_rate = metrics_dict.get(
-                    "improvement_rate", 0.0
-                )
-                self.metrics.pattern_diversity = metrics_dict.get(
-                    "pattern_diversity", 0.0
-                )
-
-                if "last_updated" in metrics_dict:
-                    self.metrics.last_updated = datetime.fromisoformat(
-                        metrics_dict["last_updated"]
-                    )
-
-                logger.info("Loaded SIMBA metrics")
 
         except Exception as e:
             logger.error(f"Failed to load stored SIMBA data: {e}")
@@ -1030,20 +1030,6 @@ class SIMBAQueryEnhancer:
             improvement_rate=0.0,
             pattern_diversity=0.0,
         )
-
-        # Clear stored files
-        try:
-            for filename in [
-                self.config.memory_file,
-                self.config.metrics_file,
-                self.config.embedding_cache_file,
-            ]:
-                file_path = self.storage_dir / filename
-                if file_path.exists():
-                    file_path.unlink()
-
-        except Exception as e:
-            logger.error(f"Failed to clear stored files: {e}")
 
         # Re-initialize components
         self._initialize_simba_components()

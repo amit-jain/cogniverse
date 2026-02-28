@@ -16,7 +16,7 @@ Key Features:
 
 import json
 import logging
-import pickle
+import tempfile
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -25,6 +25,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # MLflow imports
 try:
@@ -127,23 +130,26 @@ class MLflowIntegration:
     def __init__(
         self,
         config: ExperimentConfig,
-        storage_dir: str = "data/mlflow",
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
         test_mode: bool = False,
     ):
         """Initialize MLflow integration
 
         Args:
             config: Experiment configuration
-            storage_dir: Directory for MLflow artifacts
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
             test_mode: If True, use mock MLflow (for tests/CI)
         """
         if not MLFLOW_AVAILABLE:
             raise ImportError("MLflow not available. Install with: pip install mlflow")
+        if not tenant_id:
+            raise ValueError("tenant_id is required for MLflowIntegration")
         self._test_mode = test_mode
 
         self.config = config
-        self.storage_dir = Path(storage_dir)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # MLflow client
         self.client = None
@@ -511,34 +517,40 @@ class MLflowIntegration:
             return None
 
         try:
-            # Create model directory
-            model_dir = self.storage_dir / f"models/{model_name}_{self.current_run_id}"
-            model_dir.mkdir(parents=True, exist_ok=True)
+            # Save DSPy module to temp file, then read JSON content
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = Path(tmpdir) / "dspy_module.json"
+                model.save(str(model_path))
+                model_json = model_path.read_text()
 
-            # Save DSPy module
-            model_path = model_dir / "dspy_module.pkl"
-            with open(model_path, "wb") as f:
-                pickle.dump(model, f)
+            # Save to telemetry via ArtifactManager
+            import asyncio
 
-            # Create model info
-            model_info = {
-                "name": model_name,
-                "type": "dspy_module",
-                "class": model.__class__.__name__,
-                "version": version or datetime.now().strftime("%Y%m%d_%H%M%S"),
-                "description": description,
-                "creation_time": datetime.now().isoformat(),
-                "run_id": self.current_run_id,
-                "tags": tags or {},
-            }
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    self._artifact_manager.save_blob("model", model_name, model_json)
+                )
 
-            # Save model info
-            info_path = model_dir / "model_info.json"
-            with open(info_path, "w") as f:
-                json.dump(model_info, f, indent=2)
+                # Create model info and log it
+                model_info = {
+                    "name": model_name,
+                    "type": "dspy_module",
+                    "class": model.__class__.__name__,
+                    "version": version or datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    "description": description,
+                    "creation_time": datetime.now().isoformat(),
+                    "run_id": self.current_run_id,
+                    "tags": tags or {},
+                }
 
-            # Log as artifact
-            mlflow.log_artifacts(str(model_dir), artifact_path=f"models/{model_name}")
+                loop.run_until_complete(
+                    self._artifact_manager.log_optimization_run(
+                        "mlflow_model", model_info
+                    )
+                )
+            finally:
+                loop.close()
 
             # Register model
             try:
@@ -579,37 +591,43 @@ class MLflowIntegration:
             return None
 
     def load_dspy_model(
-        self, model_name: str, version: str = "latest"
+        self, model_name: str, model_class: type = None
     ) -> Optional[dspy.Module]:
         """
-        Load DSPy model from MLflow model registry
+        Load DSPy model from telemetry store.
 
         Args:
             model_name: Name of the model
-            version: Version to load (default: "latest")
+            model_class: DSPy Module class to instantiate (required for .load())
 
         Returns:
             DSPy module if successful, None otherwise
         """
         try:
-            # Get model version
-            if version == "latest":
-                model_version = self.client.get_latest_versions(
-                    model_name, stages=["Production", "Staging", "None"]
-                )[0]
-            else:
-                model_version = self.client.get_model_version(model_name, version)
+            import asyncio
 
-            # Download model artifacts
-            model_uri = f"models:/{model_name}/{model_version.version}"
-            local_path = mlflow.artifacts.download_artifacts(model_uri)
+            loop = asyncio.new_event_loop()
+            try:
+                model_json = loop.run_until_complete(
+                    self._artifact_manager.load_blob("model", model_name)
+                )
+            finally:
+                loop.close()
+            if not model_json:
+                logger.warning(f"No model found in telemetry for {model_name}")
+                return None
 
-            # Load DSPy module
-            model_path = Path(local_path) / "dspy_module.pkl"
-            with open(model_path, "rb") as f:
-                model = pickle.load(f)
+            # Write to temp file and load via DSPy
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_path = Path(tmpdir) / "dspy_module.json"
+                model_path.write_text(model_json)
 
-            logger.info(f"DSPy model loaded: {model_name} v{model_version.version}")
+                if model_class is None:
+                    model_class = dspy.Module
+                model = model_class()
+                model.load(str(model_path))
+
+            logger.info(f"DSPy model loaded from telemetry: {model_name}")
             return model
 
         except Exception as e:
@@ -971,13 +989,21 @@ class MLflowIntegration:
 
 # Factory functions
 def create_mlflow_integration(
-    experiment_name: str, tracking_uri: str = "http://localhost:5000", **kwargs
+    experiment_name: str,
+    telemetry_provider: TelemetryProvider,
+    tenant_id: str,
+    tracking_uri: str = "http://localhost:5000",
+    **kwargs,
 ) -> MLflowIntegration:
     """Create MLflow integration instance"""
     config = ExperimentConfig(
         experiment_name=experiment_name, tracking_uri=tracking_uri, **kwargs
     )
-    return MLflowIntegration(config)
+    return MLflowIntegration(
+        config,
+        telemetry_provider=telemetry_provider,
+        tenant_id=tenant_id,
+    )
 
 
 def create_ab_test_config(

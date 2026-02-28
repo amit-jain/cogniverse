@@ -17,7 +17,6 @@ Key Features:
 
 import json
 import logging
-import pickle
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,7 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy import stats
 
-from cogniverse_core.common.tenant_utils import get_tenant_storage_path
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -159,11 +159,6 @@ class AdaptiveThresholdConfig:
     enable_joint_optimization: bool = False
     correlation_threshold: float = 0.3
 
-    # Storage
-    state_file: str = "adaptive_thresholds_state.pkl"
-    metrics_file: str = "threshold_metrics.json"
-    history_file: str = "threshold_history.pkl"
-
     # Experiment tracking
     enable_ab_testing: bool = False
     ab_test_split: float = 0.5
@@ -182,17 +177,17 @@ class AdaptiveThresholdLearner:
 
     def __init__(
         self,
+        telemetry_provider: TelemetryProvider,
         tenant_id: str,
         config: Optional[AdaptiveThresholdConfig] = None,
-        base_storage_dir: str = "data/adaptive_learning",
     ):
         """
         Initialize adaptive threshold learner
 
         Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Learner configuration
-            base_storage_dir: Base directory for storage
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -202,10 +197,7 @@ class AdaptiveThresholdLearner:
 
         self.tenant_id = tenant_id
         self.config = config or self._create_default_config()
-
-        # Tenant-specific storage directory with org/tenant structure
-        self.storage_dir = get_tenant_storage_path(base_storage_dir, tenant_id)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # Threshold states
         self.threshold_states: Dict[ThresholdParameter, ThresholdState] = {}
@@ -223,10 +215,8 @@ class AdaptiveThresholdLearner:
         self.ab_test_groups = {}
         self.ab_test_results = defaultdict(list)
 
-        # Load existing state
-        self._load_stored_state()
-
-        # Initialize default thresholds if not loaded
+        # Initialize default thresholds (caller should call load_stored_state() to restore)
+        # Note: load_stored_state() is async and must be called by the caller after init
         self._initialize_default_thresholds()
 
         logger.info(
@@ -940,125 +930,83 @@ class AdaptiveThresholdLearner:
         }
 
     async def _persist_state(self):
-        """Persist adaptive learning state"""
+        """Persist adaptive learning state via telemetry."""
         try:
-            # Save threshold states
-            state_file = self.storage_dir / self.config.state_file
-            with open(state_file, "wb") as f:
-                # Convert deque to list for pickling
-                pickle_states = {}
-                for param, state in self.threshold_states.items():
-                    pickle_state = state.__dict__.copy()
-                    pickle_state["performance_samples"] = list(
-                        pickle_state["performance_samples"]
-                    )
-                    pickle_states[param] = pickle_state
+            # Save threshold states as a JSON blob
+            serializable_states = {}
+            for param, state in self.threshold_states.items():
+                state_dict = state.__dict__.copy()
+                state_dict["parameter"] = state_dict["parameter"].value
+                state_dict["performance_samples"] = list(
+                    state_dict["performance_samples"]
+                )
+                state_dict["last_update"] = state_dict["last_update"].isoformat()
+                # value_history contains (float, float) tuples — already JSON-safe
+                serializable_states[param.value] = state_dict
 
-                pickle.dump(pickle_states, f)
+            await self._artifact_manager.save_blob(
+                "threshold", "states", json.dumps(serializable_states)
+            )
 
-            # Save current metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
+            # Log current metrics
             metrics_dict = {
                 "sample_count": self.sample_count,
                 "last_update": self.last_update.isoformat(),
-                "current_metrics": {
-                    "success_rate": self.current_metrics.success_rate,
-                    "average_confidence": self.current_metrics.average_confidence,
-                    "response_time": self.current_metrics.response_time,
-                    "user_satisfaction": self.current_metrics.user_satisfaction,
-                    "search_quality": self.current_metrics.search_quality,
-                    "enhancement_quality": self.current_metrics.enhancement_quality,
-                    "precision": self.current_metrics.precision,
-                    "recall": self.current_metrics.recall,
-                    "f1_score": self.current_metrics.f1_score,
-                    "sample_count": self.current_metrics.sample_count,
-                    "timestamp": self.current_metrics.timestamp.isoformat(),
-                },
+                "success_rate": float(self.current_metrics.success_rate),
+                "average_confidence": float(self.current_metrics.average_confidence),
+                "response_time": float(self.current_metrics.response_time),
+                "user_satisfaction": float(self.current_metrics.user_satisfaction),
+                "search_quality": float(self.current_metrics.search_quality),
+                "enhancement_quality": float(self.current_metrics.enhancement_quality),
+                "precision": float(self.current_metrics.precision),
+                "recall": float(self.current_metrics.recall),
+                "f1_score": float(self.current_metrics.f1_score),
             }
-
-            with open(metrics_file, "w") as f:
-                json.dump(metrics_dict, f, indent=2)
+            await self._artifact_manager.log_optimization_run(
+                "adaptive_threshold", metrics_dict
+            )
 
             logger.debug("Adaptive threshold state persisted")
 
         except Exception as e:
             logger.error(f"Failed to persist adaptive threshold state: {e}")
 
-    def _load_stored_state(self):
-        """Load previously stored adaptive learning state"""
+    async def load_stored_state(self):
+        """Load previously stored adaptive learning state from telemetry."""
         try:
-            # Load threshold states
-            state_file = self.storage_dir / self.config.state_file
-            if state_file.exists():
-                with open(state_file, "rb") as f:
-                    pickle_states = pickle.load(f)
-
-                for param, pickle_state in pickle_states.items():
-                    # Convert list back to deque
-                    pickle_state["performance_samples"] = deque(
-                        pickle_state["performance_samples"], maxlen=1000
+            # Load threshold states from blob
+            states_json = await self._artifact_manager.load_blob(
+                "threshold", "states"
+            )
+            if states_json:
+                stored_states = json.loads(states_json)
+                for param_value, state_dict in stored_states.items():
+                    param = ThresholdParameter(param_value)
+                    state_dict["parameter"] = param
+                    state_dict["performance_samples"] = deque(
+                        state_dict.get("performance_samples", []), maxlen=1000
                     )
+                    last_update = state_dict.get("last_update")
+                    if isinstance(last_update, str):
+                        state_dict["last_update"] = datetime.fromisoformat(last_update)
 
-                    # Create ThresholdState object
                     state = ThresholdState(
                         parameter=param,
-                        current_value=pickle_state["current_value"],
-                        best_value=pickle_state["best_value"],
-                        best_performance=pickle_state["best_performance"],
-                        value_history=pickle_state.get("value_history", []),
-                        performance_samples=pickle_state["performance_samples"],
-                        total_updates=pickle_state.get("total_updates", 0),
-                        successful_updates=pickle_state.get("successful_updates", 0),
-                        rollbacks=pickle_state.get("rollbacks", 0),
-                        last_update=pickle_state.get("last_update", datetime.now()),
-                        exploration_count=pickle_state.get("exploration_count", 0),
-                        exploitation_count=pickle_state.get("exploitation_count", 0),
+                        current_value=state_dict["current_value"],
+                        best_value=state_dict["best_value"],
+                        best_performance=state_dict["best_performance"],
+                        value_history=state_dict.get("value_history", []),
+                        performance_samples=state_dict["performance_samples"],
+                        total_updates=state_dict.get("total_updates", 0),
+                        successful_updates=state_dict.get("successful_updates", 0),
+                        rollbacks=state_dict.get("rollbacks", 0),
+                        last_update=state_dict.get("last_update", datetime.now()),
+                        exploration_count=state_dict.get("exploration_count", 0),
+                        exploitation_count=state_dict.get("exploitation_count", 0),
                     )
-
                     self.threshold_states[param] = state
 
                 logger.info(f"Loaded {len(self.threshold_states)} threshold states")
-
-            # Load metrics
-            metrics_file = self.storage_dir / self.config.metrics_file
-            if metrics_file.exists():
-                with open(metrics_file, "r") as f:
-                    metrics_dict = json.load(f)
-
-                self.sample_count = metrics_dict.get("sample_count", 0)
-
-                if "last_update" in metrics_dict:
-                    self.last_update = datetime.fromisoformat(
-                        metrics_dict["last_update"]
-                    )
-
-                current_metrics_dict = metrics_dict.get("current_metrics", {})
-                if current_metrics_dict:
-                    self.current_metrics = PerformanceMetrics(
-                        success_rate=current_metrics_dict.get("success_rate", 0.0),
-                        average_confidence=current_metrics_dict.get(
-                            "average_confidence", 0.0
-                        ),
-                        response_time=current_metrics_dict.get("response_time", 0.0),
-                        user_satisfaction=current_metrics_dict.get(
-                            "user_satisfaction", 0.0
-                        ),
-                        search_quality=current_metrics_dict.get("search_quality", 0.0),
-                        enhancement_quality=current_metrics_dict.get(
-                            "enhancement_quality", 0.0
-                        ),
-                        precision=current_metrics_dict.get("precision", 0.0),
-                        recall=current_metrics_dict.get("recall", 0.0),
-                        f1_score=current_metrics_dict.get("f1_score", 0.0),
-                        sample_count=current_metrics_dict.get("sample_count", 0),
-                    )
-
-                    if "timestamp" in current_metrics_dict:
-                        self.current_metrics.timestamp = datetime.fromisoformat(
-                            current_metrics_dict["timestamp"]
-                        )
-
-                logger.info("Loaded adaptive threshold metrics")
 
         except Exception as e:
             logger.error(f"Failed to load stored adaptive threshold state: {e}")
@@ -1077,20 +1025,6 @@ class AdaptiveThresholdLearner:
 
         self.current_metrics = PerformanceMetrics()
 
-        # Clear stored files
-        try:
-            for filename in [
-                self.config.state_file,
-                self.config.metrics_file,
-                self.config.history_file,
-            ]:
-                file_path = self.storage_dir / filename
-                if file_path.exists():
-                    file_path.unlink()
-
-        except Exception as e:
-            logger.error(f"Failed to clear stored files: {e}")
-
         # Re-initialize default thresholds
         self._initialize_default_thresholds()
 
@@ -1099,11 +1033,11 @@ class AdaptiveThresholdLearner:
 
 # Factory function
 def create_adaptive_threshold_learner(
+    telemetry_provider: TelemetryProvider,
     tenant_id: str,
     config: Optional[AdaptiveThresholdConfig] = None,
-    base_storage_dir: str = "data/adaptive_learning",
 ) -> AdaptiveThresholdLearner:
     """Create adaptive threshold learner instance"""
     return AdaptiveThresholdLearner(
-        tenant_id=tenant_id, config=config, base_storage_dir=base_storage_dir
+        telemetry_provider=telemetry_provider, tenant_id=tenant_id, config=config
     )

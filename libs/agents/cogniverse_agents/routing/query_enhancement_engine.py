@@ -12,6 +12,8 @@ learning-based query enhancement using patterns from successful transformations.
 import logging
 from typing import Any, Dict, List, Optional
 
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+
 from .dspy_relationship_router import ComposableQueryAnalysisModule
 from .simba_query_enhancer import SIMBAConfig, SIMBAQueryEnhancer
 
@@ -32,6 +34,8 @@ class QueryEnhancementPipeline:
         enable_simba: bool = True,
         simba_config: Optional[SIMBAConfig] = None,
         query_fusion_config: Optional[Dict[str, Any]] = None,
+        telemetry_provider: Optional[TelemetryProvider] = None,
+        tenant_id: str = "default",
     ):
         """Initialize the enhancement pipeline.
 
@@ -41,6 +45,8 @@ class QueryEnhancementPipeline:
             enable_simba: Whether to enable SIMBA learning-based enhancement.
             simba_config: SIMBA configuration.
             query_fusion_config: Config with 'include_original' and 'rrf_k' keys.
+            telemetry_provider: Telemetry provider for SIMBA artifact persistence.
+            tenant_id: Tenant identifier for SIMBA artifact storage.
         """
         self.analysis_module = analysis_module
         self.query_fusion_config = query_fusion_config or {
@@ -51,8 +57,14 @@ class QueryEnhancementPipeline:
         # Phase 6.2: Initialize SIMBA enhancer
         self.enable_simba = enable_simba
         if enable_simba:
+            if telemetry_provider is None:
+                raise ValueError(
+                    "telemetry_provider is required when enable_simba=True"
+                )
             self.simba_enhancer = SIMBAQueryEnhancer(
-                config=simba_config or SIMBAConfig(), storage_dir="data/enhancement"
+                config=simba_config or SIMBAConfig(),
+                telemetry_provider=telemetry_provider,
+                tenant_id=tenant_id,
             )
             logger.info("Query enhancement pipeline initialized with SIMBA")
         else:
@@ -335,6 +347,8 @@ def create_enhancement_pipeline(
     enable_simba: bool = True,
     simba_config: Optional[SIMBAConfig] = None,
     query_fusion_config: Optional[Dict[str, Any]] = None,
+    telemetry_provider: Optional[TelemetryProvider] = None,
+    tenant_id: str = "default",
 ) -> QueryEnhancementPipeline:
     """Create complete query enhancement pipeline."""
     return QueryEnhancementPipeline(
@@ -342,4 +356,6 @@ def create_enhancement_pipeline(
         enable_simba=enable_simba,
         simba_config=simba_config,
         query_fusion_config=query_fusion_config,
+        telemetry_provider=telemetry_provider,
+        tenant_id=tenant_id,
     )

@@ -11,10 +11,12 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
+
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 from .base import (
     RoutingDecision,
@@ -80,8 +82,6 @@ class OptimizationConfig:
 
     # Data management
     max_history_size: int = 10000
-    checkpoint_dir: Path = Path("outputs/routing_checkpoints")
-    metrics_export_dir: Path = Path("outputs/routing_metrics")
 
 
 class RoutingOptimizer:
@@ -90,28 +90,32 @@ class RoutingOptimizer:
     Tracks performance and triggers optimization when needed.
     """
 
-    def __init__(self, config: OptimizationConfig | None = None):
+    def __init__(
+        self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+        config: OptimizationConfig | None = None,
+    ):
         """
         Initialize the routing optimizer.
 
         Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
             config: Optimization configuration
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for RoutingOptimizer")
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+
         # Handle both OptimizationConfig and dict
         if isinstance(config, dict):
-            # Create OptimizationConfig with available fields from dict
             from dataclasses import fields
 
             valid_fields = {f.name for f in fields(OptimizationConfig)}
-            filtered_config = {}
-            for k, v in config.items():
-                if k in valid_fields:
-                    # Convert string paths to Path objects
-                    if k in ["checkpoint_dir", "metrics_export_dir"] and isinstance(
-                        v, str
-                    ):
-                        v = Path(v)
-                    filtered_config[k] = v
+            filtered_config = {
+                k: v for k, v in config.items() if k in valid_fields
+            }
             self.config = (
                 OptimizationConfig(**filtered_config)
                 if filtered_config
@@ -124,10 +128,6 @@ class RoutingOptimizer:
         self.optimization_history: list[OptimizationMetrics] = []
         self.last_optimization_time = datetime.now()
         self.baseline_metrics: OptimizationMetrics | None = None
-
-        # Create directories if needed
-        self.config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self.config.metrics_export_dir.mkdir(parents=True, exist_ok=True)
 
     def track_performance(
         self,
@@ -317,12 +317,12 @@ class RoutingOptimizer:
         )
 
     def _export_metrics(self, metrics: OptimizationMetrics):
-        """Export metrics to file."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = self.config.metrics_export_dir / f"metrics_{timestamp}.json"
-
-        with open(filepath, "w") as f:
-            json.dump(metrics.to_dict(), f, indent=2)
+        """Export metrics to telemetry experiment store."""
+        asyncio.ensure_future(
+            self._artifact_manager.log_optimization_run(
+                "routing_optimizer", metrics.to_dict()
+            )
+        )
 
 
 class AutoTuningOptimizer(RoutingOptimizer):
@@ -332,16 +332,22 @@ class AutoTuningOptimizer(RoutingOptimizer):
     """
 
     def __init__(
-        self, strategy: RoutingStrategy, config: OptimizationConfig | None = None
+        self,
+        strategy: RoutingStrategy,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+        config: OptimizationConfig | None = None,
     ):
         """
         Initialize the auto-tuning optimizer.
 
         Args:
             strategy: The routing strategy to optimize
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
             config: Optimization configuration
         """
-        super().__init__(config)
+        super().__init__(telemetry_provider, tenant_id, config)
         self.strategy = strategy
         self.optimization_attempts = 0
         self.best_params: dict[str, Any] | None = None
@@ -697,17 +703,8 @@ class AutoTuningOptimizer(RoutingOptimizer):
 
         return metric
 
-    def save_checkpoint(self, filepath: Path | None = None):
-        """
-        Save optimization checkpoint.
-
-        Args:
-            filepath: Path to save checkpoint
-        """
-        if not filepath:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filepath = self.config.checkpoint_dir / f"checkpoint_{timestamp}.json"
-
+    async def save_checkpoint(self):
+        """Save optimization checkpoint to telemetry."""
         checkpoint = {
             "strategy_name": self.strategy.__class__.__name__,
             "strategy_config": self.strategy.config,
@@ -720,20 +717,21 @@ class AutoTuningOptimizer(RoutingOptimizer):
             "timestamp": datetime.now().isoformat(),
         }
 
-        with open(filepath, "w") as f:
-            json.dump(checkpoint, f, indent=2)
+        await self._artifact_manager.save_blob(
+            "checkpoint", "routing_optimizer", json.dumps(checkpoint)
+        )
+        logger.info("Saved routing optimizer checkpoint to telemetry")
 
-        logger.info(f"Saved checkpoint to {filepath}")
+    async def load_checkpoint(self):
+        """Load optimization checkpoint from telemetry."""
+        content = await self._artifact_manager.load_blob(
+            "checkpoint", "routing_optimizer"
+        )
+        if not content:
+            logger.info("No checkpoint found in telemetry")
+            return
 
-    def load_checkpoint(self, filepath: Path):
-        """
-        Load optimization checkpoint.
-
-        Args:
-            filepath: Path to checkpoint file
-        """
-        with open(filepath) as f:
-            checkpoint = json.load(f)
+        checkpoint = json.loads(content)
 
         # Restore configuration
         self.strategy.config.update(checkpoint.get("strategy_config", {}))
@@ -741,7 +739,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
         self.best_params = checkpoint.get("best_params")
         self.best_performance = checkpoint.get("best_performance", 0.0)
 
-        logger.info(f"Loaded checkpoint from {filepath}")
+        logger.info("Loaded routing optimizer checkpoint from telemetry")
 
     def get_performance_report(self) -> dict[str, Any]:
         """

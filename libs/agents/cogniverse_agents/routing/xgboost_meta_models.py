@@ -7,8 +7,9 @@ eliminating the need for hardcoded thresholds.
 Part of Phase 11: Multi-Modal Optimization.
 """
 
+import json
 import logging
-import pickle
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -16,7 +17,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 if TYPE_CHECKING:
     pass
@@ -92,20 +95,26 @@ class TrainingDecisionModel:
     Output: Binary decision (train/skip) + expected improvement estimate
     """
 
-    def __init__(self, model_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+    ):
         """
         Initialize training decision model
 
         Args:
-            model_dir: Directory to save/load models (defaults to outputs/models/xgboost)
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
         """
-        self.model_dir = model_dir or Path("outputs/models/xgboost")
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+        if not tenant_id:
+            raise ValueError("tenant_id is required for TrainingDecisionModel")
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         self.model: Any = None
         self.is_trained = False
 
-        logger.info(f"Initialized TrainingDecisionModel (model_dir: {self.model_dir})")
+        logger.info("Initialized TrainingDecisionModel (telemetry-backed)")
 
     def train(
         self,
@@ -239,31 +248,45 @@ class TrainingDecisionModel:
             )
         return np.array(features)
 
-    def save(self, filename: str = "training_decision_model.pkl"):
-        """Save model to disk"""
+    async def save_to_telemetry(self):
+        """Save model to telemetry using XGBoost's native JSON format."""
         if not self.is_trained:
-            logger.warning("⚠️ Model not trained - nothing to save")
+            logger.warning("Model not trained - nothing to save")
             return
 
-        filepath = self.model_dir / filename
-        with open(filepath, "wb") as f:
-            pickle.dump(self.model, f)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            self.model.save_model(tmp.name)
+            model_json = Path(tmp.name).read_text()
+            Path(tmp.name).unlink()
 
-        logger.info(f"💾 Saved TrainingDecisionModel to {filepath}")
+        await self._artifact_manager.save_blob(
+            "xgboost", "training_decision_model", model_json
+        )
+        logger.info("Saved TrainingDecisionModel to telemetry")
 
-    def load(self, filename: str = "training_decision_model.pkl"):
-        """Load model from disk"""
-        filepath = self.model_dir / filename
+    async def load_from_telemetry(self) -> bool:
+        """Load model from telemetry."""
+        xgb = _import_xgboost()
 
-        if not filepath.exists():
-            logger.warning(f"⚠️ Model file not found: {filepath}")
+        model_json = await self._artifact_manager.load_blob(
+            "xgboost", "training_decision_model"
+        )
+        if not model_json:
+            logger.debug("No TrainingDecisionModel found in telemetry")
             return False
 
-        with open(filepath, "rb") as f:
-            self.model = pickle.load(f)
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", mode="w", delete=False
+        ) as tmp:
+            tmp.write(model_json)
+            tmp_path = tmp.name
+
+        self.model = xgb.XGBClassifier()
+        self.model.load_model(tmp_path)
+        Path(tmp_path).unlink()
 
         self.is_trained = True
-        logger.info(f"📂 Loaded TrainingDecisionModel from {filepath}")
+        logger.info("Loaded TrainingDecisionModel from telemetry")
         return True
 
 
@@ -278,15 +301,25 @@ class TrainingStrategyModel:
     Output: Multi-class prediction (PURE_REAL, HYBRID, SYNTHETIC, SKIP)
     """
 
-    def __init__(self, model_dir: Optional[Path] = None):
-        """Initialize training strategy model"""
-        self.model_dir = model_dir or Path("outputs/models/xgboost")
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+    ):
+        """Initialize training strategy model
+
+        Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for TrainingStrategyModel")
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         self.model: Any = None
         self.is_trained = False
 
-        logger.info(f"Initialized TrainingStrategyModel (model_dir: {self.model_dir})")
+        logger.info("Initialized TrainingStrategyModel (telemetry-backed)")
 
     def train(
         self,
@@ -437,31 +470,45 @@ class TrainingStrategyModel:
         }
         return mapping.get(label, TrainingStrategy.SKIP)
 
-    def save(self, filename: str = "training_strategy_model.pkl"):
-        """Save model to disk"""
+    async def save_to_telemetry(self):
+        """Save model to telemetry using XGBoost's native JSON format."""
         if not self.is_trained:
-            logger.warning("⚠️ Model not trained - nothing to save")
+            logger.warning("Model not trained - nothing to save")
             return
 
-        filepath = self.model_dir / filename
-        with open(filepath, "wb") as f:
-            pickle.dump(self.model, f)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            self.model.save_model(tmp.name)
+            model_json = Path(tmp.name).read_text()
+            Path(tmp.name).unlink()
 
-        logger.info(f"💾 Saved TrainingStrategyModel to {filepath}")
+        await self._artifact_manager.save_blob(
+            "xgboost", "training_strategy_model", model_json
+        )
+        logger.info("Saved TrainingStrategyModel to telemetry")
 
-    def load(self, filename: str = "training_strategy_model.pkl"):
-        """Load model from disk"""
-        filepath = self.model_dir / filename
+    async def load_from_telemetry(self) -> bool:
+        """Load model from telemetry."""
+        xgb = _import_xgboost()
 
-        if not filepath.exists():
-            logger.warning(f"⚠️ Model file not found: {filepath}")
+        model_json = await self._artifact_manager.load_blob(
+            "xgboost", "training_strategy_model"
+        )
+        if not model_json:
+            logger.debug("No TrainingStrategyModel found in telemetry")
             return False
 
-        with open(filepath, "rb") as f:
-            self.model = pickle.load(f)
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", mode="w", delete=False
+        ) as tmp:
+            tmp.write(model_json)
+            tmp_path = tmp.name
+
+        self.model = xgb.XGBClassifier()
+        self.model.load_model(tmp_path)
+        Path(tmp_path).unlink()
 
         self.is_trained = True
-        logger.info(f"📂 Loaded TrainingStrategyModel from {filepath}")
+        logger.info("Loaded TrainingStrategyModel from telemetry")
         return True
 
 
@@ -479,15 +526,25 @@ class FusionBenefitModel:
     Output: Regression prediction of expected benefit (0-1)
     """
 
-    def __init__(self, model_dir: Optional[Path] = None):
-        """Initialize fusion benefit model"""
-        self.model_dir = model_dir or Path("outputs/models/xgboost")
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
+    ):
+        """Initialize fusion benefit model
+
+        Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for FusionBenefitModel")
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         self.model: Any = None
         self.is_trained = False
 
-        logger.info(f"Initialized FusionBenefitModel (model_dir: {self.model_dir})")
+        logger.info("Initialized FusionBenefitModel (telemetry-backed)")
 
     def train(
         self,
@@ -609,29 +666,43 @@ class FusionBenefitModel:
             )
         return np.array(features)
 
-    def save(self, filename: str = "fusion_benefit_model.pkl"):
-        """Save model to disk"""
+    async def save_to_telemetry(self):
+        """Save model to telemetry using XGBoost's native JSON format."""
         if not self.is_trained:
-            logger.warning("⚠️ Model not trained - nothing to save")
+            logger.warning("Model not trained - nothing to save")
             return
 
-        filepath = self.model_dir / filename
-        with open(filepath, "wb") as f:
-            pickle.dump(self.model, f)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            self.model.save_model(tmp.name)
+            model_json = Path(tmp.name).read_text()
+            Path(tmp.name).unlink()
 
-        logger.info(f"💾 Saved FusionBenefitModel to {filepath}")
+        await self._artifact_manager.save_blob(
+            "xgboost", "fusion_benefit_model", model_json
+        )
+        logger.info("Saved FusionBenefitModel to telemetry")
 
-    def load(self, filename: str = "fusion_benefit_model.pkl"):
-        """Load model from disk"""
-        filepath = self.model_dir / filename
+    async def load_from_telemetry(self) -> bool:
+        """Load model from telemetry."""
+        xgb = _import_xgboost()
 
-        if not filepath.exists():
-            logger.warning(f"⚠️ Model file not found: {filepath}")
+        model_json = await self._artifact_manager.load_blob(
+            "xgboost", "fusion_benefit_model"
+        )
+        if not model_json:
+            logger.debug("No FusionBenefitModel found in telemetry")
             return False
 
-        with open(filepath, "rb") as f:
-            self.model = pickle.load(f)
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", mode="w", delete=False
+        ) as tmp:
+            tmp.write(model_json)
+            tmp_path = tmp.name
+
+        self.model = xgb.XGBRegressor()
+        self.model.load_model(tmp_path)
+        Path(tmp_path).unlink()
 
         self.is_trained = True
-        logger.info(f"📂 Loaded FusionBenefitModel from {filepath}")
+        logger.info("Loaded FusionBenefitModel from telemetry")
         return True
