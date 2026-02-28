@@ -267,9 +267,6 @@ class RoutingDeps(AgentDeps):
     optimizer_config: Optional[AdvancedOptimizerConfig] = Field(
         None, description="GRPO optimizer config"
     )
-    optimization_storage_dir: str = Field(
-        "data/optimization", description="Storage dir for MLflow artifacts"
-    )
 
     # MLflow integration configuration
     enable_mlflow_tracking: bool = Field(False, description="Enable MLflow tracking")
@@ -325,6 +322,9 @@ class RoutingAgent(
         self.telemetry_config = deps.telemetry_config
         self.logger = logging.getLogger(__name__)
 
+        # Initialize telemetry manager first (needed by enhancement pipeline, MLflow, etc.)
+        self._initialize_telemetry_manager()
+
         # Initialize DSPy 3.0 with local SmolLM
         self._configure_dspy(deps)
 
@@ -340,7 +340,7 @@ class RoutingAgent(
         # Initialize MLflow tracking
         self._initialize_mlflow_tracking(deps)
 
-        # Initialize production features
+        # Initialize production features (telemetry_manager already done)
         self._initialize_production_components(deps)
 
         # Create A2A config from deps
@@ -382,6 +382,16 @@ class RoutingAgent(
 
         return has_analysis_module and has_query_enhancement and has_routing_module
 
+    def _initialize_telemetry_manager(self) -> None:
+        """Initialize telemetry manager early (needed by enhancement pipeline, MLflow, etc.)."""
+        if self.telemetry_config.enabled:
+            from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+            self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
+            self.logger.info("Telemetry manager initialized")
+        else:
+            self.telemetry_manager = None
+
     def _configure_dspy(self, deps: RoutingDeps) -> None:
         """Configure DSPy LM instance (scoped via dspy.context, not global)."""
         self._dspy_lm = create_dspy_lm(deps.llm_config)
@@ -412,9 +422,12 @@ class RoutingAgent(
 
             # Query enhancement pipeline wraps the composable module
             if deps.enable_query_enhancement and self.analysis_module:
+                telemetry_provider = self._get_telemetry_provider("default")
                 self.query_enhancer = QueryEnhancementPipeline(
                     analysis_module=self.analysis_module,
                     query_fusion_config=deps.query_fusion_config,
+                    telemetry_provider=telemetry_provider,
+                    tenant_id="default",
                 )
                 self.logger.info("Query enhancement pipeline initialized")
             else:
@@ -506,7 +519,11 @@ class RoutingAgent(
             return None
         if tenant_id not in self._tenant_cross_modal_optimizers:
             try:
-                self._tenant_cross_modal_optimizers[tenant_id] = CrossModalOptimizer()
+                telemetry_provider = self._get_telemetry_provider(tenant_id)
+                self._tenant_cross_modal_optimizers[tenant_id] = CrossModalOptimizer(
+                    telemetry_provider=telemetry_provider,
+                    tenant_id=tenant_id,
+                )
                 self.logger.info(
                     f"Cross-modal optimizer initialized for tenant: {tenant_id}"
                 )
@@ -560,9 +577,11 @@ class RoutingAgent(
                     track_threshold_parameters=True,
                 )
 
+                telemetry_provider = self._get_telemetry_provider("default")
                 self.mlflow_integration = MLflowIntegration(
                     config=mlflow_config,
-                    storage_dir=f"{deps.optimization_storage_dir}/mlflow",
+                    telemetry_provider=telemetry_provider,
+                    tenant_id="default",
                 )
                 self.logger.info("MLflow tracking integration initialized")
             else:
@@ -576,14 +595,7 @@ class RoutingAgent(
     def _initialize_production_components(self, deps: RoutingDeps) -> None:
         """Initialize production-ready components from RoutingAgent"""
         try:
-            # Initialize telemetry manager
-            if self.telemetry_config.enabled:
-                from cogniverse_foundation.telemetry.manager import TelemetryManager
-
-                self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
-                self.logger.info("Telemetry manager initialized")
-            else:
-                self.telemetry_manager = None
+            # telemetry_manager already initialized in _initialize_telemetry_manager()
 
             # Initialize caching
             if deps.enable_caching:

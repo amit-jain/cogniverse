@@ -341,14 +341,27 @@ class PhoenixDatasetStore(DatasetStore):
             import phoenix as px
 
             sync_client = px.Client(endpoint=self.http_endpoint)
-            dataset = sync_client.upload_dataset(
-                dataset_name=name,
-                dataframe=data,
-                input_keys=input_keys if input_keys else None,
-                output_keys=output_keys if output_keys else None,
-                metadata_keys=metadata_keys if metadata_keys else None,
-                dataset_description=description if description else None,
-            )
+            try:
+                dataset = sync_client.upload_dataset(
+                    dataset_name=name,
+                    dataframe=data,
+                    input_keys=input_keys if input_keys else None,
+                    output_keys=output_keys if output_keys else None,
+                    metadata_keys=metadata_keys if metadata_keys else None,
+                    dataset_description=description if description else None,
+                )
+            except Exception as create_err:
+                if "already exists" in str(create_err):
+                    # Dataset exists — append a new version
+                    dataset = sync_client.append_to_dataset(
+                        dataset_name=name,
+                        dataframe=data,
+                        input_keys=input_keys if input_keys else None,
+                        output_keys=output_keys if output_keys else None,
+                        metadata_keys=metadata_keys if metadata_keys else None,
+                    )
+                else:
+                    raise
 
             logger.info(
                 f"Created dataset '{name}' with {len(data)} records "
