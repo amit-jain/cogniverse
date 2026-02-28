@@ -5,8 +5,9 @@ NOTE: RoutingAgent has been refactored to use type-safe base classes.
 Tests use the new typed API with RoutingDeps, RoutingInput, RoutingOutput.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from cogniverse_agents.routing_agent import (
@@ -14,6 +15,29 @@ from cogniverse_agents.routing_agent import (
     RoutingDeps,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory stores."""
+    provider = MagicMock()
+    datasets: dict[str, pd.DataFrame] = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.mark.unit
@@ -170,6 +194,7 @@ class TestEnhancementFailureFallback:
         When _analyze_and_enhance_query() crashes,
         it returns ([], [], query, {}) → no query_variants → single-query path.
         """
+        mock_provider = _make_mock_telemetry_provider()
         telemetry_config = TelemetryConfig(enabled=False)
         deps = RoutingDeps(
             telemetry_config=telemetry_config,
@@ -178,9 +203,16 @@ class TestEnhancementFailureFallback:
                 "rrf_k": 60,
             },
         )
-        agent = RoutingAgent(deps=deps)
 
-        # Force the enhancement pipeline to raise
+        with patch.object(
+            RoutingAgent, "_get_telemetry_provider", return_value=mock_provider
+        ):
+            agent = RoutingAgent(deps=deps)
+
+        assert agent.query_enhancer is not None, (
+            "query_enhancer must be initialized to test failure fallback"
+        )
+
         agent.query_enhancer.enhance_query_with_relationships = AsyncMock(
             side_effect=RuntimeError("Enhancement exploded")
         )
