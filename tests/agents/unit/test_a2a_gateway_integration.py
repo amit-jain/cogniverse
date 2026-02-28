@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestA2AGatewayIntegration:
     """Integration tests for A2A Gateway FastAPI endpoints"""
 

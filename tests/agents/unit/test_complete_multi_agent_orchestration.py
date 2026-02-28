@@ -28,7 +28,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestCompleteMultiAgentOrchestration:
     """Test complete multi-agent orchestration with real workflows"""
 
@@ -123,7 +123,7 @@ class TestCompleteMultiAgentOrchestration:
     def test_query_enhancement_to_search_workflow(self):
         """Test query enhancement feeding into search workflow"""
         extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         # Test query enhancement pipeline
         original_query = "Show me videos about machine learning robots"
@@ -399,7 +399,7 @@ class TestCompleteMultiAgentOrchestration:
                         pass
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestSystemScalability:
     """Test system scalability and performance characteristics"""
 

@@ -85,7 +85,7 @@ class TestRoutingAgentIntegration:
         # Agent should have DSPy components initialized
         assert hasattr(agent, "routing_module")
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_real_routing_decision_flow(self, test_config):
         """Test actual routing decision flow through comprehensive router"""
@@ -119,7 +119,7 @@ class TestRoutingAgentIntegration:
             assert isinstance(result.fallback_agents, list)
             assert isinstance(result.metadata, dict)
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_routing_agent_context_propagation(self, test_config):
         """Test that context is properly propagated through routing layers"""
@@ -171,7 +171,7 @@ class TestRoutingAgentIntegration:
         assert agent2.config is not None
         assert hasattr(agent2, "routing_module")
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_workflow_generation_consistency(self, test_config):
         """Test that workflow generation is consistent across multiple calls"""
@@ -206,7 +206,7 @@ class TestRoutingAgentIntegration:
 class TestRoutingAgentErrorHandling:
     """Test error handling in integration scenarios - needs refactoring for DSPy interface"""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_routing_failure_propagation(self):
         """Test that routing failures are properly handled and propagated"""

@@ -12,6 +12,7 @@ Tests performance characteristics of the multi-agent system:
 import asyncio
 import os
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import psutil
 import pytest
@@ -29,7 +30,7 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestPerformanceBenchmarks:
     """Performance benchmarking for multi-agent system components"""
 
@@ -189,7 +190,7 @@ class TestPerformanceBenchmarks:
 
     def test_query_enhancement_performance(self):
         """Benchmark query enhancement pipeline performance"""
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         test_cases = [
             {
@@ -397,13 +398,34 @@ class TestPerformanceBenchmarks:
             assert True  # Graceful handling is acceptable
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestAdaptiveThresholdPerformance:
     """Performance tests for adaptive threshold learning"""
 
     def test_threshold_learning_performance(self):
         """Test performance of threshold learning under load"""
-        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
+        provider = MagicMock()
+        datasets: dict = {}
+
+        async def create_dataset(name, data, metadata=None):
+            datasets[name] = data
+            return f"ds-{name}"
+
+        async def get_dataset(name):
+            if name not in datasets:
+                raise KeyError(f"Dataset {name} not found")
+            return datasets[name]
+
+        provider.datasets = MagicMock()
+        provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+        provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+        provider.experiments = MagicMock()
+        provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+        provider.experiments.log_run = AsyncMock(return_value="run-test")
+
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=provider, tenant_id="test_tenant"
+        )
 
         # Simulate performance samples
         num_samples = 100

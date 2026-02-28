@@ -22,7 +22,7 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestQueryProcessingPipeline:
     """Test complete query processing pipeline with real queries"""
 
@@ -46,8 +46,8 @@ class TestQueryProcessingPipeline:
         print(f"Extracted entities: {entities}")
         print(f"Extracted relationships: {relationships}")
 
-        # Step 2: Query Enhancement - use real components
-        pipeline = QueryEnhancementPipeline()
+        # Step 2: Query Enhancement - use real components (SIMBA disabled, no telemetry in test)
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
         enhancement_result = asyncio.run(
             pipeline.enhance_query_with_relationships(
                 query, entities=entities, relationships=relationships
@@ -77,7 +77,7 @@ class TestQueryProcessingPipeline:
         # Test graceful handling without real service dependencies
         try:
             extractor = RelationshipExtractorTool()
-            pipeline = QueryEnhancementPipeline()
+            pipeline = QueryEnhancementPipeline(enable_simba=False)
 
             # Try extraction - may fail with spacy/model issues, which is expected
             try:
@@ -342,7 +342,7 @@ class TestQueryProcessingPipeline:
             }
 
             extractor = RelationshipExtractorTool()
-            pipeline = QueryEnhancementPipeline()
+            pipeline = QueryEnhancementPipeline(enable_simba=False)
 
             # Test with edge cases
             edge_cases = [
@@ -379,7 +379,7 @@ class TestQueryProcessingPipeline:
                     assert True
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestAgentWorkflowIntegration:
     """Test agent workflow integration with real processing"""
 
@@ -470,7 +470,7 @@ class TestAgentWorkflowIntegration:
         print("Multi-agent coordination readiness validated")
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestSystemIntegrationReadiness:
     """Test overall system integration readiness"""
 
@@ -482,7 +482,7 @@ class TestSystemIntegrationReadiness:
         try:
             # Core DSPy components
             components["extractor"] = RelationshipExtractorTool()
-            components["enhancer"] = QueryEnhancementPipeline()
+            components["enhancer"] = QueryEnhancementPipeline(enable_simba=False)
 
             # Agents
             _config_manager = create_default_config_manager()
