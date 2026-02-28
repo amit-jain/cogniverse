@@ -60,6 +60,8 @@ class ArtifactManager:
                 "agent_type": agent_type,
                 "tenant_id": self._tenant_id,
                 "created_at": datetime.now().isoformat(),
+                "input_keys": ["name"],
+                "output_keys": ["value"],
             },
         )
         logger.info(
@@ -79,13 +81,13 @@ class ArtifactManager:
 
         Raises:
             Exception: Propagates store errors (connection, deserialization).
-                ``KeyError`` raised by the store when the dataset does not exist
-                is treated as "no artifacts" and returns ``None`` instead.
+                ``ValueError``/``KeyError`` raised by the store when the dataset
+                does not exist is treated as "no artifacts" and returns ``None``.
         """
         dataset_name = self._prompt_dataset_name(agent_type)
         try:
             df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except KeyError:
+        except (KeyError, ValueError):
             logger.debug(
                 "No prompt dataset found for %s/%s",
                 self._tenant_id,
@@ -96,13 +98,45 @@ class ArtifactManager:
         if df is None or df.empty:
             return None
 
-        prompts = dict(zip(df["name"], df["value"]))
+        prompts = self._extract_prompts_from_dataframe(df)
         logger.info(
             "Loaded %d prompts for %s/%s",
             len(prompts),
             self._tenant_id,
             agent_type,
         )
+        return prompts
+
+    @staticmethod
+    def _extract_prompts_from_dataframe(df: pd.DataFrame) -> Dict[str, str]:
+        """Extract name→value prompt dict from a Phoenix dataset DataFrame.
+
+        Phoenix may return columns in different layouts depending on how
+        ``input_keys``/``output_keys`` were specified at upload time:
+
+        1. Flat columns ``name``, ``value`` (when keys were specified).
+        2. A single ``input`` column containing dicts with ``name`` key,
+           and an ``output`` column containing dicts with ``value`` key.
+        3. A single ``input`` column containing dicts with both keys
+           (when no keys were specified at all).
+        """
+        if "name" in df.columns and "value" in df.columns:
+            return dict(zip(df["name"], df["value"]))
+
+        prompts: Dict[str, str] = {}
+        for _, row in df.iterrows():
+            inp = row.get("input", {})
+            out = row.get("output", {})
+            if isinstance(inp, dict) and isinstance(out, dict):
+                name = inp.get("name", "")
+                value = out.get("value", "")
+                if name:
+                    prompts[name] = value
+            elif isinstance(inp, dict):
+                name = inp.get("name", "")
+                value = inp.get("value", "")
+                if name:
+                    prompts[name] = value
         return prompts
 
     async def save_demonstrations(
@@ -126,6 +160,9 @@ class ArtifactManager:
                 "agent_type": agent_type,
                 "tenant_id": self._tenant_id,
                 "created_at": datetime.now().isoformat(),
+                "input_keys": ["input"],
+                "output_keys": ["output"],
+                "metadata_keys": ["metadata"] if "metadata" in df.columns else [],
             },
         )
         logger.info(
@@ -146,18 +183,55 @@ class ArtifactManager:
             List of demo dicts or ``None`` if no dataset exists.
         """
         dataset_name = self._demo_dataset_name(agent_type)
-        df = await self._provider.datasets.get_dataset(name=dataset_name)
+        try:
+            df = await self._provider.datasets.get_dataset(name=dataset_name)
+        except (KeyError, ValueError):
+            logger.debug(
+                "No demo dataset found for %s/%s",
+                self._tenant_id,
+                agent_type,
+            )
+            return None
 
         if df is None or df.empty:
             return None
 
-        demos = df.to_dict(orient="records")
+        demos = self._extract_demos_from_dataframe(df)
         logger.info(
             "Loaded %d demonstrations for %s/%s",
             len(demos),
             self._tenant_id,
             agent_type,
         )
+        return demos
+
+    @staticmethod
+    def _extract_demos_from_dataframe(
+        df: pd.DataFrame,
+    ) -> List[Dict[str, Any]]:
+        """Extract demo dicts from a Phoenix dataset DataFrame.
+
+        Phoenix may return flat columns (``input``, ``output``, ``metadata``)
+        when ``input_keys``/``output_keys``/``metadata_keys`` were set, or nested
+        dicts in ``input``/``output`` columns otherwise.  This method normalises
+        both layouts to ``[{"input": ..., "output": ..., "metadata": ...}, ...]``.
+        """
+        demos: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            inp = row.get("input", "")
+            out = row.get("output", "")
+            meta = row.get("metadata", "")
+
+            # Phoenix wraps each role's columns into a dict when there's
+            # exactly one column per role — unwrap the single value.
+            if isinstance(inp, dict) and len(inp) == 1 and "input" in inp:
+                inp = inp["input"]
+            if isinstance(out, dict) and len(out) == 1 and "output" in out:
+                out = out["output"]
+            if isinstance(meta, dict) and len(meta) == 1 and "metadata" in meta:
+                meta = meta["metadata"]
+
+            demos.append({"input": inp, "output": out, "metadata": meta})
         return demos
 
     async def log_optimization_run(

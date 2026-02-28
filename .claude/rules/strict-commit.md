@@ -49,6 +49,7 @@ ON DEMAND (user request or periodic)
 **When**: Any code change.
 **Must pass**: 0 failed AND 0 skipped. Uses `--tb=long` ALWAYS.
 **If fails**: Fix implementation (never weaken tests). Re-run until 100% passing.
+**Wiring coverage**: For changes that connect components (A writes, B reads), verify at least one test exercises the full round-trip (save → load → assert equality). Flag if only constructor-acceptance tests exist.
 
 ---
 

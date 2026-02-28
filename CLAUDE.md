@@ -43,6 +43,12 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 - Always use `--tb=long` — short tracebacks hide root causes and force re-runs
 - Tests must manage their own isolated infrastructure (unique ports, own Docker containers)
 
+**Test Completeness for Wiring Changes**:
+- Every change that wires components together (A saves, B loads) MUST have a round-trip integration test that exercises the full save-then-load path
+- Constructor-acceptance tests ("it initializes without error") do NOT count as coverage for wiring correctness
+- If the change fixes a specific bug (e.g., filename mismatch), write a test that would have caught the original bug — if it passes on the old broken code, it tests nothing
+- Integration tests MUST exercise the real system boundary (e.g., actual Phoenix Docker instance) — mocking the boundary only proves internal wiring, not that the real system works. No exceptions.
+
 **Development Testing**:
 - Test with single video first: `--max-frames 1`
 - Check logs: `tail -f outputs/logs/*.log`

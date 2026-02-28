@@ -22,7 +22,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-# DSPy 3.0 imports
 import dspy
 import numpy as np
 from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
@@ -176,11 +175,8 @@ class AdvancedRoutingOptimizer:
         self.config = config or AdvancedOptimizerConfig()
         self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
-        # Experience storage
         self.experiences: List[RoutingExperience] = []
         self.experience_replay: List[RoutingExperience] = []
-
-        # Metrics tracking
         self.metrics = OptimizationMetrics(
             total_experiences=0,
             avg_reward=0.0,
@@ -191,34 +187,25 @@ class AdvancedRoutingOptimizer:
             query_type_accuracy={},
             improvement_rate=0.0,
         )
-
-        # GRPO components
         self.advanced_optimizer = None
         self.routing_policy = None
         self.baseline_policy = None
-
-        # Confidence calibration
         self.confidence_calibrator = None
-
-        # State
         self.current_epsilon = self.config.exploration_epsilon
         self.training_step = 0
         self.last_update = datetime.now()
 
-        # Load existing data
         self._load_stored_data()
-
-        # Initialize advanced optimization components
         self._initialize_advanced_components()
 
         logger.info(
-            f"Advanced routing optimizer initialized with {len(self.experiences)} experiences"
+            "Advanced routing optimizer initialized with %d experiences",
+            len(self.experiences),
         )
 
     def _initialize_advanced_components(self):
         """Initialize advanced optimization components"""
 
-        # Create routing policy signatures
         class RoutingPolicySignature(dspy.Signature):
             """Optimized routing decision based on learned policy"""
 
@@ -233,7 +220,6 @@ class AdvancedRoutingOptimizer:
             confidence = dspy.OutputField(desc="Confidence in routing decision (0-1)")
             reasoning = dspy.OutputField(desc="Reasoning for routing choice")
 
-        # Create policy module
         class OptimizedRoutingPolicy(dspy.Module):
             def __init__(self):
                 super().__init__()
@@ -254,18 +240,15 @@ class AdvancedRoutingOptimizer:
 
         self.routing_policy = OptimizedRoutingPolicy()
 
-        # Initialize advanced optimizer
         if len(self.experiences) >= self.config.min_experiences_for_training:
             self.advanced_optimizer = self._create_advanced_optimizer()
-            logger.info(
-                "Advanced optimizer initialized with sufficient experience data"
-            )
+            logger.info("Advanced optimizer initialized with sufficient experience data")
         else:
             logger.info(
-                f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start advanced optimization training"
+                "Need %d more experiences to start advanced optimization training",
+                self.config.min_experiences_for_training - len(self.experiences),
             )
 
-        # Initialize confidence calibrator
         self._initialize_confidence_calibrator()
 
     def _create_advanced_optimizer(self):
@@ -287,7 +270,6 @@ class AdvancedRoutingOptimizer:
             Returns a score between 0 and 1.
             """
             try:
-                # Extract predicted and gold agent types
                 pred_agent = getattr(pred, "agent_type", None) or getattr(
                     pred, "prediction", None
                 )
@@ -297,13 +279,12 @@ class AdvancedRoutingOptimizer:
                     else None
                 )
 
-                # Basic accuracy: 1 if correct, 0 if incorrect
                 if pred_agent == gold_agent:
                     return 1.0
                 else:
                     return 0.0
             except Exception as e:
-                logger.warning(f"Error in routing_accuracy_metric: {e}")
+                logger.warning("Error in routing_accuracy_metric: %s", e)
                 return 0.0
 
         class AdvancedMultiStageOptimizer:
@@ -313,11 +294,7 @@ class AdvancedRoutingOptimizer:
                 llm_config: LLMEndpointConfig,
             ):
                 self.config = config
-
-                # Create LM via centralized factory (stored for dspy.context scoping)
                 self._lm = create_dspy_lm(llm_config)
-
-                # Initialize all advanced optimizers with required parameters
                 self.gepa_optimizer = GEPA(
                     metric=routing_accuracy_metric,
                     auto="light",
@@ -330,10 +307,9 @@ class AdvancedRoutingOptimizer:
                     metric=routing_accuracy_metric  # Required by SIMBA
                 )
                 self.bootstrap_optimizer = BootstrapFewShot(
-                    metric=routing_accuracy_metric  # Optional but good for consistency
+                    metric=routing_accuracy_metric
                 )
 
-                # Optimization strategy based on config and data size
                 self.optimization_stages = [
                     ("bootstrap", self.bootstrap_optimizer, config.bootstrap_threshold),
                     ("simba", self.simba_optimizer, config.simba_threshold),
@@ -341,7 +317,6 @@ class AdvancedRoutingOptimizer:
                     ("gepa", self.gepa_optimizer, config.gepa_threshold),
                 ]
 
-                # Optimizer mapping for direct selection
                 self.optimizers = {
                     "bootstrap": self.bootstrap_optimizer,
                     "simba": self.simba_optimizer,
@@ -351,20 +326,19 @@ class AdvancedRoutingOptimizer:
 
             def compile(self, module, trainset, **kwargs):
                 """Advanced multi-stage optimization with configurable strategy"""
-                # Scope the LM to this optimizer's compile call
                 with dspy.context(lm=self._lm):
                     try:
                         dataset_size = len(trainset)
                         logger.info(
-                            f"Starting optimization with {dataset_size} examples, strategy: {self.config.optimizer_strategy}"
+                            "Starting optimization with %d examples, strategy: %s",
+                            dataset_size,
+                            self.config.optimizer_strategy,
                         )
 
-                        # Select optimizer based on configuration
                         selected_optimizer, optimizer_name = self._select_optimizer(
                             dataset_size
                         )
 
-                        # Apply the selected optimization
                         optimized_module = self._apply_optimizer(
                             selected_optimizer,
                             optimizer_name,
@@ -373,32 +347,27 @@ class AdvancedRoutingOptimizer:
                             **kwargs,
                         )
 
-                        logger.info(f"Optimization complete using {optimizer_name}")
+                        logger.info("Optimization complete using %s", optimizer_name)
                         return optimized_module
 
                     except Exception as e:
-                        logger.error(
-                            f"Optimization failed: {e}, falling back to bootstrap"
-                        )
-                        return self.bootstrap_optimizer.compile(
-                            module, trainset=trainset, **kwargs
-                        )
+                        raise RuntimeError(
+                            f"Optimization failed with strategy "
+                            f"'{self.config.optimizer_strategy}': {e}"
+                        ) from e
 
             def _select_optimizer(self, dataset_size):
                 """Select optimizer based on config strategy and dataset size"""
-                # Force specific optimizer if configured
                 if self.config.force_optimizer:
                     if self.config.force_optimizer in self.optimizers:
                         optimizer = self.optimizers[self.config.force_optimizer]
                         return optimizer, self.config.force_optimizer
-                    else:
-                        logger.warning(
-                            f"Unknown forced optimizer: {self.config.force_optimizer}"
-                        )
+                    raise ValueError(
+                        f"Unknown forced optimizer '{self.config.force_optimizer}'. "
+                        f"Valid options: {list(self.optimizers)}"
+                    )
 
-                # Strategy-based selection
                 if self.config.optimizer_strategy == "adaptive":
-                    # Adaptive: select best optimizer based on dataset size
                     applicable_optimizers = [
                         (name, optimizer)
                         for name, optimizer, min_size in self.optimization_stages
@@ -406,24 +375,18 @@ class AdvancedRoutingOptimizer:
                     ]
 
                     if applicable_optimizers:
-                        # Use the most advanced applicable optimizer
                         name, optimizer = applicable_optimizers[-1]
                         return optimizer, name
-                    else:
-                        # Fallback to bootstrap
-                        return self.bootstrap_optimizer, "bootstrap"
+                    return self.bootstrap_optimizer, "bootstrap"
 
                 elif self.config.optimizer_strategy in self.optimizers:
-                    # Direct strategy selection
                     optimizer = self.optimizers[self.config.optimizer_strategy]
                     return optimizer, self.config.optimizer_strategy
 
-                else:
-                    # Unknown strategy, use bootstrap
-                    logger.warning(
-                        f"Unknown optimizer strategy: {self.config.optimizer_strategy}"
-                    )
-                    return self.bootstrap_optimizer, "bootstrap"
+                raise ValueError(
+                    f"Unknown optimizer strategy '{self.config.optimizer_strategy}'. "
+                    f"Valid options: adaptive, {list(self.optimizers)}"
+                )
 
             def _apply_optimizer(
                 self, optimizer, optimizer_name, module, trainset, **kwargs
@@ -525,8 +488,9 @@ class AdvancedRoutingOptimizer:
             logger.info("Confidence calibrator initialized")
 
         except Exception as e:
-            logger.error(f"Failed to initialize confidence calibrator: {e}")
-            self.confidence_calibrator = None
+            raise RuntimeError(
+                f"Failed to initialize confidence calibrator: {e}"
+            ) from e
 
     async def record_routing_experience(
         self,
@@ -561,7 +525,6 @@ class AdvancedRoutingOptimizer:
         Returns:
             Computed reward for this experience
         """
-        # Compute reward
         reward = self._compute_reward(
             search_quality=search_quality,
             agent_success=agent_success,
@@ -569,7 +532,6 @@ class AdvancedRoutingOptimizer:
             user_satisfaction=user_satisfaction,
         )
 
-        # Create experience
         experience = RoutingExperience(
             query=query,
             entities=entities,
@@ -585,10 +547,8 @@ class AdvancedRoutingOptimizer:
             metadata=metadata or {},
         )
 
-        # Store experience
         await self._store_experience(experience)
 
-        # Trigger optimization if conditions met
         if self._should_trigger_optimization():
             await self._run_optimization_step()
 
@@ -606,23 +566,19 @@ class AdvancedRoutingOptimizer:
     ) -> float:
         """Compute reward signal from routing outcome"""
 
-        # Base reward from search quality and agent success
         reward = (
             search_quality * self.config.search_quality_weight
             + (1.0 if agent_success else 0.0) * self.config.agent_success_weight
         )
 
-        # Add user satisfaction if available
         if user_satisfaction is not None:
             reward += user_satisfaction * self.config.user_satisfaction_weight
         else:
-            # If no user satisfaction, normalize the weights
             total_weight = (
                 self.config.search_quality_weight + self.config.agent_success_weight
             )
             reward = reward / total_weight
 
-        # Apply processing time penalty (longer processing = lower reward)
         if processing_time > 0:
             # Penalty increases with processing time (sigmoid-like)
             time_penalty = self.config.processing_time_penalty * (
@@ -636,15 +592,12 @@ class AdvancedRoutingOptimizer:
         """Store routing experience for learning"""
         self.experiences.append(experience)
 
-        # Add to experience replay buffer
         self.experience_replay.append(experience)
         if len(self.experience_replay) > self.config.experience_replay_size:
             self.experience_replay.pop(0)
 
-        # Update metrics
         self._update_metrics(experience)
 
-        # Persist data periodically
         if len(self.experiences) % 10 == 0:
             await self._persist_data()
 
@@ -657,26 +610,22 @@ class AdvancedRoutingOptimizer:
         else:
             self.metrics.failed_routes += 1
 
-        # Update average reward (moving average)
         if self.metrics.avg_reward == 0.0:
             self.metrics.avg_reward = experience.reward
         else:
-            alpha = 0.1  # Learning rate for moving average
+            alpha = 0.1
             self.metrics.avg_reward = (
                 1 - alpha
             ) * self.metrics.avg_reward + alpha * experience.reward
 
-        # Update agent preferences
         agent = experience.chosen_agent
         if agent not in self.metrics.agent_preferences:
             self.metrics.agent_preferences[agent] = experience.reward
         else:
-            # Moving average
             self.metrics.agent_preferences[agent] = (
                 0.9 * self.metrics.agent_preferences[agent] + 0.1 * experience.reward
             )
 
-        # Update confidence accuracy (how well confidence predicts success)
         if len(self.experiences) > 1:
             confidence_predictions = [
                 exp.routing_confidence for exp in self.experiences[-100:]
@@ -686,19 +635,18 @@ class AdvancedRoutingOptimizer:
             ]
 
             if confidence_predictions and actual_outcomes:
-                # Compute simple correlation between confidence and success
                 try:
-                    # Use numpy for correlation calculation (more reliable than scipy dependency)
                     corr_matrix = np.corrcoef(confidence_predictions, actual_outcomes)
                     correlation = (
                         corr_matrix[0, 1] if not np.isnan(corr_matrix[0, 1]) else 0.0
                     )
                     self.metrics.confidence_accuracy = max(0.0, correlation)
-                except Exception:
-                    # Fallback calculation - measure alignment between confidence and success
-                    avg_conf = np.mean(confidence_predictions)
-                    avg_success = np.mean(actual_outcomes)
-                    self.metrics.confidence_accuracy = 1.0 - abs(avg_conf - avg_success)
+                except Exception as e:
+                    raise RuntimeError(
+                        "Failed to compute confidence correlation: "
+                        f"conf_values={confidence_predictions[:3]}..., "
+                        f"outcome_values={actual_outcomes[:3]}...: {e}"
+                    ) from e
 
         self.metrics.last_updated = datetime.now()
 
@@ -707,22 +655,19 @@ class AdvancedRoutingOptimizer:
         if len(self.experiences) < self.config.min_experiences_for_training:
             return False
 
-        # Trigger every N experiences
         if len(self.experiences) % self.config.update_frequency == 0:
             return True
 
-        # Trigger if performance is declining
         recent_rewards = [exp.reward for exp in self.experiences[-10:]]
         if len(recent_rewards) >= 10:
             recent_avg = np.mean(recent_rewards)
-            if recent_avg < self.metrics.avg_reward - 0.1:  # Significant decline
+            if recent_avg < self.metrics.avg_reward - 0.1:
                 return True
 
         return False
 
     async def _run_optimization_step(self):
         """Run one step of GRPO optimization"""
-        # Lazy initialize advanced optimizer if we now have enough experiences
         if (
             self.advanced_optimizer is None
             and len(self.experiences) >= self.config.min_experiences_for_training
@@ -740,14 +685,12 @@ class AdvancedRoutingOptimizer:
         try:
             logger.info("Running GRPO optimization step...")
 
-            # Sample batch from experience replay
             batch_experiences = np.random.choice(
                 self.experience_replay,
                 size=min(self.config.batch_size, len(self.experience_replay)),
                 replace=False,
             ).tolist()
 
-            # Prepare training data
             training_examples = []
             for exp in batch_experiences:
                 example = dspy.Example(
@@ -762,7 +705,6 @@ class AdvancedRoutingOptimizer:
 
                 training_examples.append(example)
 
-            # Run bootstrap optimization
             if self.routing_policy and training_examples:
                 optimized_policy = self.advanced_optimizer.compile(
                     self.routing_policy,
@@ -774,17 +716,17 @@ class AdvancedRoutingOptimizer:
                 self.routing_policy = optimized_policy
                 self.training_step += 1
 
-                # Update exploration rate
                 self.current_epsilon = max(
                     self.config.min_epsilon,
                     self.current_epsilon * self.config.epsilon_decay,
                 )
 
                 logger.info(
-                    f"GRPO optimization step {self.training_step} complete. Epsilon: {self.current_epsilon:.3f}"
+                    "GRPO optimization step %d complete. Epsilon: %.3f",
+                    self.training_step,
+                    self.current_epsilon,
                 )
 
-                # Update improvement rate metric
                 if len(self.experiences) > 100:
                     old_rewards = [exp.reward for exp in self.experiences[-200:-100]]
                     new_rewards = [exp.reward for exp in self.experiences[-100:]]
@@ -795,7 +737,10 @@ class AdvancedRoutingOptimizer:
                         )
 
         except Exception as e:
-            logger.error(f"Advanced optimization step failed: {e}")
+            raise RuntimeError(
+                f"GRPO optimization step {self.training_step} failed "
+                f"for tenant '{self.tenant_id}': {e}"
+            ) from e
 
     async def get_routing_recommendations(
         self,
@@ -815,7 +760,6 @@ class AdvancedRoutingOptimizer:
             Routing recommendations with confidence and reasoning
         """
         try:
-            # If optimization not ready, provide basic recommendations
             if (
                 not self.routing_policy
                 or len(self.experiences) < self.config.min_experiences_for_training
@@ -824,9 +768,7 @@ class AdvancedRoutingOptimizer:
                     query, entities, relationships
                 )
 
-            # Use optimized policy for recommendations
-            enhanced_query = query  # Could enhance with relationships here
-
+            enhanced_query = query
             prediction = self.routing_policy(
                 query=query,
                 entities=entities,
@@ -834,12 +776,10 @@ class AdvancedRoutingOptimizer:
                 enhanced_query=enhanced_query,
             )
 
-            # Extract and calibrate results
             recommended_agent = prediction.recommended_agent
             raw_confidence = float(prediction.confidence)
             reasoning = prediction.reasoning
 
-            # Apply confidence calibration
             calibrated_confidence = await self._calibrate_confidence(
                 raw_confidence, query, entities, relationships
             )
@@ -854,8 +794,9 @@ class AdvancedRoutingOptimizer:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get routing recommendations: {e}")
-            return self._get_baseline_recommendations(query, entities, relationships)
+            raise RuntimeError(
+                f"Failed to get routing recommendations for query '{query[:80]}': {e}"
+            ) from e
 
     def _get_baseline_recommendations(
         self,
@@ -865,7 +806,6 @@ class AdvancedRoutingOptimizer:
     ) -> Dict[str, Any]:
         """Provide baseline recommendations when optimization not ready"""
 
-        # Simple rule-based recommendations
         query_lower = query.lower()
 
         if any(
@@ -894,7 +834,6 @@ class AdvancedRoutingOptimizer:
             confidence = 0.6
             reasoning = "Default routing to video search agent"
 
-        # Adjust confidence based on historical performance if available
         if agent in self.metrics.agent_preferences:
             agent_performance = self.metrics.agent_preferences[agent]
             confidence = min(1.0, confidence * (0.8 + 0.4 * agent_performance))
@@ -930,16 +869,12 @@ class AdvancedRoutingOptimizer:
             Optimized routing decision
         """
         try:
-            # If optimization not ready, return baseline
             if not self.routing_policy or not self.advanced_optimizer:
                 return self._apply_baseline_improvements(baseline_prediction)
 
-            # Apply exploration vs exploitation
             if np.random.random() < self.current_epsilon:
-                # Exploration: use baseline with some randomization
                 return self._add_exploration_noise(baseline_prediction)
 
-            # Exploitation: use optimized policy
             optimized_prediction = self.routing_policy(
                 query=query,
                 entities=entities,
@@ -952,7 +887,6 @@ class AdvancedRoutingOptimizer:
             raw_confidence = float(optimized_prediction.confidence)
             reasoning = optimized_prediction.reasoning
 
-            # Apply confidence calibration
             calibrated_confidence = await self._calibrate_confidence(
                 raw_confidence, query, entities, relationships
             )
@@ -967,8 +901,9 @@ class AdvancedRoutingOptimizer:
             }
 
         except Exception as e:
-            logger.error(f"GRPO optimization failed, using baseline: {e}")
-            return self._apply_baseline_improvements(baseline_prediction)
+            raise RuntimeError(
+                f"GRPO routing optimization failed for query '{query[:80]}': {e}"
+            ) from e
 
     async def _calibrate_confidence(
         self,
@@ -983,17 +918,13 @@ class AdvancedRoutingOptimizer:
             return raw_confidence
 
         try:
-            # Compute query complexity indicators
             query_complexity = (
                 min(1.0, len(query.split()) / 20.0)  # Word count complexity
                 + min(1.0, len(entities) / 10.0)  # Entity complexity
                 + min(1.0, len(relationships) / 5.0)  # Relationship complexity
             ) / 3.0
 
-            # Get historical accuracy for similar queries
             historical_accuracy = self._get_historical_accuracy_for_query_type(query)
-
-            # Apply calibration
             calibrated_result = self.confidence_calibrator(
                 raw_confidence=raw_confidence,
                 query_complexity=query_complexity,
@@ -1004,31 +935,30 @@ class AdvancedRoutingOptimizer:
             return max(0.0, min(1.0, calibrated_confidence))
 
         except Exception as e:
-            logger.error(f"Confidence calibration failed: {e}")
-            return raw_confidence
+            raise RuntimeError(
+                f"Confidence calibration failed for raw_confidence={raw_confidence}: {e}"
+            ) from e
 
     def _get_historical_accuracy_for_query_type(self, query: str) -> float:
         """Get historical accuracy for similar query types"""
         if not self.experiences:
-            return 0.7  # Default
+            return 0.7
 
-        # Simple similarity: count common words
         query_words = set(query.lower().split())
 
         similar_experiences = []
-        for exp in self.experiences[-200:]:  # Last 200 experiences
+        for exp in self.experiences[-200:]:
             exp_words = set(exp.query.lower().split())
             similarity = len(query_words.intersection(exp_words)) / max(
                 len(query_words), len(exp_words), 1
             )
 
-            if similarity > 0.3:  # Minimum similarity threshold
+            if similarity > 0.3:
                 similar_experiences.append(exp)
 
         if not similar_experiences:
             return self.metrics.confidence_accuracy
 
-        # Return success rate for similar queries
         success_rate = sum(1 for exp in similar_experiences if exp.agent_success) / len(
             similar_experiences
         )
@@ -1040,10 +970,8 @@ class AdvancedRoutingOptimizer:
         """Apply basic improvements to baseline prediction"""
         improved = baseline_prediction.copy()
 
-        # Apply agent preference learning
         agent = baseline_prediction.get("recommended_agent", "search_agent")
         if agent in self.metrics.agent_preferences:
-            # Boost confidence if this agent has performed well historically
             agent_performance = self.metrics.agent_preferences[agent]
             confidence_boost = (agent_performance - 0.5) * 0.1  # Small adjustment
 
@@ -1063,14 +991,12 @@ class AdvancedRoutingOptimizer:
         """Add exploration noise to baseline prediction"""
         exploration = baseline_prediction.copy()
 
-        # Randomly adjust confidence
-        confidence_noise = np.random.normal(0, 0.05)  # Small noise
+        confidence_noise = np.random.normal(0, 0.05)
         original_confidence = baseline_prediction.get("confidence", 0.7)
         exploration["confidence"] = max(
             0.0, min(1.0, original_confidence + confidence_noise)
         )
 
-        # Occasionally suggest different agent (small probability)
         if np.random.random() < 0.1:
             agents = ["search_agent", "summarizer_agent", "detailed_report_agent"]
             current_agent = baseline_prediction.get("recommended_agent", "search_agent")
@@ -1088,12 +1014,10 @@ class AdvancedRoutingOptimizer:
     async def _persist_data(self):
         """Persist experiences and metrics via ArtifactManager."""
         try:
-            # Save experiences as demonstrations
             if self.experiences:
                 demos = []
                 for exp in self.experiences:
                     exp_dict = asdict(exp)
-                    # Serialize datetime for JSON
                     exp_dict["timestamp"] = exp_dict["timestamp"].isoformat()
                     demos.append(
                         {
@@ -1130,7 +1054,6 @@ class AdvancedRoutingOptimizer:
                     "routing_optimizer", demos
                 )
 
-            # Save metrics
             metrics_dict = {
                 "total_experiences": self.metrics.total_experiences,
                 "avg_reward": float(self.metrics.avg_reward),
@@ -1150,7 +1073,9 @@ class AdvancedRoutingOptimizer:
             logger.debug("Persisted %d experiences and metrics", len(self.experiences))
 
         except Exception as e:
-            logger.error("Failed to persist optimization data: %s", e)
+            raise RuntimeError(
+                f"Failed to persist optimization data for tenant '{self.tenant_id}': {e}"
+            ) from e
 
     def _load_stored_data(self):
         """Load previously stored experiences and metrics from telemetry."""
@@ -1164,36 +1089,38 @@ class AdvancedRoutingOptimizer:
             loop = None
 
         if loop is not None and loop.is_running():
-            # Inside an async context — schedule and apply when ready
             task = asyncio.ensure_future(
                 self._artifact_manager.load_demonstrations("routing_optimizer")
             )
             task.add_done_callback(self._on_demos_loaded)
         else:
-            try:
-                demos = asyncio.run(
-                    self._artifact_manager.load_demonstrations("routing_optimizer")
-                )
-                self._apply_loaded_demos(demos)
-            except Exception as e:
-                logger.error("Failed to load stored optimization data: %s", e)
+            demos = asyncio.run(
+                self._artifact_manager.load_demonstrations("routing_optimizer")
+            )
+            self._apply_loaded_demos(demos)
 
     def _on_demos_loaded(self, future: asyncio.Future):
         """Callback for async demo loading."""
-        try:
-            demos = future.result()
-            self._apply_loaded_demos(demos)
-        except Exception as e:
-            logger.error("Failed to load stored optimization data: %s", e)
+        demos = future.result()
+        self._apply_loaded_demos(demos)
+
+    @staticmethod
+    def _parse_demo_field(value: Any) -> dict:
+        """Parse a demo field that may be a JSON string or already a dict."""
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return json.loads(value) if value else {}
+        return {}
 
     def _apply_loaded_demos(self, demos):
         """Apply loaded demos to experience buffer."""
         if not demos:
             return
         for demo in demos:
-            inp = json.loads(demo.get("input", "{}"))
-            out = json.loads(demo.get("output", "{}"))
-            meta = json.loads(demo.get("metadata", "{}"))
+            inp = self._parse_demo_field(demo.get("input", "{}"))
+            out = self._parse_demo_field(demo.get("output", "{}"))
+            meta = self._parse_demo_field(demo.get("metadata", "{}"))
             exp = RoutingExperience(
                 query=inp.get("query", ""),
                 entities=inp.get("entities", []),
@@ -1277,8 +1204,9 @@ class AdvancedRoutingOptimizer:
                 },
             }
         except Exception as e:
-            logger.error(f"Routing policy optimization failed: {e}")
-            return {"status": "error", "error": str(e)}
+            raise RuntimeError(
+                f"Routing policy optimization failed for tenant '{self.tenant_id}': {e}"
+            ) from e
 
     async def generate_synthetic_training_data(
         self,
@@ -1304,7 +1232,7 @@ class AdvancedRoutingOptimizer:
             SyntheticDataService,
         )
 
-        logger.info(f"🔄 Generating {count} synthetic routing examples...")
+        logger.info("Generating %d synthetic routing examples...", count)
 
         # Generate synthetic data directly
         service = SyntheticDataService(
@@ -1315,7 +1243,6 @@ class AdvancedRoutingOptimizer:
         request = SyntheticDataRequest(optimizer="routing", count=count)
         response = await service.generate(request)
 
-        # Convert to RoutingExperience objects
         initial_count = len(self.experiences)
         for example_data in response.data:
             experience = RoutingExperience(
@@ -1338,8 +1265,9 @@ class AdvancedRoutingOptimizer:
         added_count = len(self.experiences) - initial_count
 
         logger.info(
-            f"✅ Added {added_count} synthetic examples to routing experiences "
-            f"(total: {len(self.experiences)})"
+            "Added %d synthetic examples to routing experiences (total: %d)",
+            added_count,
+            len(self.experiences),
         )
 
         return added_count
@@ -1364,20 +1292,6 @@ class AdvancedRoutingOptimizer:
             improvement_rate=0.0,
         )
 
-        # Clear stored files
-        try:
-            experience_file = self.storage_dir / self.config.experience_file
-            metrics_file = self.storage_dir / self.config.metrics_file
-
-            if experience_file.exists():
-                experience_file.unlink()
-            if metrics_file.exists():
-                metrics_file.unlink()
-
-        except Exception as e:
-            logger.error(f"Failed to clear stored files: {e}")
-
-        # Re-initialize components
         self._initialize_advanced_components()
 
         logger.info("Advanced optimization reset complete")
