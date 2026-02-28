@@ -234,6 +234,90 @@ class ArtifactManager:
             demos.append({"input": inp, "output": out, "metadata": meta})
         return demos
 
+    def _blob_dataset_name(self, kind: str, key: str) -> str:
+        return f"dspy-{kind}-{self._tenant_id}-{key}"
+
+    async def save_blob(self, kind: str, key: str, content: str) -> str:
+        """Persist an arbitrary string blob as a single-row dataset.
+
+        Intended for serialized models (DSPy JSON, XGBoost JSON),
+        checkpoints, embedding caches, and other opaque string payloads.
+
+        Args:
+            kind: Category (e.g. ``model``, ``checkpoint``, ``embeddings``).
+            key: Identifier within the category.
+            content: The string payload to store.
+
+        Returns:
+            Dataset identifier assigned by the store.
+        """
+        df = pd.DataFrame([{"content": content}])
+        dataset_name = self._blob_dataset_name(kind, key)
+        dataset_id = await self._provider.datasets.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "artifact_type": f"blob_{kind}",
+                "key": key,
+                "tenant_id": self._tenant_id,
+                "created_at": datetime.now().isoformat(),
+                "input_keys": ["content"],
+                "output_keys": [],
+            },
+        )
+        logger.info(
+            "Saved blob %s/%s for %s → dataset %s",
+            kind,
+            key,
+            self._tenant_id,
+            dataset_id,
+        )
+        return dataset_id
+
+    async def load_blob(self, kind: str, key: str) -> Optional[str]:
+        """Load a string blob from dataset.
+
+        Returns:
+            The stored string or ``None`` if no dataset exists.
+        """
+        dataset_name = self._blob_dataset_name(kind, key)
+        try:
+            df = await self._provider.datasets.get_dataset(name=dataset_name)
+        except (KeyError, ValueError):
+            logger.debug(
+                "No blob dataset found for %s/%s/%s",
+                self._tenant_id,
+                kind,
+                key,
+            )
+            return None
+
+        if df is None or df.empty:
+            return None
+
+        # Extract content from the dataset (last row = latest version)
+        if "content" in df.columns:
+            content = df["content"].iloc[-1]
+        elif "input" in df.columns:
+            inp = df["input"].iloc[-1]
+            content = inp.get("content", inp) if isinstance(inp, dict) else inp
+        else:
+            logger.warning(
+                "Blob dataset %s has unexpected columns: %s",
+                dataset_name,
+                list(df.columns),
+            )
+            return None
+
+        logger.info(
+            "Loaded blob %s/%s for %s (%d chars)",
+            kind,
+            key,
+            self._tenant_id,
+            len(content) if content else 0,
+        )
+        return content
+
     async def log_optimization_run(
         self, agent_type: str, metrics: Dict[str, Any]
     ) -> str:

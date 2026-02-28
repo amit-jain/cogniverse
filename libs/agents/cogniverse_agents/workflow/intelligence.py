@@ -31,13 +31,8 @@ from typing import Any, Dict, List, Optional
 # DSPy 3.0 imports
 import dspy
 
-# Database/persistence imports (for workflow history)
-try:
-    import sqlite3
-
-    SQLITE_AVAILABLE = True
-except ImportError:
-    SQLITE_AVAILABLE = False
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Shared workflow types
 from cogniverse_agents.workflow.types import (
@@ -159,14 +154,26 @@ class WorkflowIntelligence:
 
     def __init__(
         self,
+        telemetry_provider: TelemetryProvider,
+        tenant_id: str,
         max_history_size: int = 10000,
-        enable_persistence: bool = True,
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
     ):
+        """
+        Initialize workflow intelligence.
+
+        Args:
+            telemetry_provider: Telemetry provider for artifact persistence.
+            tenant_id: Tenant identifier for multi-tenant isolation.
+            max_history_size: Maximum in-memory history size.
+            optimization_strategy: Optimization strategy to use.
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for WorkflowIntelligence")
         self.logger = logging.getLogger(__name__)
         self.max_history_size = max_history_size
-        self.enable_persistence = enable_persistence and SQLITE_AVAILABLE
         self.optimization_strategy = optimization_strategy
+        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
         # In-memory data structures
         self.workflow_history: deque = deque(maxlen=max_history_size)
@@ -185,13 +192,6 @@ class WorkflowIntelligence:
 
         # Initialize DSPy modules
         self._initialize_dspy_modules()
-
-        # Initialize persistence if enabled
-        if self.enable_persistence:
-            self._initialize_persistence()
-
-        # Load historical data
-        self._load_historical_data()
 
     def _initialize_dspy_modules(self) -> None:
         """Initialize DSPy modules for workflow intelligence"""
@@ -231,151 +231,70 @@ class WorkflowIntelligence:
         self.template_generator = FallbackTemplateModule()
         self.logger.warning("Using fallback workflow intelligence modules")
 
-    def _initialize_persistence(self) -> None:
-        """Initialize SQLite persistence for workflow history"""
+    async def load_historical_data(self) -> None:
+        """Load historical data from telemetry."""
         try:
-            from cogniverse_core.common.utils.output_manager import get_output_manager
-
-            # Get output directory from config-based OutputManager
-            output_manager = get_output_manager()
-            db_dir = output_manager.get_path("data")  # databases go in outputs/data/
-            db_path = db_dir / "workflow_intelligence.db"
-
-            self.db_connection = sqlite3.connect(str(db_path), check_same_thread=False)
-            self._create_tables()
-            self.logger.info(
-                f"Workflow intelligence persistence initialized: {db_path}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Failed to initialize persistence: {e}")
-            self.enable_persistence = False
-
-    def _create_tables(self) -> None:
-        """Create database tables for persistence"""
-        cursor = self.db_connection.cursor()
-
-        # Workflow executions table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow_executions (
-                workflow_id TEXT PRIMARY KEY,
-                query TEXT NOT NULL,
-                query_type TEXT,
-                execution_time REAL,
-                success BOOLEAN,
-                agent_sequence TEXT,
-                task_count INTEGER,
-                parallel_efficiency REAL,
-                confidence_score REAL,
-                user_satisfaction REAL,
-                error_details TEXT,
-                timestamp TEXT,
-                metadata TEXT
-            )
-        """
-        )
-
-        # Agent performance table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_performance (
-                agent_name TEXT PRIMARY KEY,
-                total_executions INTEGER,
-                successful_executions INTEGER,
-                average_execution_time REAL,
-                average_confidence REAL,
-                error_rate REAL,
-                preferred_query_types TEXT,
-                performance_trend TEXT,
-                last_updated TEXT
-            )
-        """
-        )
-
-        # Workflow templates table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow_templates (
-                template_id TEXT PRIMARY KEY,
-                name TEXT,
-                description TEXT,
-                query_patterns TEXT,
-                task_sequence TEXT,
-                expected_execution_time REAL,
-                success_rate REAL,
-                usage_count INTEGER,
-                created_at TEXT,
-                last_used TEXT
-            )
-        """
-        )
-
-        self.db_connection.commit()
-
-    def _load_historical_data(self) -> None:
-        """Load historical data from persistence"""
-        if not self.enable_persistence:
-            return
-
-        try:
-            cursor = self.db_connection.cursor()
-
             # Load workflow executions
-            cursor.execute(
-                "SELECT * FROM workflow_executions ORDER BY timestamp DESC LIMIT ?",
-                (self.max_history_size,),
-            )
-            for row in cursor.fetchall():
-                execution = WorkflowExecution(
-                    workflow_id=row[0],
-                    query=row[1],
-                    query_type=row[2],
-                    execution_time=row[3],
-                    success=bool(row[4]),
-                    agent_sequence=json.loads(row[5]) if row[5] else [],
-                    task_count=row[6],
-                    parallel_efficiency=row[7],
-                    confidence_score=row[8],
-                    user_satisfaction=row[9],
-                    error_details=row[10],
-                    timestamp=datetime.fromisoformat(row[11]),
-                    metadata=json.loads(row[12]) if row[12] else {},
-                )
-                self.workflow_history.append(execution)
+            demos = await self._artifact_manager.load_demonstrations("workflow")
+            if demos:
+                for demo in demos:
+                    try:
+                        data = json.loads(demo["input"])
+                        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+                        execution = WorkflowExecution(**data)
+                        self.workflow_history.append(execution)
+                    except Exception as e:
+                        self.logger.warning(f"Skipping malformed execution: {e}")
 
             # Load agent performance
-            cursor.execute("SELECT * FROM agent_performance")
-            for row in cursor.fetchall():
-                performance = AgentPerformance(
-                    agent_name=row[0],
-                    total_executions=row[1],
-                    successful_executions=row[2],
-                    average_execution_time=row[3],
-                    average_confidence=row[4],
-                    error_rate=row[5],
-                    preferred_query_types=json.loads(row[6]) if row[6] else [],
-                    performance_trend=row[7],
-                    last_updated=datetime.fromisoformat(row[8]),
-                )
-                self.agent_performance[row[0]] = performance
+            profiles = await self._artifact_manager.load_demonstrations(
+                "agent_profiles"
+            )
+            if profiles:
+                for profile in profiles:
+                    try:
+                        data = json.loads(profile["input"])
+                        data["last_updated"] = datetime.fromisoformat(
+                            data["last_updated"]
+                        )
+                        perf = AgentPerformance(**data)
+                        self.agent_performance[perf.agent_name] = perf
+                    except Exception as e:
+                        self.logger.warning(f"Skipping malformed agent profile: {e}")
+
+            # Load query patterns
+            patterns_json = await self._artifact_manager.load_blob(
+                "workflow", "query_patterns"
+            )
+            if patterns_json:
+                self.query_type_patterns = defaultdict(list, json.loads(patterns_json))
 
             # Load workflow templates
-            cursor.execute("SELECT * FROM workflow_templates")
-            for row in cursor.fetchall():
-                template = WorkflowTemplate(
-                    template_id=row[0],
-                    name=row[1],
-                    description=row[2],
-                    query_patterns=json.loads(row[3]) if row[3] else [],
-                    task_sequence=json.loads(row[4]) if row[4] else [],
-                    expected_execution_time=row[5],
-                    success_rate=row[6],
-                    usage_count=row[7],
-                    created_at=datetime.fromisoformat(row[8]),
-                    last_used=datetime.fromisoformat(row[9]) if row[9] else None,
-                )
-                self.workflow_templates[row[0]] = template
+            template_index_json = await self._artifact_manager.load_blob(
+                "workflow", "template_index"
+            )
+            if template_index_json:
+                template_ids = json.loads(template_index_json)
+                for tid in template_ids:
+                    tmpl_json = await self._artifact_manager.load_blob(
+                        "workflow", f"template_{tid}"
+                    )
+                    if tmpl_json:
+                        try:
+                            data = json.loads(tmpl_json)
+                            data["created_at"] = datetime.fromisoformat(
+                                data["created_at"]
+                            )
+                            if data.get("last_used"):
+                                data["last_used"] = datetime.fromisoformat(
+                                    data["last_used"]
+                                )
+                            template = WorkflowTemplate(**data)
+                            self.workflow_templates[tid] = template
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Skipping malformed template {tid}: {e}"
+                            )
 
             self.logger.info(
                 f"Loaded {len(self.workflow_history)} executions, "
@@ -413,9 +332,8 @@ class WorkflowIntelligence:
             # Update agent performance
             await self._update_agent_performance(workflow_plan)
 
-            # Persist if enabled
-            if self.enable_persistence:
-                await self._persist_execution(execution)
+            # Persist to telemetry
+            await self._persist_execution(execution)
 
             # Check for template creation opportunities
             await self._evaluate_template_creation(execution)
@@ -779,9 +697,8 @@ class WorkflowIntelligence:
 
             perf.last_updated = datetime.now()
 
-            # Persist if enabled
-            if self.enable_persistence:
-                await self._persist_agent_performance(perf)
+            # Persist to telemetry
+            await self._persist_agent_performance(perf)
 
     async def _evaluate_template_creation(self, execution: WorkflowExecution) -> None:
         """Evaluate whether to create a new workflow template"""
@@ -856,9 +773,8 @@ class WorkflowIntelligence:
             self.workflow_templates[template_id] = template
             self.optimization_stats["templates_created"] += 1
 
-            # Persist if enabled
-            if self.enable_persistence:
-                await self._persist_template(template)
+            # Persist to telemetry
+            await self._persist_template(template)
 
             self.logger.info(f"Created workflow template: {template.name}")
 
@@ -968,101 +884,76 @@ class WorkflowIntelligence:
         return relevant[:limit]
 
     async def _persist_execution(self, execution: WorkflowExecution) -> None:
-        """Persist workflow execution to database"""
-        if not self.enable_persistence:
-            return
-
+        """Persist workflow execution to telemetry."""
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO workflow_executions 
-                (workflow_id, query, query_type, execution_time, success, agent_sequence,
-                 task_count, parallel_efficiency, confidence_score, user_satisfaction,
-                 error_details, timestamp, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    execution.workflow_id,
-                    execution.query,
-                    execution.query_type,
-                    execution.execution_time,
-                    execution.success,
-                    json.dumps(execution.agent_sequence),
-                    execution.task_count,
-                    execution.parallel_efficiency,
-                    execution.confidence_score,
-                    execution.user_satisfaction,
-                    execution.error_details,
-                    execution.timestamp.isoformat(),
-                    json.dumps(execution.metadata),
-                ),
+            exec_dict = {
+                "workflow_id": execution.workflow_id,
+                "query": execution.query,
+                "query_type": execution.query_type,
+                "execution_time": execution.execution_time,
+                "success": execution.success,
+                "agent_sequence": execution.agent_sequence,
+                "task_count": execution.task_count,
+                "parallel_efficiency": execution.parallel_efficiency,
+                "confidence_score": execution.confidence_score,
+                "user_satisfaction": execution.user_satisfaction,
+                "error_details": execution.error_details,
+                "timestamp": execution.timestamp.isoformat(),
+                "metadata": execution.metadata,
+            }
+            await self._artifact_manager.save_demonstrations(
+                "workflow",
+                [{"input": json.dumps(exec_dict, default=str), "output": "execution"}],
             )
-            self.db_connection.commit()
-
         except Exception as e:
             self.logger.error(f"Failed to persist execution: {e}")
 
     async def _persist_agent_performance(self, performance: AgentPerformance) -> None:
-        """Persist agent performance to database"""
-        if not self.enable_persistence:
-            return
-
+        """Persist agent performance to telemetry."""
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO agent_performance 
-                (agent_name, total_executions, successful_executions, average_execution_time,
-                 average_confidence, error_rate, preferred_query_types, performance_trend, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    performance.agent_name,
-                    performance.total_executions,
-                    performance.successful_executions,
-                    performance.average_execution_time,
-                    performance.average_confidence,
-                    performance.error_rate,
-                    json.dumps(performance.preferred_query_types),
-                    performance.performance_trend,
-                    performance.last_updated.isoformat(),
-                ),
+            perf_dict = {
+                "agent_name": performance.agent_name,
+                "total_executions": performance.total_executions,
+                "successful_executions": performance.successful_executions,
+                "average_execution_time": performance.average_execution_time,
+                "average_confidence": performance.average_confidence,
+                "error_rate": performance.error_rate,
+                "preferred_query_types": performance.preferred_query_types,
+                "performance_trend": performance.performance_trend,
+                "last_updated": performance.last_updated.isoformat(),
+            }
+            await self._artifact_manager.save_demonstrations(
+                "agent_profiles",
+                [{"input": json.dumps(perf_dict, default=str), "output": "profile"}],
             )
-            self.db_connection.commit()
-
         except Exception as e:
             self.logger.error(f"Failed to persist agent performance: {e}")
 
     async def _persist_template(self, template: WorkflowTemplate) -> None:
-        """Persist workflow template to database"""
-        if not self.enable_persistence:
-            return
-
+        """Persist workflow template to telemetry."""
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO workflow_templates 
-                (template_id, name, description, query_patterns, task_sequence,
-                 expected_execution_time, success_rate, usage_count, created_at, last_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    template.template_id,
-                    template.name,
-                    template.description,
-                    json.dumps(template.query_patterns),
-                    json.dumps(template.task_sequence),
-                    template.expected_execution_time,
-                    template.success_rate,
-                    template.usage_count,
-                    template.created_at.isoformat(),
-                    template.last_used.isoformat() if template.last_used else None,
-                ),
+            template_dict = {
+                "template_id": template.template_id,
+                "name": template.name,
+                "description": template.description,
+                "query_patterns": template.query_patterns,
+                "task_sequence": template.task_sequence,
+                "expected_execution_time": template.expected_execution_time,
+                "success_rate": template.success_rate,
+                "usage_count": template.usage_count,
+                "created_at": template.created_at.isoformat(),
+                "last_used": template.last_used.isoformat() if template.last_used else None,
+            }
+            await self._artifact_manager.save_blob(
+                "workflow", "template_" + template.template_id,
+                json.dumps(template_dict, default=str),
             )
-            self.db_connection.commit()
-
+            # Update template index for reload
+            template_ids = list(self.workflow_templates.keys())
+            await self._artifact_manager.save_blob(
+                "workflow", "template_index",
+                json.dumps(template_ids),
+            )
         except Exception as e:
             self.logger.error(f"Failed to persist template: {e}")
 
@@ -1092,7 +983,7 @@ class WorkflowIntelligence:
                 "query_types": len(
                     set(exec.query_type for exec in self.workflow_history)
                 ),
-                "persistence_enabled": self.enable_persistence,
+                "persistence_enabled": True,
                 "optimization_strategy": self.optimization_strategy.value,
             }
         )
@@ -1145,9 +1036,8 @@ class WorkflowIntelligence:
             # Add to history
             self.workflow_history.append(workflow_execution)
 
-            # Persist if enabled
-            if self.enable_persistence:
-                await self._persist_execution(workflow_execution)
+            # Persist to telemetry
+            await self._persist_execution(workflow_execution)
 
             # Check for template creation opportunities
             await self._evaluate_template_creation(workflow_execution)
@@ -1176,9 +1066,8 @@ class WorkflowIntelligence:
             # Add to history with higher priority
             self.workflow_history.append(workflow_execution)
 
-            # Persist if enabled
-            if self.enable_persistence:
-                await self._persist_execution(workflow_execution)
+            # Persist to telemetry
+            await self._persist_execution(workflow_execution)
 
             # Always evaluate for template creation from ground truth
             await self._evaluate_template_creation(workflow_execution)
@@ -1275,39 +1164,15 @@ class WorkflowIntelligence:
 
 
 def create_workflow_intelligence(
+    telemetry_provider: TelemetryProvider,
+    tenant_id: str,
     max_history_size: int = 10000,
-    enable_persistence: bool = True,
     optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
 ) -> WorkflowIntelligence:
     """Factory function to create workflow intelligence system"""
     return WorkflowIntelligence(
+        telemetry_provider=telemetry_provider,
+        tenant_id=tenant_id,
         max_history_size=max_history_size,
-        enable_persistence=enable_persistence,
         optimization_strategy=optimization_strategy,
     )
-
-
-# Example usage
-if __name__ == "__main__":
-
-    async def test_workflow_intelligence():
-        """Test workflow intelligence system"""
-        # Create workflow intelligence
-        intelligence = create_workflow_intelligence(
-            optimization_strategy=OptimizationStrategy.BALANCED
-        )
-
-        # Test statistics
-        stats = intelligence.get_intelligence_statistics()
-        print("Workflow Intelligence Statistics:")
-        for key, value in stats.items():
-            if isinstance(value, (int, float)):
-                print(f"  {key}: {value:.3f}")
-            elif isinstance(value, dict) and len(value) < 10:
-                print(f"  {key}: {value}")
-            else:
-                print(
-                    f"  {key}: {type(value).__name__} with {len(value) if hasattr(value, '__len__') else '?'} items"
-                )
-
-    asyncio.run(test_workflow_intelligence())
