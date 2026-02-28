@@ -6,8 +6,7 @@ model versioning, and A/B testing for the routing system.
 """
 
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: F401
 
 import pytest
 
@@ -18,6 +17,29 @@ from cogniverse_agents.routing.mlflow_integration import (
     ModelVersionInfo,
     create_mlflow_integration,
 )
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider for unit tests."""
+    provider = MagicMock()
+    datasets: dict = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 class TestExperimentConfig:
@@ -116,11 +138,10 @@ class TestMLflowIntegration:
 
             # Should initialize without error
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             assert integration.config == config
-            assert integration.storage_dir == Path(temp_dir)
             # client is None in mock/test mode, which is expected
             assert integration.experiment_id is not None
 
@@ -132,7 +153,11 @@ class TestMLflowIntegration:
             "cogniverse_agents.routing.mlflow_integration.MLFLOW_AVAILABLE", False
         ):
             with pytest.raises(ImportError, match="MLflow not available"):
-                MLflowIntegration(config)
+                MLflowIntegration(
+                    config,
+                    telemetry_provider=_make_mock_telemetry_provider(),
+                    tenant_id="test_tenant",
+                )
 
     def test_start_run(self):
         """Test starting an MLflow run."""
@@ -142,7 +167,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start a run using context manager
@@ -160,7 +185,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start run and log performance
@@ -192,7 +217,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start run and log optimization metrics
@@ -224,7 +249,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             with integration.start_run("model_test_run"):
@@ -256,7 +281,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             ab_config = ABTestConfig(
@@ -280,7 +305,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start A/B test
@@ -313,7 +338,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start A/B test
@@ -342,7 +367,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start run and log some metrics
@@ -379,7 +404,7 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start run using context manager
@@ -400,11 +425,10 @@ class TestMLflowIntegrationIntegration:
     def test_create_mlflow_integration_function(self):
         """Test the create_mlflow_integration helper function."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # storage_dir is not passed through kwargs to ExperimentConfig
-            # It's passed directly to MLflowIntegration constructor
-            # create_mlflow_integration only passes config-related kwargs
             integration = create_mlflow_integration(
                 experiment_name="helper_test",
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
                 tracking_uri=f"file://{temp_dir}/mlruns",
             )
 
@@ -439,7 +463,7 @@ class TestMLflowIntegrationIntegration:
             )
 
             integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
+                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
             )
 
             # Start experiment run

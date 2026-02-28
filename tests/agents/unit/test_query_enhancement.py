@@ -2170,7 +2170,7 @@ class TestDSPyComponentsIntegration:
             )
             mock_extractor_class.return_value = mock_extractor_instance
 
-            QueryEnhancementPipeline()
+            QueryEnhancementPipeline(enable_simba=False)
 
             # Process multiple queries (synchronous test, so we'll simulate the async calls)
             results = []
@@ -2233,7 +2233,7 @@ class TestDSPyComponentsIntegration:
                 QueryEnhancementPipeline,
             )
 
-            QueryEnhancementPipeline()
+            QueryEnhancementPipeline(enable_simba=False)
             # Since this is an async method but we're testing synchronously,
             # we'll simulate the result structure
             result = {

@@ -5,9 +5,7 @@ Tests essential MLflow functionality without excessive mocking or implementation
 Focuses on the components we actually need working.
 """
 
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,6 +13,29 @@ from cogniverse_agents.routing.mlflow_integration import (
     ExperimentConfig,
     MLflowIntegration,
 )
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory stores."""
+    provider = MagicMock()
+    datasets: dict = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.mark.unit
@@ -30,55 +51,54 @@ class TestMLflowCoreIntegration:
 
     def test_mlflow_integration_initialization(self):
         """Test MLflow integration can be initialized"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = ExperimentConfig(
-                experiment_name="test_init", tracking_uri=f"file://{temp_dir}/mlruns"
-            )
+        config = ExperimentConfig(experiment_name="test_init")
 
-            # Should not raise exception
-            integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
-            )
-            assert integration.config == config
-            assert integration.storage_dir == Path(temp_dir)
+        # Should not raise exception
+        integration = MLflowIntegration(
+            config,
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+            test_mode=True,
+        )
+        assert integration.config == config
 
     def test_context_manager_pattern(self):
         """Test that MLflow integration supports context manager pattern"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = ExperimentConfig(
-                experiment_name="test_context", tracking_uri=f"file://{temp_dir}/mlruns"
-            )
+        config = ExperimentConfig(experiment_name="test_context")
 
-            integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
-            )
+        integration = MLflowIntegration(
+            config,
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+            test_mode=True,
+        )
 
-            # Test context manager exists and is callable
-            assert hasattr(integration, "start_run")
-            context_manager = integration.start_run(run_name="test_run")
-            assert hasattr(context_manager, "__enter__")
-            assert hasattr(context_manager, "__exit__")
+        # Test context manager exists and is callable
+        assert hasattr(integration, "start_run")
+        context_manager = integration.start_run(run_name="test_run")
+        assert hasattr(context_manager, "__enter__")
+        assert hasattr(context_manager, "__exit__")
 
     def test_essential_methods_exist(self):
         """Test that essential methods exist on MLflow integration"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = ExperimentConfig(
-                experiment_name="test_methods", tracking_uri=f"file://{temp_dir}/mlruns"
-            )
+        config = ExperimentConfig(experiment_name="test_methods")
 
-            integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
-            )
+        integration = MLflowIntegration(
+            config,
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+            test_mode=True,
+        )
 
-            # Check essential methods exist
-            assert hasattr(integration, "start_run")
-            assert hasattr(integration, "log_routing_performance")
-            assert hasattr(integration, "log_optimization_metrics")
-            assert hasattr(integration, "save_dspy_model")
-            assert callable(integration.start_run)
-            assert callable(integration.log_routing_performance)
-            assert callable(integration.log_optimization_metrics)
-            assert callable(integration.save_dspy_model)
+        # Check essential methods exist
+        assert hasattr(integration, "start_run")
+        assert hasattr(integration, "log_routing_performance")
+        assert hasattr(integration, "log_optimization_metrics")
+        assert hasattr(integration, "save_dspy_model")
+        assert callable(integration.start_run)
+        assert callable(integration.log_routing_performance)
+        assert callable(integration.log_optimization_metrics)
+        assert callable(integration.save_dspy_model)
 
     def test_component_imports_successfully(self):
         """Test that all MLflow components can be imported"""
@@ -116,25 +136,24 @@ class TestMLflowIntegrationReadiness:
     @patch("cogniverse_agents.routing.mlflow_integration.mlflow")
     def test_integration_with_dspy_system(self, mock_mlflow):
         """Test MLflow integration can work with DSPy routing system"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = ExperimentConfig(
-                experiment_name="dspy_integration_test",
-                tracking_uri=f"file://{temp_dir}/mlruns",
-            )
+        config = ExperimentConfig(experiment_name="dspy_integration_test")
 
-            # Mock MLflow to avoid actual MLflow server dependency
-            mock_mlflow.set_tracking_uri = lambda x: None
-            mock_mlflow.create_experiment = (
-                lambda x, artifact_location=None, tags=None: "test_exp_id"
-            )
+        # Mock MLflow to avoid actual MLflow server dependency
+        mock_mlflow.set_tracking_uri = lambda x: None
+        mock_mlflow.create_experiment = (
+            lambda x, artifact_location=None, tags=None: "test_exp_id"
+        )
 
-            integration = MLflowIntegration(
-                config, storage_dir=temp_dir, test_mode=True
-            )
+        integration = MLflowIntegration(
+            config,
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+            test_mode=True,
+        )
 
-            # Should be ready for use
-            assert integration is not None
-            assert integration.config.experiment_name == "dspy_integration_test"
+        # Should be ready for use
+        assert integration is not None
+        assert integration.config.experiment_name == "dspy_integration_test"
 
     def test_factory_function_exists(self):
         """Test factory function for creating MLflow integration"""

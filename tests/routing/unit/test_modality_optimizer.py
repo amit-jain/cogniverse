@@ -2,10 +2,7 @@
 Unit tests for ModalityOptimizer
 """
 
-import shutil
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,11 +21,27 @@ class TestModalityOptimizer:
     """Test ModalityOptimizer functionality"""
 
     @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    def mock_telemetry_provider(self):
+        """Create mock telemetry provider with in-memory dataset store."""
+        provider = MagicMock()
+        datasets: dict = {}
+
+        async def create_dataset(name, data, metadata=None):
+            datasets[name] = data
+            return f"ds-{name}"
+
+        async def get_dataset(name):
+            if name not in datasets:
+                raise KeyError(f"Dataset {name} not found")
+            return datasets[name]
+
+        provider.datasets = MagicMock()
+        provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+        provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+        provider.experiments = MagicMock()
+        provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+        provider.experiments.log_run = AsyncMock(return_value="run-test")
+        return provider
 
     @pytest.fixture
     def mock_components(self):
@@ -66,19 +79,18 @@ class TestModalityOptimizer:
             }
 
     @pytest.fixture
-    def optimizer(self, temp_model_dir, mock_components):
+    def optimizer(self, mock_telemetry_provider, mock_components):
         """Create optimizer instance with mocked components"""
         return ModalityOptimizer(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            telemetry_provider=mock_telemetry_provider,
             tenant_id="test-tenant",
-            model_dir=temp_model_dir,
             vespa_client=None,
         )
 
-    def test_initialization(self, optimizer, temp_model_dir):
+    def test_initialization(self, optimizer):
         """Test optimizer initialization"""
         assert optimizer.tenant_id == "test-tenant"
-        assert optimizer.model_dir == temp_model_dir
         assert optimizer.span_collector is not None
         assert optimizer.evaluator is not None
         assert optimizer.training_history == {}
@@ -357,7 +369,7 @@ class TestModalityOptimizer:
         assert (
             "optimizer" in result
         )  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
-        assert "model_path" in result
+        assert "timestamp" in result  # Telemetry-backed: no model_path, has timestamp
 
     def test_record_training(self, optimizer):
         """Test recording training in history"""

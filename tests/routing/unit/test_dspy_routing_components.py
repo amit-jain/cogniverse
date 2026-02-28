@@ -112,14 +112,14 @@ class TestQueryEnhancementPipeline:
 
     def test_pipeline_initialization(self):
         """Test query enhancement pipeline initialization"""
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
         assert pipeline is not None
         assert hasattr(pipeline, "enhance_query_with_relationships")
 
     @pytest.mark.asyncio
     async def test_enhance_query_basic(self):
         """Test basic query enhancement"""
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         # Test with actual enhancement (should handle gracefully)
         result = await pipeline.enhance_query_with_relationships("original query")
@@ -132,14 +132,20 @@ class TestAdaptiveThresholdLearner:
 
     def test_learner_initialization(self):
         """Test adaptive threshold learner initialization"""
-        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
         assert learner is not None
         assert hasattr(learner, "config")
         assert hasattr(learner, "threshold_states")
 
     def test_learning_status(self):
         """Test getting learning status"""
-        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
         status = learner.get_learning_status()
 
         assert isinstance(status, dict)
@@ -148,7 +154,10 @@ class TestAdaptiveThresholdLearner:
     @pytest.mark.asyncio
     async def test_record_performance_sample(self):
         """Test recording performance sample"""
-        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
 
         # Test recording performance sample
         try:
@@ -252,9 +261,10 @@ class TestDSPyRoutingIntegration:
         """Test basic interaction between components"""
         # Initialize components with temporary storage
         extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
         AdaptiveThresholdLearner(
-            tenant_id="test-tenant"
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
         )  # Create but don't assign to unused variable
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",

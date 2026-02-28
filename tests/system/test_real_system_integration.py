@@ -426,7 +426,7 @@ class TestRealOllamaIntegration:
 
     def test_real_query_enhancement_with_ollama(self):
         """Test actual query enhancement using Ollama models"""
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         test_cases = [
             {
@@ -528,7 +528,7 @@ class TestRealPipelineIntegration:
         routing_deps = RoutingDeps(telemetry_config=telemetry_config)
         routing_agent = RoutingAgent(deps=routing_deps)
         extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline(enable_simba=False)
 
         test_query = "Find videos of people throwing objects"
 
@@ -730,7 +730,7 @@ class TestRealEndToEndIntegration:
 
         relationship_extractor = RelationshipExtractorTool()
 
-        query_enhancer = QueryEnhancementPipeline()
+        query_enhancer = QueryEnhancementPipeline(enable_simba=False)
 
         # Test query: "person throwing discus"
         test_query = "person throwing discus"

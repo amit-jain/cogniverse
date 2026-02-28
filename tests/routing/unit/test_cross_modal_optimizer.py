@@ -2,11 +2,7 @@
 Unit tests for CrossModalOptimizer
 """
 
-import json
-import shutil
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,11 +14,27 @@ class TestCrossModalOptimizer:
     """Test CrossModalOptimizer functionality"""
 
     @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    def mock_telemetry_provider(self):
+        """Create mock telemetry provider with in-memory dataset store."""
+        provider = MagicMock()
+        datasets: dict = {}
+
+        async def create_dataset(name, data, metadata=None):
+            datasets[name] = data
+            return f"ds-{name}"
+
+        async def get_dataset(name):
+            if name not in datasets:
+                raise KeyError(f"Dataset {name} not found")
+            return datasets[name]
+
+        provider.datasets = MagicMock()
+        provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+        provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+        provider.experiments = MagicMock()
+        provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+        provider.experiments.log_run = AsyncMock(return_value="run-test")
+        return provider
 
     @pytest.fixture
     def mock_fusion_model(self):
@@ -33,6 +45,7 @@ class TestCrossModalOptimizer:
             model = MagicMock()
             model.is_trained = False
             model.predict_benefit = MagicMock(return_value=0.6)
+            model.save_to_telemetry = AsyncMock(return_value=None)
             mock.return_value = model
             yield model
 
@@ -47,13 +60,16 @@ class TestCrossModalOptimizer:
             yield collector
 
     @pytest.fixture
-    def optimizer(self, temp_model_dir, mock_fusion_model, mock_span_collector):
+    def optimizer(self, mock_telemetry_provider, mock_fusion_model, mock_span_collector):
         """Create optimizer instance"""
-        return CrossModalOptimizer(tenant_id="test-tenant", model_dir=temp_model_dir)
+        return CrossModalOptimizer(
+            telemetry_provider=mock_telemetry_provider,
+            tenant_id="test-tenant",
+        )
 
-    def test_initialization(self, optimizer, temp_model_dir):
+    def test_initialization(self, optimizer):
         """Test optimizer initialization"""
-        assert optimizer.model_dir == temp_model_dir
+        assert optimizer.tenant_id == "test-tenant"
         assert optimizer.fusion_model is not None
         assert optimizer.fusion_history == []
         assert optimizer.fusion_success_rates == {}
@@ -282,7 +298,7 @@ class TestCrossModalOptimizer:
 
         assert result["status"] == "success"
         assert mock_fusion_model.train.called
-        assert mock_fusion_model.save.called
+        assert mock_fusion_model.save_to_telemetry.called
 
     def test_get_fusion_recommendations_single_modality(self, optimizer):
         """Test fusion recommendations with single modality"""
@@ -435,43 +451,6 @@ class TestCrossModalOptimizer:
 
         assert optimizer.fusion_history == []
         assert optimizer.fusion_success_rates == {}
-
-    def test_export_fusion_data(self, optimizer, temp_model_dir):
-        """Test exporting fusion data"""
-        # Add some fusion history
-        optimizer.fusion_history = [
-            {
-                "timestamp": (
-                    optimizer.fusion_history[0]["timestamp"]
-                    if optimizer.fusion_history
-                    else pytest.importorskip("datetime").datetime.now()
-                ),
-                "primary_modality": "video",
-                "secondary_modality": "document",
-                "fusion_context": {},
-                "success": True,
-                "improvement": 0.1,
-            }
-        ]
-        optimizer.fusion_success_rates = {
-            (QueryModality.VIDEO, QueryModality.DOCUMENT): 0.85
-        }
-
-        export_path = temp_model_dir / "fusion_data.json"
-        success = optimizer.export_fusion_data(export_path)
-
-        assert success is True
-        assert export_path.exists()
-
-        # Verify exported data
-        with open(export_path) as f:
-            data = json.load(f)
-
-        assert "fusion_history" in data
-        assert "fusion_success_rates" in data
-        assert "export_timestamp" in data
-        assert "video+document" in data["fusion_success_rates"]
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

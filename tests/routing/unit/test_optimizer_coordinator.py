@@ -39,12 +39,11 @@ class TestOptimizerCoordinator:
     """Test OptimizerCoordinator facade pattern and lazy loading."""
 
     @pytest.fixture
-    def coordinator(self, tmp_path):
-        """Create coordinator with temp optimization dir."""
+    def coordinator(self):
+        """Create coordinator with telemetry provider."""
         return OptimizerCoordinator(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
             telemetry_provider=_make_mock_telemetry_provider(),
-            optimization_dir=str(tmp_path / "optimization"),
             tenant_id="test_tenant",
         )
 
@@ -110,7 +109,7 @@ class TestOptimizerCoordinator:
         mock_cls.assert_called_once()
 
     @patch(
-        "cogniverse_agents.workflow_intelligence.WorkflowIntelligence",
+        "cogniverse_agents.workflow.intelligence.WorkflowIntelligence",
     )
     @patch(
         "cogniverse_agents.routing.unified_optimizer.UnifiedOptimizer",
@@ -210,7 +209,7 @@ class TestOptimizerCoordinator:
         mock_optimizer.optimize_fusion.assert_called_once_with(training_data=data)
 
     @patch(
-        "cogniverse_agents.workflow_intelligence.WorkflowIntelligence",
+        "cogniverse_agents.workflow.intelligence.WorkflowIntelligence",
     )
     @patch(
         "cogniverse_agents.routing.unified_optimizer.UnifiedOptimizer",

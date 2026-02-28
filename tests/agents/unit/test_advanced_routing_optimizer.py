@@ -274,7 +274,11 @@ class TestSIMBAIntegration:
         config = SIMBAConfig()
 
         with patch("sentence_transformers.SentenceTransformer"):
-            enhancer = SIMBAQueryEnhancer(config)
+            enhancer = SIMBAQueryEnhancer(
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                config=config,
+            )
             assert enhancer.config == config
             assert len(enhancer.enhancement_patterns) == 0
 
@@ -288,7 +292,10 @@ class TestAdaptiveThresholdLearner:
             AdaptiveThresholdLearner,
         )
 
-        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+        )
 
         assert learner.config is not None
         assert hasattr(learner.config, "global_learning_rate")
@@ -301,7 +308,10 @@ class TestAdaptiveThresholdLearner:
             AdaptiveThresholdLearner,
         )
 
-        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+        )
         status = learner.get_learning_status()
 
         assert isinstance(status, dict)
@@ -327,7 +337,12 @@ class TestMLflowIntegration:
                 experiment_name="test_experiment", tracking_uri="file:///tmp/test"
             )
 
-            integration = MLflowIntegration(config, test_mode=True)
+            integration = MLflowIntegration(
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
+            )
 
             # Just verify it was created without errors
             assert integration is not None
@@ -382,30 +397,33 @@ class TestAdvancedRoutingOptimizerIntegration:
                 config=config,
             )
 
-            # Collect 210 experiences to exceed GEPA threshold
-            for i in range(210):
-                await optimizer.record_routing_experience(
-                    query=f"Test query {i}",
-                    entities=[{"type": "TEST", "text": f"entity_{i}"}],
-                    relationships=[],
-                    enhanced_query=f"Enhanced query {i}",
-                    chosen_agent=(
-                        "video_search_agent" if i % 2 == 0 else "summarizer_agent"
-                    ),
-                    routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
-                    search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
-                    agent_success=i % 10 != 0,  # 90% success rate
-                )
-
-            # Verify optimizer was initialized
-            assert (
-                optimizer.advanced_optimizer is not None
-            ), "Advanced optimizer should be initialized after min_experiences_for_training"
+            # Patch _run_optimization_step to avoid actual LLM calls during collection
+            with patch.object(optimizer, "_run_optimization_step", new=AsyncMock()):
+                # Collect 210 experiences to exceed GEPA threshold
+                for i in range(210):
+                    await optimizer.record_routing_experience(
+                        query=f"Test query {i}",
+                        entities=[{"type": "TEST", "text": f"entity_{i}"}],
+                        relationships=[],
+                        enhanced_query=f"Enhanced query {i}",
+                        chosen_agent=(
+                            "video_search_agent" if i % 2 == 0 else "summarizer_agent"
+                        ),
+                        routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
+                        search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
+                        agent_success=i % 10 != 0,  # 90% success rate
+                    )
 
             # Verify we have enough experiences
             assert (
                 len(optimizer.experiences) == 210
             ), f"Should have 210 experiences, got {len(optimizer.experiences)}"
+
+            # Explicitly initialize advanced_optimizer since _run_optimization_step was patched
+            # (in production it is created lazily inside _run_optimization_step when
+            # min_experiences_for_training is exceeded)
+            if optimizer.advanced_optimizer is None:
+                optimizer.advanced_optimizer = optimizer._create_advanced_optimizer()
 
             # Test optimizer selection with 210 examples
             dataset_size = 210

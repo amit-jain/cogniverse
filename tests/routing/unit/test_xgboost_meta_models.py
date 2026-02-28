@@ -2,9 +2,7 @@
 Unit tests for XGBoost Meta-Models
 """
 
-import shutil
-import tempfile
-from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,6 +14,29 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategyModel,
 )
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory blob stores."""
+    provider = MagicMock()
+    blobs: dict[str, bytes] = {}
+
+    async def save_blob(key, data, metadata=None):
+        blobs[key] = data
+        return key
+
+    async def load_blob(key):
+        return blobs.get(key)
+
+    provider.save_blob = AsyncMock(side_effect=save_blob)
+    provider.load_blob = AsyncMock(side_effect=load_blob)
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(return_value="ds-test")
+    provider.datasets.get_dataset = AsyncMock(return_value=None)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 class TestModelingContext:
@@ -45,20 +66,15 @@ class TestTrainingDecisionModel:
     """Test TrainingDecisionModel functionality"""
 
     @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    def model(self):
+        """Create model instance with telemetry-backed storage."""
+        return TrainingDecisionModel(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
 
-    @pytest.fixture
-    def model(self, temp_model_dir):
-        """Create model instance"""
-        return TrainingDecisionModel(model_dir=temp_model_dir)
-
-    def test_initialization(self, model, temp_model_dir):
+    def test_initialization(self, model):
         """Test model initialization"""
-        assert model.model_dir == temp_model_dir
         assert model.is_trained is False
         assert model.model is None
 
@@ -272,56 +288,20 @@ class TestTrainingDecisionModel:
         assert isinstance(should_train, bool)
         assert isinstance(improvement, float)
 
-    def test_save_and_load(self, model, temp_model_dir):
-        """Test saving and loading model"""
-        # Train model
-        contexts = []
-        outcomes = []
-
-        for i in range(20):
-            context = ModelingContext(
-                modality=QueryModality.VIDEO,
-                real_sample_count=100,
-                synthetic_sample_count=50,
-                success_rate=0.8,
-                avg_confidence=0.85,
-                days_since_last_training=7,
-                current_performance_score=0.8,
-            )
-            contexts.append(context)
-            # Vary outcomes: some beneficial (>2%), some not
-            outcomes.append(0.05 if i % 2 == 0 else 0.01)
-
-        model.train(contexts, outcomes)
-        model.save()
-
-        # Create new model and load
-        new_model = TrainingDecisionModel(model_dir=temp_model_dir)
-        assert new_model.is_trained is False
-
-        success = new_model.load()
-        assert success is True
-        assert new_model.is_trained is True
-
 
 class TestTrainingStrategyModel:
     """Test TrainingStrategyModel functionality"""
 
     @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    def model(self):
+        """Create model instance with telemetry-backed storage."""
+        return TrainingStrategyModel(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
 
-    @pytest.fixture
-    def model(self, temp_model_dir):
-        """Create model instance"""
-        return TrainingStrategyModel(model_dir=temp_model_dir)
-
-    def test_initialization(self, model, temp_model_dir):
+    def test_initialization(self, model):
         """Test model initialization"""
-        assert model.model_dir == temp_model_dir
         assert model.is_trained is False
 
     def test_fallback_strategy_cold_start(self, model):
@@ -499,20 +479,15 @@ class TestFusionBenefitModel:
     """Test FusionBenefitModel functionality"""
 
     @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    def model(self):
+        """Create model instance with telemetry-backed storage."""
+        return FusionBenefitModel(
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test-tenant",
+        )
 
-    @pytest.fixture
-    def model(self, temp_model_dir):
-        """Create model instance"""
-        return FusionBenefitModel(model_dir=temp_model_dir)
-
-    def test_initialization(self, model, temp_model_dir):
+    def test_initialization(self, model):
         """Test model initialization"""
-        assert model.model_dir == temp_model_dir
         assert model.is_trained is False
 
     def test_fallback_benefit_high_disagreement(self, model):

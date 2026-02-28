@@ -1,7 +1,7 @@
 """Tests for QueryAnalysisToolV3 with enhanced capabilities."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -14,6 +14,29 @@ from cogniverse_agents.query_analysis_tool_v3 import (
     create_enhanced_query_analyzer,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
+
+
+def _make_mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory stores."""
+    provider = MagicMock()
+    datasets: dict = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = MagicMock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = MagicMock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
 
 
 @pytest.fixture
@@ -56,7 +79,10 @@ class TestQueryAnalysisToolV3:
         """Test analyzer initialization with default settings"""
         mock_get_config.return_value = mock_config
 
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         assert analyzer.enable_thinking_phase is True
         assert analyzer.enable_query_expansion is True
@@ -72,6 +98,7 @@ class TestQueryAnalysisToolV3:
 
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_thinking_phase=False,
             enable_query_expansion=False,
             enable_agent_integration=False,
@@ -95,6 +122,7 @@ class TestQueryAnalysisToolV3:
 
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=True,
         )
 
@@ -112,6 +140,7 @@ class TestQueryAnalysisToolV3:
 
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=True,
         )
 
@@ -121,7 +150,10 @@ class TestQueryAnalysisToolV3:
     def test_clean_query(self, mock_get_config, mock_config):
         """Test query cleaning functionality"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         # Test basic cleaning
         assert analyzer._clean_query("  HELLO WORLD  ") == "hello world"
@@ -134,7 +166,10 @@ class TestQueryAnalysisToolV3:
     def test_detect_intents_simple(self, mock_get_config, mock_config):
         """Test intent detection for simple queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         # Test search intent
         thinking_phase = {"query_type_indicators": {}}
@@ -154,7 +189,10 @@ class TestQueryAnalysisToolV3:
     def test_detect_intents_complex(self, mock_get_config, mock_config):
         """Test intent detection for complex queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking_phase = {
             "query_type_indicators": {"report": True},
@@ -178,7 +216,10 @@ class TestQueryAnalysisToolV3:
     def test_assess_complexity_simple(self, mock_get_config, mock_config):
         """Test complexity assessment for simple queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         complexity = analyzer._assess_complexity("find cats", QueryIntent.SEARCH, [])
         assert complexity == QueryComplexity.SIMPLE
@@ -187,7 +228,10 @@ class TestQueryAnalysisToolV3:
     def test_assess_complexity_moderate(self, mock_get_config, mock_config):
         """Test complexity assessment for moderate queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         complexity = analyzer._assess_complexity(
             "compare cats and dogs", QueryIntent.COMPARE, [QueryIntent.ANALYZE]
@@ -198,7 +242,10 @@ class TestQueryAnalysisToolV3:
     def test_assess_complexity_complex(self, mock_get_config, mock_config):
         """Test complexity assessment for complex queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         complexity = analyzer._assess_complexity(
             "analyze and report comprehensive findings",
@@ -211,7 +258,10 @@ class TestQueryAnalysisToolV3:
     def test_detect_modality_requirements_default(self, mock_get_config, mock_config):
         """Test modality detection with default requirements"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking_phase = {"modality_hints": {}}
         requirements = analyzer._detect_modality_requirements(
@@ -228,7 +278,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test modality detection for video-only queries"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking_phase = {"modality_hints": {"video": True, "text": False}}
         requirements = analyzer._detect_modality_requirements(
@@ -244,7 +297,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test modality detection enabling visual analysis"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking_phase = {"modality_hints": {"video": True}}
         requirements = analyzer._detect_modality_requirements(
@@ -257,7 +313,10 @@ class TestQueryAnalysisToolV3:
     def test_extract_temporal_filters(self, mock_get_config, mock_config):
         """Test temporal filter extraction"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         # Test common temporal terms
         filters = analyzer._extract_temporal_filters("show me recent videos")
@@ -277,7 +336,10 @@ class TestQueryAnalysisToolV3:
     def test_extract_entities_and_keywords(self, mock_get_config, mock_config):
         """Test entity and keyword extraction"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         query = 'Find videos about "machine learning" and Python programming'
         entities, keywords = analyzer._extract_entities_and_keywords(query)
@@ -311,7 +373,10 @@ class TestQueryAnalysisToolV3:
     async def test_expand_query_basic(self, mock_get_config, mock_config):
         """Test basic query expansion"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         expansions = await analyzer._expand_query("find videos about cats", None, {})
 
@@ -329,7 +394,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test query expansion with context"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         expansions = await analyzer._expand_query("latest research", sample_context, {})
 
@@ -354,7 +422,10 @@ class TestQueryAnalysisToolV3:
     def test_calculate_confidence_high(self, mock_get_config, mock_config):
         """Test confidence calculation for high-confidence scenarios"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         confidence = analyzer._calculate_confidence(
             "show me machine learning videos",  # query
@@ -370,7 +441,10 @@ class TestQueryAnalysisToolV3:
     def test_calculate_confidence_low(self, mock_get_config, mock_config):
         """Test confidence calculation for low-confidence scenarios"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         confidence = analyzer._calculate_confidence(
             "complex multimodal analysis query",  # query
@@ -391,6 +465,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -428,6 +503,7 @@ class TestQueryAnalysisToolV3:
 
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=True,
         )
         analyzer.routing_agent = mock_routing_agent
@@ -449,7 +525,10 @@ class TestQueryAnalysisToolV3:
     async def test_thinking_phase_simple_query(self, mock_get_config, mock_config):
         """Test thinking phase for simple query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking = await analyzer._thinking_phase("find cats", None)
 
@@ -464,7 +543,10 @@ class TestQueryAnalysisToolV3:
     ):
         """Test thinking phase for complex query"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         thinking = await analyzer._thinking_phase(
             "analyze recent videos and create comprehensive detailed report with visual analysis",
@@ -486,6 +568,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -514,6 +597,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -540,6 +624,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_query_expansion=True,
             enable_agent_integration=False,
         )
@@ -560,6 +645,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -576,6 +662,7 @@ class TestQueryAnalysisToolV3:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -592,7 +679,10 @@ class TestQueryAnalysisToolV3:
     def test_get_statistics(self, mock_get_config, mock_config):
         """Test statistics collection"""
         mock_get_config.return_value = mock_config
-        analyzer = QueryAnalysisToolV3(config_manager=create_default_config_manager())
+        analyzer = QueryAnalysisToolV3(
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
         analyzer.total_analyses = 10
 
         stats = analyzer.get_statistics()
@@ -651,6 +741,7 @@ class TestQueryAnalysisToolV3EdgeCases:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -670,6 +761,7 @@ class TestQueryAnalysisToolV3EdgeCases:
         mock_get_config.return_value = mock_config
         analyzer = QueryAnalysisToolV3(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_agent_integration=False,
         )
 
@@ -699,7 +791,8 @@ class TestFactoryFunction:
         mock_get_config.return_value = mock_config
 
         analyzer = create_enhanced_query_analyzer(
-            config_manager=create_default_config_manager()
+            config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
         )
 
         assert isinstance(analyzer, QueryAnalysisToolV3)
@@ -714,6 +807,7 @@ class TestFactoryFunction:
 
         analyzer = create_enhanced_query_analyzer(
             config_manager=create_default_config_manager(),
+            telemetry_provider=_make_mock_telemetry_provider(),
             enable_thinking_phase=False,
             max_expanded_queries=10,
         )
