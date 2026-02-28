@@ -1,5 +1,5 @@
 """
-Integration tests for agent session memory via MemoryAwareMixin.
+Unit tests for agent session memory via MemoryAwareMixin.
 
 Validates:
 - Memory initialization with tenant_id and agent_name
@@ -24,6 +24,7 @@ class MockAgent(MemoryAwareMixin):
         self.agent_name = agent_name
 
 
+@pytest.mark.unit
 class TestMemoryInitialization:
     """Test memory initialization lifecycle."""
 
@@ -69,6 +70,7 @@ class TestMemoryInitialization:
             agent.initialize_memory(agent_name="test", tenant_id=None)
 
 
+@pytest.mark.unit
 class TestMemoryNamespacing:
     """Test (tenant_id, agent_name) memory isolation."""
 
@@ -104,6 +106,7 @@ class TestMemoryNamespacing:
         assert orchestrator._memory_agent_name == "orchestrator_agent"
 
 
+@pytest.mark.unit
 class TestContextRetrieval:
     """Test memory search and context retrieval."""
 
@@ -152,6 +155,7 @@ class TestContextRetrieval:
         assert context is None
 
 
+@pytest.mark.unit
 class TestMemoryUpdates:
     """Test memory add/update operations."""
 
@@ -210,6 +214,7 @@ class TestMemoryUpdates:
         assert "Timeout error" in content
 
 
+@pytest.mark.unit
 class TestMultiTurnMemory:
     """Test multi-turn memory flow (simulating conversation)."""
 

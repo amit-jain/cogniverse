@@ -1,5 +1,5 @@
 """
-Integration tests for profile-agnostic SearchService.
+Unit tests for profile-agnostic SearchService.
 
 Validates:
 - ONE SearchService instance serves multiple profiles
@@ -68,6 +68,7 @@ def search_service(mock_config, mock_config_manager, mock_schema_loader):
         )
 
 
+@pytest.mark.unit
 class TestSearchServiceConstruction:
     """Test SearchService profile-agnostic construction."""
 
@@ -100,6 +101,7 @@ class TestSearchServiceConstruction:
                 )
 
 
+@pytest.mark.unit
 class TestProfileRouting:
     """Test profile-based routing at search() time."""
 
@@ -128,6 +130,7 @@ class TestProfileRouting:
         assert "video_videoprism_base" in str(exc.value)
 
 
+@pytest.mark.unit
 class TestEncoderCaching:
     """Test QueryEncoderFactory caching behavior."""
 
@@ -213,6 +216,7 @@ class TestEncoderCaching:
             QueryEncoderFactory.create_encoder("some_profile", config=None)
 
 
+@pytest.mark.unit
 class TestBackendCaching:
     """Test lazy backend creation per tenant_id."""
 

@@ -1,5 +1,5 @@
 """
-Integration Tests for Workflow Checkpointing
+Unit Tests for Workflow Checkpointing
 
 Tests the durable execution capability of MultiAgentOrchestrator:
 1. Checkpoint creation after each phase
@@ -154,6 +154,7 @@ def checkpoint_config():
     )
 
 
+@pytest.mark.unit
 class TestCheckpointCreation:
     """Tests for checkpoint creation during workflow execution"""
 
@@ -323,6 +324,7 @@ class TestCheckpointCreation:
         assert result["status"] == "completed"
 
 
+@pytest.mark.unit
 class TestWorkflowResume:
     """Tests for resuming workflows from checkpoints"""
 
@@ -481,6 +483,7 @@ class TestWorkflowResume:
         assert "Checkpoint storage not configured" in result["error"]
 
 
+@pytest.mark.unit
 class TestResumeableWorkflows:
     """Tests for listing resumable workflows"""
 
@@ -553,6 +556,7 @@ class TestResumeableWorkflows:
         assert "wf_completed" not in workflow_ids
 
 
+@pytest.mark.unit
 class TestCheckpointLevels:
     """Tests for different checkpoint granularity levels"""
 
@@ -653,6 +657,7 @@ class TestCheckpointLevels:
         assert orchestrator4._should_checkpoint_phase() is False
 
 
+@pytest.mark.unit
 class TestWorkflowReconstruction:
     """Tests for reconstructing workflow plans from checkpoints"""
 

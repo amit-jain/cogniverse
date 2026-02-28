@@ -1,5 +1,5 @@
 """
-Integration tests validating agents boot with NO env vars.
+Unit tests validating agents boot with NO env vars.
 
 Validates:
 - Zero os.getenv/os.environ in A2A agent __init__ or constructor paths
@@ -37,6 +37,7 @@ from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 
 
+@pytest.mark.unit
 class TestAgentConstructionNoEnvVars:
     """Every A2A agent constructs with explicit deps — zero env var reads."""
 
@@ -126,6 +127,7 @@ class TestAgentConstructionNoEnvVars:
         assert "detailed_report" in agent.capabilities
 
 
+@pytest.mark.unit
 class TestDepsHaveNoTenantId:
     """Verify Deps classes don't require tenant_id at construction."""
 
@@ -153,6 +155,7 @@ class TestDepsHaveNoTenantId:
         assert deps.backend_port == 8080
 
 
+@pytest.mark.unit
 class TestBootstrapConfigIsOnlyEnvBoundary:
     """BootstrapConfig is the ONLY place env vars are read."""
 
@@ -184,6 +187,7 @@ class TestBootstrapConfigIsOnlyEnvBoundary:
                 BootstrapConfig.from_environment()
 
 
+@pytest.mark.unit
 class TestNoOsGetenvInAgentModules:
     """Static analysis: agent modules must not use os.getenv/os.environ."""
 
@@ -232,9 +236,9 @@ class TestNoOsGetenvInAgentModules:
 
         non_startup_source = "\n".join(clean_lines)
 
-        assert (
-            "os.getenv" not in non_startup_source
-        ), f"{module_path} uses os.getenv outside startup boundary"
-        assert (
-            "os.environ" not in non_startup_source
-        ), f"{module_path} uses os.environ outside startup boundary"
+        assert "os.getenv" not in non_startup_source, (
+            f"{module_path} uses os.getenv outside startup boundary"
+        )
+        assert "os.environ" not in non_startup_source, (
+            f"{module_path} uses os.environ outside startup boundary"
+        )

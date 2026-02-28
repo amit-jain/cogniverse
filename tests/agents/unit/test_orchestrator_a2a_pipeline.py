@@ -1,5 +1,5 @@
 """
-Integration tests for OrchestratorAgent A2A pipeline.
+Unit tests for OrchestratorAgent A2A pipeline.
 
 Validates:
 - OrchestratorAgent uses AgentRegistry for discovery
@@ -65,6 +65,7 @@ def orchestrator(mock_registry):
         )
 
 
+@pytest.mark.unit
 class TestA2APipelineFlow:
     """Test the full A2A pipeline through OrchestratorAgent."""
 
@@ -130,6 +131,7 @@ class TestA2APipelineFlow:
         assert captured_kwargs.get("session_id") == "sess-123"
 
 
+@pytest.mark.unit
 class TestRegistryDiscovery:
     """Test agent discovery via AgentRegistry."""
 
@@ -173,6 +175,7 @@ class TestRegistryDiscovery:
         assert "not available" in result.agent_results["summarizer"]["message"]
 
 
+@pytest.mark.unit
 class TestParallelExecution:
     """Test parallel execution groups in the pipeline."""
 
@@ -226,6 +229,7 @@ class TestParallelExecution:
         )
 
 
+@pytest.mark.unit
 class TestErrorHandling:
     """Test graceful error handling in the pipeline."""
 
