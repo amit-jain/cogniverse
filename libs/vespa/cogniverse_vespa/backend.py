@@ -70,9 +70,9 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[str, Any] = (
-            {}
-        )  # For async ingestion (optional)
+        self._async_ingestion_clients: Dict[
+            str, Any
+        ] = {}  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
@@ -608,9 +608,7 @@ class VespaBackend(Backend):
             id=document_id,
             text_content=fields.get("text", ""),
             metadata={
-                k: v
-                for k, v in fields.items()
-                if k not in ("text", "embedding", "id")
+                k: v for k, v in fields.items() if k not in ("text", "embedding", "id")
             },
         )
 

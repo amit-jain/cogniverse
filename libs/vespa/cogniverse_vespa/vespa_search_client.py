@@ -1069,7 +1069,7 @@ class VespaVideoSearchClient:
                     frame_id = hit.get("fields", {}).get("frame_id", "unknown")
                     timestamp = hit.get("fields", {}).get("start_time", "unknown")
                     self.logger.info(
-                        f"  {i+1}. {video_id} frame {frame_id} @{timestamp}s (score: {relevance:.3f})"
+                        f"  {i + 1}. {video_id} frame {frame_id} @{timestamp}s (score: {relevance:.3f})"
                     )
 
             if not response.hits:

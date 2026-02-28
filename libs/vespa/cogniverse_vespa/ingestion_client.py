@@ -110,7 +110,11 @@ class VespaPyClient:
         # Compute namespace based on content type (schema determines namespace)
         if "agent_memories" in self.schema_name:
             self.namespace = "memory_content"
-        elif "config_metadata" in self.schema_name or "tenant_metadata" in self.schema_name or "organization_metadata" in self.schema_name:
+        elif (
+            "config_metadata" in self.schema_name
+            or "tenant_metadata" in self.schema_name
+            or "organization_metadata" in self.schema_name
+        ):
             self.namespace = "metadata"
         else:
             self.namespace = "video"

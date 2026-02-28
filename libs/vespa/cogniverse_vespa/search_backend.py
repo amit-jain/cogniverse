@@ -853,7 +853,7 @@ class VespaSearchBackend(SearchBackend):
 
             logger.info(
                 f"[{correlation_id}] Search completed: {len(results)} results "
-                f"in {(time.time() - start_time)*1000:.2f}ms"
+                f"in {(time.time() - start_time) * 1000:.2f}ms"
             )
 
             return results
@@ -1151,8 +1151,7 @@ class VespaSearchBackend(SearchBackend):
 
             except Exception as e:
                 logger.error(
-                    f"[{correlation_id}] Failed to process hit: {e}, "
-                    f"hit data: {hit}"
+                    f"[{correlation_id}] Failed to process hit: {e}, hit data: {hit}"
                 )
 
         return results
@@ -1533,4 +1532,6 @@ def create_vespa_search_backend(
     Returns:
         VespaSearchBackend instance
     """
-    return VespaSearchBackend(backend_url=backend_url, schema_name=schema_name, **kwargs)
+    return VespaSearchBackend(
+        backend_url=backend_url, schema_name=schema_name, **kwargs
+    )

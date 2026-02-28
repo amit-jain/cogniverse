@@ -761,7 +761,6 @@ class VespaSchemaManager:
 
             # Build document_visual schema (ColPali page-as-image)
             if "document_visual" in schemas:
-
                 document_visual_schema = Schema(
                     name="document_visual",
                     document=Document(

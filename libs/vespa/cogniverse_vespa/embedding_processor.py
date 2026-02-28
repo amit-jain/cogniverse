@@ -51,9 +51,7 @@ class VespaEmbeddingProcessor:
                 raw_embeddings = raw_embeddings.reshape(1, -1)
                 return {
                     "embedding": self._convert_to_float_dict(raw_embeddings),
-                    "embedding_binary": self._convert_to_binary_dict(
-                        raw_embeddings
-                    ),
+                    "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
                 }
             else:
                 raise ValueError(
