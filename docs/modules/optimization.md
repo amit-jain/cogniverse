@@ -180,6 +180,8 @@ def get_metrics(self) -> Dict[str, Any]:
 **Constructor Parameters:**
 ```python
 __init__(
+    llm_config: LLMEndpointConfig,          # REQUIRED: LLM config for optimizer and annotator
+    telemetry_provider: TelemetryProvider,  # REQUIRED: Telemetry provider for artifact persistence
     tenant_id: str = "default",
     span_eval_interval_minutes: int = 15,
     annotation_interval_minutes: int = 30,
@@ -538,7 +540,7 @@ class ModalityRoutingModule(dspy.Module):
 
 - Uses **BootstrapFewShot** if <50 examples (few-shot learning)
 
-- Saves trained models per modality to `model_dir/{modality}_routing_module.json`
+- Saves trained models per modality to telemetry via `ArtifactManager.save_blob()`
 
 **File:** `libs/agents/cogniverse_agents/routing/modality_optimizer.py`
 
@@ -583,7 +585,6 @@ def get_optimization_status(self) -> Dict[str, Any]:
     Returns:
         {
             "tenant_id": str,
-            "optimization_dir": str,
             "loaded_optimizers": List[str]
         }
     """
@@ -592,9 +593,9 @@ def get_optimization_status(self) -> Dict[str, Any]:
 **Lazy Loading:**
 ```python
 # Optimizers loaded on-demand to minimize memory usage
-_get_routing_optimizer()     # AdvancedRoutingOptimizer(tenant_id, base_storage_dir)
-_get_modality_optimizer()    # ModalityOptimizer(tenant_id, model_dir)
-_get_cross_modal_optimizer() # CrossModalOptimizer(tenant_id, model_dir)
+_get_routing_optimizer()     # AdvancedRoutingOptimizer(tenant_id, llm_config, telemetry_provider)
+_get_modality_optimizer()    # ModalityOptimizer(llm_config, telemetry_provider, tenant_id)
+_get_cross_modal_optimizer() # CrossModalOptimizer(telemetry_provider, tenant_id)
 _get_unified_optimizer()     # UnifiedOptimizer(routing_optimizer, workflow_intelligence)
 ```
 
@@ -711,8 +712,6 @@ class OptimizationConfig:
 
     # Storage
     max_history_size: int = 10000
-    checkpoint_dir: Path = Path("outputs/routing_checkpoints")
-    metrics_export_dir: Path = Path("outputs/routing_metrics")
 ```
 
 **File:** `libs/agents/cogniverse_agents/routing/optimizer.py`
@@ -725,9 +724,15 @@ class OptimizationConfig:
 
 ```python
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize orchestrator with production config
 orchestrator = OptimizationOrchestrator(
+    llm_config=LLMEndpointConfig(
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    telemetry_provider=telemetry_provider,
     tenant_id="production",
     span_eval_interval_minutes=15,      # Evaluate spans every 15 minutes
     annotation_interval_minutes=30,     # Identify spans for annotation every 30 minutes
@@ -757,6 +762,7 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     AdvancedOptimizerConfig
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Configure advanced optimizer
 config = AdvancedOptimizerConfig(
@@ -774,11 +780,15 @@ config = AdvancedOptimizerConfig(
     processing_time_penalty=0.1
 )
 
-# Initialize optimizer with required tenant_id parameter
+# Initialize optimizer with required parameters
 optimizer = AdvancedRoutingOptimizer(
-    tenant_id="production",  # REQUIRED parameter
+    tenant_id="production",             # REQUIRED parameter
+    llm_config=LLMEndpointConfig(       # REQUIRED parameter
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    telemetry_provider=telemetry_provider,
     config=config,
-    base_storage_dir="data/optimization"
 )
 
 # Record routing experience
@@ -824,14 +834,18 @@ print(f"Confidence accuracy: {status['metrics']['confidence_accuracy']}")  # 0.7
 
 ```python
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer, QueryModality
-from pathlib import Path
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize modality optimizer
 # vespa_client and backend_config parameters are optional (default to None)
 # Provide them only if using synthetic data generation
 optimizer = ModalityOptimizer(
+    llm_config=LLMEndpointConfig(       # REQUIRED: LLM config for DSPy training
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    telemetry_provider=telemetry_provider,
     tenant_id="production",
-    model_dir=Path("outputs/models/modality"),
     vespa_client=None,  # Optional VespaClient instance for synthetic data generation
     backend_config=None  # Optional backend config dict for synthetic data generation
 )
@@ -892,11 +906,23 @@ for modality, details in summary['modalities'].items():
 ```python
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize components
-routing_optimizer = AdvancedRoutingOptimizer(tenant_id="production")
-workflow_intelligence = WorkflowIntelligence()
+llm_config = LLMEndpointConfig(
+    model="ollama_chat/smollm3:3b",
+    api_base="http://localhost:11434",
+)
+routing_optimizer = AdvancedRoutingOptimizer(
+    tenant_id="production",
+    llm_config=llm_config,
+    telemetry_provider=telemetry_provider,
+)
+workflow_intelligence = WorkflowIntelligence(
+    telemetry_provider=telemetry_provider,
+    tenant_id="production",
+)
 
 # Create unified optimizer
 unified_optimizer = UnifiedOptimizer(
@@ -937,11 +963,16 @@ from cogniverse_agents.routing.optimizer_coordinator import (
     OptimizerCoordinator,
     OptimizationType
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize coordinator
 coordinator = OptimizerCoordinator(
-    optimization_dir="optimization_results",
-    tenant_id="production"
+    llm_config=LLMEndpointConfig(
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    telemetry_provider=telemetry_provider,
+    tenant_id="production",
 )
 
 # Prepare training data
@@ -992,9 +1023,15 @@ print(f"Loaded optimizers: {status['loaded_optimizers']}")
 
 ```python
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize orchestrator
 orchestrator = OptimizationOrchestrator(
+    llm_config=LLMEndpointConfig(
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+    telemetry_provider=telemetry_provider,
     tenant_id="test",
     span_eval_interval_minutes=15,
     annotation_interval_minutes=30,
@@ -1046,7 +1083,11 @@ batch_experiences = np.random.choice(
 **Lazy Loading:**
 ```python
 # OptimizerCoordinator lazy-loads optimizers to minimize memory
-coordinator = OptimizerCoordinator()  # No optimizers loaded yet
+coordinator = OptimizerCoordinator(
+    llm_config=llm_config,
+    telemetry_provider=telemetry_provider,
+    tenant_id="production",
+)  # No optimizers loaded yet
 
 # Optimizers loaded on first use
 routing_optimizer = coordinator.get_optimizer(OptimizationType.ROUTING)  # Now loaded
@@ -1102,34 +1143,48 @@ batch_experiences = np.random.choice(
 
 **Tenant-Specific Optimization:**
 ```python
-# Each tenant has isolated optimization state
+# Each tenant has isolated optimization state via telemetry
+provider_a = telemetry_manager.get_provider(tenant_id="tenant_a")
 optimizer_tenant_a = AdvancedRoutingOptimizer(
     tenant_id="tenant_a",
-    base_storage_dir="data/optimization"
+    llm_config=llm_config,
+    telemetry_provider=provider_a,
 )
 
+provider_b = telemetry_manager.get_provider(tenant_id="tenant_b")
 optimizer_tenant_b = AdvancedRoutingOptimizer(
     tenant_id="tenant_b",
-    base_storage_dir="data/optimization"
+    llm_config=llm_config,
+    telemetry_provider=provider_b,
 )
 
 # Separate experience storage per tenant
-orchestrator_a = OptimizationOrchestrator(tenant_id="tenant_a")
-orchestrator_b = OptimizationOrchestrator(tenant_id="tenant_b")
+orchestrator_a = OptimizationOrchestrator(
+    llm_config=llm_config,
+    telemetry_provider=provider_a,
+    tenant_id="tenant_a",
+)
+orchestrator_b = OptimizationOrchestrator(
+    llm_config=llm_config,
+    telemetry_provider=provider_b,
+    tenant_id="tenant_b",
+)
 ```
 
 **Shared vs Tenant-Specific Models:**
 ```python
 # Option 1: Tenant-specific models (better personalization)
 modality_optimizer = ModalityOptimizer(
+    llm_config=llm_config,
+    telemetry_provider=provider_a,
     tenant_id="tenant_a",
-    model_dir=Path(f"outputs/models/modality/tenant_a")
 )
 
 # Option 2: Shared models (faster cold start, less personalization)
 shared_modality_optimizer = ModalityOptimizer(
+    llm_config=llm_config,
+    telemetry_provider=shared_provider,
     tenant_id="shared",
-    model_dir=Path("outputs/models/modality/shared")
 )
 ```
 
@@ -1197,7 +1252,14 @@ logger.info(
 ```python
 # Deploy as long-running service
 async def main():
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    llm_config = LLMEndpointConfig(
+        model="ollama_chat/smollm3:3b",
+        api_base="http://localhost:11434",
+    )
     orchestrator = OptimizationOrchestrator(
+        llm_config=llm_config,
+        telemetry_provider=telemetry_provider,
         tenant_id="production",
         span_eval_interval_minutes=15,
         annotation_interval_minutes=30,
@@ -1225,7 +1287,7 @@ if __name__ == "__main__":
 async def shutdown():
     logger.info("Saving optimization state before shutdown...")
     await optimizer._persist_data()
-    optimizer.save_checkpoint()
+    await optimizer.save_checkpoint()
     logger.info("Optimization state saved")
 ```
 
@@ -1450,25 +1512,24 @@ except Exception as e:
 
 **Checkpoint and Recovery:**
 ```python
-# Save checkpoints periodically
-optimizer.save_checkpoint(filepath=Path("checkpoints/optimizer_20250107.json"))
+# Save checkpoints periodically (persisted to telemetry via ArtifactManager)
+await optimizer.save_checkpoint()
 
 # Restore from checkpoint after crash
-optimizer.load_checkpoint(filepath=Path("checkpoints/optimizer_20250107.json"))
+await optimizer.load_checkpoint()
 ```
 
 **Experience Persistence:**
 ```python
-# Auto-persist every 10 experiences
+# Auto-persist every 10 experiences via telemetry
 if len(self.experiences) % 10 == 0:
     await self._persist_data()
 
 # Load on startup
-def _load_stored_data(self):
-    experience_file = self.storage_dir / self.config.experience_file
-    if experience_file.exists():
-        with open(experience_file, "rb") as f:
-            self.experiences = pickle.load(f)
+async def load_stored_data(self):
+    demos = await self._artifact_manager.load_demonstrations("routing_optimizer")
+    if demos:
+        self.experiences = [RoutingExperience(**d) for d in demos]
         logger.info(f"Loaded {len(self.experiences)} routing experiences")
 ```
 
@@ -1541,7 +1602,12 @@ def _load_stored_data(self):
 def test_multi_stage_optimizer_selection():
     """Test that correct optimizer is selected based on dataset size"""
     config = AdvancedOptimizerConfig(optimizer_strategy="adaptive")
-    optimizer = AdvancedRoutingOptimizer(config=config)
+    optimizer = AdvancedRoutingOptimizer(
+        tenant_id="test",
+        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        telemetry_provider=telemetry_provider,
+        config=config,
+    )
 
     # Small dataset → BootstrapFewShot
     small_trainset = [create_example() for _ in range(15)]
@@ -1564,7 +1630,11 @@ def test_multi_stage_optimizer_selection():
 @pytest.mark.asyncio
 async def test_reward_signal_computation():
     """Test reward computation from routing outcomes"""
-    optimizer = AdvancedRoutingOptimizer()
+    optimizer = AdvancedRoutingOptimizer(
+        tenant_id="test",
+        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        telemetry_provider=telemetry_provider,
+    )
 
     # High-quality routing
     reward_high = await optimizer.record_routing_experience(
@@ -1604,7 +1674,11 @@ async def test_reward_signal_computation():
 @pytest.mark.asyncio
 async def test_xgboost_meta_model_training():
     """Test XGBoost meta-models for training decisions"""
-    optimizer = ModalityOptimizer(tenant_id="test")
+    optimizer = ModalityOptimizer(
+        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        telemetry_provider=telemetry_provider,
+        tenant_id="test",
+    )
 
     # Create modeling contexts
     contexts = [
@@ -1640,6 +1714,8 @@ async def test_xgboost_meta_model_training():
 async def test_complete_optimization_cycle():
     """Test end-to-end optimization orchestration"""
     orchestrator = OptimizationOrchestrator(
+        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        telemetry_provider=telemetry_provider,
         tenant_id="test",
         span_eval_interval_minutes=1,
         annotation_interval_minutes=1,
@@ -1971,6 +2047,7 @@ orchestrator = OptimizationOrchestrator(
         model="ollama_chat/smollm3:3b",
         api_base="http://localhost:11434",
     ),
+    telemetry_provider=telemetry_provider,
     tenant_id="production",
     span_eval_interval_minutes=15,
     confidence_threshold=0.6,
@@ -2041,8 +2118,11 @@ optimizer.initialize_language_model(endpoint_config=endpoint_config)
 pipeline = DSPyAgentOptimizerPipeline(optimizer)
 optimized_modules = await pipeline.optimize_all_modules()
 
-# Save optimized prompts (defaults to get_output_manager().get_optimization_dir())
-pipeline.save_optimized_prompts()
+# Save optimized prompts via ArtifactManager → telemetry DatasetStore
+await pipeline.save_optimized_prompts(
+    tenant_id="production",
+    telemetry_provider=telemetry_provider,
+)
 ```
 
 #### Optimizable Modules
@@ -2072,16 +2152,30 @@ from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
 # Create router module
 router = RouterModule()
 
-# Run MIPROv2 optimization
+# Run MIPROv2 optimization (artifacts saved to telemetry via ArtifactManager)
 results = optimize_router(
-    student_model="google/gemma-3-1b-it",
-    teacher_model="claude-3-5-sonnet-20241022",
+    student_config=LLMEndpointConfig(
+        model="openai/google/gemma-3-1b-it",
+        api_base="https://your-inference-endpoint",
+    ),
+    tenant_id="production",
+    telemetry_provider=telemetry_provider,
+    teacher_config=LLMEndpointConfig(
+        model="anthropic/claude-3-5-sonnet-20241022",
+        api_key="sk-ant-...",
+    ),
     num_teacher_examples=50,
-    output_dir="optimization_results"
 )
 
-# Load optimized router for production
-optimized = OptimizedRouter("optimization_results/router_prompt_artifact.json")
+# Load optimized router for production (artifacts loaded from telemetry)
+optimized = OptimizedRouter(
+    tenant_id="production",
+    telemetry_provider=telemetry_provider,
+    lm_config=LLMEndpointConfig(
+        model="openai/google/gemma-3-1b-it",
+        api_base="https://your-inference-endpoint",
+    ),
+)
 decision = optimized.route(
     user_query="Show me how to bake a cake",
     conversation_history=""
@@ -2132,17 +2226,13 @@ uv run python -m cogniverse_agents.optimizer.dspy_agent_optimizer
 
 ### Output Artifacts
 
-After optimization, artifacts are saved to `optimization_results/`:
+After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`:
 
-```text
-optimization_results/
-├── unified_optimization_20241215_143022.json  # Full results with metrics
-├── unified_router_prompt_artifact.json        # Integration artifact
-├── router_prompt_artifact.json                # Router-specific artifact
-└── teacher_training_cache.json                # Cached teacher examples
-```
+- `dspy-prompts-{tenant_id}-router` — Optimized system prompts for the router module
+- `dspy-demos-{tenant_id}-router` — Few-shot demonstration examples
+- `dspy-optimization-{tenant_id}` — Optimization run metrics (via ExperimentStore)
 
-**Integration artifact structure:**
+**Stored prompt artifact structure (retrieved from DatasetStore):**
 
 ```json
 {

@@ -152,7 +152,7 @@ jobs:
 
         # Test DSPy integration
         uv run python -c "
-        from cogniverse_agents.dspy_agent_optimizer import DSPyAgentPromptOptimizer
+        from cogniverse_agents.optimizer.dspy_agent_optimizer import DSPyAgentPromptOptimizer
         optimizer = DSPyAgentPromptOptimizer()
         print('✅ DSPy optimizer import successful')
         "

@@ -22,18 +22,29 @@ The routing optimizer uses teacher/student patterns with DSPy optimizers:
 
 ```python
 # Run the optimization orchestrator
-from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
-# Config loaded from COGNIVERSE_CONFIG env var or configs/config.json
-orchestrator = OptimizationOrchestrator()
-result = orchestrator.run_optimization()
+# OptimizationOrchestrator requires llm_config and telemetry_provider
+orchestrator = OptimizationOrchestrator(
+    llm_config=LLMEndpointConfig(
+        model="openai/HuggingFaceTB/SmolLM3-3B",
+        api_base="https://username--general-inference-service-serve.modal.run",
+    ),
+    telemetry_provider=telemetry_provider,  # from TelemetryManager.get_tenant_provider()
+    tenant_id="production",
+)
+
+# Start the orchestrator loop (run_once for a single pass)
+await orchestrator.run_once()
 
 # Available DSPy optimizers (MIPROv2 is used in the orchestrator):
 from dspy.teleprompt import MIPROv2
 
 # Teacher (Claude/GPT-4) generates training examples
 # Student (SmolLM3-3B on Modal) learns from teacher examples via MIPROv2
-# Optimized prompts saved to get_output_manager().get_optimization_dir()
+# Optimized prompts saved via ArtifactManager → telemetry DatasetStore
 ```
 
 ### 2. VLM for Video Processing
@@ -213,7 +224,7 @@ Update your configuration file with your Modal endpoints. LLM configuration is c
 The teacher/student optimization workflow:
 1. **Teacher** (Claude/GPT-4) generates high-quality training examples
 2. **Student** (SmolLM3-3B on Modal) learns from these examples via MIPROv2
-3. Optimized prompts are saved to `get_output_manager().get_optimization_dir()`
+3. Optimized prompts are saved via `ArtifactManager` → telemetry `DatasetStore`
 
 ### Using Modal Services
 
@@ -309,8 +320,8 @@ modal app list  # Note the general-inference-service endpoint
 # Set inference.modal_endpoint in config.json to your deployed endpoint
 
 # 4. Run DSPy optimization with teacher/student
-# Note: Orchestrator requires config_manager injected at startup via llm_config
-uv run python -m cogniverse_agents.optimizer.orchestrator
+# Note: Orchestrator requires llm_config and telemetry_provider at startup
+uv run python -m cogniverse_agents.routing.optimization_orchestrator
 
 # 5. Run video ingestion with Modal VLM
 modal deploy scripts/modal_vlm_service.py

@@ -9,8 +9,12 @@ After making code changes, run agents IN ORDER based on what changed. Never skip
 Check `git diff --name-only HEAD` and route to the appropriate workflow:
 
 ```
-CODE ONLY (*.py, configs/, *.toml)
+CODE ONLY (*.py, configs/, *.toml) — no API/interface changes
   → lint-and-quality → quality-enforcer → commit-enforcer
+
+CODE WITH API CHANGES (*.py that adds/removes/renames public classes,
+  methods, config keys, storage backends, or constructor signatures)
+  → lint-and-quality → doc-verifier → quality-enforcer → commit-enforcer
 
 DOCS ONLY (docs/*.md)
   → doc-verifier → commit-enforcer
@@ -22,6 +26,12 @@ ON DEMAND (user request or periodic)
   → feature-dev:code-reviewer   (deep static analysis)
   → codebase-integrity-auditor  (full codebase audit)
 ```
+
+**How to detect API changes**: After lint-and-quality passes, grep the diff for:
+- New/removed class definitions, public method signatures, or `__init__` parameter changes
+- Changed storage backends (filesystem → telemetry, local → remote)
+- Renamed or removed config keys
+If ANY match, route through doc-verifier even if no docs/*.md files changed.
 
 ---
 
@@ -50,6 +60,7 @@ ON DEMAND (user request or periodic)
 **Must pass**: 0 failed AND 0 skipped. Uses `--tb=long` ALWAYS.
 **If fails**: Fix implementation (never weaken tests). Re-run until 100% passing.
 **Wiring coverage**: For changes that connect components (A writes, B reads), verify at least one test exercises the full round-trip (save → load → assert equality). Flag if only constructor-acceptance tests exist.
+**Reject if tests are missing**: If code changes wire components together but no round-trip integration test exists, quality-enforcer MUST fail the check — even if all existing tests pass. Missing tests = incomplete implementation.
 
 ---
 
@@ -100,8 +111,24 @@ NEVER declare "done" or "complete" when:
 - Creating stub methods that raise NotImplementedError
 - Using fallback logic that masks missing implementation
 - Adding backward compatibility shims instead of actual implementation
+- Integration tests for wiring changes have not been written yet
+- Documentation for changed APIs/constructors/storage backends has not been updated yet
 
 If a condition cannot be met, RAISE an exception with a clear message.
+
+## Atomic Implementation Rule
+
+Each code change MUST ship with its tests and doc updates in the same step. Never split implementation into:
+- "Step N: write code" → "Step N+1: write tests" → "Step N+2: update docs"
+
+Instead, for each component changed:
+1. Edit the code
+2. Grep `docs/` for references to changed APIs and update them
+3. Write or update the integration test that exercises the new wiring
+4. Run the test, fix any failures
+5. THEN move to the next component
+
+This is not optional. Do not ask permission. Do not defer. The rules in CLAUDE.md already mandate this — follow them.
 
 ## File Discipline
 

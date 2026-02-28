@@ -206,15 +206,16 @@ class RoutingConfig:
 
 **Key Methods**:
 ```python
-def merge_with_env(self):
-    """Override config from environment variables"""
-    # Format: ROUTING_<SECTION>_<KEY>
-    # Examples:
-    #   ROUTING_LLM_MODEL=gemma2:2b
-
 @classmethod
 def from_file(cls, filepath: Path) -> "RoutingConfig":
     """Load configuration from JSON/YAML file"""
+
+@classmethod
+def from_dict(cls, data: dict) -> "RoutingConfig":
+    """Create config from a dictionary"""
+
+def to_dict(self) -> dict:
+    """Serialize config to dictionary"""
 
 def save(self, filepath: Path):
     """Save configuration to file"""
@@ -222,9 +223,8 @@ def save(self, filepath: Path):
 
 **Usage**:
 ```python
-# Load from file with env overrides
+# Load from file
 config = RoutingConfig.from_file("configs/routing_config.yaml")
-config.merge_with_env()
 
 # Or use defaults
 config = RoutingConfig()
@@ -356,9 +356,10 @@ Use exact JSON format in your response."""
 class AdvancedRoutingOptimizer:
     def __init__(
         self,
-        tenant_id: str,  # REQUIRED - no default
+        tenant_id: str,                          # REQUIRED - no default
+        llm_config: LLMEndpointConfig,           # REQUIRED
+        telemetry_provider: TelemetryProvider,   # REQUIRED
         config: Optional[AdvancedOptimizerConfig] = None,
-        base_storage_dir: str = "data/optimization"
     ):
         # Experience storage
         self.experiences: List[RoutingExperience] = []
@@ -1380,9 +1381,16 @@ else:
 
 ```python
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
-# Initialize pipeline with SIMBA enabled
-pipeline = QueryEnhancementPipeline(enable_simba=True)
+# telemetry_provider obtained from TelemetryManager.get_tenant_provider(tenant_id)
+
+# Initialize pipeline with SIMBA enabled (telemetry_provider required when enable_simba=True)
+pipeline = QueryEnhancementPipeline(
+    enable_simba=True,
+    telemetry_provider=telemetry_provider,
+    tenant_id="production",
+)
 
 # Enhance query
 query = "AI robot learning to play games"
@@ -1425,8 +1433,10 @@ await pipeline.record_enhancement_outcome(
 ```python
 from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
-    AdvancedOptimizerConfig
+    AdvancedOptimizerConfig,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Initialize optimizer
 config = AdvancedOptimizerConfig(
@@ -1437,8 +1447,10 @@ config = AdvancedOptimizerConfig(
 )
 
 optimizer = AdvancedRoutingOptimizer(
-    tenant_id="default",  # Required parameter
-    config=config
+    tenant_id="default",
+    llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+    telemetry_provider=telemetry_provider,
+    config=config,
 )
 
 # Record routing experience
@@ -1482,9 +1494,15 @@ print(f"Optimization ready: {recommendations['optimization_ready']}")
 ```python
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
-# Initialize optimizer (tenant_id is required)
-optimizer = CrossModalOptimizer(tenant_id="default")
+# telemetry_provider obtained from TelemetryManager.get_tenant_provider(tenant_id)
+
+# Initialize optimizer (both telemetry_provider and tenant_id are required)
+optimizer = CrossModalOptimizer(
+    telemetry_provider=telemetry_provider,
+    tenant_id="default",
+)
 
 # Predict fusion benefit
 benefit = optimizer.predict_fusion_benefit(
@@ -1764,9 +1782,8 @@ export ROUTING_OPTIMIZATION_ENABLE_AUTO_OPTIMIZATION=true
 ```
 
 ```python
-# Load config with env overrides
+# Load config from file
 config = RoutingConfig.from_file("configs/routing_config.yaml")
-config.merge_with_env()  # Apply environment overrides
 ```
 
 **Multi-tenant Configuration**:
