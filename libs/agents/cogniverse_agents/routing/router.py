@@ -1,11 +1,8 @@
-# src/routing/router.py
 """
 Comprehensive Router implementation with tiered architecture.
-Implements the hybrid approach described in COMPREHENSIVE_ROUTING.md.
 """
 
 import asyncio
-import json
 import logging
 import time
 from collections import Counter
@@ -104,11 +101,9 @@ class ComprehensiveRouter:
         self.cache: dict[str, tuple[RoutingDecision, float]] = {}
         self.metrics_buffer: list[RoutingMetrics] = []
         self.query_count = 0
-        self.optimizer = None  # Placeholder for testing
 
     def _initialize_strategies(self):
         """Initialize routing strategies for each tier."""
-        # Handle both RouterConfig and RoutingConfig
         if isinstance(self.config, dict):
             tier_config = self.config.get("tier_config", {})
             gliner_cfg = self.config.get("gliner_config", {})
@@ -133,24 +128,20 @@ class ComprehensiveRouter:
             langextract_cfg = getattr(self.config, "langextract_config", {})
             keyword_cfg = getattr(self.config, "keyword_config", {})
 
-        # Fast Path: GLiNER2
         if tier_config.get("enable_fast_path", True):
             self.strategies[RoutingTier.FAST_PATH] = GLiNERRoutingStrategy(gliner_cfg)
             logger.info("Initialized Fast Path (GLiNER) routing strategy")
 
-        # Slow Path: LLM (SmolLM3 or other)
         if tier_config.get("enable_slow_path", True):
             self.strategies[RoutingTier.SLOW_PATH] = LLMRoutingStrategy(llm_cfg)
             logger.info("Initialized Slow Path (LLM) routing strategy")
 
-        # LangExtract Path: Structured extraction
         if tier_config.get("enable_langextract", True):
             self.strategies[RoutingTier.LANGEXTRACT] = LangExtractRoutingStrategy(
                 langextract_cfg
             )
             logger.info("Initialized LangExtract routing strategy")
 
-        # Fallback: Keyword-based
         if tier_config.get("enable_fallback", True):
             self.strategies[RoutingTier.FALLBACK] = KeywordRoutingStrategy(keyword_cfg)
             logger.info("Initialized Fallback (Keyword) routing strategy")
@@ -171,11 +162,10 @@ class ComprehensiveRouter:
         start_time = time.time()
         self.query_count += 1
 
-        # Check cache first
         if hasattr(self.config, "cache_config"):
             enable_caching = self.config.cache_config.get("enable_caching", True)
         else:
-            enable_caching = True  # Default to enabled
+            enable_caching = True
 
         if enable_caching:
             cached_decision = self._check_cache(query)
@@ -183,13 +173,11 @@ class ComprehensiveRouter:
                 logger.debug(f"Cache hit for query: {query[:50]}...")
                 return cached_decision
 
-        # Check if ensemble mode is enabled
         ensemble_config = self._get_ensemble_config()
         if ensemble_config and ensemble_config.get("enabled", False):
             logger.debug(f"Using ensemble routing for: {query[:50]}...")
             return await self._ensemble_route(query, context, start_time)
 
-        # Fall back to tiered routing
         return await self._tiered_route(query, context, start_time)
 
     def _get_ensemble_config(self) -> dict[str, Any] | None:
@@ -223,7 +211,6 @@ class ComprehensiveRouter:
             f"Ensemble routing with {len(enabled_strategies)} strategies: {enabled_strategies}"
         )
 
-        # Map strategy names to tiers
         strategy_tier_map = {
             "gliner": RoutingTier.FAST_PATH,
             "llm": RoutingTier.SLOW_PATH,
@@ -231,7 +218,6 @@ class ComprehensiveRouter:
             "keyword": RoutingTier.FALLBACK,
         }
 
-        # Create async tasks for enabled strategies
         tasks = []
         for strategy_name in enabled_strategies:
             tier = strategy_tier_map.get(strategy_name)
@@ -249,7 +235,6 @@ class ComprehensiveRouter:
             )
             return await self._tiered_route(query, context, start_time)
 
-        # Wait for all strategies to complete (with timeout)
         timeout = ensemble_config.get("timeout_seconds", 10.0)
         try:
             completed_tasks = await asyncio.wait_for(
@@ -260,7 +245,6 @@ class ComprehensiveRouter:
             logger.warning(f"Ensemble routing timeout after {timeout}s")
             return await self._tiered_route(query, context, start_time)
 
-        # Collect successful decisions
         decisions = []
         for i, (strategy_name, _) in enumerate(tasks):
             result = completed_tasks[i]
@@ -273,10 +257,8 @@ class ComprehensiveRouter:
             logger.warning("All ensemble strategies failed, falling back to tiered")
             return await self._tiered_route(query, context, start_time)
 
-        # Extract modality prediction from context if available
         modality_prediction = context.get("modality_prediction") if context else None
 
-        # Vote on decisions
         final_decision = self._vote_on_decisions(
             decisions,
             voting_method,
@@ -285,16 +267,13 @@ class ComprehensiveRouter:
             modality_prediction,
         )
 
-        # Determine orchestration strategy
         self._determine_orchestration_strategy(final_decision, query, context)
 
-        # Update cache and metrics
         self._update_cache(query, final_decision)
         self._record_routing_metrics(
             query, final_decision, time.time() - start_time, None
         )
 
-        # Add ensemble metadata
         final_decision.metadata.update(
             {
                 "routing_method": "ensemble",
@@ -355,7 +334,6 @@ class ComprehensiveRouter:
             )
             return single_decision
 
-        # Extract decision components
         search_modalities = []
         generation_types = []
         confidence_scores = []
@@ -364,20 +342,16 @@ class ComprehensiveRouter:
         for strategy_name, decision in decisions:
             weight = strategy_weights.get(strategy_name, 1.0)
 
-            # Weight the votes
-            for _ in range(int(weight * 10)):  # Scale weights to integers
+            for _ in range(int(weight * 10)):
                 search_modalities.append(decision.search_modality)
                 generation_types.append(decision.generation_type)
 
             confidence_scores.append(decision.confidence_score * weight)
             reasonings.append(f"{strategy_name}: {decision.reasoning}")
 
-        # Phase 11: Apply modality-specific model prediction if available
         if modality_prediction and modality_prediction.get("confidence", 0.0) >= 0.7:
-            # High-confidence modality-specific prediction overrides ensemble
             recommended_agent = modality_prediction["recommended_agent"]
 
-            # Map agent to search modality
             agent_to_modality = {
                 "search_agent": SearchModality.VIDEO,
                 "text_search_agent": SearchModality.TEXT,
@@ -392,18 +366,13 @@ class ComprehensiveRouter:
                     f"🎯 Modality prediction overriding ensemble: {recommended_agent} "
                     f"(confidence: {modality_prediction['confidence']:.2f})"
                 )
-                # Boost this modality in voting
-                boost_weight = int(
-                    modality_prediction["confidence"] * 50
-                )  # Strong boost
+                boost_weight = int(modality_prediction["confidence"] * 50)
                 for _ in range(boost_weight):
                     search_modalities.append(modality_override)
 
-        # Vote on search modality
         modality_votes = Counter(search_modalities)
         final_modality = modality_votes.most_common(1)[0][0]
 
-        # Check agreement threshold
         modality_agreement = modality_votes.most_common(1)[0][1] / len(
             search_modalities
         )
@@ -413,13 +382,10 @@ class ComprehensiveRouter:
             )
             final_modality = SearchModality.BOTH  # Default to both when uncertain
 
-        # Vote on generation type
         generation_votes = Counter(generation_types)
         final_generation = generation_votes.most_common(1)[0][0]
 
-        # Calculate confidence score
         if voting_method == "confidence_weighted":
-            # Weight by individual confidence scores
             total_weight = sum(d.confidence_score for _, d in decisions)
             final_confidence = (
                 sum(d.confidence_score**2 for _, d in decisions) / total_weight
@@ -427,17 +393,15 @@ class ComprehensiveRouter:
                 else 0.0
             )
         elif voting_method == "weighted":
-            # Use manual weights
             total_weight = sum(strategy_weights.get(name, 1.0) for name, _ in decisions)
             final_confidence = (
                 sum(confidence_scores) / total_weight if total_weight > 0 else 0.0
             )
-        else:  # majority
+        else:
             final_confidence = sum(d.confidence_score for _, d in decisions) / len(
                 decisions
             )
 
-        # Combine reasoning
         final_reasoning = f"Ensemble ({voting_method}): " + "; ".join(reasonings)
         if modality_prediction and modality_prediction.get("confidence", 0.0) >= 0.7:
             final_reasoning = (
@@ -446,7 +410,6 @@ class ComprehensiveRouter:
                 + final_reasoning
             )
 
-        # Build metadata
         metadata = {
             "agreement_score": modality_agreement,
             "strategies_count": len(decisions),
@@ -457,7 +420,7 @@ class ComprehensiveRouter:
         return RoutingDecision(
             search_modality=final_modality,
             generation_type=final_generation,
-            confidence_score=min(final_confidence, 1.0),  # Cap at 1.0
+            confidence_score=min(final_confidence, 1.0),
             routing_method="ensemble",
             reasoning=final_reasoning,
             metadata=metadata,
@@ -480,7 +443,6 @@ class ComprehensiveRouter:
             query: The user query
             context: Optional context information
         """
-        # Extract modality and generation requirements
         is_multi_modal = len(decision.detected_modalities) > 1
         needs_video = decision.search_modality in [
             SearchModality.VIDEO,
@@ -493,12 +455,10 @@ class ComprehensiveRouter:
         is_detailed_report = decision.generation_type == GenerationType.DETAILED_REPORT
         is_summary = decision.generation_type == GenerationType.SUMMARY
 
-        # Explicit orchestration request from context
         explicit_orchestration = (
             context.get("require_orchestration", False) if context else False
         )
 
-        # Determine if orchestration is needed
         requires_orchestration = (
             is_multi_modal
             or (needs_video and needs_text)
@@ -508,21 +468,17 @@ class ComprehensiveRouter:
         )
 
         if not requires_orchestration:
-            # Single agent can handle this
             decision.requires_orchestration = False
             return
 
-        # Orchestration is needed - determine pattern and agents
         decision.requires_orchestration = True
 
-        # Determine orchestration pattern
         if explicit_orchestration and not (
             is_multi_modal
             or (needs_video and needs_text)
             or is_detailed_report
             or is_summary
         ):
-            # Explicit orchestration without other triggers - use fallback pattern
             decision.orchestration_pattern = "sequential"
             decision.primary_agent = (
                 "video_search_agent" if needs_video else "text_search_agent"
@@ -539,12 +495,10 @@ class ComprehensiveRouter:
             return
 
         if is_detailed_report:
-            # Detailed reports need sequential processing: search -> summarize -> detailed_report
             decision.orchestration_pattern = "sequential"
             decision.primary_agent = "detailed_report_agent"
 
             if needs_video and needs_text:
-                # Need both video and text search first
                 decision.secondary_agents = [
                     "video_search_agent",
                     "text_search_agent",
@@ -563,7 +517,7 @@ class ComprehensiveRouter:
                     "summarizer_agent",
                     "detailed_report_agent",
                 ]
-            else:  # needs_text or multi-modal
+            else:
                 decision.secondary_agents = ["text_search_agent", "summarizer_agent"]
                 decision.agent_execution_order = [
                     "text_search_agent",
@@ -572,12 +526,10 @@ class ComprehensiveRouter:
                 ]
 
         elif is_summary:
-            # Summaries need search then summarize
             decision.orchestration_pattern = "sequential"
             decision.primary_agent = "summarizer_agent"
 
             if needs_video and needs_text:
-                # Parallel search, then sequential summarization
                 decision.orchestration_pattern = "parallel"
                 decision.secondary_agents = ["video_search_agent", "text_search_agent"]
                 decision.agent_execution_order = [
@@ -599,21 +551,18 @@ class ComprehensiveRouter:
                 ]
 
         elif needs_video and needs_text:
-            # Multi-modal search - parallel execution
             decision.orchestration_pattern = "parallel"
             decision.primary_agent = "video_search_agent"
             decision.secondary_agents = ["text_search_agent"]
             decision.agent_execution_order = ["video_search_agent", "text_search_agent"]
 
         else:
-            # Should not reach here, but handle gracefully
             logger.warning(
                 f"Orchestration required but pattern unclear for query: {query[:50]}..."
             )
             decision.requires_orchestration = False
             return
 
-        # Add orchestration metadata
         decision.metadata.update(
             {
                 "orchestration_determined": True,
@@ -623,7 +572,9 @@ class ComprehensiveRouter:
                     else (
                         "multi_search"
                         if (needs_video and needs_text)
-                        else "multi_modal" if is_multi_modal else "complex_generation"
+                        else "multi_modal"
+                        if is_multi_modal
+                        else "complex_generation"
                     )
                 ),
             }
@@ -637,8 +588,7 @@ class ComprehensiveRouter:
     async def _tiered_route(
         self, query: str, context: dict[str, Any] | None, start_time: float
     ) -> RoutingDecision:
-        """Original tiered routing logic."""
-        # Get thresholds
+        """Route query through tiered strategy cascade."""
         if isinstance(self.config, dict):
             fast_threshold = self.config.get("tier_config", {}).get(
                 "fast_path_confidence_threshold", 0.7
@@ -666,7 +616,6 @@ class ComprehensiveRouter:
                 self.config, "langextract_confidence_threshold", 0.5
             )
 
-        # Try Fast Path (Tier 1)
         fast_decision = None
         if RoutingTier.FAST_PATH in self.strategies:
             fast_decision = await self._try_fast_path(query, context)
@@ -681,7 +630,6 @@ class ComprehensiveRouter:
                 )
                 return fast_decision
 
-        # Escalate to Slow Path (Tier 2)
         if RoutingTier.SLOW_PATH in self.strategies:
             slow_decision = await self._try_slow_path(query, context, fast_decision)
             if slow_decision and slow_decision.confidence_score >= slow_threshold:
@@ -695,7 +643,6 @@ class ComprehensiveRouter:
                 )
                 return slow_decision
 
-        # Try LangExtract (Tier 3)
         if RoutingTier.LANGEXTRACT in self.strategies:
             langextract_decision = await self._try_langextract(query, context)
             if (
@@ -714,7 +661,6 @@ class ComprehensiveRouter:
                 )
                 return langextract_decision
 
-        # Ultimate Fallback (Tier 4)
         if RoutingTier.FALLBACK in self.strategies:
             fallback_decision = await self._try_fallback(query, context)
             self._determine_orchestration_strategy(fallback_decision, query, context)
@@ -723,8 +669,6 @@ class ComprehensiveRouter:
                 query, fallback_decision, time.time() - start_time, RoutingTier.FALLBACK
             )
             return fallback_decision
-
-        # No strategies available, return default
         default_decision = RoutingDecision(
             search_modality=SearchModality.BOTH,
             generation_type=GenerationType.RAW_RESULTS,
@@ -857,7 +801,6 @@ class ComprehensiveRouter:
         """
         if query in self.cache:
             decision, timestamp = self.cache[query]
-            # Get cache TTL
             if isinstance(self.config, dict):
                 cache_ttl = self.config.get("cache_config", {}).get(
                     "cache_ttl_seconds", 300
@@ -868,7 +811,6 @@ class ComprehensiveRouter:
             if time.time() - timestamp < cache_ttl:
                 return decision
             else:
-                # Cache expired
                 del self.cache[query]
         return None
 
@@ -880,7 +822,6 @@ class ComprehensiveRouter:
             query: The query
             decision: The routing decision
         """
-        # Check if caching is enabled
         if isinstance(self.config, dict):
             enable_caching = self.config.get("cache_config", {}).get(
                 "enable_caching", True
@@ -891,9 +832,7 @@ class ComprehensiveRouter:
         if enable_caching:
             self.cache[query] = (decision, time.time())
 
-            # Limit cache size
             if len(self.cache) > 1000:
-                # Remove oldest entries
                 sorted_items = sorted(self.cache.items(), key=lambda x: x[1][1])
                 for key, _ in sorted_items[:100]:
                     del self.cache[key]
@@ -914,7 +853,6 @@ class ComprehensiveRouter:
             execution_time: Time taken
             tier: The tier that handled the query
         """
-        # Check if metrics are enabled
         if hasattr(self.config, "monitoring_config"):
             enable_metrics = self.config.monitoring_config.get("enable_metrics", True)
             metrics_batch_size = self.config.monitoring_config.get(
@@ -936,15 +874,12 @@ class ComprehensiveRouter:
 
             self.metrics_buffer.append(metrics)
 
-            # Flush metrics buffer if it's full
             if len(self.metrics_buffer) >= metrics_batch_size:
                 self._flush_metrics()
 
     def _flush_metrics(self):
         """Flush metrics buffer to storage or monitoring system."""
         if self.metrics_buffer:
-            # Here you would send metrics to a monitoring system
-            # For now, just log summary
             avg_time = sum(m.execution_time for m in self.metrics_buffer) / len(
                 self.metrics_buffer
             )
@@ -974,7 +909,7 @@ class ComprehensiveRouter:
         report = {
             "total_queries": self.query_count,
             "cache_size": len(self.cache),
-            "cache_hit_rate": 0.0,  # Would need to track this
+            "cache_hit_rate": 0.0,
             "tier_performance": {},
         }
 
@@ -992,7 +927,6 @@ class ComprehensiveRouter:
         Args:
             training_data: Optional training data for optimization
         """
-        # Check if auto-optimization is enabled
         if hasattr(self.config, "optimization_config"):
             enable_auto_opt = self.config.optimization_config.get(
                 "enable_auto_optimization", False
@@ -1006,12 +940,9 @@ class ComprehensiveRouter:
 
         logger.info("Starting routing optimization...")
 
-        # Collect performance data from all strategies
         performance_data = self.get_performance_report()
 
-        # Identify underperforming tiers
         for tier_name, tier_stats in performance_data["tier_performance"].items():
-            # Get minimum accuracy threshold
             if hasattr(self.config, "optimization_config"):
                 min_accuracy = self.config.optimization_config.get("min_accuracy", 0.8)
             else:
@@ -1023,48 +954,7 @@ class ComprehensiveRouter:
                     f"{tier_stats.get('success_rate', 0):.2%}"
                 )
 
-                # Here you would trigger re-optimization of the specific tier
-                # For example, re-compile DSPy programs or retrain GLiNER
-
         logger.info("Routing optimization completed")
-
-    def export_metrics(self, filepath: str):
-        """
-        Export all collected metrics.
-
-        Args:
-            filepath: Path to save metrics
-        """
-        all_metrics = []
-
-        # Collect metrics from all strategies
-        for tier, strategy in self.strategies.items():
-            for metric in strategy.metrics_history:
-                metric_dict = metric.to_dict()
-                metric_dict["tier"] = tier.value
-                all_metrics.append(metric_dict)
-
-        # Add buffered metrics
-        for metric in self.metrics_buffer:
-            all_metrics.append(metric.to_dict())
-
-        with open(filepath, "w") as f:
-            json.dump(all_metrics, f, indent=2)
-
-        logger.info(f"Exported {len(all_metrics)} metrics to {filepath}")
-
-    async def _run_ensemble(self, query: str) -> RoutingDecision:
-        """
-        Run ensemble voting across multiple strategies (placeholder for future implementation).
-
-        Args:
-            query: The query to route
-
-        Returns:
-            RoutingDecision from ensemble voting
-        """
-        # For now, just use the standard routing logic
-        return await self.route(query)
 
 
 class TieredRouter(ComprehensiveRouter):
@@ -1084,7 +974,6 @@ class TieredRouter(ComprehensiveRouter):
         """Enhanced routing with tier tracking."""
         decision = await super().route(query, context)
 
-        # Track tier usage
         tier_used = decision.metadata.get("tier")
         if tier_used:
             for tier in RoutingTier:
@@ -1094,7 +983,6 @@ class TieredRouter(ComprehensiveRouter):
                         self.tier_success_stats[tier] += 1
                     break
 
-        # Check if rebalancing is needed
         if self.query_count % 100 == 0:
             self._check_tier_balance()
 
@@ -1111,14 +999,12 @@ class TieredRouter(ComprehensiveRouter):
             for tier, count in self.tier_usage_stats.items()
         }
 
-        # Log if slow path is being used too often (>20%)
         if tier_percentages.get(RoutingTier.SLOW_PATH, 0) > 20:
             logger.warning(
                 f"High Slow Path usage: {tier_percentages[RoutingTier.SLOW_PATH]:.1f}%. "
                 "Consider optimizing Fast Path strategy."
             )
 
-        # Log if fallback is being used too often (>10%)
         if tier_percentages.get(RoutingTier.FALLBACK, 0) > 10:
             logger.warning(
                 f"High Fallback usage: {tier_percentages[RoutingTier.FALLBACK]:.1f}%. "

@@ -1,9 +1,7 @@
-# src/routing/base.py
 """
 Base classes and interfaces for the comprehensive routing system.
 """
 
-import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -44,10 +42,8 @@ class RoutingDecision:
     reasoning: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Phase 6: Multi-modal classification
     detected_modalities: list[str] = field(default_factory=list)
 
-    # Phase 7: Multi-agent orchestration
     requires_orchestration: bool = False
     orchestration_pattern: str | None = None  # "parallel", "sequential", "conditional"
     primary_agent: str | None = None
@@ -227,35 +223,6 @@ class RoutingStrategy(ABC):
             "average_execution_time": avg_time,
             "modality_distribution": modality_distribution,
         }
-
-    def export_metrics(self, filepath: str):
-        """
-        Export metrics to a JSON file.
-
-        Args:
-            filepath: Path to save metrics
-        """
-        metrics_data = [m.to_dict() for m in self.metrics_history]
-        with open(filepath, "w") as f:
-            json.dump(metrics_data, f, indent=2)
-
-    def load_metrics(self, filepath: str):
-        """
-        Load metrics from a JSON file.
-
-        Args:
-            filepath: Path to load metrics from
-        """
-        with open(filepath) as f:
-            metrics_data = json.load(f)
-
-        self.metrics_history = []
-        for data in metrics_data:
-            decision_data = data.pop("decision")
-            decision = RoutingDecision.from_dict(decision_data)
-            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
-            metrics = RoutingMetrics(decision=decision, **data)
-            self.metrics_history.append(metrics)
 
 
 class TemporalExtractor:
