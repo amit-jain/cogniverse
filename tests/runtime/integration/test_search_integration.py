@@ -106,7 +106,7 @@ class TestSearchIntegration:
     @patch(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
     )
-    @patch("cogniverse_runtime.search.service.QueryEncoderFactory.create_encoder")
+    @patch("cogniverse_agents.search.service.QueryEncoderFactory.create_encoder")
     def test_search_with_mocked_encoder(
         self,
         mock_create_encoder,
@@ -152,7 +152,7 @@ class TestSearchIntegration:
     @patch(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
     )
-    @patch("cogniverse_runtime.search.service.QueryEncoderFactory.create_encoder")
+    @patch("cogniverse_agents.search.service.QueryEncoderFactory.create_encoder")
     def test_search_stream_with_mocked_encoder(
         self,
         mock_create_encoder,

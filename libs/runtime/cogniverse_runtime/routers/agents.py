@@ -247,8 +247,8 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
 
 async def _execute_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any]:
     """Execute a search task using the SearchService."""
+    from cogniverse_agents.search.service import SearchService
     from cogniverse_foundation.config.utils import get_config
-    from cogniverse_runtime.search.service import SearchService
 
     config = get_config(tenant_id=tenant_id, config_manager=_config_manager)
     search_service = SearchService(

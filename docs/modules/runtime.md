@@ -370,7 +370,7 @@ manager.list_processors()
 The search service provides multi-modal search with tenant isolation:
 
 ```python
-from cogniverse_runtime.search.service import SearchService
+from cogniverse_agents.search.service import SearchService
 from cogniverse_foundation.config.utils import get_config, create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path

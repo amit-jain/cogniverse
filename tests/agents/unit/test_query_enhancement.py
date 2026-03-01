@@ -16,6 +16,37 @@ from cogniverse_agents.dspy_integration_mixin import (
     DSPyRoutingMixin,
     DSPySummaryMixin,
 )
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+    DSPyAgentOptimizerPipeline,
+    DSPyAgentPromptOptimizer,
+)
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing.dspy_relationship_router import (
+    ComposableQueryAnalysisModule,
+    DSPyAdvancedRoutingModule,
+    create_composable_query_analysis_module,
+)
+from cogniverse_agents.routing.dspy_routing_signatures import (
+    BasicQueryAnalysisSignature,
+    QueryReformulationSignature,
+    UnifiedExtractionReformulationSignature,
+)
+from cogniverse_agents.routing.query_enhancement_engine import (
+    QueryEnhancementPipeline,
+    create_enhancement_pipeline,
+)
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    GLiNERRelationshipExtractor,
+    RelationshipExtractorTool,
+    SpaCyDependencyAnalyzer,
+)
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingOutput
+from cogniverse_agents.search_agent import SearchAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 def _make_mock_telemetry_provider():
@@ -53,43 +84,6 @@ def _make_mixin(**kwargs):
     }
     defaults.update(kwargs)
     return DSPyIntegrationMixin(**defaults)
-from cogniverse_agents.optimizer.dspy_agent_optimizer import (
-    DSPyAgentOptimizerPipeline,
-    DSPyAgentPromptOptimizer,
-)
-from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from cogniverse_agents.routing.dspy_relationship_router import (
-    ComposableQueryAnalysisModule,
-    DSPyAdvancedRoutingModule,
-    create_composable_query_analysis_module,
-)
-from cogniverse_agents.routing.dspy_routing_signatures import (
-    BasicQueryAnalysisSignature,
-    QueryReformulationSignature,
-    UnifiedExtractionReformulationSignature,
-)
-from cogniverse_agents.routing.query_enhancement_engine import (
-    QueryEnhancementPipeline,
-    create_enhancement_pipeline,
-)
-from cogniverse_agents.routing.relationship_extraction_tools import (
-    GLiNERRelationshipExtractor,
-    RelationshipExtractorTool,
-    SpaCyDependencyAnalyzer,
-)
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingOutput
-
-# Phase 5 imports for enhanced agent testing
-from cogniverse_agents.search_agent import SearchAgent
-
-# Agent imports
-from cogniverse_agents.summarizer_agent import SummarizerAgent
-
-# Phase 1-3 imports for integration tests
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 # Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
@@ -3166,7 +3160,7 @@ class TestVideoSearchAgent:
                 deps = SearchAgentDeps()
                 agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
                 assert agent is not None
-                assert hasattr(agent, "_tenant_backends")
+                assert hasattr(agent, "_shared_backend")
                 assert hasattr(agent, "_backend_config")
 
     def test_relationship_aware_search_params(self):

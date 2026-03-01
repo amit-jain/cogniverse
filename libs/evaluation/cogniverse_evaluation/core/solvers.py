@@ -32,6 +32,7 @@ def create_retrieval_solver(
         Solver that runs actual searches
     """
     config = config or {}
+    runtime_url = config.get("runtime_url", "http://localhost:8000")
 
     async def solve(state, generate):
         """Execute searches for all profile/strategy combinations."""
@@ -45,16 +46,11 @@ def create_retrieval_solver(
             logger.error("No query found in state.input")
             return state
 
-        query_str = str(query)  # Ensure it's a string
+        query_str = str(query)
         logger.info(f"Running retrieval for query: {query_str[:50]}...")
-
-        import os
 
         import httpx
 
-        # Use runtime API instead of instantiating SearchService directly
-        # (avoids complex dependency chain — runtime is already running)
-        runtime_url = os.environ.get("RUNTIME_URL", "http://localhost:8000")
         tenant_id = config.get("tenant_id", "flywheel_org:production")
 
         # Store results for each configuration
@@ -164,7 +160,6 @@ def create_retrieval_solver(
             f"Solver set state.output (length={len(packed_output)}): {packed_output[:100] if packed_output else 'EMPTY'}"
         )
 
-        # Also keep in metadata for backward compatibility
         state.metadata["search_results"] = all_results
 
         return state
@@ -202,20 +197,16 @@ def create_batch_solver(
         # Get backend if needed for ground truth extraction
         backend = None
         if config.get("use_backend_for_ground_truth", False):
-            try:
-                from cogniverse_foundation.config.manager import ConfigManager
-                from cogniverse_foundation.config.utils import get_config
-                from cogniverse_runtime.search.service import SearchService
+            from cogniverse_agents.search.service import SearchService
+            from cogniverse_foundation.config.manager import ConfigManager
+            from cogniverse_foundation.config.utils import get_config
 
-                # Initialize ConfigManager for dependency injection
-                ground_truth_config_manager = ConfigManager()
-                main_config = get_config(
-                    tenant_id="default", config_manager=ground_truth_config_manager
-                )
-                search_service = SearchService(main_config)
-                backend = search_service.backend
-            except Exception as e:
-                logger.warning(f"Could not initialize backend for ground truth: {e}")
+            ground_truth_config_manager = ConfigManager()
+            main_config = get_config(
+                tenant_id="default", config_manager=ground_truth_config_manager
+            )
+            search_service = SearchService(main_config)
+            backend = search_service.backend
 
         # Get traces
         if trace_ids:

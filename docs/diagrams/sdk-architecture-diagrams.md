@@ -502,11 +502,11 @@ sequenceDiagram
     Agents->>Core: Import BackendRegistry
     Core-->>Agents: BackendRegistry class
 
-    Agents->>Core: backend = BackendRegistry.get_search_backend("vespa", tenant_id)
-    Core->>Vespa: Return cached backend instance
+    Agents->>Core: backend = BackendRegistry.get_search_backend("vespa")
+    Core->>Vespa: Return shared cached backend instance
 
-    Agents->>Vespa: docs = backend.search(query, schema="video_colpali_mv_frame_acme_corp")
-    Vespa->>Vespa: Execute Vespa query with tenant schema
+    Agents->>Vespa: docs = backend.search(query_dict with tenant_id)
+    Vespa->>Vespa: Derive tenant schema and execute query
     Vespa-->>Agents: Search results
 
     Agents->>Agents: Multi-modal reranking

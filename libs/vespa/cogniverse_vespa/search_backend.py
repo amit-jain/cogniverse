@@ -297,12 +297,6 @@ class VespaSearchBackend(SearchBackend):
         if config is not None:
             self.backend_url = config.get("url", "http://localhost")
             self.backend_port = config.get("port", 8080)
-            # tenant_id is REQUIRED - no fallback allowed
-            self.tenant_id = config.get("tenant_id")
-            if not self.tenant_id:
-                logger.warning(
-                    "VespaSearchBackend initialized WITHOUT tenant_id - search will fail"
-                )
             # Store ALL profiles - schema determined at query time
             self.profiles = config.get("profiles", {})
             self.default_profiles = config.get("default_profiles", {})
@@ -360,22 +354,10 @@ class VespaSearchBackend(SearchBackend):
         # Extract config values
         self.backend_url = config.get("url", "http://localhost")
         self.backend_port = config.get("port", 8080)
-        base_schema_name = config.get("schema_name")
-        tenant_id = config.get("tenant_id")
+        self.schema_name = config.get("schema_name")
         self.profile = config.get("profile")
         self.query_encoder = None
         self._config_manager = config.get("config_manager")
-
-        # Transform schema name to tenant-scoped format if tenant_id provided
-        if tenant_id and base_schema_name:
-            # Generate tenant-specific schema name (replace : with _ to match deployed schema names)
-            safe_tenant_id = tenant_id.replace(":", "_")
-            self.schema_name = f"{base_schema_name}_{safe_tenant_id}"
-            logger.info(
-                f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})"
-            )
-        else:
-            self.schema_name = base_schema_name
 
         # Combine URL and port
         full_url = f"{self.backend_url}:{self.backend_port}"
@@ -684,15 +666,16 @@ class VespaSearchBackend(SearchBackend):
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)
 
-        # Apply tenant scoping - tenant_id is REQUIRED
-        if not self.tenant_id:
+        # Apply tenant scoping - tenant_id is REQUIRED in query_dict
+        tenant_id = query_dict.get("tenant_id")
+        if not tenant_id:
             raise ValueError(
-                f"tenant_id is required for search operations. "
+                "tenant_id is required in query_dict for search operations. "
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
         # Generate tenant-specific schema name (replace : with _ to match deployed schema names)
-        safe_tenant_id = self.tenant_id.replace(":", "_")
+        safe_tenant_id = tenant_id.replace(":", "_")
         schema_name = f"{base_schema_name}_{safe_tenant_id}"
         logger.info(
             f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}"

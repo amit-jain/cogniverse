@@ -95,7 +95,6 @@ def deploy_memory_schema_for_tests(
     }
     backend = registry.get_search_backend(
         name=backend_type,
-        tenant_id=tenant_id,
         config=backend_config_dict,
         config_manager=config_manager,
         schema_loader=schema_loader,

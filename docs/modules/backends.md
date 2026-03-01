@@ -511,18 +511,18 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Get backend from registry (handles instantiation and caching)
+# Get shared search backend from registry (handles instantiation and caching)
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="acme",
     config_manager=config_manager,
     schema_loader=schema_loader
 )
 
-# Search
+# Search — tenant_id is passed in query_dict for schema name derivation
 results = backend.search({
     "query": "cooking video",
     "type": "video",
+    "tenant_id": "acme",
     "top_k": 10
 })
 
@@ -540,7 +540,8 @@ ingestion_backend.ingest_documents(documents)
 
 - **Unified Interface**: Single class for search + ingestion
 - **Profile-Aware**: Automatically uses profile config from BackendConfig
-- **Tenant-Aware**: Handles tenant schema routing internally
+- **Shared Search Backend**: One search backend instance serves all tenants; tenant_id passed in query_dict
+- **Tenant-Isolated Ingestion**: Ingestion backends are per-tenant for schema isolation
 - **Lazy Initialization**: Components created on-demand per operation
 
 ### Architecture Diagram
@@ -686,11 +687,10 @@ profiles = list(backend_config.profiles.keys())
 # Select profile dynamically
 profile_name = "video_colpali_smol500_mv_frame"
 
-# Get backend from registry with profile configuration
+# Get shared search backend from registry with profile configuration
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="acme",
     config={"profile": profile_name},
     config_manager=config_manager,
     schema_loader=schema_loader

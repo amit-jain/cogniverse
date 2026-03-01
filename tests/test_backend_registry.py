@@ -356,32 +356,29 @@ class TestBackendRegistry(unittest.TestCase):
         config = {"search_config": "value"}
         backend = self.registry.get_search_backend(
             "test_search",
-            "test_tenant",
             config,
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
 
         self.assertIsInstance(backend, MockSearchBackend)
-        # Config should have tenant_id injected by registry
-        self.assertEqual(backend.config, {**config, "tenant_id": "test_tenant"})
+        # Config should NOT have tenant_id (search backends are shared)
+        self.assertEqual(backend.config, config)
         self.assertTrue(backend.initialized)
 
     def test_backend_instance_caching(self):
-        """Test that backend instances are cached per tenant."""
-        self.registry.register_backend("test_full", MockFullBackend)
+        """Test that search backend instances are cached (shared)."""
+        self.registry.register_search("test_search", MockSearchBackend)
 
-        # Get instance twice for same tenant
+        # Get instance twice
         backend1 = self.registry.get_search_backend(
-            "test_full",
-            "test_tenant",
+            "test_search",
             {"config": 1},
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
         backend2 = self.registry.get_search_backend(
-            "test_full",
-            "test_tenant",
+            "test_search",
             {"config": 2},
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
@@ -392,19 +389,17 @@ class TestBackendRegistry(unittest.TestCase):
 
     def test_clear_instances(self):
         """Test clearing cached instances."""
-        self.registry.register_backend("test_full", MockFullBackend)
+        self.registry.register_search("test_search", MockSearchBackend)
 
         backend1 = self.registry.get_search_backend(
-            "test_full",
-            "test_tenant",
+            "test_search",
             {},
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
         self.registry.clear_instances()
         backend2 = self.registry.get_search_backend(
-            "test_full",
-            "test_tenant",
+            "test_search",
             {},
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
@@ -418,7 +413,6 @@ class TestBackendRegistry(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             self.registry.get_search_backend(
                 "nonexistent",
-                "test_tenant",
                 {},
                 config_manager=self.config_manager,
                 schema_loader=self.schema_loader,
@@ -451,21 +445,17 @@ class TestBackendRegistry(unittest.TestCase):
         self.assertEqual(result["success_count"], 1)
         self.assertEqual(result["error_count"], 0)
 
-        # Get the SAME backend instance for search (due to caching)
-        # This is important - it's the same object that has the ingested documents
-        search_backend = self.registry.get_search_backend(
+        # Get a search backend instance (shared, not per-tenant) — verify no exception
+        self.registry.get_search_backend(
             "test_full",
-            "test_tenant",
             {},
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
 
-        # Verify it's the same instance
-        self.assertIs(backend, search_backend)
-
-        # Now the document should be there
-        retrieved_doc = search_backend.get_document("test_doc_1")
+        # Search backend is a separate shared instance (not same as ingestion)
+        # Retrieve document directly from ingestion backend
+        retrieved_doc = backend.get_document("test_doc_1")
 
         self.assertIsNotNone(retrieved_doc)
         self.assertEqual(retrieved_doc.id, "test_doc_1")
@@ -513,8 +503,8 @@ class TestBackendRegistry(unittest.TestCase):
 
             # Test getting Vespa backend instance
             config = {
-                "backend_url": "http://localhost",
-                "backend_port": 8080,
+                "url": "http://localhost",
+                "port": 8080,
                 "schema_name": "test_schema",
             }
 
@@ -522,7 +512,6 @@ class TestBackendRegistry(unittest.TestCase):
             try:
                 backend = registry.get_search_backend(
                     "vespa",
-                    "test_tenant",
                     config,
                     config_manager=self.config_manager,
                     schema_loader=self.schema_loader,
@@ -593,32 +582,21 @@ class TestBackendIntegration(unittest.TestCase):
         result = backend.ingest_documents(docs)
         self.assertEqual(result["success_count"], 5)
 
-        # Get search backend - should be same instance due to caching
-        search_backend = registry.get_search_backend(
-            "workflow_test",
-            "test_tenant",
-            {},
-            config_manager=self.config_manager,
-            schema_loader=self.schema_loader,
-        )
-
-        # Verify it's the same instance (has the ingested documents)
-        self.assertIs(backend, search_backend)
-
-        # Now search should work
-        search_results = search_backend.search(None, "test", top_k=3)
+        # Search via ingestion backend directly (it implements both interfaces)
+        # Search backend from registry is a separate shared instance
+        search_results = backend.search(None, "test", top_k=3)
 
         self.assertEqual(len(search_results), 3)
 
         # Get statistics
-        stats = search_backend.get_statistics()
+        stats = backend.get_statistics()
         self.assertEqual(stats["document_count"], 5)
 
         # Delete a document
         self.assertTrue(backend.delete_document("doc_0"))
 
         # Check it's gone
-        doc = search_backend.get_document("doc_0")
+        doc = backend.get_document("doc_0")
         self.assertIsNone(doc)
 
 

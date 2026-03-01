@@ -206,17 +206,19 @@ class BackendRegistry:
     def get_search_backend(
         cls,
         name: str,
-        tenant_id: str,
         config: Optional[Dict[str, Any]] = None,
         config_manager=None,
         schema_loader=None,
     ) -> SearchBackend:
         """
-        Get a tenant-specific search backend instance.
+        Get a shared search backend instance.
+
+        Search backends are shared across all tenants. Tenant isolation is
+        achieved by passing tenant_id in query_dict at search() time, where
+        it is used for schema name derivation.
 
         Args:
             name: Backend name
-            tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
             config_manager: ConfigManager instance for dependency injection (REQUIRED)
             schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
@@ -225,27 +227,16 @@ class BackendRegistry:
             Initialized SearchBackend instance
 
         Raises:
-            ValueError: If backend not found, tenant_id not provided, config_manager not provided, or schema_loader not provided
-
-        Note:
-            Backend instances are cached per tenant for isolation.
-            Each tenant gets their own backend instance.
+            ValueError: If backend not found, config_manager not provided, or schema_loader not provided
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
-
         if config_manager is None:
             raise ValueError("config_manager is required for backend initialization")
 
         if schema_loader is None:
             raise ValueError("schema_loader is required for backend initialization")
 
-        # Cache key includes tenant_id for isolation
-        # For full backends, use same key as ingestion to share instance
-        if name in cls._full_backends:
-            instance_key = f"backend_{name}_{tenant_id}"
-        else:
-            instance_key = f"search_{name}_{tenant_id}"
+        # Search backends are shared — cache key has no tenant suffix
+        instance_key = f"search_{name}"
 
         # Check if instance already exists
         if instance_key in cls._backend_instances:
@@ -266,8 +257,8 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        # Get system config for defaults
-        system_config = config_manager.get_system_config(tenant_id)
+        # Get system config for defaults (use "shared" sentinel — search backends are tenant-agnostic)
+        system_config = config_manager.get_system_config("shared")
 
         # Generic merge: Start with system config defaults, override with config["backend"] if provided
         backend_url = system_config.backend_url
@@ -294,7 +285,7 @@ class BackendRegistry:
 
         # Create BackendConfig object with merged values
         backend_config_obj = BackendConfig(
-            tenant_id=tenant_id,
+            tenant_id="shared",
             backend_type=name,
             url=backend_url,
             port=backend_port,
@@ -302,8 +293,8 @@ class BackendRegistry:
             metadata=backend_metadata,
         )
 
-        # Build backend initialization config - merge top-level keys with backend section
-        backend_init_config = {"tenant_id": tenant_id}
+        # Build backend initialization config
+        backend_init_config = {}
 
         if config:
             # Merge all top-level config keys into backend initialization config
@@ -325,9 +316,9 @@ class BackendRegistry:
             backend_init_config=backend_init_config,
         )
 
-        # Cache instance with tenant_id
+        # Cache shared instance
         cls._backend_instances[instance_key] = instance
-        logger.info(f"Created and cached backend: {instance_key}")
+        logger.info(f"Created and cached shared search backend: {instance_key}")
 
         return instance
 
@@ -339,34 +330,12 @@ class BackendRegistry:
         Args:
             name: Backend name to import
         """
-        # Try SDK package structure (cogniverse_{name})
+        module_path = f"cogniverse_{name}.backend"
         try:
-            module_path = f"cogniverse_{name}.backend"
             importlib.import_module(module_path)
             logger.info(f"Auto-imported backend module: {module_path}")
-            return
         except ImportError as e:
-            logger.debug(f"Could not import {module_path}: {e}")
-
-        # Try legacy src structure for backward compatibility
-        try:
-            module_path = f"src.backends.{name}"
-            importlib.import_module(module_path)
-            logger.info(f"Auto-imported backend module: {module_path}")
-            return
-        except ImportError:
-            pass
-
-        # Try with underscore (e.g., "vespa_backend")
-        try:
-            module_path = f"src.backends.{name}_backend"
-            importlib.import_module(module_path)
-            logger.info(f"Auto-imported backend module: {module_path}")
-            return
-        except ImportError:
-            pass
-
-        logger.debug(f"Could not auto-import backend: {name}")
+            logger.debug(f"Could not auto-import backend module {module_path}: {e}")
 
     @classmethod
     def list_ingestion_backends(cls) -> list:

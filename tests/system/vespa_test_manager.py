@@ -578,7 +578,6 @@ class VespaTestManager:
 
             backend = registry.get_search_backend(
                 "vespa",
-                "test_tenant",
                 backend_config,
                 config_manager=config_manager,
                 schema_loader=schema_loader,
@@ -732,7 +731,6 @@ class VespaTestManager:
         else:  # search
             return registry.get_search_backend(
                 name="vespa",
-                tenant_id=tenant_id,
                 config=backend_config,
                 config_manager=config_manager,
                 schema_loader=schema_loader,

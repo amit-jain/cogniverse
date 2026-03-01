@@ -28,16 +28,19 @@ def mock_config():
                     "embedding_model": "vidore/colSmol-256M",
                     "embedding_dim": 128,
                     "embedding_format": "binary",
+                    "schema_name": "frame_based_colpali",
                 },
                 "video_colqwen_omni": {
                     "embedding_model": "vidore/colqwen2-v1.0",
                     "embedding_dim": 128,
                     "embedding_format": "binary",
+                    "schema_name": "video_colqwen_omni",
                 },
                 "video_videoprism_base": {
                     "embedding_model": "google/videoprism-base",
                     "embedding_dim": 768,
                     "embedding_format": "float",
+                    "schema_name": "video_videoprism_base",
                 },
             },
         },
@@ -74,7 +77,7 @@ class TestSearchServiceConstruction:
 
     def test_init_no_profile_no_tenant(self, search_service):
         """SearchService initializes without profile or tenant_id."""
-        assert search_service._backends == {}
+        assert search_service._backend is None
         assert search_service.config_manager is not None
         assert search_service.schema_loader is not None
 
@@ -220,12 +223,12 @@ class TestEncoderCaching:
 class TestBackendCaching:
     """Test lazy backend creation per tenant_id."""
 
-    def test_backends_start_empty(self, search_service):
-        """No backends until first search() call."""
-        assert len(search_service._backends) == 0
+    def test_backend_starts_none(self, search_service):
+        """No backend until first search() call."""
+        assert search_service._backend is None
 
-    def test_get_backend_caches_by_tenant(self, search_service):
-        """_get_backend caches backends by tenant_id."""
+    def test_get_backend_caches_single_instance(self, search_service):
+        """_get_backend caches a single shared backend."""
         mock_encoder = MagicMock()
         profile_config = {"embedding_model": "test", "schema_name": "test_schema"}
 
@@ -235,36 +238,52 @@ class TestBackendCaching:
 
             # First call — creates backend
             b1 = search_service._get_backend(
-                "tenant_a", "frame_based_colpali", profile_config, mock_encoder
+                "frame_based_colpali", profile_config, mock_encoder
             )
-            # Second call same tenant — returns cached
+            # Second call — returns cached
             b2 = search_service._get_backend(
-                "tenant_a", "frame_based_colpali", profile_config, mock_encoder
+                "frame_based_colpali", profile_config, mock_encoder
             )
 
             assert b1 is b2
+            assert search_service._backend is mock_backend
             # Registry only called once (cached for second call)
             assert mock_reg.return_value.get_search_backend.call_count == 1
 
-    def test_different_tenants_create_separate_backends(self, search_service):
-        """Different tenant_ids create separate backend entries."""
+    def test_tenant_id_injected_in_query_dict(self, search_service):
+        """Verify search() adds tenant_id to query_dict."""
         mock_encoder = MagicMock()
-        profile_config = {"embedding_model": "test", "schema_name": "test_schema"}
+        mock_encoder.encode.return_value = None
 
-        with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
-            mock_reg.return_value.get_search_backend.side_effect = [
-                MagicMock(name="backend_a"),
-                MagicMock(name="backend_b"),
-            ]
+        mock_backend = MagicMock()
+        mock_backend.search.return_value = []
 
-            b1 = search_service._get_backend(
-                "tenant_a", "frame_based_colpali", profile_config, mock_encoder
+        with (
+            patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
+            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
+            patch(
+                "cogniverse_foundation.telemetry.context.search_span"
+            ) as mock_search_span,
+            patch("cogniverse_foundation.telemetry.context.encode_span"),
+            patch("cogniverse_foundation.telemetry.context.backend_search_span"),
+            patch(
+                "cogniverse_foundation.telemetry.context.add_embedding_details_to_span"
+            ),
+            patch(
+                "cogniverse_foundation.telemetry.context.add_search_results_to_span"
+            ),
+        ):
+            mock_reg.return_value.get_search_backend.return_value = mock_backend
+            mock_search_span.return_value.__enter__ = MagicMock()
+            mock_search_span.return_value.__exit__ = MagicMock(return_value=False)
+
+            search_service.search(
+                query="test",
+                profile="frame_based_colpali",
+                tenant_id="acme",
             )
-            b2 = search_service._get_backend(
-                "tenant_b", "frame_based_colpali", profile_config, mock_encoder
-            )
 
-            assert b1 is not b2
-            assert len(search_service._backends) == 2
-            assert "tenant_a" in search_service._backends
-            assert "tenant_b" in search_service._backends
+            # Verify search was called with tenant_id in query_dict
+            call_args = mock_backend.search.call_args
+            query_dict = call_args[0][0]
+            assert query_dict["tenant_id"] == "acme"

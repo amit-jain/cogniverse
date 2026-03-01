@@ -1,7 +1,8 @@
 """Unified search service that coordinates query encoding and backend search.
 
-Profile-agnostic: accepts profile and tenant_id at search() time, not at construction.
-Caches encoders by model_name and backends by tenant_id for efficiency.
+Profile-agnostic: profile and tenant_id are accepted at search() time.
+Caches encoders by model_name. A single shared search backend serves all tenants,
+with tenant_id passed in query_dict at search time for schema name derivation.
 """
 
 import logging
@@ -20,7 +21,7 @@ class SearchService:
 
     Profile-agnostic: ONE instance serves all profiles and tenants.
     Encoders are cached by model_name (via QueryEncoderFactory).
-    Backends are lazily created per tenant_id.
+    A single shared search backend serves all tenants.
     """
 
     def __init__(
@@ -53,8 +54,8 @@ class SearchService:
             )
         self.schema_loader = schema_loader
 
-        # Lazy backend cache: tenant_id → search backend
-        self._backends: Dict[str, Any] = {}
+        # Lazy single shared backend instance
+        self._backend: Any = None
 
         # Initialize telemetry
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -91,14 +92,13 @@ class SearchService:
 
     def _get_backend(
         self,
-        tenant_id: str,
         profile: str,
         profile_config: Dict[str, Any],
         query_encoder,
     ):
-        """Get or create cached search backend for the given tenant."""
-        if tenant_id in self._backends:
-            return self._backends[tenant_id]
+        """Get or create the shared search backend."""
+        if self._backend is not None:
+            return self._backend
 
         backend_type = self.config.get("search_backend", "vespa")
         schema_name = profile_config.get("schema_name")
@@ -110,9 +110,9 @@ class SearchService:
 
         backend_section = self.config.get("backend", {})
         backend_config = {
-            "backend_url": self.config.get("backend_url")
+            "url": self.config.get("backend_url")
             or backend_section.get("url", "http://localhost"),
-            "backend_port": self.config.get("backend_port")
+            "port": self.config.get("backend_port")
             or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
@@ -123,14 +123,13 @@ class SearchService:
 
         backend = backend_registry.get_search_backend(
             backend_type,
-            tenant_id,
             backend_config,
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
 
-        self._backends[tenant_id] = backend
-        logger.info(f"Created {backend_type} search backend for tenant: {tenant_id}")
+        self._backend = backend
+        logger.info(f"Created shared {backend_type} search backend")
         return backend
 
     def search(
@@ -167,9 +166,7 @@ class SearchService:
         # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile)
         query_encoder = self._get_encoder(profile, profile_config)
-        search_backend = self._get_backend(
-            tenant_id, profile, profile_config, query_encoder
-        )
+        search_backend = self._get_backend(profile, profile_config, query_encoder)
 
         logger.info(f"Searching profile={profile} tenant={tenant_id}")
 
@@ -229,6 +226,7 @@ class SearchService:
                     "query": query,
                     "type": "video",
                     "profile": profile,
+                    "tenant_id": tenant_id,
                     "strategy": ranking_strategy or "default",
                     "top_k": top_k,
                     "filters": filters,
@@ -259,7 +257,7 @@ class SearchService:
         """
         profile_config = self._get_profile_config(profile)
         query_encoder = self._get_encoder(profile, profile_config)
-        backend = self._get_backend(tenant_id, profile, profile_config, query_encoder)
+        backend = self._get_backend(profile, profile_config, query_encoder)
 
         doc = backend.get_document(document_id)
         if doc:

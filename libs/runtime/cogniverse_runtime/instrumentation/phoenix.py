@@ -127,7 +127,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
         try:
             # Instrument at the app layer, not backend layer
             # This keeps evaluation independent of specific backends
-            from cogniverse_runtime.search.service import SearchService
+            from cogniverse_agents.search.service import SearchService
 
             # Store original methods
             original_search = SearchService.search

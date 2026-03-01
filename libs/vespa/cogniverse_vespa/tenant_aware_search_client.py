@@ -125,7 +125,6 @@ class TenantAwareVespaSearchClient:
         }
         backend = registry.get_search_backend(
             name="vespa",
-            tenant_id=tenant_id,
             config=config,
             config_manager=config_manager,
             schema_loader=schema_loader,

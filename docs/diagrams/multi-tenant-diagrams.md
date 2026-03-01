@@ -359,9 +359,10 @@ sequenceDiagram
     Foundation-->>Runtime: SystemConfig with tenant_id
 
     Runtime->>Agent: create_video_search_agent(config, tenant_id)
-    Agent->>Backend: get_search_backend(tenant_id, schema_name)
+    Agent->>Backend: get_search_backend(schema_name)
+    Backend-->>Agent: Shared search backend
+    Agent->>Backend: search(query_dict with tenant_id)
     Backend->>Backend: Apply tenant suffix: video_colpali_smol500_mv_frame_acme_corp
-    Backend-->>Agent: Backend with tenant schema
 
     Agent->>Agent: Generate query embedding
 

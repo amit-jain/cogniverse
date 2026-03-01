@@ -33,11 +33,11 @@ def video_search_tool():
         """
         try:
             # Import here to avoid circular dependencies
+            from cogniverse_agents.search.service import SearchService
             from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )
-            from cogniverse_runtime.search.service import SearchService
 
             # Initialize ConfigManager for dependency injection
             config_manager = create_default_config_manager()
@@ -103,8 +103,6 @@ def video_search_tool():
 def phoenix_query_tool():
     """
     Tool for querying telemetry provider for traces and datasets.
-
-    Note: Name kept as 'phoenix_query_tool' for backward compatibility.
     """
 
     async def run(query_type: str, **kwargs) -> Any:

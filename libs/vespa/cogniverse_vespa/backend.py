@@ -135,10 +135,13 @@ class VespaBackend(Backend):
         # Store merged config for accessing profiles and other settings
         self.config = merged_config
 
-        # Check if async ingestion is requested (optional feature)
-        self.use_async_ingestion = (
-            merged_config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
-        )
+        if merged_config.get("use_async_ingestion", False) and not ASYNC_AVAILABLE:
+            raise ImportError(
+                "Async ingestion requested (use_async_ingestion=True) but "
+                "async_ingestion_client module is not available. "
+                "Ensure cogniverse_vespa is installed with async extras."
+            )
+        self.use_async_ingestion = merged_config.get("use_async_ingestion", False)
 
         # Allow config to override URL/port from BackendConfig
         config_url = merged_config.get("url")
@@ -575,6 +578,9 @@ class VespaBackend(Backend):
             )
             self._initialized_as_search = True
             logger.info("VespaSearchBackend initialized with all profiles")
+
+        # Inject tenant_id into query_dict so VespaSearchBackend can derive schema names
+        query_dict["tenant_id"] = self._tenant_id
 
         # Delegate directly to VespaSearchBackend
         # It returns List[SearchResult], which is what SearchService expects

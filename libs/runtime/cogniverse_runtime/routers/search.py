@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from cogniverse_agents.search.service import SearchService
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_runtime.search.service import SearchService
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)

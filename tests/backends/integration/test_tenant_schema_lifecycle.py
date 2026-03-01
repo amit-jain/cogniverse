@@ -66,7 +66,6 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
         }
         return registry.get_search_backend(
             name="vespa",
-            tenant_id=tenant_id,
             config=config,
             config_manager=temp_config_manager,
             schema_loader=schema_loader,

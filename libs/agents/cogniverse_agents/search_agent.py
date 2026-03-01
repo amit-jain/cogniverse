@@ -42,9 +42,6 @@ from cogniverse_core.registries.backend_registry import get_backend_registry
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Input/Output/Dependencies
-# =============================================================================
 
 
 class SearchInput(AgentInput):
@@ -216,7 +213,7 @@ class RelationshipAwareSearchParams(BaseModel):
     )
 
 
-# --- Enhanced Data Models ---
+
 class VideoPart(BaseModel):
     """Video content part for A2A messages"""
 
@@ -235,7 +232,7 @@ class ImagePart(BaseModel):
     content_type: Optional[str] = Field(None, description="MIME type")
 
 
-# --- Content Processing Components ---
+
 class ContentProcessor:
     """Handles content upload, processing, and encoding to embeddings"""
 
@@ -366,7 +363,7 @@ class ContentProcessor:
             )
 
 
-# --- Generic Multi-Modal Search Agent ---
+
 class SearchAgent(
     RLMAwareMixin,
     MemoryAwareMixin,
@@ -562,7 +559,7 @@ class SearchAgent(
             "profile": active_profile,
             "backend": backend_config_data,
         }
-        self._tenant_backends: Dict[str, Any] = {}
+        self._shared_backend: Any = None
 
         logger.info(
             f"Search backend configured at {backend_url}:{backend_port} "
@@ -584,19 +581,18 @@ class SearchAgent(
 
         logger.info("SearchAgent initialized (tenant-agnostic)")
 
-    def _get_backend(self, tenant_id: str):
-        """Get or create per-tenant search backend (lazy initialization)."""
-        if tenant_id not in self._tenant_backends:
+    def _get_backend(self):
+        """Get or create the shared search backend (lazy initialization)."""
+        if self._shared_backend is None:
             registry = get_backend_registry()
-            self._tenant_backends[tenant_id] = registry.get_search_backend(
+            self._shared_backend = registry.get_search_backend(
                 self._backend_type,
-                tenant_id,
                 self._backend_config,
                 config_manager=self.config_manager,
                 schema_loader=self.schema_loader,
             )
-            logger.info(f"Search backend initialized for tenant: {tenant_id}")
-        return self._tenant_backends[tenant_id]
+            logger.info("Shared search backend initialized")
+        return self._shared_backend
 
     def _fuse_results_rrf(
         self,
@@ -765,10 +761,11 @@ class SearchAgent(
                     "filters": None,
                     "strategy": kwargs.get("ranking", "binary_binary"),
                     "profile": profile_name,
+                    "tenant_id": tenant_id,
                 }
 
                 # Execute synchronous search in shared thread pool
-                backend = self._get_backend(tenant_id)
+                backend = self._get_backend()
                 search_results = await loop.run_in_executor(
                     executor, backend.search, query_dict
                 )
@@ -880,9 +877,10 @@ class SearchAgent(
                 "filters": None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
+                "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend(tenant_id).search(query_dict)
+            search_results = self._get_backend().search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1006,9 +1004,10 @@ class SearchAgent(
                 "filters": None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
+                "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend(tenant_id).search(query_dict)
+            search_results = self._get_backend().search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1108,9 +1107,10 @@ class SearchAgent(
                 "filters": None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
+                "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend(tenant_id).search(query_dict)
+            search_results = self._get_backend().search(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1359,9 +1359,10 @@ class SearchAgent(
                     "strategy": search_params.ranking_strategy
                     or kwargs.get("ranking", "binary_binary"),
                     "profile": self.active_profile,
+                    "tenant_id": tenant_id,
                 }
 
-                search_results = self._get_backend(tenant_id).search(query_dict)
+                search_results = self._get_backend().search(query_dict)
 
                 # Convert SearchResult objects to dict format
                 raw_results = []
@@ -1448,8 +1449,9 @@ class SearchAgent(
                     "filters": None,
                     "strategy": ranking_strategy,
                     "profile": self.active_profile,
+                    "tenant_id": tenant_id,
                 }
-                search_results = self._get_backend(tenant_id).search(query_dict)
+                search_results = self._get_backend().search(query_dict)
                 results = []
                 for sr in search_results:
                     result_dict = {
@@ -1712,10 +1714,6 @@ class SearchAgent(
 
         return result
 
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
-
     async def _process_impl(
         self, input: Union[SearchInput, Dict[str, Any]]
     ) -> SearchOutput:
@@ -1854,7 +1852,7 @@ class SearchAgent(
     # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
-# --- FastAPI Server ---
+
 app = FastAPI(
     title="Generic Multi-Modal Search Agent",
     description="Search agent with support for text, video, image, audio, and document queries",
@@ -2104,7 +2102,7 @@ async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- A2A Protocol Enhanced Support ---
+
 @app.post("/tasks/send")
 async def handle_enhanced_a2a_task(task: dict):
     """Enhanced A2A task handler with routing decision support"""
