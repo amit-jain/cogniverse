@@ -579,8 +579,11 @@ class VespaBackend(Backend):
             self._initialized_as_search = True
             logger.info("VespaSearchBackend initialized with all profiles")
 
-        # Inject tenant_id into query_dict so VespaSearchBackend can derive schema names
-        query_dict["tenant_id"] = self._tenant_id
+        # Inject tenant_id into query_dict so VespaSearchBackend can derive schema names.
+        # Only inject if not already present — callers (e.g. SearchService) may have
+        # already set the real tenant_id when using shared search backends.
+        if "tenant_id" not in query_dict:
+            query_dict["tenant_id"] = self._tenant_id
 
         # Delegate directly to VespaSearchBackend
         # It returns List[SearchResult], which is what SearchService expects
