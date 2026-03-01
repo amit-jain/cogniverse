@@ -191,6 +191,12 @@ class BackendVectorStore(VectorStoreBase):
 
             query_embeddings = np.array(vectors) if vectors is not None else None
 
+            if not self.tenant_id:
+                raise ValueError(
+                    "tenant_id is required for BackendVectorStore search operations. "
+                    f"Collection '{self.collection_name}' has no tenant_id set."
+                )
+
             query_dict = {
                 "query": query,
                 "type": "memory",  # Content type required by VespaSearchBackend
@@ -200,6 +206,7 @@ class BackendVectorStore(VectorStoreBase):
                 "top_k": limit,
                 "filters": backend_filters,
                 "query_embeddings": query_embeddings,  # Pre-computed embeddings from mem0
+                "tenant_id": self.tenant_id,
             }
 
             logger.debug(
