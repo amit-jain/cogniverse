@@ -456,7 +456,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 backend = BackendRegistry.get_search_backend(
-    name="vespa", tenant_id="acme_corp",
+    name="vespa",
     config_manager=config_manager, schema_loader=schema_loader
 )
 # TelemetryManager is a singleton class - use constructor to get instance
@@ -865,7 +865,6 @@ def vespa_backend(config_manager, schema_loader):
     """Vespa backend for integration tests"""
     return BackendRegistry.get_search_backend(
         name="vespa",
-        tenant_id="test_tenant",
         config_manager=config_manager,
         schema_loader=schema_loader
     )

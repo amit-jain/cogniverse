@@ -418,10 +418,9 @@ from cogniverse_core.registries import BackendRegistry
 # Register custom backend (implements Backend interface)
 BackendRegistry.register_backend("my_backend", MyBackendClass)
 
-# Get backend instance (requires tenant_id, config_manager, schema_loader)
+# Get shared backend instance (tenant_id passed in query_dict at search time)
 backend = BackendRegistry.get_search_backend(
     name="my_backend",
-    tenant_id="acme",
     config_manager=config_manager,
     schema_loader=schema_loader
 )

@@ -184,7 +184,6 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 # Get backend from registry (handles instantiation and caching)
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="acme",
     config_manager=config_manager,
     schema_loader=schema_loader
 )
@@ -418,7 +417,6 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 # Get backend from registry (handles instantiation and caching)
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="acme",
     config_manager=config_manager,
     schema_loader=schema_loader
 )
@@ -477,7 +475,6 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 # Get backend from registry
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="default",
     config_manager=config_manager,
     schema_loader=schema_loader
 )

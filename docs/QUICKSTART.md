@@ -54,20 +54,20 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Get backend from registry (handles instantiation and caching)
+# Get shared search backend from registry (handles instantiation and caching)
 backend = BackendRegistry.get_search_backend(
     name="vespa",
-    tenant_id="quickstart",
     config_manager=config_manager,
     schema_loader=schema_loader
 )
 
-# Execute a search using query dict format
+# Execute a search — tenant_id is required in query_dict
 results = backend.search({
     "query": "machine learning tutorial",
     "type": "video",
     "top_k": 10,
-    "profile": "video_colpali_smol500_mv_frame"
+    "profile": "video_colpali_smol500_mv_frame",
+    "tenant_id": "quickstart",
 })
 
 # Results are SearchResult objects with document and score

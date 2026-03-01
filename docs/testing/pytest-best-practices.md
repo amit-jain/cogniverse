@@ -478,18 +478,18 @@ async def test_tenant_data_isolation(sample_video, config_manager, schema_loader
     assert result_a["status"] == "success"
 
     # Search as tenant B (should get no results from tenant A)
-    backend_b = BackendRegistry.get_search_backend(
+    backend = BackendRegistry.get_search_backend(
         name="vespa",
-        tenant_id="globex_inc",
         config_manager=config_manager,
         schema_loader=schema_loader
     )
 
-    results = backend_b.search(
+    results = backend.search(
         query_dict={
             "query": "test",
             "type": "video",
-            "profile": "video_colpali_smol500_mv_frame_globex_inc"
+            "profile": "video_colpali_smol500_mv_frame",
+            "tenant_id": "globex_inc",
         }
     )
 
