@@ -65,10 +65,10 @@ scripts/
 │   └── setup_video_processing.py    # Video processing setup
 │
 ├── Optimization & Experiments
-│   ├── run_optimization.py           # DSPy optimization workflow
+│   ├── run_module_optimization.py    # DSPy module optimization workflow
 │   ├── run_experiments_with_visualization.py  # Phoenix experiments
 │   ├── optimize_system.py            # System-wide optimization
-│   └── checkpoint_phase5.py          # Optimization checkpoint
+│   └── auto_optimization_trigger.py  # Automated optimization trigger
 │
 ├── Dataset Management
 │   ├── manage_datasets.py            # Dataset CRUD operations
@@ -587,11 +587,11 @@ http://localhost:8000
 
 ---
 
-### 5. run_optimization.py
+### 5. run_module_optimization.py
 
 **Purpose:** Complete optimization and deployment workflow for agentic router
 
-**Location:** `scripts/run_optimization.py` (297 lines)
+**Location:** `scripts/run_module_optimization.py`
 
 **Workflow Steps:**
 

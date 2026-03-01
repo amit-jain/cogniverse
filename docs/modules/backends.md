@@ -1132,13 +1132,17 @@ class VespaSearchBackend:
 
     def search(
         self,
-        query: Dict[str, Any],
-        tenant_id: str
-    ) -> List[Dict[str, Any]]:
-        """Execute search using pooled connection."""
-        # Resolve profile and strategy
-        profile = self._resolve_profile_for_query(query, tenant_id)
-        strategy = self._resolve_strategy_for_profile(profile, query)
+        query_dict: Dict[str, Any],
+    ) -> List[SearchResult]:
+        """Execute search using pooled connection.
+
+        Note: tenant_id is set at construction time (from config dict),
+        not passed per-call. The schema is tenant-scoped automatically.
+        """
+        # Resolve profile and strategy from query_dict
+        # (tenant_id is already on self.tenant_id, set during __init__)
+        profile = self._resolve_profile_for_query(query_dict)
+        strategy = self._resolve_strategy_for_profile(profile, query_dict)
 
         # Get connection from pool (context manager pattern)
         pool = self._get_connection_pool()
@@ -1146,9 +1150,9 @@ class VespaSearchBackend:
         with pool.get_connection() as conn:
             # Execute query via Vespa client
             results = conn.query(
-                yql=self._build_yql(query, strategy),
+                yql=self._build_yql(query_dict, strategy),
                 ranking=strategy,
-                hits=query.get("top_k", 10)
+                hits=query_dict.get("top_k", 10)
             )
             return results
 
@@ -1161,39 +1165,35 @@ class VespaSearchBackend:
 **SearchMetrics Integration**:
 ```python
 class SearchMetrics:
-    """Track search backend metrics including connection health"""
+    """Track search backend metrics for latency and success rates."""
 
-    def record_connection_health(
+    def record_search(
         self,
-        schema_name: str,
-        is_healthy: bool,
-        error_count: int
+        success: bool,
+        latency_ms: float,
+        strategy: str,
+        error: Optional[Exception] = None,
     ):
-        """Record connection health metrics"""
-        self.metrics[schema_name] = {
-            "healthy": is_healthy,
-            "error_count": error_count,
-            "last_check": datetime.now()
-        }
+        """Record a search operation with latency and success/failure."""
+        ...
 
-    def get_pool_health(self, schema_name: str) -> Dict[str, Any]:
-        """Get health metrics for connection pool"""
-        pool = self.pools.get(schema_name)
+    @property
+    def success_rate(self) -> float:
+        """Percentage of successful searches (0.0–100.0)."""
+        ...
 
-        if not pool:
-            return {"status": "no_pool"}
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average search latency in milliseconds."""
+        ...
 
-        healthy_count = sum(
-            1 for c in pool._connections if c.is_healthy
-        )
-
-        return {
-            "total_connections": len(pool._connections),
-            "healthy_connections": healthy_count,
-            "unhealthy_connections": len(pool._connections) - healthy_count,
-            "health_check_interval": pool.health_check_interval
-        }
+    @property
+    def p95_latency_ms(self) -> float:
+        """95th-percentile search latency in milliseconds."""
+        ...
 ```
+
+Connection health is tracked per-connection via `VespaConnection.is_healthy` (set by the background `_health_check_loop` in `ConnectionPool`). The pool itself maintains healthy/unhealthy state; `SearchMetrics` tracks query-level latency and success rates only.
 
 ### Benefits
 

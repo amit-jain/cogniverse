@@ -142,6 +142,7 @@ graph TD
 
     Root --> OptDir["<span style='color:#000'><b>optimizer/</b></span>"]
     OptDir --> OptInit["<span style='color:#000'>__init__.py</span>"]
+    OptDir --> ArtifactMgr["<span style='color:#000'>artifact_manager.py</span>"]
     OptDir --> DspyAgentOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
     OptDir --> RouterOpt["<span style='color:#000'>router_optimizer.py</span>"]
     OptDir --> Schemas["<span style='color:#000'>schemas.py</span>"]
@@ -261,11 +262,15 @@ class RoutingOutput(AgentOutput):
         return self.metadata
 
 class RoutingDeps(AgentDeps):
-    """Dependencies for routing agent."""
-    tenant_id: str = Field("default", description="Tenant ID for multi-tenancy isolation")
+    """Dependencies for routing agent. Tenant-agnostic at startup — tenant_id arrives per-request."""
     telemetry_config: Any = Field(..., description="Telemetry configuration")
-    model_name: str = Field("smollm3:3b", description="DSPy model name")
-    base_url: str = Field("http://localhost:11434/v1", description="Model API base URL")
+    llm_config: LLMEndpointConfig = Field(
+        default_factory=lambda: LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
+        description="LLM endpoint configuration for DSPy routing",
+    )
     confidence_threshold: float = Field(0.7, description="Min confidence threshold")
     enable_relationship_extraction: bool = Field(True, description="Enable relationship extraction")
     enable_query_enhancement: bool = Field(True, description="Enable query enhancement")
@@ -2462,14 +2467,16 @@ class RoutingResult:
 from cogniverse_agents.a2a_routing_agent import A2ARoutingAgent
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 config_manager = create_default_config_manager()
 deps = RoutingDeps(
-    tenant_id="acme",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=deps)
 a2a_router = A2ARoutingAgent(
@@ -2902,11 +2909,14 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=deps)
 # tenant_id arrives per-request in A2A task payload
@@ -3007,13 +3017,16 @@ sequenceDiagram
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # ONE agent serves ALL tenants — tenant_id arrives per-request
 
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1",
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=deps)
 
@@ -3609,13 +3622,15 @@ def cleanup_tenant_schemas(test_tenant_id):
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-# ✅ Good: Explicit deps with tenant_id
+# ✅ Good: Explicit deps (no tenant_id — it arrives per-request)
 deps = RoutingDeps(
-    tenant_id="acme",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=deps)
 

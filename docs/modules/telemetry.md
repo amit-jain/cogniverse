@@ -617,12 +617,13 @@ Phoenix is the default telemetry provider, implementing all store interfaces usi
 ```python
 from cogniverse_telemetry_phoenix import PhoenixProvider
 
-# Initialize Phoenix provider
+# Initialize Phoenix provider (provider.initialize() is called by TelemetryManager)
+# Required keys: tenant_id, http_endpoint, grpc_endpoint
 provider = PhoenixProvider()
 provider.initialize({
     "tenant_id": "acme",
-    "http_endpoint": "http://localhost:6006",
-    "project_template": "cogniverse-{tenant_id}-{service}"
+    "http_endpoint": "http://localhost:6006",     # HTTP API endpoint (required)
+    "grpc_endpoint": "http://localhost:4317",     # gRPC OTLP endpoint (required)
 })
 
 # Query spans

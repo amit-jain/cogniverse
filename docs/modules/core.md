@@ -207,8 +207,12 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
             )
         return RoutingOutput(recommended_agent="search", confidence=0.5)
 
-# Create and run agent
-deps = RoutingDeps(model_name="smollm3:3b")  # No tenant_id at construction
+# Create and run agent (RoutingDeps uses llm_config, not model_name)
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+deps = RoutingDeps(
+    telemetry_config=...,
+    llm_config=LLMEndpointConfig(model="ollama/smollm3:3b", api_base="http://localhost:11434"),
+)  # No tenant_id at construction — arrives per-request
 config = A2AAgentConfig(
     agent_name="routing_agent",
     agent_description="Routes queries to appropriate agents",
