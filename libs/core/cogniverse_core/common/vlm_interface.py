@@ -93,9 +93,7 @@ class VLMInterface:
                 if Path(image_path).exists():
                     image_descriptions.append(f"Image: {Path(image_path).name}")
 
-            result = visual_analysis(
-                images=", ".join(image_descriptions), query=query
-            )
+            result = visual_analysis(images=", ".join(image_descriptions), query=query)
 
             def _split_or_empty(val: str | None) -> list[str]:
                 return val.split(", ") if val else []
@@ -105,7 +103,9 @@ class VLMInterface:
                 "themes": _split_or_empty(result.themes),
                 "key_objects": _split_or_empty(result.key_objects),
                 "insights": _split_or_empty(result.insights),
-                "relevance_score": float(result.relevance_score) if result.relevance_score else 0.0,
+                "relevance_score": float(result.relevance_score)
+                if result.relevance_score
+                else 0.0,
             }
 
     async def analyze_visual_content_detailed(

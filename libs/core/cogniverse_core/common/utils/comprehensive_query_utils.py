@@ -62,7 +62,7 @@ def build_query_params(
                 f'{field} contains "{text_query}"' for field in text_fields
             ]
             query_params["yql"] = (
-                f'select * from sources * where ({" OR ".join(text_conditions)})'
+                f"select * from sources * where ({' OR '.join(text_conditions)})"
             )
         else:
             query_params["yql"] = "select * from sources * where true"
@@ -81,7 +81,7 @@ def build_query_params(
             where_clauses.append("true")
 
         query_params["yql"] = (
-            f'select * from sources * where {" AND ".join(where_clauses)}'
+            f"select * from sources * where {' AND '.join(where_clauses)}"
         )
 
     # Add tensor inputs based on ranking profile
@@ -187,7 +187,7 @@ def benchmark_all_strategies(
                     ],
                 }
 
-                print(f"   ✅ {len(hits_returned)} hits in {query_time*1000:.1f}ms")
+                print(f"   ✅ {len(hits_returned)} hits in {query_time * 1000:.1f}ms")
 
             else:
                 results[strategy] = {

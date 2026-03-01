@@ -82,9 +82,7 @@ class WorkflowStoreRegistry:
             try:
                 store_class = entry_point.load()
                 cls._stores[name] = store_class
-                logger.info(
-                    f"Discovered workflow store: {name} ({entry_point.value})"
-                )
+                logger.info(f"Discovered workflow store: {name} ({entry_point.value})")
             except Exception as e:
                 logger.error(f"Failed to load workflow store '{name}': {e}")
 
@@ -153,7 +151,9 @@ class WorkflowStoreRegistry:
 
         # Create cache key from config
         config = config or {}
-        cache_key = f"{name}_{config.get('backend_url', '')}_{config.get('backend_port', '')}"
+        cache_key = (
+            f"{name}_{config.get('backend_url', '')}_{config.get('backend_port', '')}"
+        )
 
         # Check cache
         if cache_key in cls._store_instances:

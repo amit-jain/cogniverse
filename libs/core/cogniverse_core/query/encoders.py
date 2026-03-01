@@ -209,7 +209,9 @@ class QueryEncoderFactory:
         # Create new encoder
         encoder = cls._create_encoder_instance(model_name, profile)
         cls._encoder_cache[model_name] = encoder
-        logger.info(f"Cached new encoder for model: {model_name} ({type(encoder).__name__})")
+        logger.info(
+            f"Cached new encoder for model: {model_name} ({type(encoder).__name__})"
+        )
         return encoder
 
     @staticmethod

@@ -1109,7 +1109,7 @@ class VideoIngestionPipeline:
         print(f"\n🏁 Concurrent processing completed in {total_time:.1f}s")
         print(f"   ✅ Successful: {successful}/{len(video_files)}")
         print(f"   ❌ Failed: {failed}/{len(video_files)}")
-        print(f"   ⚡ Average time: {total_time/len(video_files):.1f}s per video")
+        print(f"   ⚡ Average time: {total_time / len(video_files):.1f}s per video")
 
         # Emit completion event
         if cancelled > 0:
@@ -1260,7 +1260,7 @@ class VideoIngestionPipeline:
             f"Summary - Total: {len(video_files)}, Processed: {len(results['processed_videos'])}, Failed: {len(results['failed_videos'])}"
         )
         self.logger.info(
-            f"Total time: {results['total_processing_time']:.2f} seconds ({results['total_processing_time']/60:.1f} minutes)"
+            f"Total time: {results['total_processing_time']:.2f} seconds ({results['total_processing_time'] / 60:.1f} minutes)"
         )
         self.logger.info(
             f"Average time per video: {results['total_processing_time'] / len(video_files):.2f} seconds"
@@ -1272,9 +1272,9 @@ class VideoIngestionPipeline:
             f"✅ Processed: {len(results['processed_videos'])}/{len(video_files)} videos"
         )
         print(f"❌ Failed: {len(results['failed_videos'])} videos")
-        print(f"⏱️ Total time: {results['total_processing_time']/60:.1f} minutes")
+        print(f"⏱️ Total time: {results['total_processing_time'] / 60:.1f} minutes")
         print(
-            f"⚡ Throughput: {len(video_files)/results['total_processing_time']*60:.1f} videos/minute"
+            f"⚡ Throughput: {len(video_files) / results['total_processing_time'] * 60:.1f} videos/minute"
         )
         print(f"📄 Summary saved: {summary_file}")
 

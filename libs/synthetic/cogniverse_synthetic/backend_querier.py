@@ -390,7 +390,10 @@ class BackendQuerier:
         yql = f"select * from sources * where true limit {sample_size}"
         try:
             results = self.backend.query_metadata_documents(
-                schema="*", yql=yql, hits=sample_size, ranking="random"  # All schemas
+                schema="*",
+                yql=yql,
+                hits=sample_size,
+                ranking="random",  # All schemas
             )
             return self._extract_fields_from_results(
                 results, {"schema_name": "default", "embedding_type": "mixed"}

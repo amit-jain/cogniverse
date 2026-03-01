@@ -84,8 +84,7 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
             # Penalty for each retry
             confidence -= retry_count * self.retry_penalty
             logger.debug(
-                f"Retry penalty: {retry_count} retries -> "
-                f"confidence={confidence:.2f}"
+                f"Retry penalty: {retry_count} retries -> confidence={confidence:.2f}"
             )
 
         # Signal 2: Entity presence in query

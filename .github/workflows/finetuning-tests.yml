@@ -91,8 +91,8 @@ jobs:
 
     - name: Run linting
       run: |
-        uv run ruff check libs/finetuning/cogniverse_finetuning tests/finetuning || true
-        uv run black --check libs/finetuning/cogniverse_finetuning tests/finetuning || true
+        uv run ruff check libs/finetuning/cogniverse_finetuning tests/finetuning
+        uv run ruff format --check libs/finetuning/cogniverse_finetuning tests/finetuning
       continue-on-error: true
 
   test-imports:

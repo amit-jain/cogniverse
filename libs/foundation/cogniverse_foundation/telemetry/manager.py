@@ -454,11 +454,7 @@ class TelemetryManager:
         # initialise without requiring manual provider_config entries.
         otlp_ep = self.config.otlp_endpoint  # e.g. "localhost:4317"
         scheme = "https" if self.config.otlp_use_tls else "http"
-        grpc_default = (
-            f"{scheme}://{otlp_ep}"
-            if "://" not in otlp_ep
-            else otlp_ep
-        )
+        grpc_default = f"{scheme}://{otlp_ep}" if "://" not in otlp_ep else otlp_ep
         # HTTP endpoint: replace gRPC port (4317) with HTTP port (6006)
         http_default = grpc_default.replace(":4317", ":6006")
 

@@ -84,8 +84,8 @@ jobs:
 
     - name: Run linting
       run: |
-        uv run ruff check libs/core/cogniverse_core libs/foundation/cogniverse_foundation || true
-        uv run black --check libs/core/cogniverse_core libs/foundation/cogniverse_foundation || true
+        uv run ruff check libs/core/cogniverse_core libs/foundation/cogniverse_foundation
+        uv run ruff format --check libs/core/cogniverse_core libs/foundation/cogniverse_foundation
       continue-on-error: true
 
   test-imports:

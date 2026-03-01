@@ -118,8 +118,7 @@ def get_optimizer_config(optimizer_name: str) -> OptimizerConfig:
     if optimizer_name not in OPTIMIZER_REGISTRY:
         available = ", ".join(OPTIMIZER_REGISTRY.keys())
         raise ValueError(
-            f"Unknown optimizer: '{optimizer_name}'. "
-            f"Available optimizers: {available}"
+            f"Unknown optimizer: '{optimizer_name}'. Available optimizers: {available}"
         )
 
     return OPTIMIZER_REGISTRY[optimizer_name]

@@ -545,8 +545,7 @@ class Mem0MemoryManager:
                 )
 
         logger.info(
-            f"Cleaned up {deleted_count} expired memories "
-            f"for tenant {self.tenant_id}"
+            f"Cleaned up {deleted_count} expired memories for tenant {self.tenant_id}"
         )
         return deleted_count
 

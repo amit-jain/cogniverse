@@ -221,7 +221,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
 
                     logger.info(
                         f"Task processed in {processing_time:.3f}s "
-                        f"(avg: {self.total_processing_time/self.request_count:.3f}s)"
+                        f"(avg: {self.total_processing_time / self.request_count:.3f}s)"
                     )
 
                     return a2a_response
@@ -378,7 +378,10 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
         return extracted
 
     def _create_a2a_response(
-        self, output: OutputT, tenant_id: Optional[str] = None, session_id: Optional[str] = None
+        self,
+        output: OutputT,
+        tenant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Convert typed output to A2A response format."""
         response = {

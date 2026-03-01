@@ -2051,9 +2051,7 @@ with main_tabs[5]:
                 _cm = create_default_config_manager()
                 _cfg = get_config(tenant_id="default", config_manager=_cm)
                 _llm = _cfg.get_llm_config().primary
-                st.session_state.modality_optimizer = ModalityOptimizer(
-                    llm_config=_llm
-                )
+                st.session_state.modality_optimizer = ModalityOptimizer(llm_config=_llm)
 
             optimizer = st.session_state.modality_optimizer
 

@@ -329,9 +329,7 @@ async def _execute_text_analysis_task(
     """Execute a text analysis task using TextAnalysisAgent."""
     from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
 
-    agent = TextAnalysisAgent(
-        tenant_id=tenant_id, config_manager=_config_manager
-    )
+    agent = TextAnalysisAgent(tenant_id=tenant_id, config_manager=_config_manager)
 
     analysis_type = task.context.get("analysis_type", "summary")
     # analyze_text is synchronous
@@ -373,9 +371,7 @@ async def _execute_detailed_report_task(
     }
 
 
-async def _execute_image_search_task(
-    task: AgentTask, tenant_id: str
-) -> Dict[str, Any]:
+async def _execute_image_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any]:
     """Execute an image search task using ImageSearchAgent."""
     from cogniverse_agents.image_search_agent import (
         ImageSearchAgent,
@@ -389,9 +385,7 @@ async def _execute_image_search_task(
     )
     agent = ImageSearchAgent(deps=deps)
 
-    results = await agent.search_images(
-        query=task.query, limit=task.top_k
-    )
+    results = await agent.search_images(query=task.query, limit=task.top_k)
 
     result_list = [dataclasses.asdict(r) for r in results]
     return {
@@ -403,9 +397,7 @@ async def _execute_image_search_task(
     }
 
 
-async def _execute_audio_search_task(
-    task: AgentTask, tenant_id: str
-) -> Dict[str, Any]:
+async def _execute_audio_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any]:
     """Execute an audio search task using AudioAnalysisAgent."""
     from cogniverse_agents.audio_analysis_agent import (
         AudioAnalysisAgent,
@@ -419,9 +411,7 @@ async def _execute_audio_search_task(
     )
     agent = AudioAnalysisAgent(deps=deps)
 
-    results = await agent.search_audio(
-        query=task.query, limit=task.top_k
-    )
+    results = await agent.search_audio(query=task.query, limit=task.top_k)
 
     result_list = [dataclasses.asdict(r) for r in results]
     return {
@@ -449,9 +439,7 @@ async def _execute_document_search_task(
     )
     agent = DocumentAgent(deps=deps)
 
-    results = await agent.search_documents(
-        query=task.query, limit=task.top_k
-    )
+    results = await agent.search_documents(query=task.query, limit=task.top_k)
 
     result_list = [dataclasses.asdict(r) for r in results]
     return {

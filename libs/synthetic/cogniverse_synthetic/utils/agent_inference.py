@@ -95,7 +95,8 @@ class AgentInferrer:
         """
         modality_upper = modality.upper()
         agent = self.MODALITY_TO_AGENT.get(
-            modality_upper, "video_search_agent"  # Default fallback
+            modality_upper,
+            "video_search_agent",  # Default fallback
         )
 
         logger.debug(f"Inferred agent '{agent}' from modality '{modality}'")

@@ -84,7 +84,7 @@ jobs:
     - name: Run linting
       run: |
         uv run ruff check libs/vespa/cogniverse_vespa tests/backends
-        uv run black --check libs/vespa/cogniverse_vespa tests/backends
+        uv run ruff format --check libs/vespa/cogniverse_vespa tests/backends
 
   test-imports:
     runs-on: ubuntu-latest

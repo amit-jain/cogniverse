@@ -109,7 +109,6 @@ class QueueManagedBatchExporter(SpanExporter):
                 self.config.log_dropped_spans
                 and current_time - self._last_drop_log_time > 60
             ):  # 1 minute
-
                 if (
                     self._drop_log_count_since_last
                     < self.config.max_drop_log_rate_per_minute

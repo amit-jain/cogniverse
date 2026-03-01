@@ -138,8 +138,7 @@ class BackendRegistry:
         if name not in cls._ingestion_backends:
             available = list(cls._ingestion_backends.keys())
             raise ValueError(
-                f"Ingestion backend '{name}' not found. "
-                f"Available backends: {available}"
+                f"Ingestion backend '{name}' not found. Available backends: {available}"
             )
 
         # Create BackendConfig from config_manager
@@ -260,8 +259,7 @@ class BackendRegistry:
         if name not in cls._search_backends:
             available = list(cls._search_backends.keys())
             raise ValueError(
-                f"Search backend '{name}' not found. "
-                f"Available backends: {available}"
+                f"Search backend '{name}' not found. Available backends: {available}"
             )
 
         # Create BackendConfig from config_manager

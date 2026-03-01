@@ -89,7 +89,13 @@ class SearchService:
             profile, model_name, config=self.config
         )
 
-    def _get_backend(self, tenant_id: str, profile: str, profile_config: Dict[str, Any], query_encoder):
+    def _get_backend(
+        self,
+        tenant_id: str,
+        profile: str,
+        profile_config: Dict[str, Any],
+        query_encoder,
+    ):
         """Get or create cached search backend for the given tenant."""
         if tenant_id in self._backends:
             return self._backends[tenant_id]
@@ -98,9 +104,7 @@ class SearchService:
         schema_name = profile_config.get("schema_name")
 
         if not schema_name:
-            raise ValueError(
-                f"Profile '{profile}' missing 'schema_name' configuration"
-            )
+            raise ValueError(f"Profile '{profile}' missing 'schema_name' configuration")
 
         backend_registry = get_backend_registry()
 
@@ -126,9 +130,7 @@ class SearchService:
         )
 
         self._backends[tenant_id] = backend
-        logger.info(
-            f"Created {backend_type} search backend for tenant: {tenant_id}"
-        )
+        logger.info(f"Created {backend_type} search backend for tenant: {tenant_id}")
         return backend
 
     def search(
@@ -165,7 +167,9 @@ class SearchService:
         # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile)
         query_encoder = self._get_encoder(profile, profile_config)
-        search_backend = self._get_backend(tenant_id, profile, profile_config, query_encoder)
+        search_backend = self._get_backend(
+            tenant_id, profile, profile_config, query_encoder
+        )
 
         logger.info(f"Searching profile={profile} tenant={tenant_id}")
 
@@ -177,7 +181,6 @@ class SearchService:
             profile=profile,
             backend=self.config.get("search_backend", "vespa"),
         ) as search_span_ctx:
-
             if ranking_strategy:
                 logger.info(f"Using ranking strategy: {ranking_strategy}")
 
@@ -185,9 +188,7 @@ class SearchService:
             query_embeddings = None
             if query_encoder:
                 encoder_type = (
-                    type(query_encoder)
-                    .__name__.lower()
-                    .replace("queryencoder", "")
+                    type(query_encoder).__name__.lower().replace("queryencoder", "")
                 )
 
                 with encode_span(
@@ -242,7 +243,9 @@ class SearchService:
 
             return results
 
-    def get_document(self, document_id: str, tenant_id: str, profile: str) -> Optional[Dict[str, Any]]:
+    def get_document(
+        self, document_id: str, tenant_id: str, profile: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Retrieve a specific document by ID.
 

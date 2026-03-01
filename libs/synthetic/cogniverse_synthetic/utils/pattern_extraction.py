@@ -165,13 +165,13 @@ class PatternExtractor:
 
             # Create bigrams
             for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i+1]}"
+                bigram = f"{words[i]} {words[i + 1]}"
                 if len(bigram) > 10:  # Filter short bigrams
                     topics.add(bigram)
 
             # Create trigrams
             for i in range(len(words) - 2):
-                trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+                trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
                 if len(trigram) > 15:  # Filter short trigrams
                     topics.add(trigram)
 

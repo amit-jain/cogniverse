@@ -83,8 +83,8 @@ jobs:
 
     - name: Run linting
       run: |
-        uv run ruff check libs/telemetry-phoenix/cogniverse_telemetry_phoenix || true
-        uv run black --check libs/telemetry-phoenix/cogniverse_telemetry_phoenix || true
+        uv run ruff check libs/telemetry-phoenix/cogniverse_telemetry_phoenix
+        uv run ruff format --check libs/telemetry-phoenix/cogniverse_telemetry_phoenix
       continue-on-error: true
 
   test-imports:

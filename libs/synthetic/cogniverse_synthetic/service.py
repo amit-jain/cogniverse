@@ -184,7 +184,7 @@ class SyntheticDataService:
         if not validate_optimizer_exists(request.optimizer):
             available = ", ".join(OPTIMIZER_REGISTRY.keys())
             raise ValueError(
-                f"Unknown optimizer: '{request.optimizer}'. " f"Available: {available}"
+                f"Unknown optimizer: '{request.optimizer}'. Available: {available}"
             )
 
         config = get_optimizer_config(request.optimizer)

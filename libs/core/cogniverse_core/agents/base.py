@@ -177,8 +177,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         # Validate deps type at runtime
         if not isinstance(deps, self._deps_type):
             raise TypeError(
-                f"deps must be {self._deps_type.__name__}, "
-                f"got {type(deps).__name__}"
+                f"deps must be {self._deps_type.__name__}, got {type(deps).__name__}"
             )
 
         self.deps = deps

@@ -188,12 +188,8 @@ class ConfigLoader:
             except Exception as e:
                 logger.error(f"Failed to load agent '{agent_name}': {e}")
 
-        registered_count = (
-            len(agent_registry.list_agents()) if agent_registry else 0
-        )
-        logger.info(
-            f"Agent loading complete. {registered_count} agents registered"
-        )
+        registered_count = len(agent_registry.list_agents()) if agent_registry else 0
+        logger.info(f"Agent loading complete. {registered_count} agents registered")
 
     def get_backend_config(self, backend_name: str) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific backend."""

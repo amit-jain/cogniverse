@@ -82,8 +82,8 @@ jobs:
 
     - name: Run linting
       run: |
-        uv run ruff check libs/synthetic/cogniverse_synthetic || true
-        uv run black --check libs/synthetic/cogniverse_synthetic || true
+        uv run ruff check libs/synthetic/cogniverse_synthetic
+        uv run ruff format --check libs/synthetic/cogniverse_synthetic
       continue-on-error: true
 
   test-imports:

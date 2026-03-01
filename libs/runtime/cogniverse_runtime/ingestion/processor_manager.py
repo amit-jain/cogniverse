@@ -62,7 +62,6 @@ class ProcessorManager:
                             and hasattr(attr, "PROCESSOR_NAME")
                             and attr.PROCESSOR_NAME
                         ):
-
                             processor_name = attr.PROCESSOR_NAME
                             self._processor_classes[processor_name] = attr
                             self.logger.debug(

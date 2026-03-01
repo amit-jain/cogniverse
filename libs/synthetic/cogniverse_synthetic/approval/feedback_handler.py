@@ -139,7 +139,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 )
 
                 logger.info(
-                    f"Successfully regenerated {item.item_id}: " f"'{result.query}'"
+                    f"Successfully regenerated {item.item_id}: '{result.query}'"
                 )
 
                 return new_item
