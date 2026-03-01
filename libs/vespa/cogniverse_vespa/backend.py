@@ -70,9 +70,9 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[
-            str, Any
-        ] = {}  # For async ingestion (optional)
+        self._async_ingestion_clients: Dict[str, Any] = (
+            {}
+        )  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
