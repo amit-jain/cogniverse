@@ -257,8 +257,8 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        # Get system config for defaults (use "shared" sentinel — search backends are tenant-agnostic)
-        system_config = config_manager.get_system_config("shared")
+        # Get system config for defaults (URL, port) using the default tenant
+        system_config = config_manager.get_system_config("default")
 
         # Generic merge: Start with system config defaults, override with config["backend"] if provided
         backend_url = system_config.backend_url
@@ -285,7 +285,7 @@ class BackendRegistry:
 
         # Create BackendConfig object with merged values
         backend_config_obj = BackendConfig(
-            tenant_id="shared",
+            tenant_id="default",
             backend_type=name,
             url=backend_url,
             port=backend_port,
