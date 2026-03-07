@@ -220,8 +220,9 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
 
     # Route based on agent capabilities.
     # Order matters: check specific capabilities before general ones.
-    # E.g. detailed_report before text_generation (DetailedReportAgent has both).
-    if capabilities & {"search", "video_search", "retrieval", "routing"}:
+    if "routing" in capabilities:
+        return await _execute_routing_task(task, tenant_id)
+    elif capabilities & {"search", "video_search", "retrieval"}:
         return await _execute_search_task(task, tenant_id)
     elif capabilities & {"image_search", "visual_analysis"}:
         return await _execute_image_search_task(task, tenant_id)
@@ -282,6 +283,87 @@ async def _execute_search_task(task: AgentTask, tenant_id: str) -> Dict[str, Any
         "results_count": result_count,
         "results": result_list,
         "profile": profile,
+    }
+
+
+async def _execute_routing_task(
+    task: AgentTask, tenant_id: str
+) -> Dict[str, Any]:
+    """Execute routing via the actual RoutingAgent.
+
+    Instantiates RoutingAgent with RoutingDeps (same pattern as
+    SummarizerAgent/DetailedReportAgent). Memory, query enhancement,
+    entity extraction, and agent selection are all handled by the
+    RoutingAgent's own pipeline (MemoryAwareMixin + route_query()).
+    """
+    from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+    config = get_config(tenant_id=tenant_id, config_manager=_config_manager)
+
+    # Build LLM endpoint config from centralized config
+    llm_config_dict = config.get("llm_config", {})
+    primary = llm_config_dict.get("primary", {})
+
+    llm_endpoint = LLMEndpointConfig(
+        model=primary.get("model", "ollama/smollm3:3b"),
+        api_base=primary.get("api_base", "http://localhost:11434"),
+        temperature=primary.get("temperature", 0.1),
+        max_tokens=primary.get("max_tokens", 1000),
+    )
+
+    # Memory config from routing_agent section or top-level config
+    routing_config = config.get("routing_agent", {})
+    memory_enabled = routing_config.get("enable_memory", False)
+
+    deps_kwargs: Dict[str, Any] = {
+        "telemetry_config": TelemetryConfig(enabled=False),
+        "llm_config": llm_endpoint,
+        "enable_memory": memory_enabled,
+    }
+
+    if memory_enabled:
+        backend_url = config.get("backend_url", "http://localhost")
+        backend_port = config.get("backend_port", 8080)
+        deps_kwargs.update(
+            {
+                "memory_backend_host": backend_url,
+                "memory_backend_port": backend_port,
+                "memory_llm_model": primary.get("model", "qwen3:4b"),
+                "memory_embedding_model": routing_config.get(
+                    "memory_embedding_model", "nomic-embed-text"
+                ),
+                "memory_llm_base_url": primary.get(
+                    "api_base", "http://localhost:11434"
+                ),
+                "memory_config_manager": _config_manager,
+                "memory_schema_loader": _schema_loader,
+            }
+        )
+
+    deps = RoutingDeps(**deps_kwargs)
+    agent = RoutingAgent(deps=deps)
+
+    result = await agent.route_query(
+        query=task.query,
+        context=task.context.get("context"),
+        tenant_id=tenant_id,
+    )
+
+    return {
+        "status": "success",
+        "agent": "routing_agent",
+        "message": f"Routed '{task.query}' to {result.recommended_agent}",
+        "recommended_agent": result.recommended_agent,
+        "confidence": result.confidence,
+        "reasoning": result.reasoning,
+        "enhanced_query": result.enhanced_query,
+        "entities": result.entities,
+        "relationships": result.relationships,
+        "query_variants": result.query_variants,
+        "metadata": result.metadata,
     }
 
 

@@ -3,9 +3,10 @@ Unit tests for Agent Registry HTTP endpoints (Curated Registry pattern).
 
 Tests the A2A Curated Registries implementation where agents self-register
 via HTTP POST and clients discover agents via HTTP GET.
+Also tests the process_agent_task dispatch logic.
 """
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -297,3 +298,158 @@ class TestAgentRegistryIntegration:
         response = client.get("/agents/")
         assert response.status_code == 200
         assert response.json()["count"] == 2
+
+
+@pytest.mark.ci_fast
+class TestProcessAgentTaskDispatch:
+    """Test that process_agent_task dispatches to the correct handler based on capabilities."""
+
+    @pytest.fixture
+    def app_and_client(self):
+        """Create FastAPI app with agents router and injected dependencies."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from cogniverse_runtime.routers.agents import (
+            router,
+            set_agent_dependencies,
+            set_agent_registry,
+        )
+
+        config_manager = Mock()
+        schema_loader = Mock()
+        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        set_agent_registry(registry)
+        set_agent_dependencies(config_manager, schema_loader)
+
+        app = FastAPI()
+        app.include_router(router, prefix="/agents")
+        client = TestClient(app)
+        return app, client, registry
+
+    def test_routing_capability_dispatches_to_routing_task(self, app_and_client):
+        """Routing agent with 'routing' capability uses _execute_routing_task, not search."""
+        _, client, registry = app_and_client
+
+        registry.register_agent(
+            AgentEndpoint(
+                name="routing_agent",
+                url="http://localhost:8001",
+                capabilities=["routing", "query_analysis", "conversation_memory"],
+            )
+        )
+
+        mock_result = {
+            "status": "success",
+            "agent": "routing_agent",
+            "message": "Routed 'test' to search_agent",
+            "recommended_agent": "search_agent",
+            "confidence": 0.9,
+        }
+
+        with patch(
+            "cogniverse_runtime.routers.agents._execute_routing_task",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_routing:
+            response = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "test query",
+                    "context": {"tenant_id": "default"},
+                },
+            )
+            assert response.status_code == 200
+            mock_routing.assert_called_once()
+
+    def test_search_capability_dispatches_to_search_task(self, app_and_client):
+        """Search agent with 'search' capability uses _execute_search_task."""
+        _, client, registry = app_and_client
+
+        registry.register_agent(
+            AgentEndpoint(
+                name="search_agent",
+                url="http://localhost:8002",
+                capabilities=["search", "video_search", "retrieval"],
+            )
+        )
+
+        mock_result = {
+            "status": "success",
+            "agent": "search_agent",
+            "results_count": 0,
+            "results": [],
+        }
+
+        with patch(
+            "cogniverse_runtime.routers.agents._execute_search_task",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_search:
+            response = client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": "find videos",
+                    "context": {"tenant_id": "default"},
+                },
+            )
+            assert response.status_code == 200
+            mock_search.assert_called_once()
+
+    def test_routing_takes_priority_over_search(self, app_and_client):
+        """Agent with both 'routing' and 'search' capabilities routes to routing, not search."""
+        _, client, registry = app_and_client
+
+        registry.register_agent(
+            AgentEndpoint(
+                name="hybrid_agent",
+                url="http://localhost:8003",
+                capabilities=["routing", "search"],
+            )
+        )
+
+        mock_result = {"status": "success", "agent": "routing_agent"}
+
+        with patch(
+            "cogniverse_runtime.routers.agents._execute_routing_task",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_routing, patch(
+            "cogniverse_runtime.routers.agents._execute_search_task",
+            new_callable=AsyncMock,
+        ) as mock_search:
+            response = client.post(
+                "/agents/hybrid_agent/process",
+                json={
+                    "agent_name": "hybrid_agent",
+                    "query": "test",
+                    "context": {"tenant_id": "default"},
+                },
+            )
+            assert response.status_code == 200
+            mock_routing.assert_called_once()
+            mock_search.assert_not_called()
+
+    def test_unsupported_capability_returns_501(self, app_and_client):
+        """Agent with no supported capabilities returns 501."""
+        _, client, registry = app_and_client
+
+        registry.register_agent(
+            AgentEndpoint(
+                name="unknown_agent",
+                url="http://localhost:8004",
+                capabilities=["unknown_capability"],
+            )
+        )
+
+        response = client.post(
+            "/agents/unknown_agent/process",
+            json={
+                "agent_name": "unknown_agent",
+                "query": "test",
+                "context": {"tenant_id": "default"},
+            },
+        )
+        assert response.status_code == 501

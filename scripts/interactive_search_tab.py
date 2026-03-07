@@ -159,7 +159,17 @@ def render_interactive_search_tab(agent_status: dict):
                                 horizontal=True,
                             )
                             if st.button("💾 Save Annotation", key=f"save_{i}"):
-                                st.success(f"Annotation saved for result #{i+1}")
+                                if "search_annotations" not in st.session_state:
+                                    st.session_state["search_annotations"] = []
+                                st.session_state["search_annotations"].append({
+                                    "query": search_query,
+                                    "result_rank": i + 1,
+                                    "video_id": video_id,
+                                    "doc_id": doc_id,
+                                    "score": score,
+                                    "relevance": _relevance,
+                                })
+                                st.success(f"Annotation saved for result #{i+1}: {_relevance}")
 
             # Store search in session state for statistics
             if "search_history" not in st.session_state:
@@ -182,7 +192,8 @@ def render_interactive_search_tab(agent_status: dict):
     with stats_col1:
         st.metric("Total Searches", len(history))
     with stats_col2:
-        st.metric("Annotations", "0")
+        annotation_count = len(st.session_state.get("search_annotations", []))
+        st.metric("Annotations", str(annotation_count))
     with stats_col3:
         if history:
             avg_lat = sum(h["latency_ms"] for h in history) / len(history)

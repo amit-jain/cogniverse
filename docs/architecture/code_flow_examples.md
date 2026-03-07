@@ -112,11 +112,13 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 tenant_id = request.headers.get("X-Tenant-ID", "default")
 
 # 3. Initialize routing agent with typed dependencies
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id=tenant_id,
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=deps, port=8001)
 
@@ -318,11 +320,13 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
 # 1. Initialize routing agent with optimizer
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id="customer_a",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=deps, port=8001)
 optimizer = AdvancedRoutingOptimizer(tenant_id="customer_a")

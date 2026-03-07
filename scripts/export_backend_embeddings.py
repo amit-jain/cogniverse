@@ -181,12 +181,15 @@ class BackendEmbeddingExporter:
                     if "values" in embedding:
                         return np.array(embedding["values"])
                     elif "blocks" in embedding:
-                        # Tensor format
+                        # Multi-vector tensor format (e.g., ColPali patches)
+                        # Each block is one patch with embedding_dim values.
+                        # Mean-pool across patches to get a single fixed-size vector.
                         blocks = embedding["blocks"]
-                        values = []
+                        patch_vectors = []
                         for block_key in sorted(blocks.keys(), key=int):
-                            values.extend(blocks[block_key])
-                        return np.array(values)
+                            patch_vectors.append(blocks[block_key])
+                        patches_array = np.array(patch_vectors, dtype=np.float32)
+                        return patches_array.mean(axis=0)
                 elif isinstance(embedding, list):
                     return np.array(embedding)
                 elif isinstance(embedding, np.ndarray):

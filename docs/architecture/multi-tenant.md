@@ -79,14 +79,16 @@ vespa_client.query(
 
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Agent constructed WITHOUT tenant_id — serves all tenants
 deps = RoutingDeps(
-    tenant_id="default",  # RoutingAgent still needs it for routing state
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=deps)
 
@@ -341,12 +343,13 @@ if schema_manager.tenant_schema_exists("acme", "video_frames"):
 #### Schema Deletion
 
 ```python
-# Delete all schemas for a tenant
+# Delete all schemas for a tenant and redeploy to Vespa
 # IMPORTANT: Requires schema_registry to be configured during VespaSchemaManager initialization
 # Example: schema_manager = VespaSchemaManager(..., schema_registry=schema_registry)
 # Without schema_registry, this method will raise ValueError
 deleted = schema_manager.delete_tenant_schemas("acme")
 # Returns: ['video_frames_acme', 'agent_memories_acme']
+# Schemas are immediately removed from Vespa via redeployment (no restart needed)
 # Raises ValueError: "schema_registry required for tenant schema operations" if not configured
 ```
 
@@ -413,15 +416,16 @@ schema_manager = VespaSchemaManager(
 )
 memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 
-# Initialize agent with deps
+# Initialize agent with deps — tenant-agnostic at construction
 deps = RoutingDeps(
-    tenant_id="acme",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=deps)
-# Agent automatically uses tenant-specific resources:
+# Agent automatically uses tenant-specific resources per-request:
 # - Memory: agent_memories_acme (via Mem0MemoryManager singleton)
 # - Telemetry: cogniverse-acme project
 # - Optimization: data/optimization/acme/
@@ -546,24 +550,26 @@ Throughout the request lifecycle, tenant_id is available from `request.state`:
 ```python
 from fastapi import Request
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
+
+# Agent is constructed once — tenant-agnostic
+deps = RoutingDeps(
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+)
+routing_agent = RoutingAgent(deps=deps)
 
 @app.post("/search")
 async def search(request: Request, query: str):
     # Access tenant_id from request state
     tenant_id = request.state.tenant_id
 
-    # Initialize agent with tenant context
-    deps = RoutingDeps(
-        tenant_id=tenant_id,
-        telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
-    )
-    routing_agent = RoutingAgent(deps=deps)
-
-    # Execute search (automatically uses tenant-specific resources)
-    results = await routing_agent.route_query(query)
+    # tenant_id flows per-request into route_query
+    results = await routing_agent.route_query(query, tenant_id=tenant_id)
 
     return results
 ```
@@ -1338,7 +1344,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    vespa visit --schema agent_memories_acme > acme_memories_backup.jsonl
    ```
 
-2. **Delete Tenant Schemas**:
+2. **Delete Tenant Schemas** (immediate Vespa redeployment):
    ```python
    # Note: Requires schema_registry to be configured
    schema_manager = VespaSchemaManager(
@@ -1348,6 +1354,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    )
    deleted = schema_manager.delete_tenant_schemas("acme")
    # Returns: ['video_frames_acme', 'agent_memories_acme']
+   # Schemas are removed from Vespa immediately via redeployment
    # Raises ValueError if schema_registry not configured
    ```
 
@@ -1392,10 +1399,13 @@ def test_tenant_isolation():
     """Verify tenants don't interfere with each other"""
 
     # ONE agent serves all tenants (tenant-agnostic at construction)
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 
@@ -1466,17 +1476,19 @@ async def test_end_to_end_tenant_flow():
     )
     video_schema = schema_manager.get_tenant_schema_name(tenant_id, "video_frames")
 
-    # 2. Initialize agent
+    # 2. Initialize agent — tenant-agnostic at construction
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id=tenant_id,
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 
-    # 3. Execute query
-    result = await agent.route_query("cooking videos")
+    # 3. Execute query — tenant_id flows per-request
+    result = await agent.route_query("cooking videos", tenant_id=tenant_id)
 
     # 4. Verify result (RoutingOutput Pydantic model)
     assert result.recommended_agent is not None
@@ -1525,27 +1537,19 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-def create_routing_agent(tenant_id: str) -> RoutingAgent:
-    """Create routing agent with tenant context"""
+def create_routing_agent() -> RoutingAgent:
+    """Create routing agent — tenant-agnostic at construction.
+    tenant_id flows per-request via route_query(query, tenant_id=...).
+    """
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-    # Create config manager (required for dependency injection)
-    config_manager = create_default_config_manager()
-
-    # Get tenant schema names (schemas should be pre-deployed)
-    schema_manager = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=8080
-    )
-    video_schema = schema_manager.get_tenant_schema_name(tenant_id, "video_frames")
-    memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories")
-
-    # Create agent with deps (tenant_id is required in AgentDeps)
-    # RoutingDeps provides defaults for model_name, base_url, etc. (see class definition)
+    # Create agent with deps — no tenant_id at construction
     deps = RoutingDeps(
-        tenant_id=tenant_id,
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",  # Default: "smollm3:3b"
-        base_url="http://localhost:11434/v1"  # Default: "http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 
@@ -1573,17 +1577,19 @@ async def search(
 ):
     """Search endpoint with automatic tenant scoping"""
 
-    # Initialize tenant-aware agent
+    # Agent is tenant-agnostic — initialized once, tenant flows per-request
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id=tenant_id,
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 
-    # Execute query (automatically uses tenant resources)
-    results = await agent.route_query(query)
+    # Execute query — tenant_id scopes resources at request time
+    results = await agent.route_query(query, tenant_id=tenant_id)
 
     return results
 ```
@@ -1782,16 +1788,19 @@ memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories
 
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
-# ✅ Good: Explicit deps with tenant_id
+# ✅ Good: Tenant-agnostic deps — tenant_id flows per-request
 deps = RoutingDeps(
-    tenant_id=tenant_id,
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=deps)
+# Pass tenant_id per-request: await agent.route_query(query, tenant_id=tenant_id)
 
 # ❌ Bad: Missing deps
 agent = RoutingAgent()  # TypeError: missing required argument 'deps'
@@ -1802,20 +1811,16 @@ agent = RoutingAgent()  # TypeError: missing required argument 'deps'
 ```python
 # Always test that tenants can't access each other's data
 def test_tenant_isolation():
-    deps_a = RoutingDeps(
-        tenant_id="tenant_a",
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
-    deps_b = RoutingDeps(
-        tenant_id="tenant_b",
-        telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
-    )
-    agent_a = RoutingAgent(deps=deps_a)
-    agent_b = RoutingAgent(deps=deps_b)
+    agent = RoutingAgent(deps=deps)
+    # One agent serves all tenants — tenant isolation at request time
 
     # Verify separate memory manager instances per tenant
     memory_a = Mem0MemoryManager(tenant_id="tenant_a")

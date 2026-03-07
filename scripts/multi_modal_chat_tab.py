@@ -44,6 +44,9 @@ def initialize_chat_state():
     """Initialize session state for chat interface."""
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
+    if "chat_session_id" not in st.session_state:
+        import uuid
+        st.session_state.chat_session_id = str(uuid.uuid4())
     if "chat_tenant_id" not in st.session_state:
         # Use current tenant from main dashboard, or default
         st.session_state.chat_tenant_id = st.session_state.get("current_tenant", "default")
@@ -115,6 +118,7 @@ async def route_and_process_query(
                 "context": {
                     "tenant_id": tenant_id,
                     "user_id": tenant_id,
+                    "session_id": st.session_state.get("chat_session_id", tenant_id),
                     "timestamp": datetime.now().isoformat(),
                 },
                 "top_k": 10,
@@ -315,6 +319,8 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         # Clear conversation button
         if st.button("🗑️ Clear Conversation", use_container_width=True):
             st.session_state.chat_messages = []
+            import uuid
+            st.session_state.chat_session_id = str(uuid.uuid4())
             st.rerun()
 
         # Display message count

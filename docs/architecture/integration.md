@@ -113,11 +113,13 @@ class TestRealVespaIntegration:
 
         # cogniverse-agents package - RoutingAgent requires RoutingDeps with all required fields
         # Note: tenant_id is per-request, not at construction
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         routing_deps = RoutingDeps(
-            tenant_id="test",
             telemetry_config=TelemetryConfig(),
-            model_name="smollm3:3b",
-            base_url="http://localhost:11434/v1"
+            llm_config=LLMEndpointConfig(
+                model="ollama/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
         )
         routing_agent = RoutingAgent(deps=routing_deps)
 
@@ -473,7 +475,7 @@ config_manager = create_default_config_manager()
 
 # AgentDeps carries infrastructure config (no tenant_id — it's per-request)
 # Concrete agents use extended Deps classes:
-# RoutingDeps(AgentDeps) adds: telemetry_config, model_name, base_url, etc.
+# RoutingDeps(AgentDeps) adds: telemetry_config, llm_config, etc.
 # SearchAgentDeps(AgentDeps) adds: backend_url, backend_port, etc.
 deps = AgentDeps()  # No tenant_id at construction
 ```
@@ -485,11 +487,13 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 routing_deps = RoutingDeps(
-    tenant_id="test",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 agent = RoutingAgent(deps=routing_deps)
 
@@ -575,11 +579,13 @@ sampled_content = [
 synthetic_data = await generator.generate(sampled_content=sampled_content, target_count=10)
 
 # Test routing agent with synthetic queries
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 routing_deps = RoutingDeps(
-    tenant_id="test",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=routing_deps)
 for example in synthetic_data:

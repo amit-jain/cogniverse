@@ -313,7 +313,7 @@ manager.upload_schema_from_json_file(
     app_name="videosearch"
 )
 
-# Delete all schemas for a tenant (unregisters from registry)
+# Delete all schemas for a tenant (unregisters from registry + redeploys to Vespa)
 deleted = manager.delete_tenant_schemas(tenant_id="acme")
 # Returns: ["video_colpali_smol500_mv_frame_acme", ...]
 ```
@@ -321,7 +321,7 @@ deleted = manager.delete_tenant_schemas(tenant_id="acme")
 **Key Methods:**
 - `get_tenant_schema_name(tenant_id, base_schema_name)` - Generate tenant schema name
 - `tenant_schema_exists(tenant_id, base_schema_name)` - Check schema existence
-- `delete_tenant_schemas(tenant_id)` - Unregister tenant schemas
+- `delete_tenant_schemas(tenant_id)` - Unregister tenant schemas and immediately redeploy to Vespa with `allow_schema_removal=True`
 - `deploy_schema_from_json(schema_json, app_name)` - Deploy from dict
 - `upload_schema_from_json_file(json_file_path, app_name)` - Deploy from file
 

@@ -1241,7 +1241,10 @@ class VespaSchemaManager:
         )
 
     def _deploy_package(
-        self, app_package: ApplicationPackage, allow_field_type_change: bool = False
+        self,
+        app_package: ApplicationPackage,
+        allow_field_type_change: bool = False,
+        allow_schema_removal: bool = False,
     ) -> None:
         """
         Deploy an application package to Vespa.
@@ -1249,26 +1252,37 @@ class VespaSchemaManager:
         Args:
             app_package: The ApplicationPackage to deploy
             allow_field_type_change: If True, adds validation override for field type changes
+            allow_schema_removal: If True, adds validation override for content type removal
         """
         import json
+        from datetime import datetime, timedelta
 
         import requests
         from vespa.package import Validation, ValidationID
 
-        # Add validation override if requested
-        if allow_field_type_change:
-            from datetime import datetime, timedelta
-
-            # Set validation until 29 days from now (to stay within 30-day limit)
+        # Add validation overrides if requested
+        if allow_field_type_change or allow_schema_removal:
             until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
-            validation = Validation(
-                validation_id=ValidationID.fieldTypeChange,
-                until=until_date,
-                comment="Allow field type changes for schema updates",
-            )
             if app_package.validations is None:
                 app_package.validations = []
-            app_package.validations.append(validation)
+
+            if allow_field_type_change:
+                app_package.validations.append(
+                    Validation(
+                        validation_id=ValidationID.fieldTypeChange,
+                        until=until_date,
+                        comment="Allow field type changes for schema updates",
+                    )
+                )
+
+            if allow_schema_removal:
+                app_package.validations.append(
+                    Validation(
+                        validation_id=ValidationID.contentTypeRemoval,
+                        until=until_date,
+                        comment="Allow schema removal during tenant deletion",
+                    )
+                )
 
         # Create the deployment URL - properly construct with base URL and port
         import re
@@ -1438,7 +1452,6 @@ class VespaSchemaManager:
 
             # Deploy all schemas together
             app_package = ApplicationPackage(name=app_name, schema=all_schemas)
-
             self._deploy_package(app_package)
 
             if existing_schemas:
@@ -1480,7 +1493,10 @@ class VespaSchemaManager:
 
     def delete_tenant_schemas(self, tenant_id: str) -> list:
         """
-        Delete all schemas for a tenant.
+        Delete all schemas for a tenant and redeploy to Vespa.
+
+        Unregisters each schema from the registry, then redeploys
+        the application package without the deleted schemas.
 
         Args:
             tenant_id: Tenant identifier
@@ -1503,7 +1519,7 @@ class VespaSchemaManager:
                 tenant_id, base_schema_name
             )
             try:
-                # Delete from Vespa (unregister only, Vespa doesn't support schema deletion)
+                # Unregister from SchemaRegistry (redeployment happens after the loop)
                 self._schema_registry.unregister_schema(tenant_id, base_schema_name)
                 deleted_schemas.append(tenant_schema_name)
                 self._logger.info(
@@ -1513,6 +1529,38 @@ class VespaSchemaManager:
                 self._logger.error(
                     f"Failed to delete schema '{tenant_schema_name}': {e}"
                 )
+
+        # Redeploy to Vespa without the deleted schemas
+        if deleted_schemas:
+            self._logger.info(
+                f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa"
+            )
+            from vespa.package import ApplicationPackage
+
+            from cogniverse_vespa.metadata_schemas import (
+                create_adapter_registry_schema,
+                create_config_metadata_schema,
+                create_organization_metadata_schema,
+                create_tenant_metadata_schema,
+            )
+
+            metadata_schemas = [
+                create_organization_metadata_schema(),
+                create_tenant_metadata_schema(),
+                create_config_metadata_schema(),
+                create_adapter_registry_schema(),
+            ]
+            remaining_tenant_schemas = self._get_existing_tenant_schemas()
+            all_schemas = metadata_schemas + remaining_tenant_schemas
+
+            app_package = ApplicationPackage(
+                name="videosearch", schema=all_schemas
+            )
+            self._deploy_package(app_package, allow_schema_removal=True)
+
+            self._logger.info(
+                f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
+            )
 
         return deleted_schemas
 

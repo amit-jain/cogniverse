@@ -16,11 +16,7 @@ from cogniverse_agents.result_enhancement_engine import (
     EnhancementContext,
     ResultEnhancementEngine,
 )
-
-# Phase 4 imports
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps, RoutingOutput
-
-# Phase 5 imports
 
 
 class TestRoutingToEnhancedSearchIntegration:
@@ -1006,3 +1002,163 @@ class TestRoutingEnhancementPerformanceIntegration:
 
         # Memory growth should be minimal (allow some growth for caching, etc.)
         assert memory_growth < 1000, f"Excessive memory growth: {memory_growth} objects"
+
+
+class TestRouterToRoutingAgentWiring:
+    """Integration tests for the agents router -> RoutingAgent wiring.
+
+    Verifies that _execute_routing_task correctly:
+    1. Reads config and builds RoutingDeps
+    2. Instantiates real RoutingAgent
+    3. Calls route_query() and returns typed RoutingOutput fields
+    """
+
+    @pytest.mark.asyncio
+    async def test_execute_routing_task_instantiates_real_agent(
+        self, telemetry_manager_without_phoenix
+    ):
+        """_execute_routing_task builds RoutingDeps from config and calls route_query."""
+        from cogniverse_runtime.routers.agents import (
+            AgentTask,
+            _execute_routing_task,
+            set_agent_dependencies,
+        )
+
+        # Inject dependencies
+        config_manager = Mock()
+        schema_loader = Mock()
+        set_agent_dependencies(config_manager, schema_loader)
+
+        # Mock get_config to return a realistic config dict
+        test_config = {
+            "llm_config": {
+                "primary": {
+                    "model": "ollama/smollm3:3b",
+                    "api_base": "http://localhost:11434",
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                }
+            },
+            "routing_agent": {"enable_memory": False},
+            "backend_url": "http://localhost",
+            "backend_port": 8080,
+        }
+
+        # Mock the RoutingAgent to avoid needing Ollama
+        mock_routing_output = RoutingOutput(
+            query="find cats in videos",
+            recommended_agent="search_agent",
+            confidence=0.85,
+            reasoning="Video content search query",
+            enhanced_query="find cats in videos",
+            entities=[{"text": "cats", "label": "ANIMAL"}],
+            relationships=[],
+        )
+
+        with patch(
+            "cogniverse_foundation.config.utils.get_config",
+            return_value=test_config,
+        ):
+            with patch(
+                "cogniverse_agents.routing_agent.RoutingAgent",
+            ) as mock_agent_class:
+                mock_agent = Mock()
+                mock_agent.route_query = AsyncMock(return_value=mock_routing_output)
+                mock_agent_class.return_value = mock_agent
+
+                task = AgentTask(
+                    agent_name="routing_agent",
+                    query="find cats in videos",
+                    context={"tenant_id": "test_tenant"},
+                )
+
+                result = await _execute_routing_task(task, "test_tenant")
+
+                # Verify RoutingDeps was constructed correctly
+                call_kwargs = mock_agent_class.call_args[1]
+                deps = call_kwargs["deps"]
+                assert deps.llm_config.model == "ollama/smollm3:3b"
+                assert deps.llm_config.api_base == "http://localhost:11434"
+                assert deps.enable_memory is False
+
+                # Verify route_query was called with correct args
+                mock_agent.route_query.assert_called_once_with(
+                    query="find cats in videos",
+                    context=None,
+                    tenant_id="test_tenant",
+                )
+
+                # Verify response contains typed RoutingOutput fields
+                assert result["status"] == "success"
+                assert result["recommended_agent"] == "search_agent"
+                assert result["confidence"] == 0.85
+                assert result["enhanced_query"] == "find cats in videos"
+                assert result["entities"] == [{"text": "cats", "label": "ANIMAL"}]
+
+    @pytest.mark.asyncio
+    async def test_execute_routing_task_with_memory_enabled(
+        self, telemetry_manager_without_phoenix
+    ):
+        """When enable_memory=True, RoutingDeps includes all memory_* fields."""
+        from cogniverse_runtime.routers.agents import (
+            AgentTask,
+            _execute_routing_task,
+            set_agent_dependencies,
+        )
+
+        config_manager = Mock()
+        schema_loader = Mock()
+        set_agent_dependencies(config_manager, schema_loader)
+
+        test_config = {
+            "llm_config": {
+                "primary": {
+                    "model": "ollama/qwen3:4b",
+                    "api_base": "http://localhost:11434",
+                }
+            },
+            "routing_agent": {
+                "enable_memory": True,
+                "memory_embedding_model": "nomic-embed-text",
+            },
+            "backend_url": "http://vespa-host",
+            "backend_port": 19071,
+        }
+
+        mock_output = RoutingOutput(
+            query="test",
+            recommended_agent="search_agent",
+            confidence=0.9,
+            reasoning="test",
+            enhanced_query="test",
+        )
+
+        with patch(
+            "cogniverse_foundation.config.utils.get_config",
+            return_value=test_config,
+        ):
+            with patch(
+                "cogniverse_agents.routing_agent.RoutingAgent",
+            ) as mock_agent_class:
+                mock_agent = Mock()
+                mock_agent.route_query = AsyncMock(return_value=mock_output)
+                mock_agent_class.return_value = mock_agent
+
+                task = AgentTask(
+                    agent_name="routing_agent",
+                    query="test",
+                    context={"tenant_id": "test_tenant"},
+                )
+
+                await _execute_routing_task(task, "test_tenant")
+
+                # Verify memory fields in RoutingDeps
+                deps = mock_agent_class.call_args[1]["deps"]
+                assert deps.enable_memory is True
+                assert deps.memory_backend_host == "http://vespa-host"
+                assert deps.memory_backend_port == 19071
+                assert deps.memory_llm_model == "ollama/qwen3:4b"
+                assert deps.memory_embedding_model == "nomic-embed-text"
+                assert deps.memory_llm_base_url == "http://localhost:11434"
+                assert deps.memory_config_manager is config_manager
+                assert deps.memory_schema_loader is schema_loader

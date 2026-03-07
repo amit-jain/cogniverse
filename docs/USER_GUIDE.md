@@ -210,14 +210,16 @@ Cogniverse automatically routes queries to the optimal search strategy:
 
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Initialize routing agent with deps
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 routing_agent = RoutingAgent(deps=deps)
 
@@ -906,14 +908,16 @@ results = agent.search(
 
 ```python
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Create dependencies (telemetry_config is required)
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",  # Local Ollama model
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 
 agent = RoutingAgent(deps=deps)

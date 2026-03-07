@@ -17,6 +17,30 @@ from .conftest import skip_if_no_ollama
 
 
 @pytest.fixture
+def mock_telemetry_provider():
+    """Create a mock TelemetryProvider with in-memory stores."""
+    provider = Mock()
+    datasets: dict = {}
+
+    async def create_dataset(name, data, metadata=None):
+        datasets[name] = data
+        return f"ds-{name}"
+
+    async def get_dataset(name):
+        if name not in datasets:
+            raise KeyError(f"Dataset {name} not found")
+        return datasets[name]
+
+    provider.datasets = Mock()
+    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+    provider.experiments = Mock()
+    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
+    provider.experiments.log_run = AsyncMock(return_value="run-test")
+    return provider
+
+
+@pytest.fixture
 def ollama_config():
     """Configuration for Ollama models for query analysis"""
     return {
@@ -131,7 +155,7 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_query_analysis_with_smollm3(
-        self, ollama_config, mock_ollama_query_client
+        self, ollama_config, mock_ollama_query_client, mock_telemetry_provider
     ):
         """Test query analysis with SmolLM3 model"""
         # Mock routing agent initialization to avoid external dependencies
@@ -142,6 +166,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_thinking_phase=True,
                 enable_query_expansion=True,
                 enable_agent_integration=False,  # Disable for this test
@@ -164,7 +189,7 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_complex_query_analysis_with_qwen(
-        self, ollama_config, mock_ollama_query_client, sample_conversation_context
+        self, ollama_config, mock_ollama_query_client, sample_conversation_context, mock_telemetry_provider
     ):
         """Test complex query analysis with Qwen model"""
         with patch(
@@ -174,6 +199,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_thinking_phase=True,
                 enable_query_expansion=True,
                 enable_agent_integration=False,
@@ -201,7 +227,7 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_thinking_phase_with_ollama_reasoning(
-        self, ollama_config, mock_ollama_query_client
+        self, ollama_config, mock_ollama_query_client, mock_telemetry_provider
     ):
         """Test thinking phase with Ollama-powered reasoning"""
         with patch(
@@ -211,6 +237,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_thinking_phase=True,
             )
 
@@ -239,7 +266,7 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_query_expansion_with_context(
-        self, ollama_config, sample_conversation_context
+        self, ollama_config, sample_conversation_context, mock_telemetry_provider
     ):
         """Test query expansion using conversation context"""
         with patch(
@@ -249,6 +276,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_query_expansion=True,
                 max_expanded_queries=5,
             )
@@ -282,7 +310,7 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_routing_agent_integration_with_ollama(
-        self, ollama_config, mock_routing_agent
+        self, ollama_config, mock_routing_agent, mock_telemetry_provider
     ):
         """Test integration with routing agent using Ollama"""
         with patch(
@@ -292,6 +320,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_agent_integration=True,
             )
 
@@ -331,7 +360,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_multimodal_query_detection(self, ollama_config):
+    async def test_multimodal_query_detection(self, ollama_config, mock_telemetry_provider):
         """Test detection of multimodal queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -339,7 +368,8 @@ class TestQueryAnalysisV3OllamaIntegration:
             mock_routing_class.return_value = None
 
             analyzer = QueryAnalysisToolV3(
-                config_manager=create_default_config_manager()
+                config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
             )
 
             # Test multimodal query
@@ -360,7 +390,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_temporal_query_analysis(self, ollama_config):
+    async def test_temporal_query_analysis(self, ollama_config, mock_telemetry_provider):
         """Test analysis of temporal queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -368,7 +398,8 @@ class TestQueryAnalysisV3OllamaIntegration:
             mock_routing_class.return_value = None
 
             analyzer = QueryAnalysisToolV3(
-                config_manager=create_default_config_manager()
+                config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
             )
 
             # Test temporal query
@@ -391,7 +422,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_entity_and_keyword_extraction(self, ollama_config):
+    async def test_entity_and_keyword_extraction(self, ollama_config, mock_telemetry_provider):
         """Test entity and keyword extraction capabilities"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -399,7 +430,8 @@ class TestQueryAnalysisV3OllamaIntegration:
             mock_routing_class.return_value = None
 
             analyzer = QueryAnalysisToolV3(
-                config_manager=create_default_config_manager()
+                config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
             )
 
             # Test query with entities and keywords
@@ -430,7 +462,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_confidence_scoring_integration(self, ollama_config):
+    async def test_confidence_scoring_integration(self, ollama_config, mock_telemetry_provider):
         """Test confidence scoring across different query types"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -438,7 +470,8 @@ class TestQueryAnalysisV3OllamaIntegration:
             mock_routing_class.return_value = None
 
             analyzer = QueryAnalysisToolV3(
-                config_manager=create_default_config_manager()
+                config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
             )
 
             # Test high-confidence query (clear intent, simple, with entities)
@@ -461,7 +494,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_end_to_end_simple_search_workflow(self, ollama_config):
+    async def test_end_to_end_simple_search_workflow(self, ollama_config, mock_telemetry_provider):
         """Test complete workflow for simple search query"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -469,6 +502,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
             mock_routing_class.return_value = None
 
             analyzer = create_enhanced_query_analyzer(
+                telemetry_provider=mock_telemetry_provider,
                 enable_thinking_phase=True,
                 enable_query_expansion=True,
                 enable_agent_integration=False,
@@ -491,7 +525,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_end_to_end_analytical_workflow(
-        self, ollama_config, sample_conversation_context
+        self, ollama_config, sample_conversation_context, mock_telemetry_provider
     ):
         """Test complete workflow for analytical query"""
         with patch(
@@ -499,7 +533,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
         ) as mock_routing_class:
             mock_routing_class.return_value = None
 
-            analyzer = create_enhanced_query_analyzer()
+            analyzer = create_enhanced_query_analyzer(telemetry_provider=mock_telemetry_provider)
 
             # Simulate complex analytical query
             query = "analyze the evolution of artificial intelligence research over the past year and provide comprehensive insights with visual analysis"
@@ -535,14 +569,14 @@ class TestQueryAnalysisV3WorkflowIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_statistics_and_monitoring_integration(self, ollama_config):
+    async def test_statistics_and_monitoring_integration(self, ollama_config, mock_telemetry_provider):
         """Test statistics collection and monitoring"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
         ) as mock_routing_class:
             mock_routing_class.return_value = None
 
-            analyzer = create_enhanced_query_analyzer()
+            analyzer = create_enhanced_query_analyzer(telemetry_provider=mock_telemetry_provider)
 
             # Perform multiple analyses
             queries = [
@@ -577,7 +611,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_routing_agent_failure_handling(self, ollama_config):
+    async def test_routing_agent_failure_handling(self, ollama_config, mock_telemetry_provider):
         """Test handling of routing agent failures"""
         # Mock routing agent that fails
         mock_failing_agent = Mock()
@@ -592,6 +626,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_agent_integration=True,
             )
 
@@ -609,7 +644,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_thinking_phase_error_handling(self, ollama_config):
+    async def test_thinking_phase_error_handling(self, ollama_config, mock_telemetry_provider):
         """Test handling of thinking phase errors"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -618,6 +653,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
             analyzer = QueryAnalysisToolV3(
                 config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
                 enable_thinking_phase=True,
             )
 
@@ -635,7 +671,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_empty_and_edge_case_queries(self, ollama_config):
+    async def test_empty_and_edge_case_queries(self, ollama_config, mock_telemetry_provider):
         """Test handling of empty and edge case queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -643,7 +679,8 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
             mock_routing_class.return_value = None
 
             analyzer = QueryAnalysisToolV3(
-                config_manager=create_default_config_manager()
+                config_manager=create_default_config_manager(),
+                telemetry_provider=mock_telemetry_provider,
             )
 
             # Test empty query

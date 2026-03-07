@@ -59,81 +59,112 @@ Application Layer (Light Blue/Purple)
 
 ### 1. Multi-Tenant Schema Management
 
-Automatically appends tenant suffixes to schema names:
+Automatically appends tenant suffixes to schema names via `VespaSchemaManager`:
 
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
-config = SystemConfig(
-    tenant_id="acme_corp",
-    backend_url="http://localhost",
+# Initialize schema manager (backend_endpoint and backend_port are REQUIRED)
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
     backend_port=8080,
 )
 
-# Tenant schema naming: video_colpali_mv_frame_acme_corp
+# Get tenant-specific schema name (colon → underscore)
+schema_name = schema_manager.get_tenant_schema_name(
+    tenant_id="acme_corp",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+# Returns: "video_colpali_smol500_mv_frame_acme_corp"
+# For "acme:production": "video_colpali_smol500_mv_frame_acme_production"
 ```
 
 ### 2. Dynamic Schema Deployment
 
 ```python
-from cogniverse_vespa.backends import VespaSchemaManager
-from cogniverse_vespa.json_parser import JsonSchemaParser
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 # Parse JSON schema definition
 parser = JsonSchemaParser()
-schema = parser.parse("schemas/video_colpali.json")
+schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol500_mv_frame_schema.json")
 
-# Deploy with tenant isolation
-manager = VespaSchemaManager(config)
-await manager.deploy_schema(schema, tenant_id="acme_corp")
-# Creates: video_colpali_acme_corp
+# Deploy schema — schema_registry required for tenant operations
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+from pathlib import Path
+
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+schema_registry = SchemaRegistry(config_manager=config_manager, backend=None, schema_loader=schema_loader)
+
+manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080,
+    schema_loader=schema_loader,
+    schema_registry=schema_registry,
+)
+
+# Delete tenant schemas (unregisters from registry, then immediately redeploys to Vespa
+# with allow_schema_removal=True so Vespa accepts the content type removal)
+deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
+# Returns: ["video_colpali_smol500_mv_frame_acme_corp", ...]
 ```
 
 ### 3. Document Operations
 
 ```python
-# Feed documents
-response = await backend.feed_documents(
-    documents=[
-        {"id": "video1", "embedding": [...], "title": "ML Tutorial"},
-        {"id": "video2", "embedding": [...], "title": "AI Basics"}
-    ],
-    schema_name="video_colpali_mv_frame"
+from cogniverse_vespa.backend import VespaBackend
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
+
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+
+backend = VespaBackend(
+    backend_config={"url": "http://localhost", "port": 8080},
+    schema_loader=schema_loader,
+    config_manager=config_manager,
 )
 
-# Search documents
-results = await backend.search(
-    query="machine learning",
-    schema_name="video_colpali_mv_frame",
-    limit=10
-)
-
-# Delete documents
-await backend.delete_document(
+# Feed documents (synchronous)
+backend.feed_datapoint(
     doc_id="video1",
-    schema_name="video_colpali_mv_frame"
+    data={"title": "ML Tutorial", "embedding": [0.1, 0.2]},
+    schema_name="video_colpali_smol500_mv_frame_acme_corp",
+)
+
+# Search documents (synchronous)
+results = backend.search(
+    query_dict={"query": "machine learning", "schema": "video_colpali_smol500_mv_frame_acme_corp"},
+    tenant_id="acme_corp",
 )
 ```
 
-### 4. Tenant Schema Manager
+### 4. Tenant Schema Operations
 
 ```python
-from cogniverse_vespa.backends import TenantSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
-tenant_mgr = TenantSchemaManager(config)
-
-# Deploy all schemas for a tenant
-await tenant_mgr.deploy_tenant_schemas(
-    tenant_id="acme_corp",
-    schema_files=["video_colpali.json", "video_videoprism.json"]
+# Full initialization with schema_registry for tenant operations
+manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080,
+    schema_loader=schema_loader,
+    schema_registry=schema_registry,
 )
 
-# List tenant schemas
-schemas = await tenant_mgr.list_tenant_schemas("acme_corp")
-# Returns: ["video_colpali_acme_corp", "video_videoprism_acme_corp"]
+# Check if tenant schema exists
+exists = manager.tenant_schema_exists(
+    tenant_id="acme_corp",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
 
-# Delete tenant schemas
-await tenant_mgr.delete_tenant_schemas("acme_corp")
+# Delete tenant schemas (immediately redeploys to Vespa without deleted schemas)
+deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
+# Returns: List of deleted schema names
 ```
 
 ---
@@ -170,67 +201,76 @@ pip install cogniverse-vespa
 ### Basic Setup
 
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_vespa.backend import VespaBackend
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Initialize config with tenant
-config = SystemConfig(
-    tenant_id="acme_corp",
-    backend_url="http://localhost",
-    backend_port=8080,
+# Initialize dependencies
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+
+# Initialize backend
+backend = VespaBackend(
+    backend_config={"url": "http://localhost", "port": 8080},
+    schema_loader=schema_loader,
+    config_manager=config_manager,
 )
 ```
 
 ### Feed Documents
 
 ```python
-documents = [
-    {
-        "id": "video_001",
+backend.feed_datapoint(
+    doc_id="video_001",
+    data={
         "title": "Machine Learning Basics",
-        "embedding": [0.1, 0.2, ...],  # 1024-dim vector
-        "timestamp": "2025-11-13T10:00:00Z"
-    }
-]
-
-response = await backend.feed_documents(
-    documents=documents,
-    schema_name="video_colpali_mv_frame"
+        "embedding": [0.1, 0.2, ...],  # vector matching schema dimension
+    },
+    schema_name="video_colpali_smol500_mv_frame_acme_corp",
 )
-
-print(f"Fed {response.count} documents")
 ```
 
 ### Search Documents
 
 ```python
-# Vector search
-results = await backend.search(
-    query="machine learning tutorial",
-    schema_name="video_colpali_mv_frame",
-    limit=10,
-    rank_profile="vector_similarity"
+# Construct query dict for Vespa YQL
+results = backend.search(
+    query_dict={
+        "query": "machine learning tutorial",
+        "schema": "video_colpali_smol500_mv_frame_acme_corp",
+        "hits": 10,
+    },
+    tenant_id="acme_corp",
 )
 
 for result in results:
-    print(f"Document: {result['id']}, Score: {result['relevance']}")
+    print(f"Document: {result.get('id')}, Score: {result.get('relevance')}")
 ```
 
-### Deploy Custom Schema
+### Deploy Tenant Schemas
 
 ```python
-from cogniverse_vespa.backends import VespaSchemaManager
-from cogniverse_vespa.json_parser import JsonSchemaParser
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+from cogniverse_core.registries.schema_registry import SchemaRegistry
+from pathlib import Path
 
-# Parse JSON schema
-parser = JsonSchemaParser()
-schema = parser.parse("custom_schema.json")
-
-# Deploy
-manager = VespaSchemaManager(config)
-await manager.deploy_schema(
-    schema=schema,
-    tenant_id="acme_corp"
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+schema_registry = SchemaRegistry(
+    config_manager=config_manager, backend=None, schema_loader=schema_loader
 )
+
+manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080,
+    schema_loader=schema_loader,
+    schema_registry=schema_registry,
+)
+
+# Delete tenant schemas — immediately redeploys Vespa without the removed schemas
+deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
+print(f"Deleted schemas: {deleted}")
 ```
 
 ---
@@ -386,16 +426,23 @@ uv run python -c "import json; json.load(open('schema.json'))"
 
 **3. Tenant Schema Not Found**
 ```python
-# List all schemas
-manager = VespaSchemaManager(config)
-schemas = await manager.list_all_schemas()
-print(schemas)
+# Check if tenant schema exists via schema_manager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=8080,
+    schema_registry=schema_registry,
+)
+exists = manager.tenant_schema_exists(
+    tenant_id="acme_corp",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+print(f"Schema exists: {exists}")
 ```
 
 **4. Document Feed Fails**
-- Verify schema exists: `await backend.get_schema(schema_name)`
 - Check document format matches schema fields
-- Ensure tensor dimensions match schema definition
+- Ensure tensor dimensions match schema definition (128 for ColPali patch, 768 for base, 1024 for large)
 
 ---
 

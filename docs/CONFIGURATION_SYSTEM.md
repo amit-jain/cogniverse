@@ -301,7 +301,7 @@ schema_manager = VespaSchemaManager(
     schema_registry=schema_registry  # Required for delete_tenant_schemas and tenant_schema_exists
 )
 
-# Delete all schemas for a tenant
+# Delete all schemas for a tenant (immediately redeploys to Vespa)
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 print(f"Deleted schemas: {deleted}")
 

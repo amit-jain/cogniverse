@@ -881,13 +881,17 @@ def test_routing_agent_initialization():
     from cogniverse_agents.routing_agent import RoutingDeps
     from cogniverse_foundation.telemetry.config import TelemetryConfig
 
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id="test",
-        telemetry_config=TelemetryConfig()
+        telemetry_config=TelemetryConfig(),
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps)
 
-    assert agent.tenant_id == "test"
+    assert agent.deps is not None
 
 async def test_routing_agent_strategy_selection(mocker):
     """Test strategy selection with mocked LLM"""
@@ -897,9 +901,13 @@ async def test_routing_agent_strategy_selection(mocker):
     # Mock external dependencies
     mocker.patch("cogniverse_agents.routing.strategies.GLiNERRoutingStrategy.route")
 
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id="test",
-        telemetry_config=TelemetryConfig()
+        telemetry_config=TelemetryConfig(),
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps)
 
@@ -1054,12 +1062,16 @@ python -c "
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id='test',
-    telemetry_config=TelemetryConfig()
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model='ollama/smollm3:3b',
+        api_base='http://localhost:11434',
+    ),
 )
 agent = RoutingAgent(deps)
-print('✅ Release smoke test passed')
+print('Release smoke test passed')
 "
 ```
 
@@ -1247,9 +1259,13 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 async def main():
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id="acme_corp",
-        telemetry_config=TelemetryConfig()
+        telemetry_config=TelemetryConfig(),
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps)
     result = await agent.route_query("Show me machine learning videos")

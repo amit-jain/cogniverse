@@ -57,6 +57,9 @@ class MemoryAwareMixin:
         tenant_id: str,
         backend_host: str = "localhost",
         backend_port: int = 8080,
+        llm_model: str = "qwen3:4b",
+        embedding_model: str = "nomic-embed-text",
+        llm_base_url: str = "http://localhost:11434",
         config_manager=None,
         schema_loader=None,
     ) -> bool:
@@ -68,6 +71,9 @@ class MemoryAwareMixin:
             tenant_id: Tenant identifier (REQUIRED - no default)
             backend_host: Backend endpoint host
             backend_port: Backend endpoint port
+            llm_model: LLM model name for memory extraction
+            embedding_model: Embedding model name for memory search
+            llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
 
@@ -92,6 +98,9 @@ class MemoryAwareMixin:
                 self.memory_manager.initialize(
                     backend_host=backend_host,
                     backend_port=backend_port,
+                    llm_model=llm_model,
+                    embedding_model=embedding_model,
+                    llm_base_url=llm_base_url,
                     base_schema_name="agent_memories",
                     auto_create_schema=True,
                     config_manager=config_manager,

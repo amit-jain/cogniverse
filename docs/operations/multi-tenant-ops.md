@@ -116,9 +116,10 @@ def soft_delete_tenant(tenant_id: str):
 def hard_delete_tenant(tenant_id: str):
     """Hard delete - permanent removal"""
 
-    # 1. Delete backend schemas
-    # Note: Schema deletion requires backend API calls
-    # Use backend HTTP API or CLI to remove tenant-specific schemas
+    # 1. Delete backend schemas — unregisters from SchemaRegistry, then immediately
+    # redeploys the Vespa application package with allow_schema_removal=True
+    # (Vespa validation override required for content type removal)
+    schema_manager.delete_tenant_schemas(tenant_id)
 
     # 2. Delete telemetry project
     # (manual cleanup required via telemetry provider UI or API)

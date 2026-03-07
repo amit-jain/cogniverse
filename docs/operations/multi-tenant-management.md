@@ -295,7 +295,7 @@ curl http://localhost:9000/admin/organizations/acme/tenants
 
 ### Delete Tenant
 
-Deletes a tenant and all associated data (schemas, documents, storage).
+Deletes a tenant and all associated data (schemas, documents, storage). Schemas are immediately removed from Vespa via redeployment.
 
 **Request**:
 ```bash
@@ -675,13 +675,16 @@ agent = VideoSearchAgent(
 
 # Routing Agent (implementation layer)
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
+# RoutingDeps is tenant-agnostic — no tenant_id at construction
 deps = RoutingDeps(
-    tenant_id="acme:production",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 router = RoutingAgent(deps=deps)
 ```

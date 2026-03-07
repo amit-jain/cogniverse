@@ -507,7 +507,7 @@ for name, card in agents.items():
 ```text
 RoutingAgent:
   Description: Intelligent query routing with DSPy optimization
-  Capabilities: routing, entity_extraction, query_enhancement
+  Capabilities: routing, query_analysis, entity_extraction, conversation_memory
   Version: 1.0.0
 
 VideoSearchAgent:

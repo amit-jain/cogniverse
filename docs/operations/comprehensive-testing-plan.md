@@ -345,7 +345,7 @@ results = manager.search_memory(
 for i, result in enumerate(results, 1):
     print(f"\nMemory {i}:")
     print(f"  Content: {result['memory']}")
-    print(f"  Score: {result['score']:.3f}")
+    print(f"  Score: {result.score:.3f}")
     print(f"  Metadata: {result.get('metadata', {})}")
 ```
 
@@ -802,11 +802,13 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # RoutingAgent requires RoutingDeps (typed dependencies)
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 router = RoutingAgent(deps=deps)  # deps is REQUIRED parameter
 
@@ -832,11 +834,13 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Initialize routing agent with typed dependencies (RoutingDeps is REQUIRED)
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 router = RoutingAgent(deps=deps)  # deps parameter is REQUIRED
 
@@ -1064,11 +1068,13 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Initialize routing agent with typed dependencies
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 router = RoutingAgent(deps=deps)  # deps is REQUIRED
 
@@ -1436,11 +1442,13 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
 # 1. Route the query (async method)
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
-    tenant_id="default",
     telemetry_config=TelemetryConfig(),
-    model_name="smollm3:3b",
-    base_url="http://localhost:11434/v1"
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
 )
 router = RoutingAgent(deps=deps)  # deps is REQUIRED
 decision = await router.route_query("Find videos about machine learning")

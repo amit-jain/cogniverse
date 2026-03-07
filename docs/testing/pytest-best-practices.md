@@ -350,16 +350,20 @@ def test_agents_depends_on_foundation_and_core():
     from cogniverse_foundation.telemetry.config import TelemetryConfig
 
     # Create dependencies with tenant-specific configuration
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     telemetry_config = TelemetryConfig()
     deps = RoutingDeps(
-        tenant_id="test",
-        telemetry_config=telemetry_config
+        telemetry_config=telemetry_config,
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
 
     # RoutingAgent from agents package should accept RoutingDeps
     agent = RoutingAgent(deps=deps)
 
-    assert agent.tenant_id == "test"
+    assert agent.deps is not None
     assert agent.deps == deps
 
 def test_runtime_depends_on_all():
@@ -582,15 +586,19 @@ def tenant_agent(tenant_a_config):
     from cogniverse_agents.routing_agent import RoutingDeps
     from cogniverse_foundation.telemetry.config import TelemetryConfig
 
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id=tenant_a_config.tenant_id,
-        telemetry_config=TelemetryConfig()
+        telemetry_config=TelemetryConfig(),
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     return RoutingAgent(deps=deps)
 
 # Use in tests:
 def test_with_tenant_fixtures(tenant_a_config, tenant_agent):
-    assert tenant_agent.tenant_id == "acme_corp"
+    assert tenant_agent.deps is not None
 ```
 
 ---

@@ -29,7 +29,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Removed wait_for_operation_complete import - function deleted in nuclear cleanup
 # Import config and memory management tabs
 from config_management_tab import render_config_management_tab
 from memory_management_tab import render_memory_management_tab
@@ -2901,6 +2900,10 @@ with main_tabs[8]:
                                             st.session_state.search_annotations.append(
                                                 annotation
                                             )
+
+        # Show annotation count
+        if hasattr(st.session_state, "search_annotations") and st.session_state.search_annotations:
+            st.info(f"📊 {len(st.session_state.search_annotations)} annotation(s) saved this session")
 
         # Export annotations
         if st.button("📥 Export Annotations") and hasattr(

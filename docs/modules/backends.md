@@ -1319,10 +1319,12 @@ exists = schema_manager.tenant_schema_exists(
 )
 # Returns: True/False
 
-# Delete tenant schemas (cleanup)
+# Delete tenant schemas (cleanup) — immediately redeploys to Vespa
 # REQUIRES: schema_registry in constructor, raises ValueError if not provided
+# Internally: unregisters each schema, then redeploys the application package
+# with allow_schema_removal=True (Vespa validation override for content type removal)
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
-# Returns: List of deleted schema names
+# Returns: List of deleted schema names (schemas removed from Vespa via redeployment)
 ```
 
 #### Schema Naming Convention

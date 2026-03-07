@@ -297,7 +297,7 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
         config = A2AAgentConfig(
             agent_name="routing_agent",
             agent_description="Intelligent query routing with DSPy optimization",
-            capabilities=["routing", "query_enhancement"],
+            capabilities=self._get_routing_capabilities(deps),
             port=port,
         )
         super().__init__(deps=deps, config=config, dspy_module=None)
@@ -2509,8 +2509,8 @@ VideoSearchAgent(
 ```python
 def search(
     query: str,
-    profile: Optional[str] = None,      # Per-request (defaults to config active_video_profile)
-    tenant_id: str = "default",          # Per-request
+    tenant_id: str,                      # Required — no default
+    profile: Optional[str] = None,       # Per-request (defaults to config active_video_profile)
     top_k: int = 10,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -2528,9 +2528,9 @@ config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
 
-results = agent.search("cooking tutorial", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
+results = agent.search("cooking tutorial", tenant_id="acme", profile="video_colpali_smol500_mv_frame", top_k=10)
 for result in results:
-    print(f"{result.document_id} - Score: {result.score}")
+    print(f"{result.document.id} - Score: {result.score}")
 ```
 
 ---
@@ -2646,13 +2646,14 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
-        backend_host: str,          # Required - e.g. "http://localhost"
-        backend_port: int,          # Required - e.g. 8080
-        llm_model: str,             # Required - e.g. "ollama/llama3.2"
-        embedding_model: str,       # Required - e.g. "nomic-embed-text"
-        llm_base_url: str,          # Required - e.g. "http://localhost:11434/v1"
-        config_manager,             # Required for schema deployment
-        schema_loader,              # Required for schema templates
+        backend_host: str,           # Required — no default
+        backend_port: int,           # Required — no default
+        llm_model: str,              # Required — no default
+        embedding_model: str,        # Required — no default
+        llm_base_url: str,           # Required — no default
+        config_manager,              # Required for schema deployment
+        schema_loader,               # Required for schema templates
+        provider: str = "ollama",
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
     ) -> bool:
@@ -2660,53 +2661,33 @@ class MemoryAwareMixin:
         Initialize memory for agent.
 
         Creates tenant-specific Mem0MemoryManager instance.
-        All LLM/embedding params are required - no defaults.
+        Raises ValueError if tenant_id is empty or None.
         """
-        from cogniverse_core.memory.manager import Mem0MemoryManager
+        ...  # Implementation in cogniverse_core.agents.memory_aware_mixin
 
-        self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
-        self.memory_manager.initialize(
-            backend_host=backend_host,
-            backend_port=backend_port,
-            llm_model=llm_model,
-            embedding_model=embedding_model,
-            llm_base_url=llm_base_url,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-            base_schema_name="agent_memories",  # Creates agent_memories_{tenant_id}
-            auto_create_schema=auto_create_schema,
-        )
+    def get_relevant_context(self, query: str, top_k: Optional[int] = 5) -> Optional[str]:
+        """Retrieve relevant memories for query. Returns None if memory not initialized."""
+        ...
 
-        self.agent_name = agent_name
-        self.tenant_id = tenant_id
-        return True
+    def update_memory(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Add content to agent's memory. Returns success status."""
+        ...
 
-    def get_relevant_context(self, query: str, top_k: int = 5) -> str:
-        """Retrieve relevant memories for query"""
-        if not hasattr(self, "memory_manager"):
-            return ""
+    def remember_success(self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Remember a successful interaction."""
+        ...
 
-        memories = self.memory_manager.search_memory(
-            query=query,
-            tenant_id=self.tenant_id,
-            agent_name=self.agent_name,
-            top_k=top_k
-        )
+    def remember_failure(self, query: str, error: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Remember a failed interaction to avoid repeating mistakes."""
+        ...
 
-        return "\n".join(m.get("memory", "") for m in memories)
+    def is_memory_enabled(self) -> bool:
+        """Check if memory is enabled and initialized."""
+        ...
 
-    def remember_success(self, query: str, result: Any, metadata: Dict) -> bool:
-        """Store successful interaction"""
-        if not hasattr(self, "memory_manager"):
-            return False
-
-        self.memory_manager.add_memory(
-            content=f"SUCCESS: {query} -> {result}",
-            tenant_id=self.tenant_id,
-            agent_name=self.agent_name,
-            metadata=metadata
-        )
-        return True
+    def get_memory_summary(self) -> Dict[str, Any]:
+        """Get summary of memory status (enabled, agent_name, tenant_id, initialized)."""
+        ...
 ```
 
 ### TenantAwareAgentMixin
@@ -3050,13 +3031,22 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 # Initialize agent for tenant using deps
 # telemetry_config is required (can be empty dict for defaults)
-deps = RoutingDeps(telemetry_config={}, enable_caching=True)  # No tenant_id
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry import TelemetryConfig
+deps = RoutingDeps(
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+)  # No tenant_id at construction
 agent = RoutingAgent(deps=deps)
 
-# Route query
+# Route query — context is Optional[str], tenant_id flows per-request
 decision = await agent.route_query(
     query="Show me videos about machine learning",
-    context={"user_preference": "educational"}
+    context="User prefers educational content",
+    tenant_id="acme",
 )
 
 print(f"Recommended agent: {decision.recommended_agent}")
@@ -3083,8 +3073,8 @@ results = agent.search(
 )
 
 for result in results:
-    print(f"Video: {result['title']}")
-    print(f"Score: {result['score']}")
+    print(f"Video: {result.document.title}")
+    print(f"Score: {result.score}")
 ```
 
 ### Example 3: Multi-Agent Orchestration
@@ -3128,15 +3118,20 @@ agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loa
 
 # Initialize memory manager separately
 memory = Mem0MemoryManager(tenant_id="acme")
-# Initialize backend connection
+# All parameters are required (no defaults)
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    base_schema_name="agent_memories"
+    llm_model="qwen3:4b",
+    embedding_model="nomic-embed-text",
+    llm_base_url="http://localhost:11434",
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+    base_schema_name="agent_memories",
 )
 
-# First search
-results1 = agent.search(query="cooking tutorials", top_k=5)
+# First search — tenant_id is required
+results1 = agent.search(query="cooking tutorials", tenant_id="acme", top_k=5)
 
 # Store in memory for future context
 # add_memory takes: content (str), tenant_id, agent_name, optional metadata
@@ -3148,7 +3143,7 @@ memory.add_memory(
 )
 
 # Second search (memory context retrieved separately)
-results2 = agent.search(query="advanced cooking techniques", top_k=5)
+results2 = agent.search(query="advanced cooking techniques", tenant_id="acme", top_k=5)
 ```
 
 ### Example 5: Streaming Results
@@ -3517,14 +3512,30 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 class TestRoutingAgent:
     def test_initialization(self):
         """Test agent initialization with deps (no tenant_id)"""
-        deps = RoutingDeps(telemetry_config={})
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_foundation.telemetry import TelemetryConfig
+        deps = RoutingDeps(
+            telemetry_config=TelemetryConfig(),
+            llm_config=LLMEndpointConfig(
+                model="ollama/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
+        )
         agent = RoutingAgent(deps=deps)
 
         assert agent.telemetry is not None
 
     async def test_route_query(self):
         """Test query routing — tenant_id in request"""
-        deps = RoutingDeps(telemetry_config={})
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_foundation.telemetry import TelemetryConfig
+        deps = RoutingDeps(
+            telemetry_config=TelemetryConfig(),
+            llm_config=LLMEndpointConfig(
+                model="ollama/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
+        )
         agent = RoutingAgent(deps=deps)
 
         decision = await agent.route_query(
@@ -3538,7 +3549,15 @@ class TestRoutingAgent:
 
     def test_tenant_agnostic_construction(self):
         """Agent serves all tenants — one instance, per-request tenant_id"""
-        deps = RoutingDeps(telemetry_config={})
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_foundation.telemetry import TelemetryConfig
+        deps = RoutingDeps(
+            telemetry_config=TelemetryConfig(),
+            llm_config=LLMEndpointConfig(
+                model="ollama/smollm3:3b",
+                api_base="http://localhost:11434",
+            ),
+        )
         agent = RoutingAgent(deps=deps)
 
         # Same agent handles different tenants at search time
@@ -3656,11 +3675,19 @@ results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant
 
 ```python
 # Telemetry automatically initialized (telemetry_config required)
-deps = RoutingDeps(telemetry_config={})  # No tenant_id at construction
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry import TelemetryConfig
+deps = RoutingDeps(
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model="ollama/smollm3:3b",
+        api_base="http://localhost:11434",
+    ),
+)  # No tenant_id at construction
 agent = RoutingAgent(deps=deps)
 
 # Operations traced per-request with tenant_id from A2A payload
-decision = await agent.route_query("query")
+decision = await agent.route_query("query", tenant_id="acme")
 ```
 
 ### 4. Test Tenant Isolation
@@ -3669,7 +3696,15 @@ decision = await agent.route_query("query")
 # Always verify tenants are isolated
 def test_tenant_isolation():
     # ONE agent serves all tenants — tenant_id is per-request
-    deps = RoutingDeps(telemetry_config={})
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.telemetry import TelemetryConfig
+    deps = RoutingDeps(
+        telemetry_config=TelemetryConfig(),
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
+    )
     agent = RoutingAgent(deps=deps)
 
     # Tenant isolation verified at request time, not construction

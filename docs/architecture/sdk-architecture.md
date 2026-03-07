@@ -915,11 +915,13 @@ async def test_routing_agent_with_vespa_backend(config_manager, tenant_id):
     )
 
     # Initialize routing agent
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id=tenant_id,
         telemetry_config=TelemetryConfig(),
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 

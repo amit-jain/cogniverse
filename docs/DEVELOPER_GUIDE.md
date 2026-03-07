@@ -655,9 +655,13 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 def routing_deps():
     """Create RoutingDeps for testing"""
     telemetry_config = TelemetryConfig(enabled=False)
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     return RoutingDeps(
-        tenant_id="test_tenant",
         telemetry_config=telemetry_config,
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
 
 @pytest.mark.unit
@@ -687,11 +691,13 @@ async def test_full_routing_pipeline(config_manager):
     """Test routing agent with real Vespa backend"""
     # Initialize agent
     telemetry_config = TelemetryConfig(enabled=False)
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
-        tenant_id="test",
         telemetry_config=telemetry_config,
-        model_name="smollm3:3b",
-        base_url="http://localhost:11434/v1"
+        llm_config=LLMEndpointConfig(
+            model="ollama/smollm3:3b",
+            api_base="http://localhost:11434",
+        ),
     )
     agent = RoutingAgent(deps=deps)
 

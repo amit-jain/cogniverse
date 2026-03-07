@@ -527,7 +527,7 @@ curl http://localhost:8000/agents/video-search-agent/card
 curl -X DELETE http://localhost:8000/agents/video-search-agent
 ```
 
-**POST /agents/{agent_name}/process** - Process task with agent in-process (search capabilities execute via `SearchService`; text generation/analysis return 501 Not Implemented)
+**POST /agents/{agent_name}/process** - Process task with agent in-process. Dispatches by capability: `routing` instantiates `RoutingAgent` (with memory, query enhancement, entity extraction); `search`/`video_search`/`retrieval` execute via `SearchService`; `summarization`/`detailed_report`/`text_analysis` instantiate their respective agents; unsupported capabilities return 501.
 
 **POST /agents/{agent_name}/upload** - Upload file to agent
 

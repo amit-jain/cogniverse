@@ -216,7 +216,7 @@ deps = RoutingDeps(
 config = A2AAgentConfig(
     agent_name="routing_agent",
     agent_description="Routes queries to appropriate agents",
-    capabilities=["query_routing", "agent_selection"],
+    capabilities=["intelligent_routing", "query_analysis", "agent_orchestration"],
     port=8001
 )
 agent = RoutingAgent(deps=deps, config=config)
@@ -251,16 +251,13 @@ def initialize_memory(
     self,
     agent_name: str,
     tenant_id: str,
-    backend_host: str,               # Required - e.g. "http://localhost"
-    backend_port: int,               # Required - e.g. 8080
-    llm_model: str,                  # Required - e.g. "ollama/llama3.2"
-    embedding_model: str,            # Required - e.g. "nomic-embed-text"
-    llm_base_url: str,               # Required - e.g. "http://localhost:11434/v1"
-    config_manager,                  # Required for schema deployment
-    schema_loader,                   # Required for schema templates
-    provider: str = "ollama",        # LLM provider type
-    backend_config_port: Optional[int] = None,
-    auto_create_schema: bool = True,
+    backend_host: str = "localhost",
+    backend_port: int = 8080,
+    llm_model: str = "qwen3:4b",
+    embedding_model: str = "nomic-embed-text",
+    llm_base_url: str = "http://localhost:11434",
+    config_manager=None,             # Required for schema deployment
+    schema_loader=None,              # Required for schema templates
 ) -> bool:
 ```
 
