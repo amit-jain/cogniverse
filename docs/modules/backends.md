@@ -1681,7 +1681,7 @@ schema_manager = VespaSchemaManager(
 
 schema_manager.upload_schema_from_json_file(
     json_file_path="configs/schemas/video_colpali_smol500_mv_frame_schema.json",
-    app_name="videosearch"
+    app_name="cogniverse"
 )
 ```
 

@@ -446,7 +446,7 @@ schemas_dir = Path("configs/schemas")
 schema_files = list(schemas_dir.glob("*.json"))  # All JSON schemas
 
 # Create application package to hold all schemas
-app_package = ApplicationPackage(name="videosearch")
+app_package = ApplicationPackage(name="cogniverse")
 
 # Parse each schema and add to package
 for schema_file in schema_files:

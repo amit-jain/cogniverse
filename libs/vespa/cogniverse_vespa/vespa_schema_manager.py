@@ -932,7 +932,7 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to upload content type schemas: {str(e)}")
             raise
 
-    def upload_frame_schema(self, app_name: str = "videosearch") -> None:
+    def upload_frame_schema(self, app_name: str = "cogniverse") -> None:
         """
         Create and upload document-per-frame schema using PyVespa directly.
 
@@ -1092,7 +1092,7 @@ class VespaSchemaManager:
             raise
 
     def deploy_schema_from_json(
-        self, schema_json: dict, app_name: str = "videosearch"
+        self, schema_json: dict, app_name: str = "cogniverse"
     ) -> None:
         """
         Deploy schema from JSON dict to Vespa using JSON parser.
@@ -1130,7 +1130,7 @@ class VespaSchemaManager:
             raise
 
     def upload_schema_from_json_file(
-        self, json_file_path: str, app_name: str = "videosearch"
+        self, json_file_path: str, app_name: str = "cogniverse"
     ) -> None:
         """
         Load schema from JSON file and deploy to Vespa using JSON parser.
@@ -1173,7 +1173,7 @@ class VespaSchemaManager:
             raise
 
     def upload_schema_from_sd_file(
-        self, sd_file_path: str, app_name: str = "videosearch"
+        self, sd_file_path: str, app_name: str = "cogniverse"
     ) -> None:
         """
         Read a .sd file and upload it to Vespa using the original parsing approach.
@@ -1402,16 +1402,13 @@ class VespaSchemaManager:
             return pyvespa_schemas
 
         except Exception as e:
-            # If anything fails, log and return empty (safe fallback)
-            self._logger.error(
-                f"❌ Could not retrieve tenant schemas: {e}. Deploying metadata only."
-            )
-            import traceback
+            raise RuntimeError(
+                f"Failed to retrieve tenant schemas from SchemaRegistry: {e}. "
+                f"Cannot safely deploy metadata schemas without the full schema list — "
+                f"proceeding would wipe all existing tenant schemas from Vespa."
+            ) from e
 
-            self._logger.error(traceback.format_exc())
-            return []
-
-    def upload_metadata_schemas(self, app_name: str = "videosearch") -> None:
+    def upload_metadata_schemas(self, app_name: str = "cogniverse") -> None:
         """
         Deploy organization and tenant metadata schemas for multi-tenant management.
 
@@ -1423,7 +1420,7 @@ class VespaSchemaManager:
         schemas and includes them in the deployment package.
 
         Args:
-            app_name: Name of the application (default: "videosearch" to match standard app name)
+            app_name: Name of the application (default: "cogniverse" to match standard app name)
         """
         try:
             from vespa.package import ApplicationPackage
@@ -1468,10 +1465,6 @@ class VespaSchemaManager:
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")
             raise
-
-    # ============================================================================
-    # Tenant Schema Management (Multi-Tenancy Support)
-    # ============================================================================
 
     def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
@@ -1554,7 +1547,7 @@ class VespaSchemaManager:
             all_schemas = metadata_schemas + remaining_tenant_schemas
 
             app_package = ApplicationPackage(
-                name="videosearch", schema=all_schemas
+                name="cogniverse", schema=all_schemas
             )
             self._deploy_package(app_package, allow_schema_removal=True)
 

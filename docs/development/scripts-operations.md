@@ -442,7 +442,7 @@ def deploy_base_schemas(logger):
     schemas_dir = Path("configs/schemas")
     schema_files = list(schemas_dir.glob("*.json"))
 
-    app_package = ApplicationPackage(name="videosearch")
+    app_package = ApplicationPackage(name="cogniverse")
     for schema_file in schema_files:
         parser = JsonSchemaParser()
         schema = parser.load_schema_from_json_file(str(schema_file))
@@ -1263,7 +1263,7 @@ User Command
     │       │   • Convert to Vespa Schema objects
     │       │
     │       ├─> Create Application Package
-    │       │   • ApplicationPackage(name="videosearch")
+    │       │   • ApplicationPackage(name="cogniverse")
     │       │   • Add schema(s)
     │       │   • Add validation overrides (if multi-schema)
     │       │

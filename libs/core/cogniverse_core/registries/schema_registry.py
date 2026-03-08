@@ -480,7 +480,7 @@ class SchemaRegistry:
             existing_schemas = registry.get_tenant_schemas("test_tenant")
 
             # Create ApplicationPackage with ALL schemas
-            app_package = ApplicationPackage("videosearch")
+            app_package = ApplicationPackage("cogniverse")
 
             # Add the new schema
             app_package.add_schema(new_schema)

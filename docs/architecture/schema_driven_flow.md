@@ -304,13 +304,13 @@ exists = manager.tenant_schema_exists(
 # Deploy schema from JSON definition
 manager.deploy_schema_from_json(
     schema_json=schema_definition,
-    app_name="videosearch"
+    app_name="cogniverse"
 )
 
 # Or deploy from JSON file
 manager.upload_schema_from_json_file(
     json_file_path="configs/schemas/video_colpali_smol500_mv_frame_schema.json",
-    app_name="videosearch"
+    app_name="cogniverse"
 )
 
 # Delete all schemas for a tenant (unregisters from registry + redeploys to Vespa)

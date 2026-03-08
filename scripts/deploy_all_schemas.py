@@ -59,7 +59,7 @@ def deploy_base_schemas(logger: logging.Logger) -> int:
     logger.info(f"🚀 Found {len(schema_files)} schemas to deploy")
 
     # Create application package with all schemas
-    app_package = ApplicationPackage(name="videosearch")
+    app_package = ApplicationPackage(name="cogniverse")
 
     # Parse each schema and add to package
     for schema_file in schema_files:
@@ -133,11 +133,17 @@ def deploy_tenant_schemas(
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
     # Initialize backend with proper dependency injection
+    backend_url = config.get("backend_url")
+    backend_port = config.get("backend_port")
+    if backend_url is None:
+        raise ValueError("backend_url is not set in config")
+    if backend_port is None:
+        raise ValueError("backend_port is not set in config")
     backend_config = BackendConfig(
         tenant_id=tenant_id,
         backend_type="vespa",
-        url=config.get("backend_url", "http://localhost"),
-        port=config.get("backend_port", 8080),
+        url=backend_url,
+        port=backend_port,
     )
     backend = VespaBackend(
         backend_config=backend_config,
