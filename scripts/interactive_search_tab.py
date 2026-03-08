@@ -30,6 +30,10 @@ def render_interactive_search_tab(agent_status: dict):
     st.header("Interactive Search Interface")
     st.markdown("Search via unified Runtime API (`POST /search/`).")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Generate session_id for conversational memory (persists per browser session)
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = str(uuid.uuid4())
@@ -74,7 +78,7 @@ def render_interactive_search_tab(agent_status: dict):
 
     with col2:
         # Profile — use the tenant's deployed schema
-        current_tenant = st.session_state.get("current_tenant", "default")
+        current_tenant = st.session_state["current_tenant"]
         profile = st.text_input(
             "Profile",
             value="video_colpali_smol500_mv_frame",
@@ -96,7 +100,7 @@ def render_interactive_search_tab(agent_status: dict):
     if search_button and search_query:
         st.subheader("Search Results")
 
-        current_tenant = st.session_state.get("current_tenant", "default")
+        current_tenant = st.session_state["current_tenant"]
         session_id = st.session_state["session_id"]
 
         with st.spinner(f"Searching for '{search_query}'..."):

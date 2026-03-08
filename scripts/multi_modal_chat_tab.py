@@ -48,8 +48,7 @@ def initialize_chat_state():
         import uuid
         st.session_state.chat_session_id = str(uuid.uuid4())
     if "chat_tenant_id" not in st.session_state:
-        # Use current tenant from main dashboard, or default
-        st.session_state.chat_tenant_id = st.session_state.get("current_tenant", "default")
+        st.session_state.chat_tenant_id = st.session_state["current_tenant"]
 
 
 def validate_tenant_id(tenant_id: str) -> bool:
@@ -270,6 +269,10 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         "Chat with your data using text, images, videos, and PDFs. "
         "Intelligent routing selects the best agent for each query."
     )
+
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
 
     # Initialize state
     initialize_chat_state()

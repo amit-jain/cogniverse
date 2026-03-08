@@ -134,7 +134,11 @@ def get_available_strategies() -> Dict[str, list]:
 
 def render_embedding_atlas_tab():
     """Render the embedding atlas visualization tab"""
-    
+
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Introduction
     st.markdown("""
     ### Export and Visualize Embeddings
@@ -410,7 +414,7 @@ def export_and_visualize(
     
     # Construct tenant-scoped schema name
     # Documents live in {base_schema}_{tenant_id} where ':' is replaced with '_'
-    current_tenant = st.session_state.get("current_tenant", "default")
+    current_tenant = st.session_state["current_tenant"]
     tenant_suffix = current_tenant.replace(":", "_")
     tenant_schema = f"{schema}_{tenant_suffix}"
 

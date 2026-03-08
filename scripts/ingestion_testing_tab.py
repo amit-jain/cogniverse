@@ -7,6 +7,7 @@ with different processing profiles.
 """
 
 import streamlit as st
+
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -15,12 +16,16 @@ def render_ingestion_testing_tab(agent_status: dict):
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
         st.session_state.config_manager = create_default_config_manager()
 
     manager = st.session_state.config_manager
-    tenant_id = st.session_state.get("current_tenant", "default")
+    tenant_id = st.session_state["current_tenant"]
 
     # Load available profiles dynamically
     try:

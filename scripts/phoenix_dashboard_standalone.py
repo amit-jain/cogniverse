@@ -144,6 +144,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# current_tenant is set via the sidebar "Active Tenant" input.
+# No default — the user must explicitly set a tenant before any operation.
+
 # Helper functions
 def format_timestamp(ts_str):
     """Format timestamp string to be more readable"""
@@ -341,17 +344,19 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
 
-    # Active tenant selector — always visible, always syncs
     active_tenant = st.text_input(
         "Active Tenant",
-        value=st.session_state.get("current_tenant", "default"),
+        value=st.session_state.get("current_tenant", ""),
         placeholder="org_name:tenant_name",
         help="Tenant used for analytics, search, and all dashboard features",
         key="active_tenant_input",
     )
-    if active_tenant and ":" in active_tenant:
+    if active_tenant:
         st.session_state["current_tenant"] = active_tenant
-    st.info(f"📌 Current tenant: **{st.session_state.get('current_tenant', 'default')}**")
+    if "current_tenant" in st.session_state:
+        st.info(f"📌 Current tenant: **{st.session_state['current_tenant']}**")
+    else:
+        st.warning("⚠️ No tenant selected. Set an Active Tenant above before using the dashboard.")
 
     st.markdown("---")
 
@@ -385,6 +390,9 @@ with st.sidebar:
                 ingest_btn = st.form_submit_button("Ingest", use_container_width=True)
 
             if ingest_btn and video_url:
+                if "current_tenant" not in st.session_state:
+                    st.error("No tenant selected. Set an Active Tenant above first.")
+                    st.stop()
                 try:
                     import httpx
                     ingestion_api_url = agent_config["ingestion_api_url"]
@@ -396,7 +404,7 @@ with st.sidebar:
                                 json={
                                     "video_url": video_url,
                                     "profile": profile_select,
-                                    "tenant_id": st.session_state.get("current_tenant", "default")
+                                    "tenant_id": st.session_state["current_tenant"]
                                 },
                                 timeout=30.0
                             )
@@ -809,12 +817,15 @@ with top_level_tabs[2]:
 
 # Analytics Tab
 with monitoring_tabs[0]:
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        st.stop()
     if st.session_state.analytics is None:
         st.error("Analytics module is not available. Check that cogniverse_telemetry_phoenix is installed.")
         traces = []
     else:
         # Derive Phoenix project name from current tenant
-        current_tenant = st.session_state.get("current_tenant", "default")
+        current_tenant = st.session_state["current_tenant"]
         phoenix_project = f"cogniverse-{current_tenant}"
 
         # Fetch traces
@@ -2298,12 +2309,16 @@ with monitoring_tabs[6]:
     st.header("🧬 Fine-Tuning Experiments")
     st.markdown("View and compare fine-tuning experiments tracked in Phoenix")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        st.stop()
+
     # Configuration
     with st.expander("⚙️ Configuration", expanded=True):
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            ft_tenant_id = st.text_input("Tenant ID", value=st.session_state.get("current_tenant", "default"), key="ft_tenant")
+            ft_tenant_id = st.text_input("Tenant ID", value=st.session_state["current_tenant"], key="ft_tenant")
 
         with col2:
             ft_project = st.text_input("Project", value=f"cogniverse-{ft_tenant_id}", key="ft_project")

@@ -15,20 +15,14 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 def get_runtime_api_url() -> str:
-    """Get the runtime API URL from system config or session state."""
-    # Try to get from session state first
+    """Get the runtime API URL from session state or system config."""
     if "runtime_api_url" in st.session_state:
         return st.session_state.runtime_api_url
 
-    # Try to get from system config
-    try:
-        if "config_manager" in st.session_state:
-            system_config = st.session_state.config_manager.get_system_config("default")
-            return system_config.ingestion_api_url
-    except Exception:
-        pass
+    if "config_manager" in st.session_state:
+        system_config = st.session_state.config_manager.get_system_config("default")
+        return system_config.ingestion_api_url
 
-    # Default fallback
     return "http://localhost:8000"
 
 
@@ -169,12 +163,16 @@ def render_backend_profile_tab():
     """Main entry point for backend profile management UI"""
     st.subheader("Backend Profile Management")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
         st.session_state.config_manager = create_default_config_manager()
 
     manager = st.session_state.config_manager
-    tenant_id = st.session_state.get("current_tenant", "default")
+    tenant_id = st.session_state["current_tenant"]
 
     # Profile list
     try:

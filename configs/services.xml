@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <services version="1.0">
-    <container id="videosearch_container" version="1.0">
+    <container id="cogniverse_container" version="1.0">
         <!-- Configure JVM heap to 4GB for better performance -->
         <jvm>
             <options>-Xms4g -Xmx4g</options>
@@ -9,10 +9,9 @@
         <document-api></document-api>
         <document-processing></document-processing>
     </container>
-    <content id="videosearch_content" version="1.0">
+    <content id="cogniverse_content" version="1.0">
         <redundancy>1</redundancy>
         <documents>
-            <document type="videosearch" mode="index"></document>
             <document type="video_colqwen_omni_mv_chunk_30s" mode="index"></document>
             <document type="video_videoprism_lvt_base_sv_chunk_6s" mode="index"></document>
             <document type="video_videoprism_large_mv_chunk_30s" mode="index"></document>

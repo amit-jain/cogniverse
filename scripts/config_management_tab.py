@@ -32,6 +32,10 @@ def render_config_management_tab():
     """Render the configuration management UI"""
     st.header("⚙️ Configuration Management")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
         st.session_state.config_manager = create_default_config_manager()
@@ -43,7 +47,7 @@ def render_config_management_tab():
     with col1:
         tenant_id = st.text_input(
             "Tenant ID",
-            value=st.session_state.get("current_tenant", "default"),
+            value=st.session_state["current_tenant"],
             help="Multi-tenant configuration isolation",
         )
         st.session_state.current_tenant = tenant_id
