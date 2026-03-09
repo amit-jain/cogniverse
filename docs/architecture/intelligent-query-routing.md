@@ -242,7 +242,7 @@ The handoff from routing to orchestration happens in the runtime endpoint (`_exe
 
 1. `RoutingAgent.route_query()` returns a `RoutingOutput` with `metadata["needs_orchestration"]`
 2. The runtime checks this flag — when `True`, it instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager` and the same `RoutingAgent` instance
-3. `MultiAgentOrchestrator.process_complex_query()` plans a workflow using DSPy, executes agents via A2A protocol, and aggregates results
+3. `MultiAgentOrchestrator.process_complex_query()` plans a workflow using DSPy, executes agents via direct HTTP (`POST /agents/{name}/process`), and aggregates results
 4. A `cogniverse.orchestration` telemetry span is emitted with attributes (`orchestration.query`, `orchestration.workflow_id`, `orchestration.pattern`, `orchestration.execution_time`, `orchestration.tasks_completed`, `orchestration.agents_used`, `orchestration.execution_order`) consumed by the dashboard's Orchestration Annotation tab
 
 ### Orchestration Signal Detection
@@ -283,14 +283,14 @@ sequenceDiagram
 
     Note over O: Phase 1: Independent tasks
     par Parallel Execution
-        O->>A1: POST /tasks/send {query, tenant_id}
-        O->>A2: POST /tasks/send {query, tenant_id}
+        O->>A1: POST /agents/{name}/process {query, context, tenant_id}
+        O->>A2: POST /agents/{name}/process {query, context, tenant_id}
     end
     A1-->>O: Search results
     A2-->>O: Summary results
 
     Note over O: Phase 2: Dependent tasks
-    O->>A3: POST /tasks/send {query, tenant_id}
+    O->>A3: POST /agents/{name}/process {query, context, tenant_id}
     A3-->>O: Report
 
     O->>AGG: Aggregate all results
@@ -306,7 +306,7 @@ sequenceDiagram
 
 3. **Durable execution via checkpointing** — Each completed phase checkpoints its results. If a workflow fails mid-execution, it can resume from the last successful phase rather than restarting from scratch. Checkpoints store task status, results, and timestamps.
 
-4. **A2A protocol** — Agents communicate via the Agent-to-Agent protocol, enabling heterogeneous agent types (search, generation, analysis) to exchange structured messages.
+4. **Direct HTTP execution** — `MultiAgentOrchestrator` calls agents via `httpx.AsyncClient` to `POST /agents/{name}/process`, enabling heterogeneous agent types (search, generation, analysis) to exchange structured messages.
 
 ---
 

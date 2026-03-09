@@ -140,12 +140,10 @@ async def get_agent_info(agent_name: str) -> Dict[str, Any]:
     """Get information about a specific agent."""
     registry = get_registry()
 
-    # Try to get agent
     agent = registry.get_agent(agent_name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # Return agent endpoint info
     return {
         "name": agent.name,
         "url": agent.url,
@@ -181,7 +179,6 @@ async def get_agent_card(agent_name: str) -> Dict[str, Any]:
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # Return A2A agent card
     return {
         "name": agent.name,
         "url": agent.url,
@@ -218,7 +215,6 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     tenant_id = task.context.get("tenant_id", "default")
     capabilities = set(agent.capabilities)
 
-    # Route based on agent capabilities.
     # Order matters: check specific capabilities before general ones.
     if "routing" in capabilities:
         return await _execute_routing_task(task, tenant_id)
@@ -303,7 +299,6 @@ async def _execute_routing_task(
 
     config = get_config(tenant_id=tenant_id, config_manager=_config_manager)
 
-    # Build LLM endpoint config from centralized config
     llm_config_dict = config.get("llm_config", {})
     primary = llm_config_dict.get("primary", {})
 
@@ -314,7 +309,6 @@ async def _execute_routing_task(
         max_tokens=primary.get("max_tokens", 1000),
     )
 
-    # Memory config from routing_agent section or top-level config
     routing_config = config.get("routing_agent", {})
     memory_enabled = routing_config.get("enable_memory", False)
 
@@ -352,17 +346,30 @@ async def _execute_routing_task(
         tenant_id=tenant_id,
     )
 
-    # Check if routing decided this query needs orchestration
     needs_orchestration = result.metadata.get("needs_orchestration", False)
 
     if needs_orchestration:
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
+        # All agents are co-located in this runtime, use localhost:8000
+        registry = get_registry()
+        runtime_base_url = "http://localhost:8000"
+        available_agents = {}
+        for agent_name in registry.list_agents():
+            agent_ep = registry.get_agent(agent_name)
+            if agent_ep and agent_name != "routing_agent":
+                available_agents[agent_name] = {
+                    "capabilities": agent_ep.capabilities,
+                    "endpoint": runtime_base_url,
+                    "timeout_seconds": agent_ep.timeout,
+                }
+
         orchestrator = MultiAgentOrchestrator(
             tenant_id=tenant_id,
             telemetry_manager=get_telemetry_manager(),
             routing_agent=agent,
+            available_agents=available_agents,
         )
 
         orch_result = await orchestrator.process_complex_query(
@@ -445,7 +452,6 @@ async def _execute_text_analysis_task(
     agent = TextAnalysisAgent(tenant_id=tenant_id, config_manager=_config_manager)
 
     analysis_type = task.context.get("analysis_type", "summary")
-    # analyze_text is synchronous
     result = agent.analyze_text(text=task.query, analysis_type=analysis_type)
 
     return {
@@ -582,8 +588,6 @@ async def upload_file_to_agent(
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # In curated registry pattern, agents are remote services
-    # This endpoint would forward the request to the agent's URL
     raise HTTPException(
         status_code=501,
         detail=f"Direct file upload not supported. Call agent at {agent.url}/upload",

@@ -342,40 +342,48 @@ class TestEnhancedAgentComponentIntegration:
     ):
         """Test complete pipeline through Multi-Agent Orchestrator"""
 
-        # Mock RoutingAgent to prevent its __init__ from creating multiple
-        # dspy.ChainOfThought instances (which would consume from any global mock cycle).
-        # Also mock A2AClient for agent communication.
+        # Mock RoutingAgent to prevent DSPy ChainOfThought init overhead.
+        # Mock httpx.AsyncClient since tasks are now executed via httpx POST
+        # (A2AClient was replaced with direct httpx calls in the orchestrator).
+        search_response_json = {
+            "results": [
+                {"id": 1, "title": "Robot soccer championship", "score": 0.8},
+                {"id": 2, "title": "AI in sports", "score": 0.7},
+            ],
+            "confidence": 0.9,
+        }
+        summarize_response_json = {
+            "summary": "Enhanced summary of robot soccer content",
+            "confidence": 0.85,
+        }
+
+        # Each httpx POST call returns a mock response whose .json() yields
+        # the appropriate payload based on call order.
+        http_responses = [search_response_json, summarize_response_json]
+        call_index = {"n": 0}
+
+        def make_mock_response():
+            idx = call_index["n"]
+            call_index["n"] += 1
+            mock_resp = Mock()
+            mock_resp.raise_for_status = Mock()
+            mock_resp.json = Mock(return_value=http_responses[idx])
+            return mock_resp
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post = AsyncMock(side_effect=lambda *a, **kw: make_mock_response())
+
         with patch(
             "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
         ) as mock_routing_agent_class:
             with patch(
-                "cogniverse_agents.multi_agent_orchestrator.A2AClient"
-            ) as mock_a2a_client_class:
+                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient"
+            ) as mock_httpx_cls:
                 mock_routing_agent_class.return_value = Mock()
-
-                mock_a2a_client = Mock()
-                mock_a2a_client.send_message = AsyncMock(
-                    side_effect=[
-                        # First task (search) result
-                        {
-                            "results": [
-                                {
-                                    "id": 1,
-                                    "title": "Robot soccer championship",
-                                    "score": 0.8,
-                                },
-                                {"id": 2, "title": "AI in sports", "score": 0.7},
-                            ],
-                            "confidence": 0.9,
-                        },
-                        # Second task (summarize) result
-                        {
-                            "summary": "Enhanced summary of robot soccer content",
-                            "confidence": 0.85,
-                        },
-                    ]
+                mock_httpx_cls.return_value.__aenter__ = AsyncMock(
+                    return_value=mock_http_client
                 )
-                mock_a2a_client_class.return_value = mock_a2a_client
+                mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 # Create orchestrator (RoutingAgent is mocked, so no DSPy init issues)
                 orchestrator = MultiAgentOrchestrator(

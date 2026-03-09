@@ -302,8 +302,8 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwa
         )
         super().__init__(deps=deps, config=config, dspy_module=None)
 
-        # Initialize telemetry (singleton, tenant-scoped via span calls)
-        self.telemetry = TelemetryManager()
+        # Initialize telemetry (initialized with deps.telemetry_config)
+        self._initialize_telemetry_manager()
         # tenant_id arrives per-request in A2A task payload, not at construction
 
         # Memory initialized lazily per-tenant on first request
@@ -3832,6 +3832,8 @@ stateDiagram-v2
 from cogniverse_agents.orchestrator import MultiAgentOrchestrator
 from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig, CheckpointLevel
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Create checkpoint storage (Phoenix span-based)
 storage = WorkflowCheckpointStorage(
@@ -3848,9 +3850,10 @@ config = CheckpointConfig(
     retain_failed_hours=24 * 30      # Keep failed for 30 days
 )
 
-# Create orchestrator with checkpointing
+# Create orchestrator with checkpointing (telemetry_manager is REQUIRED)
 orchestrator = MultiAgentOrchestrator(
     tenant_id="acme",
+    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
     checkpoint_config=config,
     checkpoint_storage=storage
 )
@@ -3938,12 +3941,15 @@ class TaskCheckpoint:
 from cogniverse_agents.orchestrator import MultiAgentOrchestrator
 from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Setup
 storage = WorkflowCheckpointStorage(project_name="checkpoints", tenant_id="acme")
 config = CheckpointConfig(enabled=True)
 orchestrator = MultiAgentOrchestrator(
     tenant_id="acme",
+    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
     checkpoint_config=config,
     checkpoint_storage=storage
 )
@@ -3985,6 +3991,8 @@ The `MultiAgentOrchestrator` integrates with the A2A EventQueue system for real-
 from cogniverse_agents.orchestrator import MultiAgentOrchestrator
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
 from cogniverse_core.events import get_queue_manager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Create event queue for the workflow
 manager = get_queue_manager()
@@ -3998,9 +4006,10 @@ storage = WorkflowCheckpointStorage(
     event_queue=queue,  # Events emitted on checkpoint saves
 )
 
-# Create orchestrator
+# Create orchestrator (telemetry_manager is REQUIRED)
 orchestrator = MultiAgentOrchestrator(
     tenant_id="tenant1",
+    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
     checkpoint_storage=storage,
     event_queue=queue,  # Additional events at non-checkpoint boundaries
 )

@@ -318,13 +318,14 @@ flowchart LR
 ```python
 # Execute multimodal search using orchestrator
 from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 query = "How does photosynthesis work?"
 
 orchestrator = MultiAgentOrchestrator(
     tenant_id="test",
-    telemetry_config=TelemetryConfig()
+    telemetry_manager=TelemetryManager(config=TelemetryConfig())
 )
 
 result = await orchestrator.process_complex_query(
@@ -421,13 +422,14 @@ assert p95_latency < 1000  # < 1 second
 ### Failure Recovery
 
 ```python
-# Example: Orchestrator handles failures gracefully
+# Example: Orchestrator handles failures
 from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 orchestrator = MultiAgentOrchestrator(
     tenant_id="test",
-    telemetry_config=TelemetryConfig()
+    telemetry_manager=TelemetryManager(config=TelemetryConfig())
 )
 
 # Execute query that may fail
@@ -436,10 +438,8 @@ result = await orchestrator.process_complex_query(
     context=None
 )
 
-# Verify orchestrator handles failures gracefully
-# Orchestrator has built-in error recovery and fallback
+# On failure, orchestrator raises RuntimeError (no silent fallbacks)
 assert result["status"] in ["completed", "failed"]
-# On failure, orchestrator returns fallback result with status "failed"
 ```
 
 ---

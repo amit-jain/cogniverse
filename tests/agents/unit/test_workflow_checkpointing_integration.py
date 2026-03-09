@@ -155,6 +155,33 @@ def mock_a2a_client():
 
 
 @pytest.fixture
+def mock_httpx_success():
+    """Patch httpx.AsyncClient in the checkpoint orchestrator module to return success.
+
+    Required for tests that assert result["status"] == "completed", because the
+    orchestrator now uses httpx (not A2AClient) for task execution.
+    """
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(
+        return_value={"result": "success", "data": "test_data", "confidence": 0.9}
+    )
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
+        return_value=mock_ctx,
+    ):
+        yield mock_client
+
+
+@pytest.fixture
 def checkpoint_config():
     """Provide checkpoint configuration for testing"""
     return CheckpointConfig(
@@ -302,7 +329,12 @@ class TestCheckpointCreation:
 
     @pytest.mark.asyncio
     async def test_checkpoint_without_storage(
-        self, checkpoint_config, mock_a2a_client, mock_routing_agent, mock_telemetry_manager
+        self,
+        checkpoint_config,
+        mock_a2a_client,
+        mock_routing_agent,
+        mock_telemetry_manager,
+        mock_httpx_success,
     ):
         """Test that workflow executes even without checkpoint storage"""
         orchestrator = MultiAgentOrchestrator(
@@ -349,6 +381,8 @@ class TestWorkflowResume:
         checkpoint_config,
         mock_a2a_client,
         mock_routing_agent,
+        mock_telemetry_manager,
+        mock_httpx_success,
     ):
         """Test that resume skips already completed tasks"""
         # Create a checkpoint with task_1 completed
@@ -402,9 +436,9 @@ class TestWorkflowResume:
         assert result["resumed_from"] == "ckpt_resume_1"
         assert result["resume_count"] == 1
 
-        # task_1 should NOT have been re-executed (A2A called only for task_2)
-        # The mock was called once for task_2
-        assert mock_a2a_client.send_message.call_count >= 1
+        # task_1 should NOT have been re-executed (httpx called only for task_2)
+        # mock_httpx_success.post was called once for task_2
+        assert mock_httpx_success.post.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_resume_marks_old_checkpoint_superseded(

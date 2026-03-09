@@ -144,6 +144,8 @@ async for event in queue.subscribe():
 ```python
 from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
 from cogniverse_core.events import get_queue_manager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Create event queue for this workflow
 manager = get_queue_manager()
@@ -153,9 +155,10 @@ queue = await manager.create_queue(
     tenant_id="tenant1",
 )
 
-# Create orchestrator with event queue
+# Create orchestrator with event queue (telemetry_manager is REQUIRED)
 orchestrator = MultiAgentOrchestrator(
     tenant_id="tenant1",
+    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
     event_queue=queue,  # Events emitted automatically
 )
 

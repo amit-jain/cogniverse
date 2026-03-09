@@ -287,23 +287,26 @@ class TestMultiAgentOrchestratorWorkflowExecution:
             )
             return orchestrator
 
-    def test_create_fallback_workflow_plan_structure(self, orchestrator_with_mocks):
-        """Test fallback workflow plan creation"""
+    @pytest.mark.asyncio
+    async def test_plan_workflow_raises_runtime_error_on_failure(
+        self, orchestrator_with_mocks
+    ):
+        """Test that _plan_workflow raises RuntimeError instead of silently falling back"""
         orchestrator = orchestrator_with_mocks
 
-        # Test creating a workflow plan with the actual method signature
-        workflow_plan = orchestrator._create_fallback_workflow_plan(
-            workflow_id="test-workflow-123",
-            query="test query",
-            context="test context",
-            user_id="test-user",
+        # Force DSPy planner to raise an exception
+        orchestrator.workflow_planner = Mock(
+            side_effect=Exception("DSPy planner unavailable")
         )
 
-        assert workflow_plan is not None
-        assert workflow_plan.status == WorkflowStatus.PENDING
-        assert len(workflow_plan.tasks) >= 1  # Should have at least one task
-        assert workflow_plan.original_query == "test query"
-        assert workflow_plan.workflow_id == "test-workflow-123"
+        with pytest.raises(RuntimeError, match="Workflow planning failed"):
+            await orchestrator._plan_workflow(
+                workflow_id="test-workflow-123",
+                query="test query",
+                context="test context",
+                user_id="test-user",
+                preferences=None,
+            )
 
     def test_workflow_statistics_update(self, orchestrator_with_mocks):
         """Test workflow statistics tracking"""

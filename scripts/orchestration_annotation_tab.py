@@ -6,11 +6,58 @@ Implements Phase 7.5 orchestration optimization feedback loop.
 """
 
 import asyncio
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Dict
 
 import streamlit as st
+
+
+def _extract_orchestration_attrs(span_row: Any) -> Dict[str, Any]:
+    """Extract orchestration attributes from a span DataFrame row.
+
+    Phoenix returns orchestration attributes in one of three formats:
+    1. Single 'attributes.orchestration' column containing a dict
+       (e.g., {"query": "...", "workflow_id": "...", "pattern": "..."})
+    2. Flattened columns: attributes.orchestration.query, etc.
+    3. Single 'attributes' column as JSON string or nested dict
+
+    This normalizes all to: {"orchestration.query": "...", "orchestration.workflow_id": "..."}
+    """
+    attrs: Dict[str, Any] = {}
+
+    if not hasattr(span_row, "index"):
+        return attrs
+
+    # Format 1: single 'attributes.orchestration' column with a dict value
+    if "attributes.orchestration" in span_row.index:
+        raw = span_row["attributes.orchestration"]
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                attrs[f"orchestration.{k}"] = v
+            return attrs
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        attrs[f"orchestration.{k}"] = v
+                    return attrs
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    # Format 2: flattened columns (attributes.orchestration.query, etc.)
+    for col in span_row.index:
+        col_str = str(col)
+        if col_str.startswith("attributes.orchestration."):
+            key = col_str.replace("attributes.", "", 1)
+            val = span_row[col]
+            if val is not None and str(val) != "nan":
+                attrs[key] = val
+
+    return attrs
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -50,11 +97,9 @@ def render_orchestration_annotation_tab():
     """
     )
 
-    # Initialize annotation storage
     tenant_id = st.text_input("Tenant ID", value="default", key="orchestration_tenant_id")
     storage = OrchestrationAnnotationStorage(tenant_id=tenant_id)
 
-    # Fetch orchestration spans
     st.subheader("📋 Recent Orchestration Workflows")
 
     col1, col2 = st.columns(2)
@@ -66,14 +111,12 @@ def render_orchestration_annotation_tab():
     if st.button("🔄 Refresh Workflows"):
         with st.spinner("Fetching orchestration spans..."):
             try:
-                # Get telemetry provider
                 telemetry_manager = get_telemetry_manager()
                 provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
                 end_time = datetime.now()
                 start_time = end_time - timedelta(hours=lookback_hours)
 
-                # Fetch spans using provider abstraction (async call)
                 async def fetch_spans():
                     return await provider.traces.get_spans(
                         project=f"cogniverse-{tenant_id}",
@@ -100,7 +143,6 @@ def render_orchestration_annotation_tab():
                 st.error(f"Error fetching spans: {e}")
                 st.session_state.orch_spans = None
 
-    # Display workflows for annotation
     if st.session_state.get("orch_spans") is not None:
         orch_spans = st.session_state.orch_spans
 
@@ -108,10 +150,9 @@ def render_orchestration_annotation_tab():
             st.info("No workflows available for annotation")
             return
 
-        # Workflow selector
         workflow_options = []
         for idx, (_, span) in enumerate(orch_spans.iterrows()):
-            attrs = span.get("attributes", {})
+            attrs = _extract_orchestration_attrs(span)
             query = attrs.get("orchestration.query", "Unknown query")
             wf_id = attrs.get("orchestration.workflow_id", f"workflow-{idx}")
             pattern = attrs.get("orchestration.pattern", "unknown")
@@ -119,11 +160,9 @@ def render_orchestration_annotation_tab():
 
         selected_idx = st.selectbox("Select workflow to annotate", range(len(workflow_options)), format_func=lambda x: workflow_options[x])
 
-        # Get selected workflow
         span_row = orch_spans.iloc[selected_idx]
-        attrs = span_row.get("attributes", {})
+        attrs = _extract_orchestration_attrs(span_row)
 
-        # Display workflow details
         st.subheader("📊 Workflow Details")
 
         col1, col2, col3 = st.columns(3)
@@ -138,8 +177,16 @@ def render_orchestration_annotation_tab():
 
         st.text_area("Query", attrs.get("orchestration.query", ""), height=100, disabled=True)
 
-        agents_used = attrs.get("orchestration.agents_used", "").split(",")
-        execution_order = attrs.get("orchestration.execution_order", "").split(",")
+        agents_raw = attrs.get("orchestration.agents_used", "[]")
+        execution_raw = attrs.get("orchestration.execution_order", "[]")
+        try:
+            agents_used = json.loads(agents_raw) if isinstance(agents_raw, str) else agents_raw
+        except (json.JSONDecodeError, TypeError):
+            agents_used = [agents_raw] if agents_raw else []
+        try:
+            execution_order = json.loads(execution_raw) if isinstance(execution_raw, str) else execution_raw
+        except (json.JSONDecodeError, TypeError):
+            execution_order = [execution_raw] if execution_raw else []
 
         col1, col2 = st.columns(2)
         with col1:
@@ -151,7 +198,6 @@ def render_orchestration_annotation_tab():
             for i, agent in enumerate(execution_order, 1):
                 st.write(f"{i}. {agent}")
 
-        # Annotation form
         st.subheader("✍️ Your Annotation")
 
         with st.form("annotation_form"):
@@ -252,7 +298,6 @@ def render_orchestration_annotation_tab():
 
             if submitted:
                 try:
-                    # Create annotation
                     annotation = OrchestrationAnnotation(
                         workflow_id=attrs.get("orchestration.workflow_id"),
                         span_id=span_row.get("context.span_id"),
@@ -287,7 +332,6 @@ def render_orchestration_annotation_tab():
                         error_details=span_row.get("status_message"),
                     )
 
-                    # Store annotation
                     result = run_async_in_streamlit(
                         storage.store_annotation(annotation)
                     )
