@@ -118,7 +118,7 @@ class TestMultiAgentOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         # Check initialization
@@ -153,7 +153,7 @@ class TestMultiAgentOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             available_agents=sample_agents_config,
             max_parallel_tasks=5,
             workflow_timeout_minutes=20,
@@ -180,7 +180,7 @@ class TestMultiAgentOrchestrator:
         """Test default agent configuration"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         default_agents = orchestrator._get_default_agents()
@@ -208,7 +208,7 @@ class TestMultiAgentOrchestrator:
         """Test DSPy module initialization"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         # DSPy modules should be initialized
@@ -232,7 +232,7 @@ class TestMultiAgentOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         # Mock workflow intelligence
@@ -282,7 +282,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
         ):
             orchestrator = MultiAgentOrchestrator(
                 tenant_id="test_tenant",
-                telemetry_config=telemetry_manager_without_phoenix.config,
+                telemetry_manager=telemetry_manager_without_phoenix,
                 enable_workflow_intelligence=False,
             )
             return orchestrator
@@ -348,7 +348,7 @@ class TestMultiAgentOrchestratorEdgeCases:
         """Test orchestrator when workflow intelligence is disabled"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
 
@@ -364,7 +364,7 @@ class TestMultiAgentOrchestratorEdgeCases:
         """Test agent utilization statistics"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
 
@@ -387,7 +387,7 @@ class TestCrossModalFusion:
         ):
             return MultiAgentOrchestrator(
                 tenant_id="test_tenant",
-                telemetry_config=telemetry_manager_without_phoenix.config,
+                telemetry_manager=telemetry_manager_without_phoenix,
                 enable_workflow_intelligence=False,
             )
 
@@ -723,6 +723,121 @@ class TestFusionStrategyEnum:
         assert "semantic" in strategies
         assert "hierarchical" in strategies
         assert "simple" in strategies
+
+
+@pytest.mark.unit
+class TestOrchestratorTelemetrySpan:
+    """Test orchestration telemetry span instrumentation"""
+
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_span_attributes_set_on_success(
+        self,
+        mock_workflow_intel,
+        mock_a2a,
+        mock_routing,
+        telemetry_manager_without_phoenix,
+    ):
+        """Test that cogniverse.orchestration span attributes are set correctly"""
+        mock_routing.return_value = Mock()
+        mock_span = Mock()
+        mock_span.set_attribute = Mock()
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_span(*args, **kwargs):
+            yield mock_span
+
+        telemetry_manager_without_phoenix.span = fake_span
+
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_manager=telemetry_manager_without_phoenix,
+        )
+
+        # Mock internals to avoid real execution
+        orchestrator._plan_workflow = AsyncMock(
+            return_value=Mock(
+                tasks=[
+                    Mock(
+                        agent_name="search_agent",
+                        status=TaskStatus.COMPLETED,
+                        dependencies=set(),
+                    ),
+                    Mock(
+                        agent_name="summarizer_agent",
+                        status=TaskStatus.COMPLETED,
+                        dependencies={"search"},
+                    ),
+                ],
+                end_time=None,
+                start_time=None,
+                metadata={},
+            )
+        )
+        orchestrator._execute_workflow = AsyncMock()
+        orchestrator._aggregate_results = AsyncMock(return_value={"content": "results"})
+        orchestrator._update_orchestration_stats = Mock()
+
+        # Set end_time/start_time after plan
+        plan_mock = orchestrator._plan_workflow.return_value
+        from datetime import datetime
+
+        plan_mock.start_time = datetime.now()
+        plan_mock.end_time = datetime.now()
+
+        result = await orchestrator.process_complex_query("test multi-step query")
+
+        assert result["status"] == "completed"
+
+        # Verify span attributes were set
+        attr_calls = {
+            call.args[0]: call.args[1]
+            for call in mock_span.set_attribute.call_args_list
+        }
+        assert attr_calls["orchestration.query"] == "test multi-step query"
+        assert "orchestration.workflow_id" in attr_calls
+        assert attr_calls["orchestration.pattern"] == "mixed"
+        assert "orchestration.execution_time" in attr_calls
+        assert attr_calls["orchestration.tasks_completed"] == 2
+        assert "orchestration.agents_used" in attr_calls
+        assert "orchestration.execution_order" in attr_calls
+
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @pytest.mark.ci_fast
+    def test_determine_execution_pattern(
+        self,
+        mock_a2a,
+        mock_routing,
+        telemetry_manager_without_phoenix,
+    ):
+        """Test _determine_execution_pattern classifies correctly"""
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id="test_tenant",
+            telemetry_manager=telemetry_manager_without_phoenix,
+            enable_workflow_intelligence=False,
+        )
+
+        # No tasks = sequential
+        assert orchestrator._determine_execution_pattern([]) == "sequential"
+
+        # All tasks with no deps = parallel
+        t1 = Mock(dependencies=set())
+        t2 = Mock(dependencies=set())
+        assert orchestrator._determine_execution_pattern([t1, t2]) == "parallel"
+
+        # All tasks with deps = sequential
+        t3 = Mock(dependencies={"t1"})
+        t4 = Mock(dependencies={"t2"})
+        assert orchestrator._determine_execution_pattern([t3, t4]) == "sequential"
+
+        # Mix = mixed
+        assert orchestrator._determine_execution_pattern([t1, t3]) == "mixed"
 
 
 if __name__ == "__main__":

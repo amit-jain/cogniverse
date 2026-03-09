@@ -346,7 +346,7 @@ class TestCrossModalFusionIntegration:
         # Create orchestrator (will use mocked agents)
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
 
@@ -476,7 +476,7 @@ class TestCrossModalFusionIntegration:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
 
@@ -546,7 +546,7 @@ class TestCrossModalFusionIntegration:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
 

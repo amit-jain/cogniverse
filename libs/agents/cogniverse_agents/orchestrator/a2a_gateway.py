@@ -30,6 +30,7 @@ from cogniverse_agents.routing_agent import (
     RoutingDeps,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 # No longer need fallback routing - RoutingAgent has all features
 
@@ -130,7 +131,7 @@ class A2AGateway:
 
     def __init__(
         self,
-        tenant_id: str = "default",
+        tenant_id: str,
         telemetry_config: Optional["TelemetryConfig"] = None,
         routing_config: Optional[RoutingConfig] = None,
         enable_orchestration: bool = True,
@@ -175,7 +176,11 @@ class A2AGateway:
 
             # Initialize multi-agent orchestrator
             if self.enable_orchestration:
-                self.orchestrator = MultiAgentOrchestrator(routing_agent=self.router)
+                self.orchestrator = MultiAgentOrchestrator(
+                    tenant_id=self.tenant_id,
+                    telemetry_manager=get_telemetry_manager(),
+                    routing_agent=self.router,
+                )
 
             self.routing_system_available = True
             self.logger.info("Routing system initialized successfully")
@@ -457,12 +462,14 @@ class A2AGateway:
 
 
 def create_a2a_gateway(
+    tenant_id: str,
     routing_config: Optional[RoutingConfig] = None,
     enable_orchestration: bool = True,
     port: int = 8000,
 ) -> A2AGateway:
     """Factory function to create A2A Gateway"""
     return A2AGateway(
+        tenant_id=tenant_id,
         routing_config=routing_config,
         enable_orchestration=enable_orchestration,
         port=port,
@@ -477,6 +484,7 @@ if __name__ == "__main__":
         """Test the A2A Gateway"""
         # Create gateway with routing and orchestration
         gateway = create_a2a_gateway(
+            tenant_id="example_org:example",
             routing_config=RoutingConfig(
                 model_name="gemma3:4b",
                 base_url="http://localhost:11434/v1",

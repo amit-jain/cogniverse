@@ -134,7 +134,7 @@ class TestRoutingToEnhancedSearchIntegration:
         routing_agent = RoutingAgent(deps=deps)
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=routing_agent,
         )
 
@@ -380,7 +380,7 @@ class TestEnhancedAgentComponentIntegration:
                 # Create orchestrator (RoutingAgent is mocked, so no DSPy init issues)
                 orchestrator = MultiAgentOrchestrator(
                     tenant_id="test_tenant",
-                    telemetry_config=telemetry_manager_without_phoenix.config,
+                    telemetry_manager=telemetry_manager_without_phoenix,
                 )
 
                 # Directly set up the workflow planner mock (avoids fragile

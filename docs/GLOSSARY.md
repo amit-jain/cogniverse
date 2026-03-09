@@ -142,7 +142,10 @@ Type of content defined by `ContentType` enum: `video`, `audio`, `image`, `text`
 Evaluation metric: average of 1/rank for first relevant result. Higher is better (max 1.0).
 
 ### Multi-Agent Orchestration
-Coordinating multiple agents to complete complex tasks. Managed by `MultiAgentOrchestrator`.
+Coordinating multiple agents to complete complex tasks. Managed by `MultiAgentOrchestrator`, which is invoked by `RoutingAgent` when a query triggers >= 3 orchestration signals.
+
+### MultiAgentOrchestrator
+DSPy-powered workflow engine that plans, executes, and aggregates multi-agent workflows. Receives queries from `RoutingAgent` when orchestration is needed. Emits `cogniverse.orchestration` telemetry spans consumed by the dashboard's Orchestration tab.
 
 ### Multi-Vector
 Embedding strategy that produces multiple vectors per document. Used by ColPali for patch-level embeddings.
@@ -163,6 +166,9 @@ Standard for distributed tracing and metrics. Cogniverse uses OpenTelemetry for 
 
 ### Optimizer
 DSPy component that improves module performance via training. Examples: GEPA, MIPROv2.
+
+### OrchestratorAgent
+A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning via `OrchestrationModule`. Plans and executes multi-agent workflows independently using `AgentRegistry` for agent discovery and direct A2A HTTP calls. Distinct from `MultiAgentOrchestrator` (which uses its own DSPy planner and cross-modal fusion) and `RoutingAgent` (which is the query entry point that decides whether orchestration is needed).
 
 ---
 
@@ -207,7 +213,7 @@ Component that reorders search results for better relevance. Types: learned, hyb
 Algorithm for combining multiple ranked lists. Used in hybrid search to merge semantic and BM25 results.
 
 ### Routing
-Directing queries to appropriate agents based on modality and content. Implemented by `RoutingAgent`.
+Directing queries to appropriate agents based on modality and content. Implemented by `RoutingAgent`. Simple queries route to a single agent; complex queries (>= 3 orchestration signals) hand off to `MultiAgentOrchestrator` for multi-step execution.
 
 ---
 

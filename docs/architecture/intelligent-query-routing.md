@@ -234,7 +234,16 @@ A factory function selects the appropriate signature tier:
 
 ## Multi-Agent Orchestration
 
-When a query is too complex for a single agent, the orchestrator coordinates multiple agents through a dependency-aware execution plan.
+When a query is too complex for a single agent, the `RoutingAgent` hands off to `MultiAgentOrchestrator` which coordinates multiple agents through a dependency-aware execution plan.
+
+### Orchestration Handoff
+
+The handoff from routing to orchestration happens in the runtime endpoint (`_execute_routing_task`):
+
+1. `RoutingAgent.route_query()` returns a `RoutingOutput` with `metadata["needs_orchestration"]`
+2. The runtime checks this flag — when `True`, it instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager` and the same `RoutingAgent` instance
+3. `MultiAgentOrchestrator.process_complex_query()` plans a workflow using DSPy, executes agents via A2A protocol, and aggregates results
+4. A `cogniverse.orchestration` telemetry span is emitted with attributes (`orchestration.query`, `orchestration.workflow_id`, `orchestration.pattern`, `orchestration.execution_time`, `orchestration.tasks_completed`, `orchestration.agents_used`, `orchestration.execution_order`) consumed by the dashboard's Orchestration Annotation tab
 
 ### Orchestration Signal Detection
 

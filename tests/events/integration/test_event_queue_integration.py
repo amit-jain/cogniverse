@@ -43,6 +43,16 @@ class MockTelemetryConfig:
     enabled = False
 
 
+@pytest.fixture
+def mock_telemetry_manager():
+    """Create mock telemetry manager for orchestrator tests."""
+    from contextlib import nullcontext
+
+    manager = MagicMock()
+    manager.span.return_value = nullcontext(MagicMock())
+    return manager
+
+
 class TestEventQueueWithOrchestrator:
     """Test EventQueue integration with MultiAgentOrchestrator."""
 
@@ -58,7 +68,9 @@ class TestEventQueueWithOrchestrator:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_orchestrator_accepts_event_queue_parameter(self, mock_routing_agent):
+    async def test_orchestrator_accepts_event_queue_parameter(
+        self, mock_routing_agent, mock_telemetry_manager
+    ):
         """Test that orchestrator accepts event_queue parameter."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
             MultiAgentOrchestrator,
@@ -72,6 +84,7 @@ class TestEventQueueWithOrchestrator:
         # Should not raise - provide routing_agent to avoid RoutingDeps creation
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             event_queue=queue,
         )
@@ -81,7 +94,9 @@ class TestEventQueueWithOrchestrator:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_orchestrator_emit_event_helper(self, mock_routing_agent):
+    async def test_orchestrator_emit_event_helper(
+        self, mock_routing_agent, mock_telemetry_manager
+    ):
         """Test that _emit_event helper works correctly."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
             MultiAgentOrchestrator,
@@ -94,6 +109,7 @@ class TestEventQueueWithOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             event_queue=queue,
         )
@@ -115,7 +131,7 @@ class TestEventQueueWithOrchestrator:
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_orchestrator_without_event_queue_does_not_fail(
-        self, mock_routing_agent
+        self, mock_routing_agent, mock_telemetry_manager
     ):
         """Test that orchestrator works without event_queue (optional)."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
@@ -125,6 +141,7 @@ class TestEventQueueWithOrchestrator:
         # Should not raise when event_queue is None
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             event_queue=None,
         )

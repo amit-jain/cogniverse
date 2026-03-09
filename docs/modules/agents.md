@@ -51,9 +51,9 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 ### Key Agents
 
-1. **RoutingAgent** - Query routing with DSPy optimization and relationship extraction
+1. **RoutingAgent** - Query entry point: DSPy routing with orchestration handoff for complex queries
 2. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
-3. **OrchestratorAgent** - Central A2A entry point with DSPy planning, parallel execution, and AgentRegistry discovery
+3. **OrchestratorAgent** - A2A HTTP entry point wrapping MultiAgentOrchestrator for external agent communication
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
@@ -2949,6 +2949,27 @@ agent.log_tenant_operation(
 )
 # Logs: [acme] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
 ```
+
+---
+
+## Routing to Orchestration Handoff
+
+When `RoutingAgent.route_query()` determines a query is too complex for a single agent, it sets `metadata["needs_orchestration"] = True`. The runtime endpoint (`_execute_routing_task` in `agents.py`) checks this flag and hands off to `MultiAgentOrchestrator`:
+
+1. **RoutingAgent** analyzes the query (entity extraction, relationship inference, DSPy routing decision)
+2. A 7-signal heuristic evaluates orchestration need (multiple verbs, entity density, low confidence, etc.)
+3. If >= 3 signals fire → `needs_orchestration = True` in routing result metadata
+4. The runtime checks this flag and instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager`
+5. `MultiAgentOrchestrator.process_complex_query()` plans, executes, and aggregates a multi-agent workflow
+6. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
+
+### Key distinction: three orchestration-related components
+
+| Component | Role | Location |
+|---|---|---|
+| **RoutingAgent** | Query entry point, decides *whether* orchestration is needed | `cogniverse_agents/routing_agent.py` |
+| **MultiAgentOrchestrator** | Workflow engine: plans tasks, executes agents, aggregates results | `cogniverse_agents/multi_agent_orchestrator.py` |
+| **OrchestratorAgent** | A2A agent with own DSPy planning and AgentRegistry-based execution | `cogniverse_agents/orchestrator_agent.py` |
 
 ---
 

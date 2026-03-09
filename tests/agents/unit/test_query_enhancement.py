@@ -737,10 +737,7 @@ class TestDSPyEndToEndIntegration:
             )
 
 
-# =============================================================================
-# PHASE 1: DSPy 3.0 + A2A Integration Tests (NEW IMPLEMENTATION)
-# These will replace the old DSPy 2.x tests above when we switch over
-# =============================================================================
+# DSPy 3.0 + A2A Integration Tests
 
 
 @pytest.mark.unit
@@ -1027,32 +1024,7 @@ class TestDSPyRedundancyAnalysis:
         assert UnifiedExtractionReformulationSignature is not None
 
 
-# =============================================================================
-# REDUNDANCY DOCUMENTATION FOR FUTURE CLEANUP
-# =============================================================================
-
-# FILES THAT BECOME REDUNDANT AFTER FULL PHASE 1 DEPLOYMENT:
-# - src/app/agents/dspy_integration_mixin.py (replaced by dspy_a2a_agent_base.py)
-# - Manual signature creation functions in dspy_agent_optimizer.py (replaced by dspy_routing_signatures.py)
-
-# CLASSES THAT BECOME REDUNDANT AFTER FULL PHASE 1 DEPLOYMENT:
-# - DSPyIntegrationMixin (replaced by DSPyA2AAgentBase)
-# - DSPyQueryAnalysisMixin (functionality moved to BasicQueryAnalysisSignature)
-# - DSPyRoutingMixin (functionality moved to AdvancedRoutingSignature)
-# - DSPySummaryMixin (functionality moved to specialized signatures)
-# - DSPyDetailedReportMixin (functionality moved to specialized signatures)
-
-# TEST CLASSES THAT BECOME REDUNDANT AFTER FULL PHASE 1 DEPLOYMENT:
-# - TestDSPyIntegrationMixin (replaced by TestDSPy30A2ABaseIntegration)
-# - TestDSPySpecializedMixins (replaced by TestDSPy30RoutingSignatures)
-# - TestDSPyAgentIntegration (replaced by TestPhase1EndToEndIntegration)
-# - Part of TestDSPyAgentOptimizer (signature creation tests replaced)
-
-
-# =============================================================================
-# PHASE 2: Relationship Extraction Engine Tests (NEW IMPLEMENTATION)
-# Tests the GLiNER + spaCy integration and DSPy relationship routing modules
-# =============================================================================
+# Relationship Extraction Engine Tests
 
 
 @pytest.mark.unit
@@ -1621,10 +1593,7 @@ class TestDSPyIntegrationReadiness:
             assert field in unified_fields, f"Missing unified field: {field}"
 
 
-# =============================================================================
-# PHASE 3: Query Enhancement System Tests (NEW IMPLEMENTATION)
-# Tests the query rewriter and DSPy query enhancement modules
-# =============================================================================
+# Query Enhancement System Tests
 
 
 @pytest.mark.unit
@@ -1960,7 +1929,6 @@ class TestQueryEnhancementIntegration:
             assert hasattr(result, attr), f"Missing routing required attribute: {attr}"
 
 
-# ======================== COMPONENT TESTS ========================
 
 
 @pytest.mark.unit
@@ -2268,7 +2236,6 @@ class TestDSPyComponentsIntegration:
             ), "Query should be actually enhanced for Phase 4"
 
 
-# ======================== COMPONENT TESTS ========================
 
 
 @pytest.mark.unit
@@ -2429,7 +2396,7 @@ class TestMultiAgentOrchestrator:
         # Test default initialization
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
         assert orchestrator is not None
         assert hasattr(orchestrator, "available_agents")
@@ -2439,7 +2406,7 @@ class TestMultiAgentOrchestrator:
         # Test with workflow intelligence disabled
         orchestrator_no_intelligence = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
         assert orchestrator_no_intelligence.workflow_intelligence is None
@@ -2447,7 +2414,7 @@ class TestMultiAgentOrchestrator:
         # Test with custom optimization strategy
         orchestrator_custom = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED,
         )
         assert orchestrator_custom.workflow_intelligence is not None
@@ -2496,7 +2463,7 @@ class TestMultiAgentOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         # Create tasks with dependencies
@@ -2543,7 +2510,7 @@ class TestMultiAgentOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
         )
 
         # Initial stats
@@ -2932,8 +2899,8 @@ class TestSystemIntegration:
         router = RoutingAgent(deps=deps)
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=router,
-            telemetry_config=telemetry_manager_without_phoenix.config,
         )
 
         # Test routing decision that needs orchestration
@@ -3025,7 +2992,7 @@ class TestSystemIntegration:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=router,
         )
         assert orchestrator is not None
@@ -3057,7 +3024,7 @@ class TestSystemIntegration:
             router = RoutingAgent(deps=deps)
             orchestrator = MultiAgentOrchestrator(
                 tenant_id="test_tenant",
-                telemetry_config=telemetry_manager_without_phoenix.config,
+                telemetry_manager=telemetry_manager_without_phoenix,
             )
             intelligence = WorkflowIntelligence(enable_persistence=False)
             gateway = A2AGateway(
@@ -3094,7 +3061,7 @@ class TestSystemIntegration:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
+            telemetry_manager=telemetry_manager_without_phoenix,
             enable_workflow_intelligence=False,
         )
         orch_stats = orchestrator.get_orchestration_statistics()
@@ -3115,7 +3082,6 @@ class TestSystemIntegration:
         assert "total_requests" in gateway_stats
 
 
-# ======================== COMPONENT TESTS ========================
 
 
 @pytest.mark.unit

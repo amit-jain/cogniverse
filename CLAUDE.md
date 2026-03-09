@@ -3,7 +3,7 @@
 Video content analysis and search system with configurable processing pipelines.
 
 ## Key Components
-- **Composing Agent**: Central orchestrator (ADK-based)
+- **Routing Agent**: Query routing with orchestration handoff (DSPy-based)
 - **Video Search Agent**: ColPali/VideoPrism retrieval via Vespa
 - **Video Processing Pipeline**: Configurable keyframe extraction, transcription, embeddings
 

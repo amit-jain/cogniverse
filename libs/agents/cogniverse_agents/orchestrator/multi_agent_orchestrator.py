@@ -17,7 +17,9 @@ Features:
 """
 
 import asyncio
+import json
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
@@ -67,6 +69,7 @@ if TYPE_CHECKING:
     from cogniverse_agents.orchestrator.checkpoint_storage import (
         WorkflowCheckpointStorage,
     )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 # Workflow intelligence (import after types to avoid circular dependency)
 from cogniverse_agents.workflow_intelligence import (
@@ -82,7 +85,7 @@ class FusionStrategy(Enum):
     TEMPORAL = "temporal"  # Time-aligned fusion for temporal queries
     SEMANTIC = "semantic"  # Semantic similarity-based fusion
     HIERARCHICAL = "hierarchical"  # Structured combination with hierarchy
-    SIMPLE = "simple"  # Basic concatenation (legacy)
+    SIMPLE = "simple"  # Basic concatenation for single-modality results
 
 
 class WorkflowPlannerSignature(dspy.Signature):
@@ -143,6 +146,7 @@ class MultiAgentOrchestrator:
     def __init__(
         self,
         tenant_id: str,
+        telemetry_manager: "TelemetryManager",
         routing_agent: Optional[RoutingAgent] = None,
         available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
         max_parallel_tasks: int = 3,
@@ -158,6 +162,7 @@ class MultiAgentOrchestrator:
 
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
+            telemetry_manager: TelemetryManager for span instrumentation (REQUIRED)
             routing_agent: Optional pre-configured routing agent
             available_agents: Dictionary of available agents
             max_parallel_tasks: Maximum parallel task execution
@@ -175,6 +180,7 @@ class MultiAgentOrchestrator:
             raise ValueError("tenant_id is required - no default tenant")
 
         self.tenant_id = tenant_id
+        self.telemetry_manager = telemetry_manager
         self.logger = logging.getLogger(__name__)
 
         # Event queue for real-time notifications
@@ -188,7 +194,10 @@ class MultiAgentOrchestrator:
         if routing_agent:
             self.routing_agent = routing_agent
         else:
-            deps = RoutingDeps(tenant_id=tenant_id)
+            deps = RoutingDeps(
+                tenant_id=tenant_id,
+                telemetry_config=telemetry_manager.config,
+            )
             self.routing_agent = RoutingAgent(deps=deps)
 
         # Configure available agents and their capabilities
@@ -366,52 +375,117 @@ class MultiAgentOrchestrator:
         workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
         self.orchestration_stats["total_workflows"] += 1
 
-        try:
-            # Step 1: Plan the workflow
-            workflow_plan = await self._plan_workflow(
-                workflow_id, query, context, user_id, preferences
-            )
+        # Create telemetry span for orchestration
+        span_context = self.telemetry_manager.span(
+            "cogniverse.orchestration", tenant_id=self.tenant_id
+        )
 
-            # Step 2: Execute the workflow (with checkpointing if enabled)
-            await self._execute_workflow(workflow_plan)
+        start_time_ns = time.monotonic()
 
-            # Step 3: Aggregate and synthesize results
-            final_result = await self._aggregate_results(workflow_plan)
+        with span_context as span:
+            try:
+                # Step 1: Plan the workflow
+                workflow_plan = await self._plan_workflow(
+                    workflow_id, query, context, user_id, preferences
+                )
 
-            # Update statistics
-            self._update_orchestration_stats(workflow_plan, success=True)
+                # Step 2: Execute the workflow (with checkpointing if enabled)
+                await self._execute_workflow(workflow_plan)
 
-            return {
-                "workflow_id": workflow_id,
-                "status": "completed",
-                "result": final_result,
-                "execution_summary": {
-                    "total_tasks": len(workflow_plan.tasks),
-                    "completed_tasks": len(
-                        [
-                            t
-                            for t in workflow_plan.tasks
-                            if t.status == TaskStatus.COMPLETED
-                        ]
+                # Step 3: Aggregate and synthesize results
+                final_result = await self._aggregate_results(workflow_plan)
+
+                # Update statistics
+                self._update_orchestration_stats(workflow_plan, success=True)
+
+                execution_time = time.monotonic() - start_time_ns
+                agents_used = list(set(t.agent_name for t in workflow_plan.tasks))
+                completed_tasks = [
+                    t
+                    for t in workflow_plan.tasks
+                    if t.status == TaskStatus.COMPLETED
+                ]
+                execution_pattern = self._determine_execution_pattern(
+                    workflow_plan.tasks
+                )
+
+                # Set span attributes matching dashboard expectations
+                if span and hasattr(span, "set_attribute"):
+                    span.set_attribute("orchestration.query", query)
+                    span.set_attribute("orchestration.workflow_id", workflow_id)
+                    span.set_attribute("orchestration.pattern", execution_pattern)
+                    span.set_attribute(
+                        "orchestration.execution_time", execution_time
+                    )
+                    span.set_attribute(
+                        "orchestration.tasks_completed", len(completed_tasks)
+                    )
+                    span.set_attribute(
+                        "orchestration.agents_used",
+                        json.dumps(agents_used),
+                    )
+                    span.set_attribute(
+                        "orchestration.execution_order",
+                        json.dumps(
+                            [t.agent_name for t in workflow_plan.tasks]
+                        ),
+                    )
+
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "completed",
+                    "result": final_result,
+                    "execution_summary": {
+                        "total_tasks": len(workflow_plan.tasks),
+                        "completed_tasks": len(completed_tasks),
+                        "execution_time": (
+                            workflow_plan.end_time - workflow_plan.start_time
+                        ).total_seconds(),
+                        "agents_used": agents_used,
+                    },
+                    "metadata": workflow_plan.metadata,
+                }
+
+            except Exception as e:
+                self.logger.error(
+                    f"Orchestration failed for query '{query}': {e}"
+                )
+                self.orchestration_stats["failed_workflows"] += 1
+
+                if span and hasattr(span, "set_attribute"):
+                    span.set_attribute("orchestration.query", query)
+                    span.set_attribute("orchestration.workflow_id", workflow_id)
+                    span.set_attribute("orchestration.error", str(e))
+
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "failed",
+                    "error": str(e),
+                    "fallback_result": await self._generate_fallback_result(
+                        query, context
                     ),
-                    "execution_time": (
-                        workflow_plan.end_time - workflow_plan.start_time
-                    ).total_seconds(),
-                    "agents_used": list(set(t.agent_name for t in workflow_plan.tasks)),
-                },
-                "metadata": workflow_plan.metadata,
-            }
+                }
 
-        except Exception as e:
-            self.logger.error(f"Orchestration failed for query '{query}': {e}")
-            self.orchestration_stats["failed_workflows"] += 1
+    def _determine_execution_pattern(
+        self, tasks: List["WorkflowTask"]
+    ) -> str:
+        """Inspect task dependencies to classify execution pattern.
 
-            return {
-                "workflow_id": workflow_id,
-                "status": "failed",
-                "error": str(e),
-                "fallback_result": await self._generate_fallback_result(query, context),
-            }
+        Returns:
+            "sequential" if all tasks have dependencies (chain),
+            "parallel" if no tasks have dependencies,
+            "mixed" otherwise.
+        """
+        if not tasks:
+            return "sequential"
+
+        has_deps = sum(1 for t in tasks if t.dependencies)
+        if has_deps == 0:
+            return "parallel"
+        elif has_deps == len(tasks):
+            return "sequential"
+        else:
+            return "mixed"
 
     async def _emit_event(self, event) -> None:
         """Emit event to EventQueue if configured."""
@@ -1006,9 +1080,7 @@ class MultiAgentOrchestrator:
 
         return failed_count / total_tasks < 0.5
 
-    # ============================================================================
     # Durable Execution: Checkpoint Methods
-    # ============================================================================
 
     def _should_checkpoint_phase(self) -> bool:
         """Check if phase-level checkpointing is enabled"""
@@ -1942,12 +2014,17 @@ class MultiAgentOrchestrator:
 
 
 def create_multi_agent_orchestrator(
+    tenant_id: str,
+    telemetry_manager: "TelemetryManager",
     routing_agent: Optional[RoutingAgent] = None,
     available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> MultiAgentOrchestrator:
     """Factory function to create Multi-Agent Orchestrator"""
     return MultiAgentOrchestrator(
-        routing_agent=routing_agent, available_agents=available_agents
+        tenant_id=tenant_id,
+        telemetry_manager=telemetry_manager,
+        routing_agent=routing_agent,
+        available_agents=available_agents,
     )
 
 

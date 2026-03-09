@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
+def mock_telemetry_manager():
+    """Create mock telemetry manager for orchestrator tests."""
+    from contextlib import nullcontext
+
+    manager = MagicMock()
+    manager.span.return_value = nullcontext(MagicMock())
+    return manager
+
+
+@pytest.fixture
 def mock_routing_agent():
     """Create a mock routing agent to avoid RoutingDeps validation"""
     agent = MagicMock(spec=RoutingAgent)
@@ -164,11 +174,12 @@ class TestCheckpointCreation:
         mock_checkpoint_storage,
         checkpoint_config,
         mock_a2a_client,
-        mock_routing_agent,
+        mock_routing_agent, mock_telemetry_manager,
     ):
         """Test that checkpoints are created after each phase completes"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -213,11 +224,12 @@ class TestCheckpointCreation:
         mock_checkpoint_storage,
         checkpoint_config,
         mock_a2a_client,
-        mock_routing_agent,
+        mock_routing_agent, mock_telemetry_manager,
     ):
         """Test that checkpoints contain correct task states"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -251,13 +263,14 @@ class TestCheckpointCreation:
             assert task_state.agent_name == "search_agent"
 
     @pytest.mark.asyncio
-    async def test_checkpointing_disabled(self, mock_a2a_client, mock_routing_agent):
+    async def test_checkpointing_disabled(self, mock_a2a_client, mock_routing_agent, mock_telemetry_manager):
         """Test that no checkpoints are saved when disabled"""
         disabled_config = CheckpointConfig(enabled=False)
         mock_storage = MockCheckpointStorage()
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=disabled_config,
             checkpoint_storage=mock_storage,
@@ -289,11 +302,12 @@ class TestCheckpointCreation:
 
     @pytest.mark.asyncio
     async def test_checkpoint_without_storage(
-        self, checkpoint_config, mock_a2a_client, mock_routing_agent
+        self, checkpoint_config, mock_a2a_client, mock_routing_agent, mock_telemetry_manager
     ):
         """Test that workflow executes even without checkpoint storage"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=None,  # No storage configured
@@ -371,6 +385,7 @@ class TestWorkflowResume:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -425,6 +440,7 @@ class TestWorkflowResume:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -444,11 +460,12 @@ class TestWorkflowResume:
 
     @pytest.mark.asyncio
     async def test_resume_without_checkpoint_returns_error(
-        self, mock_checkpoint_storage, checkpoint_config, mock_routing_agent
+        self, mock_checkpoint_storage, checkpoint_config, mock_routing_agent, mock_telemetry_manager
     ):
         """Test that resume fails gracefully when no checkpoint exists"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -464,11 +481,12 @@ class TestWorkflowResume:
 
     @pytest.mark.asyncio
     async def test_resume_without_storage_returns_error(
-        self, checkpoint_config, mock_routing_agent
+        self, checkpoint_config, mock_routing_agent, mock_telemetry_manager
     ):
         """Test that resume fails when no storage is configured"""
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=None,
@@ -541,6 +559,7 @@ class TestResumeableWorkflows:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=checkpoint_config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -562,13 +581,14 @@ class TestCheckpointLevels:
 
     @pytest.mark.asyncio
     async def test_phase_level_checkpointing(
-        self, mock_checkpoint_storage, mock_a2a_client, mock_routing_agent
+        self, mock_checkpoint_storage, mock_a2a_client, mock_routing_agent, mock_telemetry_manager
     ):
         """Test phase-level checkpointing creates checkpoint after each phase"""
         config = CheckpointConfig(enabled=True, level=CheckpointLevel.PHASE)
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=config,
             checkpoint_storage=mock_checkpoint_storage,
@@ -607,7 +627,7 @@ class TestCheckpointLevels:
 
     @pytest.mark.asyncio
     async def test_should_checkpoint_phase_returns_correct_value(
-        self, mock_routing_agent
+        self, mock_routing_agent, mock_telemetry_manager
     ):
         """Test _should_checkpoint_phase returns correct values"""
         mock_storage = MockCheckpointStorage()
@@ -615,6 +635,7 @@ class TestCheckpointLevels:
         # Enabled with PHASE level
         orchestrator1 = MultiAgentOrchestrator(
             tenant_id="test",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=CheckpointConfig(
                 enabled=True, level=CheckpointLevel.PHASE
@@ -627,6 +648,7 @@ class TestCheckpointLevels:
         # Enabled with TASK level (no phase checkpointing)
         orchestrator2 = MultiAgentOrchestrator(
             tenant_id="test",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=CheckpointConfig(
                 enabled=True, level=CheckpointLevel.TASK
@@ -639,6 +661,7 @@ class TestCheckpointLevels:
         # Disabled
         orchestrator3 = MultiAgentOrchestrator(
             tenant_id="test",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=CheckpointConfig(enabled=False),
             checkpoint_storage=mock_storage,
@@ -649,6 +672,7 @@ class TestCheckpointLevels:
         # No storage
         orchestrator4 = MultiAgentOrchestrator(
             tenant_id="test",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             checkpoint_config=CheckpointConfig(enabled=True),
             checkpoint_storage=None,
@@ -695,6 +719,7 @@ class TestWorkflowReconstruction:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
+            telemetry_manager=mock_telemetry_manager,
             routing_agent=mock_routing_agent,
             enable_workflow_intelligence=False,
         )

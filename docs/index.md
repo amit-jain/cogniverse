@@ -11,7 +11,7 @@ Cogniverse is a self-optimizing multi-agent platform for intelligent processing 
 ```mermaid
 flowchart TD
     %% Main Request Flow
-    user(("<span style='color:#000'>User</span>")) --> |request| agentlayer["<span style='color:#000'><b>Agents (A2A)</b><br/>Router · Composing · Search · ...</span>"]
+    user(("<span style='color:#000'>User</span>")) --> |request| agentlayer["<span style='color:#000'><b>Agents (A2A)</b><br/>Router · Orchestrator · Search · ...</span>"]
     agentlayer --> |response| user
     agentlayer <--> store[("<span style='color:#000'>Content Store</span>")]
     agentlayer <--> |context| memory["<span style='color:#000'>Memory</span>"]

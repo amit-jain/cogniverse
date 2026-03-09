@@ -183,7 +183,7 @@ class A2AGateway:
             if self.enable_orchestration:
                 self.orchestrator = MultiAgentOrchestrator(
                     tenant_id=self.tenant_id,
-                    telemetry_config=self.telemetry_config,
+                    telemetry_manager=get_telemetry_manager(),
                     routing_agent=self.router,
                 )
 

@@ -352,6 +352,37 @@ async def _execute_routing_task(
         tenant_id=tenant_id,
     )
 
+    # Check if routing decided this query needs orchestration
+    needs_orchestration = result.metadata.get("needs_orchestration", False)
+
+    if needs_orchestration:
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        orchestrator = MultiAgentOrchestrator(
+            tenant_id=tenant_id,
+            telemetry_manager=get_telemetry_manager(),
+            routing_agent=agent,
+        )
+
+        orch_result = await orchestrator.process_complex_query(
+            query=result.enhanced_query or task.query,
+            context=task.context.get("context"),
+        )
+
+        return {
+            "status": "success",
+            "agent": "routing_agent",
+            "message": f"Orchestrated '{task.query}' via multi-agent workflow",
+            "recommended_agent": result.recommended_agent,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "enhanced_query": result.enhanced_query,
+            "needs_orchestration": True,
+            "orchestration_result": orch_result,
+            "metadata": result.metadata,
+        }
+
     return {
         "status": "success",
         "agent": "routing_agent",
