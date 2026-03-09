@@ -309,14 +309,10 @@ with st.sidebar:
                                         },
                                         timeout=10.0
                                     )
-                                    if org_resp.status_code == 409:
-                                        # Organization exists, continue
-                                        pass
-                                    elif org_resp.status_code != 200:
+                                    if org_resp.status_code not in (200, 409):
                                         st.error(f"Failed to create org: {org_resp.text}")
-                            except Exception:
-                                # Org might exist, continue
-                                pass
+                            except httpx.RequestError as e:
+                                st.error(f"Connection error creating org: {e}")
 
                             # Create tenant
                             try:
@@ -744,9 +740,6 @@ top_level_tabs = st.tabs(["🧑‍💼 User", "⚙️ Admin", "📊 Monitoring"]
 # Show agent connectivity status in sidebar
 agent_status = show_agent_status()
 
-# =============================================================================
-# USER SECTION - Tenant/User-Facing Features
-# =============================================================================
 with top_level_tabs[0]:
     st.markdown("### User Interface")
     st.markdown("Features for everyday users to interact with the system")
@@ -770,9 +763,6 @@ with top_level_tabs[0]:
         st.header("🧠 Memory Management")
         render_memory_management_tab()
 
-# =============================================================================
-# ADMIN SECTION - Administrative Features
-# =============================================================================
 with top_level_tabs[1]:
     st.markdown("### Admin Interface")
     st.markdown("Administrative tools for system configuration and management")
@@ -798,9 +788,6 @@ with top_level_tabs[1]:
         else:
             st.error(f"❌ Optimization tab not available: {enhanced_optimization_tab_error}")
 
-# =============================================================================
-# MONITORING SECTION - Observability & Analytics
-# =============================================================================
 with top_level_tabs[2]:
     st.markdown("### Monitoring & Analytics")
     st.markdown("System observability, performance metrics, and evaluation tools")
@@ -854,21 +841,18 @@ with monitoring_tabs[0]:
         'error': t.error
     } for t in traces])
 
-    # Apply profile and strategy filters
     if "all" not in profile_filter and not traces_df.empty and 'profile' in traces_df.columns:
         traces_df = traces_df[traces_df['profile'].isin(profile_filter)]
 
     if "all" not in strategy_filter and not traces_df.empty and 'strategy' in traces_df.columns:
         traces_df = traces_df[traces_df['strategy'].isin(strategy_filter)]
 
-    # Calculate statistics with operation grouping
     if not traces_df.empty:
         stats = st.session_state.analytics.calculate_statistics(
             [TraceMetrics(**row) for _, row in traces_df.iterrows()],
             group_by="operation"
         )
     else:
-        # Default stats when no data
         stats = {
             'total_requests': 0,
             'status': {'success_rate': 0, 'error_rate': 0},
@@ -879,7 +863,6 @@ with monitoring_tabs[0]:
             'by_operation': {}
         }
 
-    # Create sub-tabs for analytics
     tabs = st.tabs([
         "📊 Overview", 
         "📈 Time Series", 
@@ -891,7 +874,6 @@ with monitoring_tabs[0]:
 
 # Tab 1: Overview
 with tabs[0]:
-    # Key metrics
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -924,8 +906,6 @@ with tabs[0]:
         )
     
     st.markdown("---")
-    
-    # Summary statistics
     st.markdown("### 📊 Detailed Analytics")
     col1, col2 = st.columns(2, gap="large")
     
@@ -1093,14 +1073,12 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Request Volume and Response Time Over Time")
     
-    # Time window selection
     time_window = st.select_slider(
         "Aggregation window",
         options=["1min", "5min", "15min", "1h"],
         value="5min"
     )
-    
-    # Create time series plot
+
     fig_ts = st.session_state.analytics.create_time_series_plot(
         traces,
         metric="duration_ms",
@@ -1166,7 +1144,6 @@ with tabs[2]:
         - Example: If P95 line is at 500ms, then 95% of requests complete in 500ms or less
         """)
     
-    # Distribution plot
     group_by = st.selectbox(
         "Group by",
         ["None", "operation", "profile", "strategy", "status"]
@@ -1200,11 +1177,10 @@ with tabs[3]:
         - All values are 'unknown' or similar default values
         """)
     
-    # Heatmap configuration
     col1, col2 = st.columns(2)
     with col1:
         x_axis = st.selectbox(
-            "X-axis", 
+            "X-axis",
             ["hour", "day_of_week", "operation"],
             help="Select the primary dimension for the heatmap"
         )
@@ -1251,7 +1227,6 @@ with tabs[4]:
         - Doesn't assume normal distribution
         """)
     
-    # Outlier detection
     outlier_metric = st.selectbox(
         "Metric for outlier detection",
         ["duration_ms", "error_rate"]
@@ -1292,8 +1267,7 @@ with tabs[4]:
 # Tab 6: Trace Explorer
 with tabs[5]:
     st.subheader("Individual Trace Explorer")
-    
-    # Search and filter
+
     col1, col2 = st.columns([3, 1])
     with col1:
         trace_search = st.text_input(
@@ -1302,8 +1276,7 @@ with tabs[5]:
         )
     with col2:
         search_type = st.selectbox("Search in", ["All", "Trace ID", "Operation"])
-    
-    # Filter traces based on search
+
     if trace_search:
         if search_type == "Trace ID":
             filtered_df = traces_df[traces_df['trace_id'].str.contains(trace_search, case=False)]
@@ -1317,7 +1290,6 @@ with tabs[5]:
     else:
         filtered_df = traces_df
     
-    # Sort options
     col1, col2 = st.columns([2, 1])
     with col1:
         sort_by = st.selectbox(
@@ -1327,18 +1299,15 @@ with tabs[5]:
         )
     with col2:
         sort_order = st.selectbox("Order", ["Descending", "Ascending"])
-    
-    # Apply sorting
+
     if not filtered_df.empty and sort_by in filtered_df.columns:
         filtered_df = filtered_df.sort_values(
-            sort_by, 
+            sort_by,
             ascending=(sort_order == "Ascending")
         )
-    
-    # Display traces
+
     st.write(f"Showing {len(filtered_df)} traces")
-    
-    # Pagination
+
     traces_per_page = 20
     num_pages = max(1, (len(filtered_df) - 1) // traces_per_page + 1)
     page = st.selectbox("Page", range(1, num_pages + 1))
@@ -1346,7 +1315,6 @@ with tabs[5]:
     start_idx = (page - 1) * traces_per_page
     end_idx = min(start_idx + traces_per_page, len(filtered_df))
     
-    # Show traces
     for idx in range(start_idx, end_idx):
         row = filtered_df.iloc[idx]
         
@@ -1903,10 +1871,10 @@ with monitoring_tabs[5]:
     # Import required modules
     try:
         from cogniverse_agents.routing.modality_cache import ModalityCacheManager
-        from cogniverse_agents.search.multi_modal_reranker import QueryModality
-        from cogniverse_foundation.telemetry.modality_metrics import (
+        from cogniverse_agents.routing.modality_metrics import (
             ModalityMetricsTracker,
         )
+        from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
         # Initialize components
         if 'metrics_tracker' not in st.session_state:
@@ -2047,16 +2015,29 @@ with monitoring_tabs[5]:
             from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 
             if 'modality_optimizer' not in st.session_state:
-                from cogniverse_foundation.config.manager import (
+                from cogniverse_foundation.config.utils import (
                     create_default_config_manager,
+                    get_config,
                 )
-                from cogniverse_foundation.config.utils import get_config
 
+                _tenant = st.session_state.get("current_tenant", "") or "default"
                 _cm = create_default_config_manager()
-                _cfg = get_config(tenant_id="default", config_manager=_cm)
+                _cfg = get_config(tenant_id=_tenant, config_manager=_cm)
                 _llm = _cfg.get_llm_config().primary
+                from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+                _registry = TelemetryRegistry()
+                _provider = _registry.get_telemetry_provider(
+                    name="phoenix",
+                    tenant_id=_tenant,
+                    config={
+                        "http_endpoint": "http://localhost:6006",
+                        "grpc_endpoint": "http://localhost:4317",
+                    },
+                )
                 st.session_state.modality_optimizer = ModalityOptimizer(
-                    llm_config=_llm
+                    llm_config=_llm,
+                    telemetry_provider=_provider,
+                    tenant_id=_tenant,
                 )
 
             optimizer = st.session_state.modality_optimizer
@@ -2082,11 +2063,14 @@ with monitoring_tabs[5]:
             with col1:
                 st.metric("Models Trained", len(optimizer.modality_models))
             with col2:
-                avg_improvement = 0.0  # Would calculate from real data
-                st.metric("Avg Accuracy Improvement", f"+{avg_improvement:.1%}")
+                avg_improvement = getattr(optimizer, "avg_accuracy_improvement", None)
+                if avg_improvement is not None:
+                    st.metric("Avg Accuracy Improvement", f"+{avg_improvement:.1%}")
+                else:
+                    st.metric("Avg Accuracy Improvement", "N/A")
             with col3:
-                last_training = "Never"  # Would get from real data
-                st.metric("Last Training", last_training)
+                last_training = getattr(optimizer, "last_training_time", None)
+                st.metric("Last Training", str(last_training) if last_training is not None else "Never")
 
         except Exception as e:
             st.warning(f"Optimization status unavailable: {e}")

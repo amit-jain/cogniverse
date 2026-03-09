@@ -2,9 +2,9 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
@@ -133,46 +133,56 @@ def get_profile_validator_dependency(
 
 @router.get("/system/stats")
 async def get_system_stats(
-    tenant_id: str,
-    backend: str,
+    tenant_id: Optional[str] = Query(None),
+    backend: Optional[str] = Query(None),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
-    """Get system statistics."""
+    """Get system statistics.
+
+    Without parameters, returns general system stats.
+    With tenant_id and backend, returns backend-specific stats.
+    """
     try:
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_ingestion_backend(
-            backend,
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
-        if not backend_instance:
-            raise HTTPException(
-                status_code=400, detail=f"Backend '{backend}' not found"
-            )
 
-        # Get basic stats from backend
-        stats = {
-            "backend": backend,
-            "backend_type": backend.__class__.__name__,
+        stats: Dict[str, Any] = {
+            "registered_backends": list(backend_registry.list_backends()),
+            "timestamp": datetime.now().isoformat(),
         }
 
-        # Add backend-specific stats if available
-        if hasattr(backend_instance, "get_stats"):
+        if backend and tenant_id:
+            backend_instance = backend_registry.get_ingestion_backend(
+                backend,
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+            if not backend_instance:
+                raise HTTPException(
+                    status_code=400, detail=f"Backend '{backend}' not found"
+                )
+
+            stats["backend"] = backend
+            stats["tenant_id"] = tenant_id
+            stats["backend_type"] = backend_instance.__class__.__name__
+
+            if not hasattr(backend_instance, "get_stats"):
+                raise HTTPException(
+                    status_code=501,
+                    detail=f"Backend '{backend}' does not implement get_stats()",
+                )
             backend_stats = await backend_instance.get_stats()
             stats.update(backend_stats)
 
         return stats
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Get stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ============================================================================
-# Profile Management Endpoints
-# ============================================================================
 
 
 @router.post("/profiles", response_model=ProfileCreateResponse, status_code=201)
@@ -203,7 +213,6 @@ async def create_profile(
         HTTPException 500: Creation or deployment failed
     """
     try:
-        # Create BackendProfileConfig from request
         profile = BackendProfileConfig(
             profile_name=request.profile_name,
             type=request.type,
@@ -217,7 +226,6 @@ async def create_profile(
             model_specific=request.model_specific,
         )
 
-        # Validate profile
         validation_errors = validator.validate_profile(
             profile, tenant_id=request.tenant_id, is_update=False
         )
@@ -230,12 +238,10 @@ async def create_profile(
                 },
             )
 
-        # Add profile to ConfigManager
         config_manager.add_backend_profile(
             profile, tenant_id=request.tenant_id, service="backend"
         )
 
-        # Optionally deploy schema
         schema_deployed = False
         tenant_schema_name = None
 
@@ -254,25 +260,19 @@ async def create_profile(
                         tenant_id=request.tenant_id,
                         base_schema_name=request.schema_name,
                     )
-                    success = True
                     schema_deployed = True
-
-                    if success:
-                        tenant_schema_name = backend.get_tenant_schema_name(
-                            request.tenant_id, request.schema_name
-                        )
-                        logger.info(
-                            f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
-                        )
+                    tenant_schema_name = backend.get_tenant_schema_name(
+                        request.tenant_id, request.schema_name
+                    )
+                    logger.info(
+                        f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
+                    )
                 else:
                     logger.warning("Backend not available for schema deployment")
 
             except Exception as e:
                 logger.error(f"Schema deployment failed: {e}")
-                # Don't fail profile creation if deployment fails
-                # User can deploy later via /deploy endpoint
 
-        # Get the actual version from the store after creation
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
@@ -320,17 +320,14 @@ async def list_profiles(
         HTTPException 500: List operation failed
     """
     try:
-        # Get all profiles for tenant
         profiles = config_manager.list_backend_profiles(
             tenant_id=tenant_id, service="backend"
         )
 
-        # Convert to summary format
         profile_summaries = []
         backend_registry = BackendRegistry.get_instance()
 
         for profile_name, profile in profiles.items():
-            # Check if schema is deployed
             schema_deployed = False
             try:
                 backend = backend_registry.get_ingestion_backend(
@@ -343,8 +340,8 @@ async def list_profiles(
                     schema_deployed = backend.schema_exists(
                         schema_name=profile.schema_name, tenant_id=tenant_id
                     )
-            except Exception:
-                pass  # If check fails, assume not deployed
+            except Exception as e:
+                logger.warning(f"Failed to check schema deployment status for '{profile_name}': {e}")
 
             profile_summaries.append(
                 ProfileSummary(
@@ -354,7 +351,7 @@ async def list_profiles(
                     schema_name=profile.schema_name,
                     embedding_model=profile.embedding_model,
                     schema_deployed=schema_deployed,
-                    created_at=datetime.now().isoformat(),  # TODO: Get actual creation time
+                    created_at=datetime.now().isoformat(),  # config store does not persist creation time
                 )
             )
 
@@ -393,7 +390,6 @@ async def get_profile(
         HTTPException 500: Get operation failed
     """
     try:
-        # Get profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
@@ -404,7 +400,6 @@ async def get_profile(
                 detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
             )
 
-        # Check if schema is deployed
         schema_deployed = False
         tenant_schema_name = None
 
@@ -491,7 +486,6 @@ async def update_profile(
         HTTPException 500: Update operation failed
     """
     try:
-        # Get existing profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
@@ -504,7 +498,6 @@ async def update_profile(
                 detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
             )
 
-        # Build overrides dictionary (only include non-None fields)
         overrides = {}
         updated_fields = []
 
@@ -527,7 +520,6 @@ async def update_profile(
         if not overrides:
             raise HTTPException(status_code=400, detail="No fields to update provided")
 
-        # Validate update fields
         validation_errors = validator.validate_update_fields(overrides)
         if validation_errors:
             raise HTTPException(
@@ -538,7 +530,6 @@ async def update_profile(
                 },
             )
 
-        # Update profile
         config_manager.update_backend_profile(
             profile_name=profile_name,
             overrides=overrides,
@@ -547,7 +538,6 @@ async def update_profile(
             service="backend",
         )
 
-        # Get the actual version from the store after update
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
@@ -601,7 +591,6 @@ async def delete_profile(
         HTTPException 500: Deletion failed
     """
     try:
-        # Check if profile exists
         profile = config_manager.get_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
@@ -614,9 +603,7 @@ async def delete_profile(
 
         schema_deleted = False
 
-        # Delete schema if requested
         if delete_schema:
-            # Check if other profiles use this schema
             all_profiles = config_manager.list_backend_profiles(
                 tenant_id=tenant_id, service="backend"
             )
@@ -650,9 +637,7 @@ async def delete_profile(
                     schema_deleted = len(deleted_schemas) > 0
             except Exception as e:
                 logger.error(f"Failed to delete schema: {e}")
-                # Continue with profile deletion even if schema deletion fails
 
-        # Delete profile
         success = config_manager.delete_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
@@ -702,7 +687,6 @@ async def deploy_profile_schema(
         HTTPException 500: Deployment failed
     """
     try:
-        # Get profile
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
@@ -715,7 +699,6 @@ async def deploy_profile_schema(
                 detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
             )
 
-        # Check if schema already deployed (unless force=True)
         backend_registry = BackendRegistry.get_instance()
         backend = backend_registry.get_ingestion_backend(
             "vespa",
@@ -746,7 +729,6 @@ async def deploy_profile_schema(
                 deployed_at=datetime.now().isoformat(),
             )
 
-        # Deploy schema
         try:
             backend.schema_registry.deploy_schema(
                 tenant_id=request.tenant_id,
@@ -758,25 +740,14 @@ async def deploy_profile_schema(
                 request.tenant_id, profile.schema_name
             )
 
-            if True:
-                return SchemaDeploymentResponse(
-                    profile_name=profile_name,
-                    tenant_id=request.tenant_id,
-                    schema_name=profile.schema_name,
-                    tenant_schema_name=tenant_schema_name,
-                    deployment_status="success",
-                    deployed_at=datetime.now().isoformat(),
-                )
-            else:
-                return SchemaDeploymentResponse(
-                    profile_name=profile_name,
-                    tenant_id=request.tenant_id,
-                    schema_name=profile.schema_name,
-                    tenant_schema_name=tenant_schema_name,
-                    deployment_status="failed",
-                    deployed_at=datetime.now().isoformat(),
-                    error_message="Schema deployment returned false",
-                )
+            return SchemaDeploymentResponse(
+                profile_name=profile_name,
+                tenant_id=request.tenant_id,
+                schema_name=profile.schema_name,
+                tenant_schema_name=tenant_schema_name,
+                deployment_status="success",
+                deployed_at=datetime.now().isoformat(),
+            )
 
         except Exception as e:
             logger.error(f"Schema deployment failed: {e}")
