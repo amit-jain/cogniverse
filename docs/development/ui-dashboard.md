@@ -960,6 +960,69 @@ GET /ingestion/status/{job_id}
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
 6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
 
+### 7. Multi-Modal Chat Tab
+
+**File**: `scripts/multi_modal_chat_tab.py`
+
+The Chat tab provides a conversational interface that supports multi-turn conversations with query rewrite. It sends messages to the routing agent, which dispatches to the appropriate downstream agent.
+
+#### Multi-Turn Conversation Support
+
+The Chat tab builds `conversation_history` from the Streamlit session state and includes it in each REST request:
+
+```python
+# Last 10 messages from session state, truncated to 200 chars each
+history = []
+for msg in st.session_state.get("chat_messages", [])[-10:]:
+    role = "user" if msg["role"] == "user" else "agent"
+    content = msg.get("content", "")
+    if content:
+        history.append({"role": role, "content": content[:200]})
+
+task_data = {
+    "agent_name": "routing_agent",
+    "query": query,
+    "context": {"tenant_id": tenant_id, ...},
+    "top_k": 10,
+    "conversation_history": history if history else None,
+}
+```
+
+#### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant U as Chat Tab (Streamlit)
+    participant REST as POST /agents/routing_agent/process
+    participant D as AgentDispatcher
+    participant S as SearchService
+    participant QR as ConversationalQueryRewriteModule
+
+    U->>REST: query + conversation_history
+    REST->>D: dispatch(routing_agent, context)
+    D->>D: route_query → recommended_agent
+    D->>D: _execute_downstream_agent(search_agent)
+
+    alt conversation_history present
+        D->>QR: rewrite(query, history)
+        QR-->>D: rewritten query
+    end
+
+    D->>S: search(rewritten_query)
+    S-->>D: results
+    D-->>REST: routing metadata + downstream_result
+    REST-->>U: JSON response with rewritten_query
+```
+
+On turn 2+, the response JSON includes `rewritten_query` (e.g., "show me longer ones" → "show me longer basketball videos") visible in the "View Details" expander.
+
+#### Features
+
+- **Multi-modal input**: Text, video, image, PDF file uploads
+- **Tenant selection**: Configurable in sidebar, validates `org:tenant` format
+- **Memory status check**: Queries routing agent capabilities for Mem0 integration
+- **Session management**: Clear conversation resets history and generates new session ID
+
 ---
 
 ## Usage Examples

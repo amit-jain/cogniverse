@@ -31,7 +31,7 @@ graph LR
 
     subgraph "Execution"
         OD{"<span style='color:#000'>Orchestration<br/>Needed?</span>"}
-        SA["<span style='color:#000'>Single Agent</span>"]
+        DDA["<span style='color:#000'>Downstream<br/>Agent Dispatch</span>"]
         MAO["<span style='color:#000'>Multi-Agent<br/>Orchestrator</span>"]
     end
 
@@ -46,7 +46,7 @@ graph LR
     CTX --> DSPy
     CQA --> DSPy --> GRPO
     GRPO --> OD
-    OD -- "No" --> SA --> VS
+    OD -- "No" --> DDA --> VS
     OD -- "Yes (≥3 signals)" --> MAO
     MAO --> VS & TS & SUM & RPT
 
@@ -56,7 +56,7 @@ graph LR
     style DSPy fill:#a5d6a7,stroke:#388e3c,color:#000
     style GRPO fill:#a5d6a7,stroke:#388e3c,color:#000
     style OD fill:#ffcc80,stroke:#ef6c00,color:#000
-    style SA fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DDA fill:#ce93d8,stroke:#7b1fa2,color:#000
     style MAO fill:#ce93d8,stroke:#7b1fa2,color:#000
     style VS fill:#ffcc80,stroke:#ef6c00,color:#000
     style TS fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -236,12 +236,31 @@ A factory function selects the appropriate signature tier:
 
 When a query is too complex for a single agent, the `RoutingAgent` hands off to `MultiAgentOrchestrator` which coordinates multiple agents through a dependency-aware execution plan.
 
-### Orchestration Handoff
+### Routing Execution Paths
 
-The handoff from routing to orchestration happens in the runtime endpoint (`_execute_routing_task`):
+`_execute_routing_task` in `AgentDispatcher` handles two execution paths based on the routing decision:
 
-1. `RoutingAgent.route_query()` returns a `RoutingOutput` with `metadata["needs_orchestration"]`
-2. The runtime checks this flag — when `True`, it instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager` and the same `RoutingAgent` instance
+#### Non-Orchestration Path (Single Agent)
+
+When `needs_orchestration=False`, the routing agent executes the recommended downstream agent directly via `_execute_downstream_agent`:
+
+1. `RoutingAgent.route_query()` returns a `RoutingOutput` with the recommended agent and `metadata["needs_orchestration"] = False`
+2. `_execute_downstream_agent` looks up the recommended agent in the registry and dispatches based on its capabilities:
+   - `search`/`video_search`/`retrieval` → `_execute_search_task` (with `conversation_history` for query rewrite)
+   - `image_search`/`visual_analysis` → `_execute_image_search_task`
+   - `audio_analysis`/`transcription` → `_execute_audio_search_task`
+   - `document_analysis`/`pdf_processing` → `_execute_document_search_task`
+   - `detailed_report` → `_execute_detailed_report_task`
+   - `summarization`/`text_generation` → `_execute_summarization_task`
+   - `text_analysis`/`sentiment`/`classification` → `_execute_text_analysis_task`
+3. The response includes both routing metadata (`recommended_agent`, `confidence`, `reasoning`) and the `downstream_result` from the executed agent
+
+#### Orchestration Path (Multi-Agent)
+
+When `needs_orchestration=True`, the routing agent hands off to `MultiAgentOrchestrator`:
+
+1. `RoutingAgent.route_query()` returns a `RoutingOutput` with `metadata["needs_orchestration"] = True`
+2. The runtime instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager` and the same `RoutingAgent` instance
 3. `MultiAgentOrchestrator.process_complex_query()` plans a workflow using DSPy, executes agents via direct HTTP (`POST /agents/{name}/process`), and aggregates results
 4. A `cogniverse.orchestration` telemetry span is emitted with attributes (`orchestration.query`, `orchestration.workflow_id`, `orchestration.pattern`, `orchestration.execution_time`, `orchestration.tasks_completed`, `orchestration.agents_used`, `orchestration.execution_order`) consumed by the dashboard's Orchestration Annotation tab
 

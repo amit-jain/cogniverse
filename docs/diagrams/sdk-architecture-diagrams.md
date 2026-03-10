@@ -469,8 +469,18 @@ sequenceDiagram
     Foundation->>Foundation: Attach tenant_id attribute
     Foundation->>Foundation: Send to Phoenix: acme_corp_project
 
-    Agents-->>Runtime: {modality: "video", strategy: "hybrid"}
-    Runtime-->>User: Routing response
+    Agents-->>Runtime: {recommended_agent: "search_agent", needs_orchestration: false}
+
+    Note over Runtime: _execute_downstream_agent dispatches by capability
+    Runtime->>Agents: _execute_search_task(query, conversation_history)
+
+    alt conversation_history present
+        Agents->>Agents: ConversationalQueryRewriteModule
+        Note over Agents: "show me more" → "show me more cat videos"
+    end
+
+    Agents-->>Runtime: downstream_result with search results
+    Runtime-->>User: routing metadata + downstream_result
 ```
 
 ### Search Flow Across Packages (Layered Architecture)

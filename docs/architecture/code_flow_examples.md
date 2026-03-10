@@ -145,6 +145,110 @@ results = video_agent.search(
 # Search service routes to correct tenant schema internally
 ```
 
+## Multi-Turn Conversation Flow
+
+### Query Rewrite with Conversation History
+
+When a user sends a follow-up message like "show me longer ones" after searching for "cat videos", the system resolves the anaphoric reference using conversation history.
+
+```bash
+# Turn 2: follow-up with conversation history
+curl -X POST http://localhost:8000/agents/routing_agent/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_name": "routing_agent",
+    "query": "show me longer ones",
+    "context": {"tenant_id": "flywheel_org:production"},
+    "top_k": 5,
+    "conversation_history": [
+      {"role": "user", "content": "search for cat videos"},
+      {"role": "agent", "content": "Found 5 cat video results"}
+    ]
+  }'
+```
+
+**Code Flow:**
+```python
+# 1. REST endpoint receives request with conversation_history
+# libs/runtime/cogniverse_runtime/routers/agents.py
+task = AgentTask(
+    agent_name="routing_agent",
+    query="show me longer ones",
+    conversation_history=[
+        {"role": "user", "content": "search for cat videos"},
+        {"role": "agent", "content": "Found 5 cat video results"},
+    ],
+)
+# conversation_history is merged into dispatch context
+
+# 2. AgentDispatcher._execute_routing_task routes the query
+# libs/runtime/cogniverse_runtime/agent_dispatcher.py
+routing_result = await routing_agent.route_query("show me longer ones")
+# routing_result.recommended_agent = "search_agent"
+# routing_result.metadata["needs_orchestration"] = False
+
+# 3. Non-orchestration path: execute downstream agent
+# _execute_downstream_agent dispatches based on capabilities
+downstream_result = await self._execute_downstream_agent(
+    agent_name="search_agent",
+    query=routing_result.enhanced_query,
+    tenant_id=tenant_id,
+    conversation_history=conversation_history,
+)
+
+# 4. Inside _execute_search_task, query rewrite happens
+# ConversationalQueryRewriteModule resolves anaphoric references
+rewritten = self._rewrite_query_with_history(
+    query="show me longer ones",
+    conversation_history=[...],
+)
+# rewritten = "show me longer cat videos"
+
+# 5. Search executes with rewritten query
+results = search_service.search(query="show me longer cat videos", ...)
+
+# 6. Response includes both routing and search results
+# {
+#   "status": "success",
+#   "agent": "routing_agent",
+#   "recommended_agent": "search_agent",
+#   "downstream_result": {
+#     "agent": "search_agent",
+#     "original_query": "show me longer ones",
+#     "rewritten_query": "show me longer cat videos",
+#     "results_count": 5,
+#     "results": [...]
+#   }
+# }
+```
+
+```mermaid
+sequenceDiagram
+    participant U as User / Chat Tab
+    participant REST as POST /agents/{name}/process
+    participant D as AgentDispatcher
+    participant R as RoutingAgent
+    participant DDA as _execute_downstream_agent
+    participant S as SearchService
+    participant QR as ConversationalQueryRewriteModule
+
+    U->>REST: query="show me longer ones"<br/>conversation_history=[{cat videos}...]
+    REST->>D: dispatch(routing_agent, query, context)
+    D->>R: route_query("show me longer ones")
+    R-->>D: recommended_agent=search_agent<br/>needs_orchestration=False
+
+    D->>DDA: execute(search_agent, query, history)
+    DDA->>QR: rewrite("show me longer ones", history)
+    QR-->>DDA: "show me longer cat videos"
+    DDA->>S: search("show me longer cat videos")
+    S-->>DDA: 5 results
+    DDA-->>D: downstream_result
+    D-->>REST: routing metadata + downstream_result
+    REST-->>U: JSON response
+```
+
+---
+
 ## 3. DSPy Routing Optimization Flow
 
 ### Advanced Multi-Stage Optimizer

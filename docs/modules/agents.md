@@ -2883,14 +2883,27 @@ agent.log_tenant_operation(
 
 ---
 
-## Routing to Orchestration Handoff
+## Routing Execution Paths
 
-When `RoutingAgent.route_query()` determines a query is too complex for a single agent, it sets `metadata["needs_orchestration"] = True`. The runtime endpoint (`_execute_routing_task` in `agents.py`) checks this flag and hands off to `MultiAgentOrchestrator`:
+`_execute_routing_task` in `AgentDispatcher` processes routing decisions through two paths:
+
+### Non-Orchestration Path (Single Agent)
+
+When the query maps to a single agent (`needs_orchestration=False`):
+
+1. **RoutingAgent** analyzes the query (entity extraction, relationship inference, DSPy routing decision)
+2. `_execute_downstream_agent` dispatches to the recommended agent based on its registered capabilities (search, summarization, text analysis, etc.)
+3. `conversation_history` is threaded through to the downstream agent, enabling query rewrite on multi-turn conversations
+4. Response includes routing metadata (`recommended_agent`, `confidence`, `reasoning`) and the `downstream_result` from the executed agent
+
+### Orchestration Path (Multi-Agent)
+
+When `RoutingAgent.route_query()` determines a query is too complex for a single agent, it sets `metadata["needs_orchestration"] = True`:
 
 1. **RoutingAgent** analyzes the query (entity extraction, relationship inference, DSPy routing decision)
 2. A 7-signal heuristic evaluates orchestration need (multiple verbs, entity density, low confidence, etc.)
 3. If >= 3 signals fire → `needs_orchestration = True` in routing result metadata
-4. The runtime checks this flag and instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager`
+4. The runtime instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager`
 5. `MultiAgentOrchestrator.process_complex_query()` plans, executes, and aggregates a multi-agent workflow
 6. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
 
