@@ -278,11 +278,23 @@ class AgentDispatcher:
                 "metadata": result.metadata,
             }
 
+        recommended = result.recommended_agent
+        effective_query = result.enhanced_query or query
+        conversation_history = context.get("conversation_history", [])
+
+        downstream_result = await self._execute_downstream_agent(
+            agent_name=recommended,
+            query=effective_query,
+            tenant_id=tenant_id,
+            top_k=context.get("top_k", 10),
+            conversation_history=conversation_history,
+        )
+
         return {
             "status": "success",
             "agent": "routing_agent",
-            "message": f"Routed '{query}' to {result.recommended_agent}",
-            "recommended_agent": result.recommended_agent,
+            "message": f"Routed '{query}' to {recommended}",
+            "recommended_agent": recommended,
             "confidence": result.confidence,
             "reasoning": result.reasoning,
             "enhanced_query": result.enhanced_query,
@@ -290,7 +302,54 @@ class AgentDispatcher:
             "relationships": result.relationships,
             "query_variants": result.query_variants,
             "metadata": result.metadata,
+            "downstream_result": downstream_result,
         }
+
+    async def _execute_downstream_agent(
+        self,
+        agent_name: str,
+        query: str,
+        tenant_id: str,
+        top_k: int = 10,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """Execute the downstream agent that the router recommended.
+
+        Re-uses the existing _execute_*_task methods based on the agent's
+        capabilities, passing conversation_history through for query rewrite.
+        """
+        agent = self._registry.get_agent(agent_name)
+        if not agent:
+            raise ValueError(
+                f"Routing recommended '{agent_name}' but it is not in the registry"
+            )
+
+        capabilities = set(agent.capabilities)
+
+        if capabilities & {"search", "video_search", "retrieval"}:
+            return await self._execute_search_task(
+                query, tenant_id, top_k,
+                conversation_history=conversation_history,
+            )
+        elif capabilities & {"image_search", "visual_analysis"}:
+            return await self._execute_image_search_task(query, tenant_id, top_k)
+        elif capabilities & {"audio_analysis", "transcription"}:
+            return await self._execute_audio_search_task(query, tenant_id, top_k)
+        elif capabilities & {"document_analysis", "pdf_processing"}:
+            return await self._execute_document_search_task(query, tenant_id, top_k)
+        elif capabilities & {"detailed_report"}:
+            return await self._execute_detailed_report_task(query, tenant_id)
+        elif capabilities & {"summarization", "text_generation"}:
+            return await self._execute_summarization_task(query, tenant_id)
+        elif capabilities & {"text_analysis", "sentiment", "classification"}:
+            return await self._execute_text_analysis_task(
+                query, {"tenant_id": tenant_id}, tenant_id
+            )
+        else:
+            raise ValueError(
+                f"Routed agent '{agent_name}' has no supported execution path. "
+                f"Capabilities: {agent.capabilities}"
+            )
 
     def _get_vespa_endpoint(self, tenant_id: str) -> str:
         from cogniverse_foundation.config.utils import get_config

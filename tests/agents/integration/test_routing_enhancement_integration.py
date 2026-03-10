@@ -343,23 +343,45 @@ class TestEnhancedAgentComponentIntegration:
         """Test complete pipeline through Multi-Agent Orchestrator"""
 
         # Mock RoutingAgent to prevent DSPy ChainOfThought init overhead.
-        # Mock httpx.AsyncClient since tasks are now executed via httpx POST
-        # (A2AClient was replaced with direct httpx calls in the orchestrator).
-        search_response_json = {
+        # Mock httpx.AsyncClient since tasks are now executed via the A2A SDK
+        # client which calls httpx.post internally.
+        #
+        # The A2A SDK transport reads response.json() and validates it as a
+        # SendMessageResponse (JSON-RPC 2.0). The response must include the
+        # "jsonrpc", "id", and "result" fields where "result" is a valid A2A
+        # Message or Task object.
+        import json as _json
+        import uuid as _uuid
+
+        search_payload = _json.dumps({
             "results": [
                 {"id": 1, "title": "Robot soccer championship", "score": 0.8},
                 {"id": 2, "title": "AI in sports", "score": 0.7},
             ],
             "confidence": 0.9,
-        }
-        summarize_response_json = {
+        })
+        summarize_payload = _json.dumps({
             "summary": "Enhanced summary of robot soccer content",
             "confidence": 0.85,
-        }
+        })
 
-        # Each httpx POST call returns a mock response whose .json() yields
-        # the appropriate payload based on call order.
-        http_responses = [search_response_json, summarize_response_json]
+        def _make_a2a_response(text_payload: str) -> dict:
+            """Wrap a text payload in a valid A2A JSON-RPC 2.0 response."""
+            return {
+                "jsonrpc": "2.0",
+                "id": str(_uuid.uuid4()),
+                "result": {
+                    "kind": "message",
+                    "messageId": str(_uuid.uuid4()),
+                    "role": "agent",
+                    "parts": [{"kind": "text", "text": text_payload}],
+                },
+            }
+
+        http_responses = [
+            _make_a2a_response(search_payload),
+            _make_a2a_response(summarize_payload),
+        ]
         call_index = {"n": 0}
 
         def make_mock_response():
@@ -367,7 +389,7 @@ class TestEnhancedAgentComponentIntegration:
             call_index["n"] += 1
             mock_resp = Mock()
             mock_resp.raise_for_status = Mock()
-            mock_resp.json = Mock(return_value=http_responses[idx])
+            mock_resp.json = Mock(return_value=http_responses[idx % len(http_responses)])
             return mock_resp
 
         mock_http_client = AsyncMock()
@@ -1064,6 +1086,26 @@ class TestRouterToRoutingAgentWiring:
             relationships=[],
         )
 
+        from cogniverse_core.common.agent_models import AgentEndpoint
+
+        # Register search_agent so _execute_downstream_agent can find it.
+        registry.register_agent(
+            AgentEndpoint(
+                name="search_agent",
+                url="http://localhost:8000",
+                capabilities=["search", "video_search"],
+            )
+        )
+
+        mock_downstream = {
+            "status": "success",
+            "agent": "search_agent",
+            "message": "Found 2 results",
+            "results_count": 2,
+            "results": [],
+            "profile": "test_profile",
+        }
+
         with patch(
             "cogniverse_foundation.config.utils.get_config",
             return_value=test_config,
@@ -1075,11 +1117,17 @@ class TestRouterToRoutingAgentWiring:
                 mock_agent.route_query = AsyncMock(return_value=mock_routing_output)
                 mock_agent_class.return_value = mock_agent
 
-                result = await dispatcher._execute_routing_task(
-                    query="find cats in videos",
-                    context={"tenant_id": "test_tenant"},
-                    tenant_id="test_tenant",
-                )
+                with patch.object(
+                    dispatcher,
+                    "_execute_downstream_agent",
+                    new_callable=AsyncMock,
+                    return_value=mock_downstream,
+                ):
+                    result = await dispatcher._execute_routing_task(
+                        query="find cats in videos",
+                        context={"tenant_id": "test_tenant"},
+                        tenant_id="test_tenant",
+                    )
 
                 # Verify RoutingDeps was constructed correctly
                 call_kwargs = mock_agent_class.call_args[1]
@@ -1142,6 +1190,26 @@ class TestRouterToRoutingAgentWiring:
             enhanced_query="test",
         )
 
+        from cogniverse_core.common.agent_models import AgentEndpoint
+
+        # Register search_agent so _execute_downstream_agent can find it.
+        registry.register_agent(
+            AgentEndpoint(
+                name="search_agent",
+                url="http://localhost:8000",
+                capabilities=["search", "video_search"],
+            )
+        )
+
+        mock_downstream = {
+            "status": "success",
+            "agent": "search_agent",
+            "message": "Found 0 results",
+            "results_count": 0,
+            "results": [],
+            "profile": "test_profile",
+        }
+
         with patch(
             "cogniverse_foundation.config.utils.get_config",
             return_value=test_config,
@@ -1153,11 +1221,17 @@ class TestRouterToRoutingAgentWiring:
                 mock_agent.route_query = AsyncMock(return_value=mock_output)
                 mock_agent_class.return_value = mock_agent
 
-                await dispatcher._execute_routing_task(
-                    query="test",
-                    context={"tenant_id": "test_tenant"},
-                    tenant_id="test_tenant",
-                )
+                with patch.object(
+                    dispatcher,
+                    "_execute_downstream_agent",
+                    new_callable=AsyncMock,
+                    return_value=mock_downstream,
+                ):
+                    await dispatcher._execute_routing_task(
+                        query="test",
+                        context={"tenant_id": "test_tenant"},
+                        tenant_id="test_tenant",
+                    )
 
                 # Verify memory fields in RoutingDeps
                 deps = mock_agent_class.call_args[1]["deps"]

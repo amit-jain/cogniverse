@@ -56,10 +56,21 @@ class TestRoutingOrchestrationHandoff:
         mock_result.query_variants = []
         mock_result.metadata = {"needs_orchestration": False}
 
-        # Configure registry to find routing agent
-        agent_ep = MagicMock()
-        agent_ep.capabilities = ["routing"]
-        dispatcher._registry.get_agent.return_value = agent_ep
+        # Configure registry: routing_agent has ["routing"],
+        # video_search_agent has ["video_search"] for downstream execution
+        routing_ep = MagicMock()
+        routing_ep.capabilities = ["routing"]
+        search_ep = MagicMock()
+        search_ep.capabilities = ["video_search"]
+
+        def get_agent_by_name(name):
+            if name == "routing_agent":
+                return routing_ep
+            if name == "video_search_agent":
+                return search_ep
+            return None
+
+        dispatcher._registry.get_agent.side_effect = get_agent_by_name
 
         # Mock the lazy imports inside _execute_routing_task
         mock_routing_agent_cls = MagicMock()
@@ -80,13 +91,25 @@ class TestRoutingOrchestrationHandoff:
 
         mock_unified_config = MagicMock()
 
+        mock_downstream = {
+            "status": "success",
+            "agent": "search_agent",
+            "message": "Found 3 results for 'test query enhanced'",
+            "results_count": 3,
+            "results": [],
+            "profile": "test_profile",
+        }
+
         with patch.dict("sys.modules", {
             "cogniverse_agents": MagicMock(),
             "cogniverse_agents.routing_agent": mock_routing_module,
             "cogniverse_foundation.config.unified_config": mock_unified_config,
             "cogniverse_foundation.config.utils": mock_config_utils,
             "cogniverse_foundation.telemetry.config": mock_telemetry_config_module,
-        }):
+        }), patch.object(
+            dispatcher, "_execute_search_task",
+            new_callable=AsyncMock, return_value=mock_downstream,
+        ):
             result = await dispatcher.dispatch(
                 agent_name="routing_agent",
                 query="find videos of cats",
@@ -96,6 +119,7 @@ class TestRoutingOrchestrationHandoff:
         assert result["status"] == "success"
         assert result["recommended_agent"] == "video_search_agent"
         assert "orchestration_result" not in result
+        assert result["downstream_result"] == mock_downstream
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast

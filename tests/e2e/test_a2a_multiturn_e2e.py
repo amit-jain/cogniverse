@@ -89,8 +89,8 @@ class TestRESTMultiTurn:
             f"Rewritten query '{data['rewritten_query']}' should reference cats/videos"
         )
 
-    def test_routing_agent_processes_with_history(self):
-        """Routing agent should accept conversation_history without error."""
+    def test_routing_agent_executes_downstream_with_rewrite(self):
+        """Routing agent should execute downstream search with query rewrite."""
         with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
@@ -101,7 +101,7 @@ class TestRESTMultiTurn:
                     "top_k": 3,
                     "conversation_history": [
                         {"role": "user", "content": "search for sports clips"},
-                        {"role": "agent", "content": "Found results"},
+                        {"role": "agent", "content": "Found 5 sports clip results"},
                     ],
                 },
             )
@@ -110,6 +110,19 @@ class TestRESTMultiTurn:
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == "routing_agent"
+        assert "downstream_result" in data, (
+            f"Routing should execute downstream agent, got keys: {list(data.keys())}"
+        )
+        ds = data["downstream_result"]
+        assert ds["agent"] == "search_agent"
+        assert ds["results_count"] > 0, "Downstream search should return results"
+        assert "rewritten_query" in ds, (
+            f"Downstream search should rewrite query with history, got keys: {list(ds.keys())}"
+        )
+        rewritten = ds["rewritten_query"].lower()
+        assert any(word in rewritten for word in ["sport", "clip"]), (
+            f"Rewritten query '{ds['rewritten_query']}' should reference sports from history"
+        )
 
 
 @pytest.mark.e2e
