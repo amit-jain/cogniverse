@@ -34,6 +34,7 @@ class LLMEndpointConfig:
     temperature: float = 0.1
     max_tokens: int = 1000
     adapter_path: Optional[str] = None  # LoRA/fine-tuned artifact path
+    extra_body: Optional[Dict[str, Any]] = None  # Provider-specific request params
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, omitting None values for clean serialization."""
@@ -95,7 +96,6 @@ class LLMConfig:
         if override is None:
             return copy.deepcopy(self.primary)
 
-        # Merge: start with primary's full dict, overlay the partial override
         merged = self.primary.to_dict()
         merged.update(override)
         return LLMEndpointConfig.from_dict(merged)
@@ -120,7 +120,7 @@ class LLMConfig:
         # Store overrides as raw dicts — they are partial and may lack "model"
         overrides: Dict[str, Optional[Dict[str, Any]]] = {}
         for key, val in data.get("overrides", {}).items():
-            overrides[key] = val  # None or partial dict
+            overrides[key] = val
 
         return cls(primary=primary, teacher=teacher, overrides=overrides)
 
@@ -841,5 +841,3 @@ class SyntheticGeneratorConfig:
         return self.optimizer_configs.get(optimizer_type)
 
 
-# ConfigEntry is now defined in config_store_interface.py
-# Import it from there if needed

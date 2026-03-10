@@ -229,5 +229,5 @@ class TestAgentDispatcherCapabilityRouting:
                 context={"tenant_id": "t1"},
             )
 
-        mock_search.assert_called_once_with("find cats", "t1", 10)
+        mock_search.assert_called_once_with("find cats", "t1", 10, conversation_history=[])
         assert result["status"] == "success"

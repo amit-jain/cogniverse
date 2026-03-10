@@ -11,19 +11,33 @@ import logging
 import time
 from pathlib import Path
 
+import dspy
+import httpx
 import pytest
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.testclient import TestClient as StarletteTestClient
 
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
+from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
+    LLMEndpointConfig,
     SystemConfig,
 )
+from cogniverse_foundation.config.utils import get_config
+from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
@@ -234,4 +248,138 @@ def health_client(vespa_instance, config_manager):
     test_app.include_router(health.router)
 
     with TestClient(test_app) as client:
+        yield client
+
+
+def _is_llm_available() -> bool:
+    """Check if the configured LLM endpoint is reachable.
+
+    Reads api_base from configs/config.json directly (no ConfigManager
+    needed — avoids BACKEND_URL env var requirement at import time).
+    """
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+
+        config_path = _Path(__file__).resolve().parents[3] / "configs" / "config.json"
+        with open(config_path) as f:
+            config = _json.load(f)
+        api_base = (
+            config.get("llm_config", {})
+            .get("primary", {})
+            .get("api_base", "http://localhost:11434")
+        )
+        response = httpx.get(f"{api_base}/api/tags", timeout=5.0)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+skip_if_no_llm = pytest.mark.skipif(
+    not _is_llm_available(),
+    reason="Configured LLM endpoint not reachable",
+)
+
+
+@pytest.fixture(scope="module")
+def _dspy_lm_instance():
+    """Module-scoped: create the LM once per module (expensive)."""
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager as _cdcm,
+    )
+
+    cm = _cdcm()
+    config = get_config(tenant_id="default", config_manager=cm)
+    llm_cfg = config.get("llm_config", {}).get("primary", {})
+
+    # Disable qwen3 thinking mode — it puts output in a 'thinking' field
+    # that DSPy can't read, leaving content empty.
+    extra_body = None
+    model = llm_cfg["model"]
+    if "qwen3" in model or "qwen-3" in model:
+        extra_body = {"think": False}
+
+    endpoint = LLMEndpointConfig(
+        model=model,
+        api_base=llm_cfg.get("api_base"),
+        temperature=0.1,
+        max_tokens=200,
+        extra_body=extra_body,
+    )
+    return create_dspy_lm(endpoint)
+
+
+@pytest.fixture
+def dspy_lm(_dspy_lm_instance):
+    """Function-scoped: re-apply dspy.configure before each test.
+
+    The root conftest cleanup_dspy_state clears dspy.settings.lm after
+    each test, so we must re-configure before every test that needs an LLM.
+    """
+    dspy.configure(lm=_dspy_lm_instance)
+    return _dspy_lm_instance
+
+
+@pytest.fixture(scope="module")
+def agent_registry(config_manager):
+    """AgentRegistry with a search_agent registered."""
+    registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+    registry.register_agent(
+        AgentEndpoint(
+            name="search_agent",
+            url="http://localhost:8000",
+            capabilities=["search", "video_search"],
+        )
+    )
+    return registry
+
+
+@pytest.fixture(scope="module")
+def dispatcher(agent_registry, config_manager, schema_loader):
+    """Real AgentDispatcher wired to real registry, config, and schema loader."""
+    return AgentDispatcher(
+        agent_registry=agent_registry,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+
+@pytest.fixture(scope="module")
+def a2a_client(dispatcher):
+    """Starlette TestClient wrapping a real A2A server with InMemoryTaskStore.
+
+    This is the production A2A stack: real executor, real task store,
+    real request handler. Only the transport is in-process (TestClient).
+    """
+    executor = CogniverseAgentExecutor(dispatcher=dispatcher)
+
+    card = AgentCard(
+        name="Test Cogniverse",
+        description="Integration test agent",
+        url="http://localhost:9999/a2a",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[
+            AgentSkill(
+                id="search_agent",
+                name="search_agent",
+                description="Search for videos",
+                tags=["search", "video_search"],
+            ),
+        ],
+    )
+
+    handler = DefaultRequestHandler(
+        agent_executor=executor,
+        task_store=InMemoryTaskStore(),
+    )
+
+    server = A2AStarletteApplication(
+        agent_card=card,
+        http_handler=handler,
+    )
+
+    with StarletteTestClient(server.build()) as client:
         yield client

@@ -4,8 +4,13 @@ Shared fixtures and utilities for agent integration tests.
 
 import logging
 
+import dspy
 import httpx
 import pytest
+
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +19,30 @@ def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
     """Check if Ollama service is available."""
     try:
         response = httpx.get(f"{base_url}/api/tags", timeout=5.0)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def is_llm_available() -> bool:
+    """Check if the configured LLM endpoint is reachable.
+
+    Reads api_base from configs/config.json directly (no ConfigManager
+    needed — avoids BACKEND_URL env var requirement at import time).
+    """
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+
+        config_path = _Path(__file__).resolve().parents[3] / "configs" / "config.json"
+        with open(config_path) as f:
+            config = _json.load(f)
+        api_base = (
+            config.get("llm_config", {})
+            .get("primary", {})
+            .get("api_base", "http://localhost:11434")
+        )
+        response = httpx.get(f"{api_base}/api/tags", timeout=5.0)
         return response.status_code == 200
     except Exception:
         return False
@@ -32,10 +61,50 @@ skip_if_no_ollama = pytest.mark.skipif(
     reason="Ollama service not available at http://localhost:11434",
 )
 
+skip_if_no_llm = pytest.mark.skipif(
+    not is_llm_available(),
+    reason="Configured LLM endpoint not reachable",
+)
+
 skip_if_no_teacher_api = pytest.mark.skipif(
     not is_teacher_api_available(),
     reason="ROUTER_OPTIMIZER_TEACHER_KEY environment variable not set",
 )
+
+
+@pytest.fixture(scope="module")
+def _dspy_lm_instance():
+    """Module-scoped: create the LM once per module (expensive)."""
+    cm = create_default_config_manager()
+    config = get_config(tenant_id="default", config_manager=cm)
+    llm_cfg = config.get("llm_config", {}).get("primary", {})
+
+    # Disable qwen3 thinking mode — it puts output in a 'thinking' field
+    # that DSPy can't read, leaving content empty.
+    extra_body = None
+    model = llm_cfg["model"]
+    if "qwen3" in model or "qwen-3" in model:
+        extra_body = {"think": False}
+
+    endpoint = LLMEndpointConfig(
+        model=model,
+        api_base=llm_cfg.get("api_base"),
+        temperature=0.1,
+        max_tokens=200,
+        extra_body=extra_body,
+    )
+    return create_dspy_lm(endpoint)
+
+
+@pytest.fixture
+def dspy_lm(_dspy_lm_instance):
+    """Function-scoped: re-apply dspy.configure before each test.
+
+    The root conftest cleanup_dspy_state clears dspy.settings.lm after
+    each test, so we must re-configure before every test that needs an LLM.
+    """
+    dspy.configure(lm=_dspy_lm_instance)
+    return _dspy_lm_instance
 
 
 @pytest.fixture(autouse=True)

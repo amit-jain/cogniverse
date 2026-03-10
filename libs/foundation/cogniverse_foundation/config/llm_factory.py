@@ -46,6 +46,9 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if config.api_key is not None:
         kwargs["api_key"] = config.api_key
 
+    if config.extra_body is not None:
+        kwargs["extra_body"] = config.extra_body
+
     logger.info(
         "Creating dspy.LM: model=%s, api_base=%s, temperature=%s, max_tokens=%s",
         config.model,
