@@ -31,7 +31,6 @@ from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingOutput
-from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
@@ -130,9 +129,8 @@ class SearchAgentDeps(AgentDeps):
     )
 
 
-# DSPy Module for Generic Search
-class GenericSearchSignature(dspy.Signature):
-    """DSPy signature for generic search operations"""
+class SearchOptimizationSignature(dspy.Signature):
+    """DSPy signature for search optimization"""
 
     query: str = dspy.InputField(desc="Search query")
     modality: str = dspy.InputField(
@@ -145,25 +143,16 @@ class GenericSearchSignature(dspy.Signature):
     confidence: float = dspy.OutputField(desc="Confidence in search approach (0-1)")
 
 
-class GenericSearchModule(dspy.Module):
-    """DSPy module for intelligent generic search"""
+class SearchOptimizationModule(dspy.Module):
+    """DSPy module for search optimization"""
 
     def __init__(self):
         super().__init__()
-        # Use lightweight reasoning for search optimization
-        self.search_optimizer = dspy.ChainOfThought(GenericSearchSignature)
+        self.search_optimizer = dspy.ChainOfThought(SearchOptimizationSignature)
 
     def forward(self, query: str, modality: str = "video", top_k: int = 10):
         """Forward pass for search optimization"""
-        try:
-            result = self.search_optimizer(query=query, modality=modality, top_k=top_k)
-            return result
-        except Exception as e:
-            logger.warning(f"DSPy search optimization failed: {e}, using defaults")
-            # Fallback to simple prediction
-            return dspy.Prediction(
-                search_strategy="hybrid", enhanced_query=query, confidence=0.5
-            )
+        return self.search_optimizer(query=query, modality=modality, top_k=top_k)
 
 
 @dataclass
@@ -451,7 +440,7 @@ class SearchAgent(
                 backend_config_port = backend_port + 10991
 
         # Create DSPy search module
-        self.search_module = GenericSearchModule()
+        self.search_module = SearchOptimizationModule()
 
         # Create A2A config
         a2a_config = A2AAgentConfig(
@@ -1165,34 +1154,34 @@ class SearchAgent(
 
     def process_enhanced_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process enhanced A2A task with multimedia support.
+        Process enhanced search task with multimedia support.
 
         Args:
-            task: Enhanced A2A task
+            task: Dict with 'messages' list, each message has 'parts' list.
+                  Each part is a dict with 'kind' field: 'data', 'text', 'video', 'image'.
 
         Returns:
             Search results
         """
-        if not task.messages:
+        messages = task.get("messages", [])
+        if not messages:
             raise ValueError("Task contains no messages")
 
-        tenant_id = (
-            task.get("tenant_id")
-            if isinstance(task, dict)
-            else getattr(task, "tenant_id", None)
-        )
+        tenant_id = task.get("tenant_id")
         if not tenant_id:
             raise ValueError("Task must include tenant_id for search operations")
 
-        last_message = task.messages[-1]
+        last_message = messages[-1]
+        parts = last_message.get("parts", [])
         results = []
         search_type = "unknown"
-        modality = "video"  # Default modality
+        modality = "video"
 
-        for part in last_message.parts:
-            if isinstance(part, DataPart):
-                # Text search
-                query_data = part.data
+        for part in parts:
+            kind = part.get("kind", "")
+
+            if kind == "data":
+                query_data = part.get("data", {})
                 query = query_data.get("query")
                 modality = query_data.get("modality", "video")
 
@@ -1209,35 +1198,35 @@ class SearchAgent(
                     )
                     results.extend(text_results)
 
-            elif isinstance(part, VideoPart):
-                # Video search
+            elif kind == "video":
                 search_type = "video"
                 video_results = self._search_by_video(
-                    video_data=part.video_data,
-                    filename=part.filename or "uploaded_video.mp4",
+                    video_data=part.get("video_data"),
+                    filename=part.get("filename", "uploaded_video.mp4"),
                     tenant_id=tenant_id,
                     modality="video",
                     top_k=10,
                 )
                 results.extend(video_results)
 
-            elif isinstance(part, ImagePart):
-                # Image search
+            elif kind == "image":
                 search_type = "image"
                 image_results = self._search_by_image(
-                    image_data=part.image_data,
-                    filename=part.filename or "uploaded_image.jpg",
+                    image_data=part.get("image_data"),
+                    filename=part.get("filename", "uploaded_image.jpg"),
                     tenant_id=tenant_id,
                     modality=modality,
                     top_k=10,
                 )
                 results.extend(image_results)
 
-            elif isinstance(part, TextPart):
-                # Simple text search
+            elif kind == "text":
                 search_type = "text"
                 text_results = self._search_by_text(
-                    query=part.text, tenant_id=tenant_id, modality="video", top_k=10
+                    query=part.get("text", ""),
+                    tenant_id=tenant_id,
+                    modality="video",
+                    top_k=10,
                 )
                 results.extend(text_results)
 
@@ -1245,7 +1234,7 @@ class SearchAgent(
             logger.warning("No valid search parts found in task")
 
         return {
-            "task_id": task.id,
+            "task_id": task.get("id"),
             "status": "completed",
             "search_type": search_type,
             "modality": modality,

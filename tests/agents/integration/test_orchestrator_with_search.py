@@ -15,7 +15,7 @@ Requirements:
 import functools
 import logging
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
 import pytest
@@ -135,11 +135,21 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
         port=8013,
     )
 
-    async def dispatch_to_agent(agent_url: str, query: str, **kwargs):
-        """Route A2A HTTP calls to in-process agent instances."""
-        agent = agent_instances.get(agent_url)
+    async def dispatch_to_agent(url: str, json=None, **kwargs):
+        """Route httpx POST calls to in-process agent instances."""
+        from unittest.mock import Mock as SyncMock
+
+        # Extract agent URL from the POST URL (e.g., "http://localhost:8010/process")
+        agent_base_url = url.rsplit("/", 1)[0]  # Remove "/process"
+        agent = agent_instances.get(agent_base_url)
+
+        query = json.get("query", "") if json else ""
+
         if agent is None:
-            return {"error": f"No in-process agent registered for {agent_url}"}
+            resp = SyncMock()
+            resp.raise_for_status = SyncMock()
+            resp.json.return_value = {"error": f"No in-process agent for {url}"}
+            return resp
 
         try:
             if isinstance(agent, EntityExtractionAgent):
@@ -149,27 +159,47 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
             elif isinstance(agent, QueryEnhancementAgent):
                 agent_input = QueryEnhancementInput(query=query)
             elif isinstance(agent, SearchAgent):
-                tenant_id = kwargs.get("tenant_id", "test_tenant")
+                tenant_id = json.get("tenant_id", "test_tenant") if json else "test_tenant"
                 agent_input = SearchInput(query=query, tenant_id=tenant_id)
             else:
-                return {"error": f"Unknown agent type: {type(agent)}"}
+                resp = SyncMock()
+                resp.raise_for_status = SyncMock()
+                resp.json.return_value = {"error": f"Unknown agent type: {type(agent)}"}
+                return resp
 
-            # Use dspy.context to ensure LM is available in this execution scope
             with dspy.context(lm=dspy_lm):
                 result = await agent._process_impl(agent_input)
 
             if hasattr(result, "model_dump"):
-                return result.model_dump()
+                result_dict = result.model_dump()
             elif hasattr(result, "__dict__"):
-                return result.__dict__
+                result_dict = result.__dict__
             else:
-                return {"result": str(result)}
+                result_dict = {"result": str(result)}
+
+            resp = SyncMock()
+            resp.raise_for_status = SyncMock()
+            resp.json.return_value = result_dict
+            return resp
 
         except Exception as e:
-            logger.error(f"In-process agent {agent_url} failed: {e}")
-            return {"status": "error", "message": str(e)}
+            logger.error(f"In-process agent {url} failed: {e}")
+            resp = SyncMock()
+            resp.raise_for_status = SyncMock()
+            resp.json.return_value = {"status": "error", "message": str(e)}
+            return resp
 
-    orchestrator.a2a_client.send_task = AsyncMock(side_effect=dispatch_to_agent)
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=dispatch_to_agent)
+    mock_cm = Mock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    httpx_patcher = patch(
+        "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+        return_value=mock_cm,
+    )
+    httpx_patcher.start()
 
     # Scope available agents to only those with in-process instances.
     # Production _create_plan() uses AgentType enum (ALL agents including
@@ -232,6 +262,8 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     orchestrator._create_plan = _scoped_create_plan
 
     yield orchestrator
+
+    httpx_patcher.stop()
 
 
 @pytest.mark.integration

@@ -7,7 +7,7 @@ ENHANCED WITH COMPREHENSIVE OPTIMIZATION UI:
 - 🔧 Optimization Tab: Triggers existing AdvancedRoutingOptimizer with user examples
 - 📥 Ingestion Testing Tab: Interactive video processing with multiple profiles
 - 🔍 Interactive Search Tab: Live search testing with relevance annotation
-- 🔗 A2A Integration: All tabs communicate with existing agents via A2AClient
+- 🔗 Agent Integration: All tabs communicate with agents via HTTP
 - 📊 Status Monitoring: Real-time optimization and processing status tracking
 - 📈 Multi-Modal Performance: Per-modality metrics and cross-modal patterns
 """
@@ -65,7 +65,6 @@ import asyncio
 import httpx
 
 sys.path.append(str(project_root / "src"))
-from tools.a2a_utils import A2AClient
 
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
@@ -326,13 +325,6 @@ st.caption(
 )
 
 
-# Initialize A2A client and configuration for agent communication
-@st.cache_resource
-def get_a2a_client():
-    """Initialize A2A client for agent communication"""
-    return A2AClient(timeout=30.0)
-
-
 @st.cache_data
 def get_agent_config():
     """Get agent endpoints from configuration - fail fast if missing required URLs"""
@@ -360,7 +352,6 @@ def get_agent_config():
     }
 
 
-a2a_client = get_a2a_client()
 agent_config = get_agent_config()
 
 

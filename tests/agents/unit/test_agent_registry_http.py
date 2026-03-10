@@ -348,10 +348,10 @@ class TestProcessAgentTaskDispatch:
         }
 
         with patch(
-            "cogniverse_runtime.routers.agents._execute_routing_task",
+            "cogniverse_runtime.routers.agents.AgentDispatcher.dispatch",
             new_callable=AsyncMock,
             return_value=mock_result,
-        ) as mock_routing:
+        ) as mock_dispatch:
             response = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -361,7 +361,7 @@ class TestProcessAgentTaskDispatch:
                 },
             )
             assert response.status_code == 200
-            mock_routing.assert_called_once()
+            mock_dispatch.assert_called_once()
 
     def test_search_capability_dispatches_to_search_task(self, app_and_client):
         """Search agent with 'search' capability uses _execute_search_task."""
@@ -383,10 +383,10 @@ class TestProcessAgentTaskDispatch:
         }
 
         with patch(
-            "cogniverse_runtime.routers.agents._execute_search_task",
+            "cogniverse_runtime.routers.agents.AgentDispatcher.dispatch",
             new_callable=AsyncMock,
             return_value=mock_result,
-        ) as mock_search:
+        ) as mock_dispatch:
             response = client.post(
                 "/agents/search_agent/process",
                 json={
@@ -396,7 +396,7 @@ class TestProcessAgentTaskDispatch:
                 },
             )
             assert response.status_code == 200
-            mock_search.assert_called_once()
+            mock_dispatch.assert_called_once()
 
     def test_routing_takes_priority_over_search(self, app_and_client):
         """Agent with both 'routing' and 'search' capabilities routes to routing, not search."""
@@ -413,13 +413,10 @@ class TestProcessAgentTaskDispatch:
         mock_result = {"status": "success", "agent": "routing_agent"}
 
         with patch(
-            "cogniverse_runtime.routers.agents._execute_routing_task",
+            "cogniverse_runtime.routers.agents.AgentDispatcher.dispatch",
             new_callable=AsyncMock,
             return_value=mock_result,
-        ) as mock_routing, patch(
-            "cogniverse_runtime.routers.agents._execute_search_task",
-            new_callable=AsyncMock,
-        ) as mock_search:
+        ) as mock_dispatch:
             response = client.post(
                 "/agents/hybrid_agent/process",
                 json={
@@ -429,8 +426,7 @@ class TestProcessAgentTaskDispatch:
                 },
             )
             assert response.status_code == 200
-            mock_routing.assert_called_once()
-            mock_search.assert_not_called()
+            mock_dispatch.assert_called_once()
 
     def test_unsupported_capability_returns_501(self, app_and_client):
         """Agent with no supported capabilities returns 501."""

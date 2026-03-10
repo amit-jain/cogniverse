@@ -686,19 +686,24 @@ class TestOrchestratorAgentIntegration:
         self, orchestrator_with_real_agents
     ):
         """CORRECTNESS: Validate orchestrator handles agent failures gracefully"""
-        from unittest.mock import AsyncMock, Mock
+        from unittest.mock import AsyncMock, Mock, patch
 
         import dspy
 
-        # Make profile_selection agent fail via A2A client
+        # Make profile_selection agent fail via httpx mock
         async def fail_profile_selection(url, **kwargs):
             if "8011" in url:
                 raise Exception("Profile selection service unavailable")
-            return {"status": "success", "result": "mock"}
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {"status": "success", "result": "mock"}
+            return resp
 
-        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
-            side_effect=fail_profile_selection
-        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=fail_profile_selection)
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -708,9 +713,13 @@ class TestOrchestratorAgentIntegration:
             )
         )
 
-        result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Show me videos")
-        )
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator_with_real_agents._process_impl(
+                OrchestratorInput(query="Show me videos")
+            )
 
         # VALIDATE: Plan created despite knowing profile_selection will fail
         assert len(result.plan_steps) == 3
@@ -930,21 +939,26 @@ class TestOrchestratorComplexPatterns:
         self, orchestrator_with_real_agents
     ):
         """CORRECTNESS: Validate failure handling when entire parallel group fails"""
-        from unittest.mock import AsyncMock, Mock
+        from unittest.mock import AsyncMock, Mock, patch
 
         import dspy
 
-        # Make both agents in parallel group fail via A2A client
+        # Make both agents in parallel group fail via httpx mock
         async def fail_parallel_group(url, **kwargs):
             if "8010" in url:
                 raise Exception("Extraction service down")
             if "8012" in url:
                 raise Exception("Enhancement service down")
-            return {"status": "success", "result": "mock"}
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {"status": "success", "result": "mock"}
+            return resp
 
-        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
-            side_effect=fail_parallel_group
-        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=fail_parallel_group)
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -954,9 +968,13 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Show me videos")
-        )
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator_with_real_agents._process_impl(
+                OrchestratorInput(query="Show me videos")
+            )
 
         # VALIDATE: Both parallel agents failed
         assert "entity_extraction" in result.agent_results
@@ -978,7 +996,7 @@ class TestOrchestratorComplexPatterns:
         self, orchestrator_with_real_agents
     ):
         """CORRECTNESS: Validate sequential failure cascade with graceful degradation"""
-        from unittest.mock import AsyncMock, Mock
+        from unittest.mock import AsyncMock, Mock, patch
 
         import dspy
 
@@ -986,11 +1004,16 @@ class TestOrchestratorComplexPatterns:
         async def fail_entity_extraction(url, **kwargs):
             if "8010" in url:
                 raise Exception("Entity extraction database unavailable")
-            return {"status": "success", "result": "mock"}
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {"status": "success", "result": "mock"}
+            return resp
 
-        orchestrator_with_real_agents.a2a_client.send_task = AsyncMock(
-            side_effect=fail_entity_extraction
-        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=fail_entity_extraction)
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -1000,9 +1023,13 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find machine learning tutorials")
-        )
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator_with_real_agents._process_impl(
+                OrchestratorInput(query="Find machine learning tutorials")
+            )
 
         # VALIDATE: First agent failed
         assert result.agent_results["entity_extraction"]["status"] == "error"

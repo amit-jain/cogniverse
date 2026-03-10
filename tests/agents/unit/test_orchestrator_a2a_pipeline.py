@@ -1,9 +1,9 @@
 """
-Unit tests for OrchestratorAgent A2A pipeline.
+Unit tests for OrchestratorAgent pipeline.
 
 Validates:
 - OrchestratorAgent uses AgentRegistry for discovery
-- A2A task flow: plan → execute (via A2AClient) → aggregate
+- Task flow: plan → execute (via httpx) → aggregate
 - tenant_id and session_id flow through to each agent call
 - Parallel execution groups respect dependencies
 - Graceful error handling when agents are unreachable
@@ -65,13 +65,35 @@ def orchestrator(mock_registry):
         )
 
 
+def _make_httpx_mock(response_factory):
+    """Create httpx mock that returns responses from a factory function.
+
+    Args:
+        response_factory: callable(url, json) -> dict to return as JSON response
+    """
+    async def mock_post(url, json=None, **kwargs):
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = response_factory(url, json)
+        return resp
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=mock_post)
+
+    mock_cm = Mock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    return mock_cm, mock_client
+
+
 @pytest.mark.unit
 class TestA2APipelineFlow:
-    """Test the full A2A pipeline through OrchestratorAgent."""
+    """Test the full pipeline through OrchestratorAgent."""
 
     @pytest.mark.asyncio
     async def test_plan_execute_aggregate(self, orchestrator):
-        """Full pipeline: plan → A2A execute → aggregate results."""
+        """Full pipeline: plan → execute → aggregate results."""
         orchestrator.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 agent_sequence="query_enhancement,search",
@@ -80,20 +102,20 @@ class TestA2APipelineFlow:
             )
         )
 
-        # Mock A2A client to return structured results
-        call_count = {"n": 0}
-
-        async def mock_send_task(url, **kwargs):
-            call_count["n"] += 1
+        def response_factory(url, json_body):
             if "8012" in url:
                 return {"status": "success", "enhanced_query": "enhanced ML videos"}
             elif "8002" in url:
                 return {"status": "success", "results": [{"title": "ML Tutorial"}]}
             return {"status": "error", "message": "Unknown agent"}
 
-        orchestrator.a2a_client.send_task = AsyncMock(side_effect=mock_send_task)
+        mock_cm, _ = _make_httpx_mock(response_factory)
 
-        result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
 
         assert isinstance(result, OrchestratorOutput)
         assert len(result.plan_steps) == 2
@@ -103,7 +125,7 @@ class TestA2APipelineFlow:
 
     @pytest.mark.asyncio
     async def test_tenant_id_flows_through(self, orchestrator):
-        """tenant_id from input is passed to each A2A call."""
+        """tenant_id from input is passed to each HTTP call."""
         orchestrator.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 agent_sequence="search",
@@ -112,23 +134,29 @@ class TestA2APipelineFlow:
             )
         )
 
-        captured_kwargs = {}
+        captured_bodies = []
 
-        async def capture_send_task(url, **kwargs):
-            captured_kwargs.update(kwargs)
+        def response_factory(url, json_body):
+            captured_bodies.append(json_body)
             return {"status": "success", "results": []}
 
-        orchestrator.a2a_client.send_task = AsyncMock(side_effect=capture_send_task)
+        mock_cm, _ = _make_httpx_mock(response_factory)
 
-        await orchestrator._process_impl(
-            OrchestratorInput(
-                query="test", tenant_id="acme_corp", session_id="sess-123"
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            await orchestrator._process_impl(
+                OrchestratorInput(
+                    query="test", tenant_id="acme_corp", session_id="sess-123"
+                )
             )
-        )
 
-        # Verify tenant_id and session_id propagated
-        assert captured_kwargs.get("tenant_id") == "acme_corp"
-        assert captured_kwargs.get("session_id") == "sess-123"
+        # Verify tenant_id and session_id propagated in the request body
+        assert len(captured_bodies) >= 1
+        body = captured_bodies[0]
+        assert body.get("tenant_id") == "acme_corp"
+        assert body.get("session_id") == "sess-123"
 
 
 @pytest.mark.unit
@@ -145,11 +173,16 @@ class TestRegistryDiscovery:
                 reasoning="Extract entities",
             )
         )
-        orchestrator.a2a_client.send_task = AsyncMock(
-            return_value={"status": "success", "entities": ["ML"]}
+
+        mock_cm, _ = _make_httpx_mock(
+            lambda url, json: {"status": "success", "entities": ["ML"]}
         )
 
-        await orchestrator._process_impl(OrchestratorInput(query="machine learning"))
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            await orchestrator._process_impl(OrchestratorInput(query="machine learning"))
 
         # Verify registry was consulted
         mock_registry.get_agent.assert_called()
@@ -189,11 +222,14 @@ class TestParallelExecution:
                 reasoning="Extract and enhance in parallel, then select profile, then search",
             )
         )
-        orchestrator.a2a_client.send_task = AsyncMock(
-            return_value={"status": "success"}
-        )
 
-        result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
+        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
 
         # Steps 0,1 parallel (no deps), step 2 depends on 0,1, step 3 depends on 2
         assert result.plan_steps[0]["depends_on"] == []
@@ -211,11 +247,16 @@ class TestParallelExecution:
                 reasoning="Full pipeline",
             )
         )
-        orchestrator.a2a_client.send_task = AsyncMock(
-            return_value={"status": "success", "result": "mock"}
+
+        mock_cm, _ = _make_httpx_mock(
+            lambda url, json: {"status": "success", "result": "mock"}
         )
 
-        result = await orchestrator._process_impl(OrchestratorInput(query="test query"))
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator._process_impl(OrchestratorInput(query="test query"))
 
         assert len(result.agent_results) == 4
         assert all(
@@ -235,7 +276,7 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_agent_exception_captured(self, orchestrator):
-        """A2A call exception is captured as error result."""
+        """HTTP call exception is captured as error result."""
         orchestrator.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 agent_sequence="search",
@@ -243,11 +284,19 @@ class TestErrorHandling:
                 reasoning="Search",
             )
         )
-        orchestrator.a2a_client.send_task = AsyncMock(
-            side_effect=ConnectionError("Agent unreachable")
-        )
 
-        result = await orchestrator._process_impl(OrchestratorInput(query="test"))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=ConnectionError("Agent unreachable"))
+
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator._process_impl(OrchestratorInput(query="test"))
 
         assert result.agent_results["search"]["status"] == "error"
         assert "Agent unreachable" in result.agent_results["search"]["message"]

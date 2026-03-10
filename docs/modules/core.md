@@ -48,7 +48,7 @@ cogniverse_core/
 │   ├── memory_aware_mixin.py    # Memory integration mixin
 │   ├── tenant_aware_mixin.py    # Multi-tenancy mixin
 │   ├── health_mixin.py          # Health check mixin
-│   ├── a2a_mixin.py             # A2A communication mixin (also in common/)
+│   ├── a2a_mixin.py             # A2A communication mixin
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy loading
 │   └── rlm_options.py           # Remote LM configuration options
 ├── registries/                  # Component registries
@@ -70,8 +70,6 @@ cogniverse_core/
 │   ├── utils/                   # Utility functions (see Utility Modules section)
 │   ├── tenant_utils.py          # Tenant utilities
 │   ├── dspy_module_registry.py  # DSPy module management
-│   ├── a2a_utils.py             # A2A protocol utilities
-│   ├── a2a_mixin.py             # A2A communication mixin (also in agents/)
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin (also in agents/)
 │   ├── health_mixin.py          # Health check mixin (also in agents/)
 │   ├── agent_models.py          # AgentEndpoint and shared agent models
@@ -188,10 +186,10 @@ class AgentDeps(BaseModel):
 
 `A2AAgent[InputT, OutputT, DepsT]` extends `AgentBase` with:
 
-- **A2A Protocol Endpoints**: Standard endpoints per Google A2A spec
+- **A2A Protocol Support**: Standard A2A spec integration via the runtime's `A2AStarletteApplication`
 - **DSPy Integration**: Optional DSPy module for AI processing
-- **FastAPI Server**: Built-in HTTP server with A2A endpoints
-- **Inter-Agent Communication**: Call other A2A agents
+- **HTTP Endpoint**: Agents expose a `/process` endpoint (dict input, not Task objects); A2A routing handled by the runtime
+- **Inter-Agent Communication**: Agents call each other via `httpx.AsyncClient` through the runtime's `AgentDispatcher`
 
 ```python
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -220,10 +218,11 @@ config = A2AAgentConfig(
     port=8001
 )
 agent = RoutingAgent(deps=deps, config=config)
-agent.start()  # Starts FastAPI server
+# The A2A HTTP server is managed by the runtime's A2AStarletteApplication,
+# not embedded in the agent. Agents expose a /process endpoint via the runtime.
 ```
 
-**A2A Endpoints:**
+**A2A Endpoints** (served by the runtime's `A2AStarletteApplication` at `/a2a`):
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -233,6 +232,8 @@ agent.start()  # Starts FastAPI server
 | `/health` | GET | Health check with metrics |
 | `/metrics` | GET | Detailed performance metrics |
 | `/schema` | GET | Input/output JSON schemas |
+
+Individual agents also expose a `/process` endpoint accepting a dict payload (not A2A Task objects).
 
 ---
 
@@ -615,27 +616,35 @@ if __name__ == "__main__":
         port=8002
     )
     agent = SummarizerAgent(deps=deps, config=config)
-    agent.start()
+    # The A2A HTTP server is managed by the runtime's A2AStarletteApplication.
+    # Register agents with the runtime and use the /a2a endpoint.
 ```
 
 ### Calling Between Agents
 
+Inter-agent calls are made via `httpx.AsyncClient` (not via `self.call_agent()`). The
+orchestrator dispatches to agents through `AgentDispatcher` and `CogniverseAgentExecutor`
+wired in the runtime:
+
 ```python
+import httpx
+
 class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]):
     async def _process_impl(self, input: OrchestratorInput) -> OrchestratorOutput:
-        # Call search agent
-        search_result = await self.call_agent(
-            agent_url="http://localhost:8001",
-            query=input.query,
-            top_k=10
-        )
+        async with httpx.AsyncClient() as client:
+            # Call search agent /process endpoint
+            search_resp = await client.post(
+                "http://localhost:8001/process",
+                json={"query": input.query, "top_k": 10}
+            )
+            search_result = search_resp.json()
 
-        # Call summarizer agent
-        summary_result = await self.call_agent(
-            agent_url="http://localhost:8002",
-            text=str(search_result["results"]),
-            max_length=200
-        )
+            # Call summarizer agent /process endpoint
+            summary_resp = await client.post(
+                "http://localhost:8002/process",
+                json={"text": str(search_result["results"]), "max_length": 200}
+            )
+            summary_result = summary_resp.json()
 
         return OrchestratorOutput(
             search_results=search_result["results"],
@@ -1069,4 +1078,4 @@ result = model.extract_embeddings(video_input)
 
 ---
 
-**Summary:** The Core module provides the type-safe foundation for all agents in Cogniverse. `AgentBase[InputT, OutputT, DepsT]` ensures compile-time type checking and runtime validation, while `A2AAgent` adds A2A protocol support, DSPy integration, and FastAPI endpoints. Mixins provide composable functionality for memory, multi-tenancy, and health checks.
+**Summary:** The Core module provides the type-safe foundation for all agents in Cogniverse. `AgentBase[InputT, OutputT, DepsT]` ensures compile-time type checking and runtime validation, while `A2AAgent` adds A2A protocol support and DSPy integration (HTTP server endpoints are managed by the runtime's `A2AStarletteApplication`). Mixins provide composable functionality for memory, multi-tenancy, and health checks.

@@ -1060,10 +1060,6 @@ from cogniverse_agents.image_search_agent import ImageSearchAgent
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.agent_registry import AgentRegistry
 
-# A2A Protocol
-from cogniverse_agents.a2a_gateway import A2AGateway
-from cogniverse_agents.a2a_routing_agent import A2ARoutingAgent
-
 # Search utilities
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_agents.search.hybrid_reranker import HybridReranker

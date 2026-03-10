@@ -41,8 +41,6 @@ libs/core/cogniverse_core/
 │   ├── tenant_utils.py              # Tenant ID parsing and storage paths
 │   ├── dynamic_dspy_mixin.py        # DSPy runtime configuration
 │   ├── dspy_module_registry.py      # DSPy module/optimizer registry
-│   ├── a2a_mixin.py                 # Agent-to-agent communication
-│   ├── a2a_utils.py                 # A2A utilities
 │   ├── health_mixin.py              # Health check mixin
 │   ├── vlm_interface.py             # Vision-language model interface
 │   ├── agent_models.py              # Agent data models

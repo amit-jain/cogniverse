@@ -14,7 +14,6 @@ from fastapi import FastAPI, HTTPException
 
 from cogniverse_agents.search.base import SearchResult
 from cogniverse_agents.search.service import SearchService
-from cogniverse_agents.tools.a2a_utils import DataPart, Task
 from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
@@ -215,39 +214,30 @@ async def search_endpoint(request: dict):
 
 
 @app.post("/process")
-async def process_task(task: Task):
-    """Process search task (A2A protocol)."""
+async def process_task(task: dict):
+    """Process search task via plain dict payload."""
     if not video_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    if not task.messages:
-        raise HTTPException(status_code=400, detail="No messages in task")
-
-    last_message = task.messages[-1]
-    data_part = next(
-        (part for part in last_message.parts if isinstance(part, DataPart)), None
-    )
-
-    if not data_part:
-        raise HTTPException(status_code=400, detail="No data in message")
-
-    query_data = data_part.data
-    query = query_data.get("query")
-
+    query = task.get("query")
     if not query:
         raise HTTPException(status_code=400, detail="No query provided")
+
+    tenant_id = task.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
 
     try:
         results = video_agent.search(
             query=query,
-            profile=query_data.get("profile"),
-            tenant_id=query_data["tenant_id"],
-            top_k=query_data.get("top_k", 10),
-            start_date=query_data.get("start_date"),
-            end_date=query_data.get("end_date"),
+            profile=task.get("profile"),
+            tenant_id=tenant_id,
+            top_k=task.get("top_k", 10),
+            start_date=task.get("start_date"),
+            end_date=task.get("end_date"),
         )
 
-        return {"task_id": task.id, "status": "completed", "results": results}
+        return {"status": "completed", "results": results}
 
     except Exception as e:
         logger.error(f"Search error: {e}")

@@ -199,6 +199,11 @@ class TestSummarizerAgent:
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
         agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
 
+        # Mock DSPy summarization module to avoid needing a real LM
+        mock_prediction = Mock()
+        mock_prediction.summary = "Brief summary of test results."
+        agent.summarization_module.forward = Mock(return_value=mock_prediction)
+
         # Create summarization request
         request = SummaryRequest(
             query="test query",
@@ -207,7 +212,8 @@ class TestSummarizerAgent:
             include_visual_analysis=False,  # Skip visual analysis for speed
         )
 
-        result = await agent._summarize(request)
+        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+            result = await agent._summarize(request)
 
         assert result.summary is not None
         assert len(result.summary) > 0
@@ -374,13 +380,13 @@ class TestSummarizerAgentCoreFunctionality:
             reasoning="Analysis of AI technology content",
         )
 
-        # Mock the agent's dspy_summarizer directly
+        # Mock the agent's summarization_module.forward
         mock_prediction = Mock()
         mock_prediction.summary = (
             "Brief summary of AI technology content including demos and tutorials."
         )
 
-        agent.dspy_summarizer = Mock(return_value=mock_prediction)
+        agent.summarization_module.forward = Mock(return_value=mock_prediction)
 
         # Need to provide the results parameter as well
         results = sample_summary_request.search_results

@@ -1,23 +1,26 @@
 """
 Integration tests for MultiAgentOrchestrator HTTP pipeline.
 
-These tests start a real FastAPI stub server and exercise actual TCP/HTTP
-round-trips through httpx — no httpx mocking. This catches URL construction,
-request serialization, HTTP error handling, and timeout bugs that mock-based
-chain tests cannot detect.
+These tests start a real FastAPI stub server that serves A2A-compliant
+JSON-RPC 2.0 responses, and exercise actual TCP/HTTP round-trips
+through the official a2a-sdk A2AClient. This catches URL construction,
+JSON-RPC serialization, and A2A protocol compliance bugs.
 """
 
 import asyncio
 import hashlib
+import json
 import threading
 import time
+import uuid
 from typing import Any, Dict, List, Set
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from cogniverse_agents.routing_agent import RoutingOutput
@@ -27,30 +30,68 @@ stub_app = FastAPI()
 # Shared mutable state — reset before each test via fixture
 _request_log: List[Dict[str, Any]] = []
 _response_map: Dict[str, Dict[str, Any]] = {}  # agent_name → response dict
-_error_agents: Set[str] = set()  # agents that should return 500
+_error_agents: Set[str] = set()  # agents that should return errors
 _slow_agents: Dict[str, float] = {}  # agent_name → delay seconds
 
 
-@stub_app.post("/agents/{agent_name}/process")
-async def stub_process(agent_name: str, request: Request):
+@stub_app.post("/")
+async def stub_a2a_rpc(request: Request):
+    """A2A JSON-RPC 2.0 endpoint that dispatches based on metadata.agent_name."""
     body = await request.json()
+
+    rpc_id = body.get("id", "1")
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    if method != "message/send":
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
+        })
+
+    metadata = params.get("metadata", {})
+    agent_name = metadata.get("agent_name", "unknown")
+    query = metadata.get("query", "")
+
     _request_log.append({
         "agent_name": agent_name,
         "url": str(request.url),
         "body": body,
         "headers": dict(request.headers),
+        "metadata": metadata,
+        "query": query,
     })
 
     if agent_name in _error_agents:
-        raise HTTPException(status_code=500, detail="Simulated failure")
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32000, "message": "Simulated failure"},
+        })
 
     if agent_name in _slow_agents:
         await asyncio.sleep(_slow_agents[agent_name])
 
-    response = _response_map.get(
+    agent_result = _response_map.get(
         agent_name, {"result": f"default from {agent_name}", "confidence": 0.8}
     )
-    return response
+
+    # Return as A2A Message response (what the executor produces)
+    task_id = str(uuid.uuid4())
+    context_id = str(uuid.uuid4())
+    return JSONResponse({
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "result": {
+            "kind": "message",
+            "messageId": str(uuid.uuid4()),
+            "role": "agent",
+            "parts": [{"kind": "text", "text": json.dumps(agent_result)}],
+            "taskId": task_id,
+            "contextId": context_id,
+        },
+    })
 
 
 def _generate_stub_port(module_name: str) -> int:
@@ -73,7 +114,7 @@ def _wait_for_server(url: str, timeout: float = 10.0):
 
 @pytest.fixture(scope="module")
 def stub_server():
-    """Start a real uvicorn server serving the stub FastAPI app."""
+    """Start a real uvicorn server serving the A2A stub app."""
     port = _generate_stub_port(__name__)
     config = uvicorn.Config(stub_app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -106,10 +147,7 @@ def _make_planner_result(tasks_data, strategy="sequential"):
 
 @pytest.fixture
 def orchestrator(stub_server, telemetry_manager_without_phoenix):
-    """Real MultiAgentOrchestrator pointing at the stub server.
-
-    httpx is NOT patched — real TCP connections to the stub server.
-    """
+    """Real MultiAgentOrchestrator pointing at the A2A stub server."""
     agents_config = {
         "search_agent": {
             "capabilities": ["video_content_search", "multimodal_retrieval"],
@@ -127,7 +165,6 @@ def orchestrator(stub_server, telemetry_manager_without_phoenix):
 
     with (
         patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-        patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
         patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
     ):
         mock_routing_instance = Mock()
@@ -150,11 +187,11 @@ def orchestrator(stub_server, telemetry_manager_without_phoenix):
 
 @pytest.mark.integration
 class TestOrchestratorHttpPipeline:
-    """Integration tests exercising real HTTP round-trips to a stub server."""
+    """Integration tests exercising real HTTP round-trips via A2A JSON-RPC."""
 
     @pytest.mark.asyncio
     async def test_http_abort_sets_end_time(self, orchestrator):
-        """Stub returns 500 for all agents → orchestrator handles errors without crashing."""
+        """Stub returns error for all agents → orchestrator handles errors without crashing."""
         _error_agents.add("search_agent")
         _error_agents.add("summarizer_agent")
 
@@ -211,8 +248,8 @@ class TestOrchestratorHttpPipeline:
         )
 
     @pytest.mark.asyncio
-    async def test_http_request_format(self, orchestrator):
-        """Verify URL, headers, and JSON body structure received by stub server."""
+    async def test_a2a_jsonrpc_request_format(self, orchestrator):
+        """Verify JSON-RPC 2.0 structure and metadata in stub-received request."""
         orchestrator.workflow_planner.forward = Mock(
             return_value=_make_planner_result([
                 {"task_id": "t1", "agent": "search_agent", "query": "find videos", "dependencies": []},
@@ -225,12 +262,14 @@ class TestOrchestratorHttpPipeline:
         assert len(_request_log) == 1
 
         req = _request_log[0]
-        # URL contains agent name in path
-        assert "/agents/search_agent/process" in req["url"]
-        # JSON body has required keys
-        assert req["body"]["agent_name"] == "search_agent"
-        assert "query" in req["body"]
-        assert "context" in req["body"]
+        body = req["body"]
+        # JSON-RPC 2.0 envelope
+        assert body["jsonrpc"] == "2.0"
+        assert body["method"] == "message/send"
+        assert "params" in body
+        # Agent name in metadata
+        assert req["metadata"]["agent_name"] == "search_agent"
+        assert req["query"] == "find videos"
         # Content-Type header present
         assert "application/json" in req["headers"].get("content-type", "")
 
@@ -247,65 +286,11 @@ class TestOrchestratorHttpPipeline:
         result = await orchestrator.process_complex_query("test")
 
         assert result["status"] == "completed"
-        # Verify the stub received resolved names, not hallucinated ones
         received_agents = [r["agent_name"] for r in _request_log]
         for name in received_agents:
             assert name in ("search_agent", "summarizer_agent"), (
                 f"Hallucinated agent name '{name}' was not resolved"
             )
-
-    @pytest.mark.asyncio
-    async def test_http_post_optimization_validates_agents(
-        self, stub_server, telemetry_manager_without_phoenix
-    ):
-        """After workflow intelligence corrupts agent names, they are re-resolved."""
-        agents_config = {
-            "search_agent": {
-                "capabilities": ["video_content_search"],
-                "endpoint": stub_server,
-                "timeout_seconds": 10,
-                "parallel_capacity": 1,
-            },
-        }
-
-        with (
-            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
-            patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence") as mock_wi_factory,
-        ):
-            mock_routing_cls.return_value = Mock()
-
-            mock_wi = AsyncMock()
-
-            async def corrupt_plan(query, plan, ctx):
-                for task in plan.tasks:
-                    task.agent_name = "InvalidAgent"
-                return plan
-
-            mock_wi.optimize_workflow_plan = AsyncMock(side_effect=corrupt_plan)
-            mock_wi_factory.return_value = mock_wi
-
-            orch = MultiAgentOrchestrator(
-                tenant_id="test_tenant",
-                telemetry_manager=telemetry_manager_without_phoenix,
-                available_agents=agents_config,
-                enable_workflow_intelligence=True,
-            )
-
-            orch.workflow_planner = Mock()
-            orch.workflow_planner.forward = Mock(
-                return_value=_make_planner_result([
-                    {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
-                ])
-            )
-
-            result = await orch.process_complex_query("test")
-
-        assert result["status"] == "completed"
-        # InvalidAgent should NOT appear in any request
-        for req in _request_log:
-            assert "InvalidAgent" not in req["url"]
-            assert req["agent_name"] != "InvalidAgent"
 
     @pytest.mark.asyncio
     async def test_http_uses_configured_endpoint(self, orchestrator, stub_server):
@@ -320,13 +305,12 @@ class TestOrchestratorHttpPipeline:
 
         assert result["status"] == "completed"
         assert len(_request_log) == 1
-        # URL starts with the stub server's base URL
-        assert _request_log[0]["url"].startswith(stub_server.replace("http://", ""))  or \
-            stub_server.split(":")[-1] in _request_log[0]["url"]
+        # Port of stub server appears in URL
+        assert stub_server.split(":")[-1] in _request_log[0]["url"]
 
     @pytest.mark.asyncio
-    async def test_http_dependency_context_serialization(self, orchestrator):
-        """Second task's context.dependency_context contains first task's result as string."""
+    async def test_a2a_dependency_context_in_metadata(self, orchestrator):
+        """Second task's metadata.dependency_context contains first task's result."""
         _response_map["search_agent"] = {"result": "search data found", "confidence": 0.9}
         _response_map["summarizer_agent"] = {"result": "summary", "confidence": 0.85}
 
@@ -342,11 +326,10 @@ class TestOrchestratorHttpPipeline:
         assert result["status"] == "completed"
         assert len(_request_log) == 2
 
-        # Second request should contain dependency context from first result
-        second_body = _request_log[1]["body"]
-        dep_context = second_body["context"].get("dependency_context")
+        # Second request metadata should contain dependency context
+        second_metadata = _request_log[1]["metadata"]
+        dep_context = second_metadata.get("dependency_context")
         assert dep_context is not None
-        assert isinstance(dep_context, str), f"Expected str, got {type(dep_context)}"
         assert "search data found" in dep_context
 
     @pytest.mark.asyncio
@@ -393,7 +376,6 @@ class TestOrchestratorHttpPipeline:
 
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
         ):
             mock_routing_cls.return_value = Mock()

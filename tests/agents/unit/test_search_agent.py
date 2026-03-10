@@ -15,7 +15,6 @@ from cogniverse_agents.search_agent import (
     SearchInput,
     VideoPart,
 )
-from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 # Create a mock schema_loader for all tests
 mock_schema_loader = Mock()
@@ -369,14 +368,17 @@ class TestSearchAgent:
             schema_loader=mock_schema_loader,
         )
 
-        # Create task with text part
-        message = A2AMessage(
-            role="user", parts=[DataPart(data={"query": "find dogs", "top_k": 5})]
-        )
-        task = Mock()
-        task.id = "test_task"
-        task.tenant_id = "test_tenant"
-        task.messages = [message]
+        # Create task dict with text data part
+        task = {
+            "id": "test_task",
+            "tenant_id": "test_tenant",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [{"kind": "data", "data": {"query": "find dogs", "top_k": 5}}],
+                }
+            ],
+        }
 
         result = agent.process_enhanced_task(task)
 
@@ -419,12 +421,17 @@ class TestSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create mock task with video part
-        message = Mock()
-        message.parts = [VideoPart(video_data=b"fake_video", filename="test.mp4")]
-        task = Mock()
-        task.id = "test_task"
-        task.messages = [message]
+        # Create task dict with video part
+        task = {
+            "id": "test_task",
+            "tenant_id": "test_tenant",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [{"kind": "video", "video_data": b"fake_video", "filename": "test.mp4"}],
+                }
+            ],
+        }
 
         result = agent.process_enhanced_task(task)
 
@@ -467,12 +474,17 @@ class TestSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create mock task with image part
-        message = Mock()
-        message.parts = [ImagePart(image_data=b"fake_image", filename="test.jpg")]
-        task = Mock()
-        task.id = "test_task"
-        task.messages = [message]
+        # Create task dict with image part
+        task = {
+            "id": "test_task",
+            "tenant_id": "test_tenant",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [{"kind": "image", "image_data": b"fake_image", "filename": "test.jpg"}],
+                }
+            ],
+        }
 
         result = agent.process_enhanced_task(task)
 
@@ -518,16 +530,21 @@ class TestSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create mock task with multiple parts
-        message = Mock()
-        message.parts = [
-            DataPart(data={"query": "find cats", "top_k": 3}),
-            VideoPart(video_data=b"fake_video", filename="test.mp4"),
-            ImagePart(image_data=b"fake_image", filename="test.jpg"),
-        ]
-        task = Mock()
-        task.id = "test_task"
-        task.messages = [message]
+        # Create task dict with multiple parts
+        task = {
+            "id": "test_task",
+            "tenant_id": "test_tenant",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"kind": "data", "data": {"query": "find cats", "top_k": 3}},
+                        {"kind": "video", "video_data": b"fake_video", "filename": "test.mp4"},
+                        {"kind": "image", "image_data": b"fake_image", "filename": "test.jpg"},
+                    ],
+                }
+            ],
+        }
 
         result = agent.process_enhanced_task(task)
 
@@ -564,7 +581,7 @@ class TestSearchAgent:
             schema_loader=mock_schema_loader,
         )
 
-        task = Task(id="test_task", messages=[])
+        task = {"id": "test_task", "messages": []}
 
         with pytest.raises(ValueError, match="Task contains no messages"):
             agent.process_enhanced_task(task)
@@ -597,14 +614,17 @@ class TestSearchAgent:
             schema_loader=mock_schema_loader,
         )
 
-        # Create task with TextPart but no query
-        message = A2AMessage(
-            role="user", parts=[DataPart(data={"no_query": "invalid"})]
-        )
-        task = Mock()
-        task.id = "test_task"
-        task.tenant_id = "test_tenant"
-        task.messages = [message]
+        # Create task with data part but no query field
+        task = {
+            "id": "test_task",
+            "tenant_id": "test_tenant",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [{"kind": "data", "data": {"no_query": "invalid"}}],
+                }
+            ],
+        }
 
         result = agent.process_enhanced_task(task)
 
@@ -738,14 +758,14 @@ class TestDataModels:
         assert image_part.filename == "test.jpg"
         assert image_part.content_type == "image/jpeg"
 
-    def test_enhanced_task_validation(self):
-        """Test Task model validation"""
-        message = A2AMessage(role="user", parts=[TextPart(text="test")])
-        task = Task(id="test_task", messages=[message])
+    def test_enhanced_task_dict_structure(self):
+        """Test task dict structure for process_enhanced_task"""
+        message = {"role": "user", "parts": [{"kind": "text", "text": "test"}]}
+        task = {"id": "test_task", "messages": [message]}
 
-        assert task.id == "test_task"
-        assert len(task.messages) == 1
-        assert task.messages[0] == message
+        assert task["id"] == "test_task"
+        assert len(task["messages"]) == 1
+        assert task["messages"][0] == message
 
 
 @pytest.mark.unit

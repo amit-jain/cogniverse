@@ -472,7 +472,6 @@ from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Core Layer
 from cogniverse_core.agents.base import AgentBase
-from cogniverse_core.common.a2a_utils import A2AClient
 from cogniverse_evaluation.providers import get_evaluation_provider
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
@@ -563,7 +562,6 @@ from cogniverse_core.agents.base import AgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_storage_path
-from cogniverse_core.common.a2a_utils import A2AClient
 
 # Evaluation - Experiment Tracking and Metrics
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker

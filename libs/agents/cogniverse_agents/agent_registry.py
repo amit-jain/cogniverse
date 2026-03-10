@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 
-from cogniverse_agents.tools.a2a_utils import A2AClient
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_foundation.config.utils import get_config
 
@@ -54,7 +53,6 @@ class AgentRegistry:
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         self.http_client = httpx.AsyncClient(timeout=10.0)
-        self.a2a_client = A2AClient(timeout=10.0)
 
         # Initialize with system config agents
         self._initialize_from_config()
@@ -449,7 +447,11 @@ class AgentRegistry:
         Raises:
             Exception if agent card cannot be retrieved
         """
-        card_data = await self.a2a_client.get_agent_card(agent_url)
+        response = await self.http_client.get(
+            f"{agent_url}/.well-known/agent-card.json"
+        )
+        response.raise_for_status()
+        card_data = response.json()
 
         # Convert agent card to AgentEndpoint
         agent_endpoint = AgentEndpoint(

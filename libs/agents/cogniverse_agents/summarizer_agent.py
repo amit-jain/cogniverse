@@ -15,10 +15,6 @@ from pydantic import Field
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingOutput
-from cogniverse_agents.tools.a2a_utils import (
-    DataPart,
-    Task,
-)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
@@ -27,9 +23,6 @@ from cogniverse_core.common.vlm_interface import VLMInterface
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Input/Output/Dependencies
-# =============================================================================
 
 
 class SummarizerInput(AgentInput):
@@ -96,19 +89,9 @@ class SummarizationModule(dspy.Module):
 
     def forward(self, content: str, query: str, summary_type: str = "comprehensive"):
         """Generate summary using DSPy"""
-        try:
-            result = self.summarizer(
-                content=content, query=query, summary_type=summary_type
-            )
-            return result
-        except Exception as e:
-            logger.warning(f"DSPy summarization failed: {e}, using fallback")
-            # Fallback prediction
-            return dspy.Prediction(
-                summary=f"Summary of {len(content.split())} words for query: {query}",
-                key_points="Content analysis, Key findings, Summary insights",
-                confidence_score=0.5,
-            )
+        return self.summarizer(
+            content=content, query=query, summary_type=summary_type
+        )
 
 
 @dataclass
@@ -810,9 +793,6 @@ and structure summary based on identified themes and content categories.
 
         return result
 
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
 
     async def _process_impl(self, input: SummarizerInput) -> SummarizerOutput:
         """
@@ -918,27 +898,14 @@ async def get_agent_card():
 
 
 @app.post("/process")
-async def process_task(task: Task):
-    """Process summarization task"""
+async def process_task(task: dict):
+    """Process summarization task via plain dict payload."""
     if not summarizer_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        # Extract data from task
-        if not task.messages:
-            raise ValueError("Task contains no messages")
+        data = task
 
-        last_message = task.messages[-1]
-        data_part = next(
-            (part for part in last_message.parts if isinstance(part, DataPart)), None
-        )
-
-        if not data_part:
-            raise ValueError("No data part found in message")
-
-        data = data_part.data
-
-        # Create summary request
         request = SummaryRequest(
             query=data.get("query", ""),
             search_results=data.get("search_results", []),
@@ -948,11 +915,9 @@ async def process_task(task: Task):
             max_results_to_analyze=data.get("max_results_to_analyze", 10),
         )
 
-        # Generate summary
         result = await summarizer_agent.summarize(request)
 
         return {
-            "task_id": task.id,
             "status": "completed",
             "summary": result.summary,
             "key_points": result.key_points,
@@ -968,28 +933,6 @@ async def process_task(task: Task):
 
     except Exception as e:
         logger.error(f"Task processing failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/tasks/send")
-async def handle_a2a_task(task: dict):
-    """A2A protocol task handler"""
-    if not summarizer_agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        # Convert dict to Task object if needed
-        from cogniverse_agents.tools.a2a_utils import Task
-
-        if not isinstance(task, Task):
-            task_obj = Task(**task)
-        else:
-            task_obj = task
-
-        return await process_task(task_obj)
-
-    except Exception as e:
-        logger.error(f"A2A task processing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

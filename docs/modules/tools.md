@@ -18,19 +18,15 @@
 ## Module Overview
 
 ### Purpose
-The Tools Module provides specialized utilities for agent communication, interactive video playback with search result markers, and enhanced temporal pattern recognition for video search queries.
+The Tools Module provides specialized utilities for interactive video playback with search result markers and enhanced temporal pattern recognition for video search queries.
 
 ### Key Capabilities
-- **A2A Protocol**: Agent-to-Agent communication following Google's A2A standard
 - **Video Player Tool**: Interactive HTML5 video player with timeline markers
 - **Temporal Extraction**: Enhanced natural language date/time pattern recognition with 26 patterns
-- **Agent Discovery**: Automatic capability discovery via agent cards
 
 ### Dependencies
 ```python
 # External
-import httpx
-from pydantic import BaseModel
 from google.genai.types import Part
 
 # Internal
@@ -43,7 +39,6 @@ from cogniverse_foundation.config.utils import get_config
 ## Package Structure
 ```text
 libs/agents/cogniverse_agents/tools/
-├── a2a_utils.py                      # A2A protocol client and utilities
 ├── video_player_tool.py              # Interactive video player tool
 ├── temporal_extractor.py             # Temporal pattern recognition
 └── video_file_server.py              # HTTP server for video file serving
@@ -53,29 +48,7 @@ libs/agents/cogniverse_agents/tools/
 
 ## Architecture
 
-### 1. A2A Protocol Architecture
-
-```mermaid
-flowchart TB
-    MSG["<span style='color:#000'>A2A Message Structure<br/>role: user | assistant | system<br/>parts:<br/>  TextPart type=text text=...<br/>  DataPart type=data data=...<br/>  FilePart type=file file_uri=... mime_type=...</span>"]
-
-    TASK["<span style='color:#000'>Task Structure<br/>id: uuid<br/>messages: A2AMessage ...</span>"]
-
-    CLIENT["<span style='color:#000'>A2AClient HTTP Transport<br/>• POST /tasks/send<br/>• GET /.well-known/agent-card.json<br/>• Async HTTP with timeout</span>"]
-
-    CARD["<span style='color:#000'>Agent Card Discovery:<br/>name: VideoSearchAgent<br/>description: Multi-modal video search<br/>url: http://localhost:8002<br/>protocol: a2a<br/>capabilities: video_search temporal_filtering<br/>skills: ...</span>"]
-
-    MSG --> TASK
-    TASK --> CLIENT
-    CLIENT -.-> CARD
-
-    style MSG fill:#90caf9,stroke:#1565c0,color:#000
-    style TASK fill:#ffcc80,stroke:#ef6c00,color:#000
-    style CLIENT fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style CARD fill:#a5d6a7,stroke:#388e3c,color:#000
-```
-
-### 2. Video Player Tool Architecture
+### 1. Video Player Tool Architecture
 
 ```mermaid
 flowchart TB
@@ -105,7 +78,7 @@ flowchart TB
     style OUTPUT fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### 3. Temporal Extraction Architecture
+### 2. Temporal Extraction Architecture
 
 ```mermaid
 flowchart TB
@@ -127,140 +100,7 @@ flowchart TB
 
 ## Core Components
 
-### 1. A2A Protocol Components (`a2a_utils.py`)
-
-#### A2AMessage Data Model
-Pydantic model for agent messages following A2A protocol.
-
-```python
-class A2AMessage(BaseModel):
-    role: str  # "user", "assistant", "system"
-    parts: List[Union[TextPart, DataPart, FilePart]]
-
-# Part types
-class TextPart(BaseModel):
-    type: Literal["text"] = "text"
-    text: str
-
-class DataPart(BaseModel):
-    type: Literal["data"] = "data"
-    data: Dict[str, Any]
-
-class FilePart(BaseModel):
-    type: Literal["file"] = "file"
-    file_uri: str
-    mime_type: str
-```
-
-**Key Features:**
-
-- Type-safe message construction with Pydantic
-
-- Support for multi-modal content (text, data, files)
-
-- Validation of message structure
-
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:11-34`
-
----
-
-#### A2AClient
-HTTP client for A2A agent communication.
-
-```python
-class A2AClient:
-    """A helper class for making A2A protocol requests to agents."""
-
-    def __init__(self, timeout: float = 60.0):
-        self.timeout = timeout
-
-    async def send_task(
-        self,
-        agent_url: str,
-        query: str,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Send a task to an A2A-compliant agent.
-
-        Returns:
-            Dict containing the agent's response
-        """
-        task_id = str(uuid.uuid4())
-        task_payload = {
-            "id": task_id,
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "data",
-                    "data": {"query": query, **kwargs}
-                }]
-            }]
-        }
-
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{agent_url}/tasks/send",
-                json=task_payload
-            )
-            return response.json()
-```
-
-**Key Methods:**
-
-1. **send_task(agent_url, query, **kwargs)**: Send task to agent
-   - Generates unique task ID
-   - Packages query as DataPart message
-   - Posts to `/tasks/send` endpoint
-   - Returns JSON response
-
-2. **get_agent_card(agent_url)**: Retrieve agent capabilities
-   - Fetches `/.well-known/agent-card.json`
-   - Returns agent metadata (capabilities, skills, version)
-
-**Error Handling:**
-
-- `httpx.RequestError`: Connection failures
-
-- `httpx.HTTPStatusError`: Non-200 responses
-
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:48-121`
-
----
-
-#### Utility Functions
-
-```python
-def create_text_message(text: str, role: str = "user") -> A2AMessage:
-    """Create a text message in A2A format."""
-
-def create_data_message(data: Dict[str, Any], role: str = "user") -> A2AMessage:
-    """Create a data message in A2A format."""
-
-def create_task(messages: List[A2AMessage], task_id: Optional[str] = None) -> Task:
-    """Create a task with auto-generated ID."""
-
-def extract_data_from_message(message: A2AMessage) -> Optional[Dict[str, Any]]:
-    """Extract data from first DataPart in message."""
-
-def extract_text_from_message(message: A2AMessage) -> Optional[str]:
-    """Extract text from first TextPart in message."""
-
-async def discover_agents(agent_urls: List[str]) -> Dict[str, AgentCard]:
-    """Discover agent capabilities by fetching their agent cards."""
-
-def format_search_results(
-    results: List[Dict[str, Any]],
-    result_type: str = "generic"
-) -> str:
-    """Format search results for display (text, video, or generic)."""
-```
-
-**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:123-220`
-
----
-
-### 2. Video Player Tool (`video_player_tool.py`)
+### 1. Video Player Tool (`video_player_tool.py`)
 
 #### VideoPlayerTool
 ADK-based tool for generating interactive video players with search result markers.
@@ -369,7 +209,7 @@ class VideoPlayerTool(BaseTool):
 
 ---
 
-### 3. Temporal Extractor (`temporal_extractor.py`)
+### 2. Temporal Extractor (`temporal_extractor.py`)
 
 #### EnhancedTemporalExtractor
 Advanced temporal pattern recognition with extensive coverage.
@@ -442,88 +282,7 @@ class EnhancedTemporalExtractor:
 
 ## Usage Examples
 
-### Example 1: A2A Agent Communication
-
-```python
-from cogniverse_agents.tools.a2a_utils import A2AClient, create_data_message
-
-# Initialize client
-client = A2AClient(timeout=30.0)
-
-# Send task to VideoSearchAgent
-response = await client.send_task(
-    agent_url="http://localhost:8002",
-    query="fire scene",
-    top_k=10,
-    start_date="2024-01-01",
-    end_date="2024-01-31"
-)
-
-print(f"Task ID: {response['task_id']}")
-print(f"Results: {len(response['results'])} videos found")
-```
-
-**Output:**
-```json
-{
-  "task_id": "550e8400-e29b-41d4-a716-446655440000",
-  "results": [
-    {
-      "video_id": "fire_scene_01",
-      "frame_id": "frame_0452",
-      "timestamp": 45.2,
-      "relevance": 0.89,
-      "description": "Fire scene with smoke and flames"
-    }
-  ],
-  "total_results": 10
-}
-```
-
----
-
-### Example 2: Agent Discovery
-
-```python
-from cogniverse_agents.tools.a2a_utils import discover_agents
-
-# Discover capabilities of multiple agents
-agent_urls = [
-    "http://localhost:8001",  # RoutingAgent
-    "http://localhost:8002",  # VideoSearchAgent
-    "http://localhost:8004"   # SummarizerAgent
-]
-
-agents = await discover_agents(agent_urls)
-
-for name, card in agents.items():
-    print(f"\n{name}:")
-    print(f"  Description: {card.description}")
-    print(f"  Capabilities: {', '.join(card.capabilities)}")
-    print(f"  Version: {card.version}")
-```
-
-**Output:**
-```text
-RoutingAgent:
-  Description: Intelligent query routing with DSPy optimization
-  Capabilities: routing, query_analysis, entity_extraction, conversation_memory
-  Version: 1.0.0
-
-VideoSearchAgent:
-  Description: Multi-modal video search with ColPali and VideoPrism
-  Capabilities: video_search, temporal_filtering, multi_modal_search
-  Version: 1.0.0
-
-SummarizerAgent:
-  Description: Content summarization and report generation
-  Capabilities: summarization, report_generation
-  Version: 1.0.0
-```
-
----
-
-### Example 3: Interactive Video Player
+### Example 1: Interactive Video Player
 
 ```python
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
@@ -588,7 +347,7 @@ if result["success"]:
 
 ---
 
-### Example 4: Temporal Pattern Extraction
+### Example 2: Temporal Pattern Extraction
 
 ```python
 from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
@@ -649,75 +408,11 @@ Date Range: 2024-01-10 to 2024-01-20
 
 ---
 
-### Example 5: Multi-Agent Workflow with A2A
-
-```python
-import json
-from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
-
-client = A2AClient()
-
-# Step 1: Route query
-routing_response = await client.send_task(
-    agent_url="http://localhost:8001",
-    query="show me fire scenes from last week"
-)
-
-modality = routing_response["routing_decision"]["search_modality"]
-print(f"Routed to: {modality} search")
-
-# Step 2: Extract temporal pattern
-from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
-extractor = EnhancedTemporalExtractor()
-pattern = extractor.extract_temporal_pattern(
-    "show me fire scenes from last week"
-)
-dates = extractor.resolve_temporal_pattern(pattern)
-print(f"Date range: {dates['start_date']} to {dates['end_date']}")
-
-# Step 3: Search videos
-search_response = await client.send_task(
-    agent_url="http://localhost:8002",
-    query="fire scenes",
-    start_date=dates["start_date"],
-    end_date=dates["end_date"],
-    top_k=5
-)
-
-# Step 4: Format results
-formatted = format_search_results(
-    search_response["results"],
-    result_type="video"
-)
-print(f"\nSearch Results:\n{formatted}")
-
-# Step 5: Generate video player for top result
-if search_response["results"]:
-    top_result = search_response["results"][0]
-
-    # Initialize VideoPlayerTool with config_manager
-    from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    config_manager = create_default_config_manager()
-    player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
-
-    player_result = await player_tool.execute(
-        video_id=top_result["video_id"],
-        search_results=json.dumps(search_response["results"]),
-        start_time=top_result["timestamp"]
-    )
-    print(f"\n✅ Video player generated with {player_result['frame_count']} markers")
-```
-
----
-
 ## Testing Guide
 
 ### Test Coverage
 
 **Unit Tests:**
-
-- ✅ A2A message construction and validation
 
 - ✅ Temporal pattern extraction (26 patterns)
 
@@ -729,45 +424,11 @@ if search_response["results"]:
 
 **Integration Tests:**
 
-- ✅ A2A client communication with real agents
-
 - ✅ Video player HTML generation
-
-- ✅ Agent discovery via agent cards
 
 - ✅ End-to-end temporal query processing
 
 ### Key Test Scenarios
-
-#### Test A2A Communication
-```python
-import pytest
-from cogniverse_agents.tools.a2a_utils import A2AClient, create_data_message
-
-@pytest.mark.asyncio
-async def test_a2a_send_task():
-    client = A2AClient(timeout=10.0)
-
-    response = await client.send_task(
-        agent_url="http://localhost:8002",
-        query="fire scene",
-        top_k=5
-    )
-
-    assert "task_id" in response
-    assert "results" in response
-    assert len(response["results"]) <= 5
-
-@pytest.mark.asyncio
-async def test_agent_discovery():
-    client = A2AClient()
-
-    card = await client.get_agent_card("http://localhost:8002")
-
-    assert card["protocol"] == "a2a"
-    assert "capabilities" in card
-    assert isinstance(card["capabilities"], list)
-```
 
 #### Test Temporal Extraction
 ```python
@@ -837,17 +498,6 @@ async def test_video_player_generation(config_manager):
 
 ### 1. Performance Characteristics
 
-**A2A Client:**
-
-- **Overhead**: ~10-20ms per HTTP request
-
-- **Timeout**: Configurable (default 60s)
-
-- **Recommendations**:
-  - Use connection pooling for multiple requests
-  - Set appropriate timeouts based on agent complexity
-  - Implement retry logic for transient failures
-
 **Video Player Tool:**
 
 - **HTML Generation**: ~5-10ms
@@ -873,26 +523,6 @@ async def test_video_player_generation(config_manager):
   - Consider caching today's date for performance
 
 ### 2. Error Handling
-
-**A2A Communication Errors:**
-```python
-from cogniverse_agents.tools.a2a_utils import A2AClient
-import httpx
-
-client = A2AClient(timeout=30.0)
-
-try:
-    response = await client.send_task(
-        agent_url="http://localhost:8002",
-        query="fire scene"
-    )
-except httpx.RequestError as e:
-    logger.error(f"Connection failed: {e}")
-    # Fallback: Use local search or cached results
-except httpx.HTTPStatusError as e:
-    logger.error(f"Agent returned error {e.response.status_code}")
-    # Fallback: Retry or use different agent
-```
 
 **Video Player Errors:**
 ```python
@@ -931,31 +561,6 @@ else:
 ```
 
 ### 3. Monitoring Points
-
-**A2A Metrics:**
-```python
-# Track agent communication metrics
-metrics = {
-    "agent_requests": 0,
-    "agent_failures": 0,
-    "avg_response_time_ms": 0,
-    "timeouts": 0
-}
-
-import time
-
-start_time = time.time()
-try:
-    response = await client.send_task(agent_url, query)
-    metrics["agent_requests"] += 1
-    response_time = (time.time() - start_time) * 1000
-    metrics["avg_response_time_ms"] = (
-        metrics["avg_response_time_ms"] + response_time
-    ) / 2
-except Exception as e:
-    metrics["agent_failures"] += 1
-    logger.error(f"Agent request failed: {e}")
-```
 
 **Video Player Metrics:**
 ```python
@@ -1003,27 +608,7 @@ if pattern:
 
 ### 4. Common Issues and Solutions
 
-**Issue 1: Agent Not Responding**
-- **Symptom**: httpx.RequestError or timeout
-- **Cause**: Agent server not running or network issue
-- **Solution**: Implement health checks and fallback agents
-
-```python
-async def get_healthy_agent(agent_urls: List[str]) -> Optional[str]:
-    """Find first healthy agent from list"""
-    client = A2AClient(timeout=5.0)
-
-    for url in agent_urls:
-        try:
-            await client.get_agent_card(url)
-            return url  # Agent is healthy
-        except Exception:
-            continue
-
-    return None  # No healthy agents found
-```
-
-**Issue 2: Video File Not Found**
+**Issue 1: Video File Not Found**
 - **Symptom**: VideoPlayerTool returns success=False
 - **Cause**: Video ID doesn't match any files in video_dir
 - **Solution**: Implement video indexing and validation
@@ -1040,7 +625,7 @@ def find_video_fast(video_id: str) -> Optional[str]:
     return video_index.get(video_id)
 ```
 
-**Issue 3: Temporal Pattern Ambiguity**
+**Issue 2: Temporal Pattern Ambiguity**
 - **Symptom**: Multiple possible interpretations (e.g., "last week" vs "past week")
 - **Cause**: Natural language is inherently ambiguous
 - **Solution**: Document pattern priorities and provide user feedback
@@ -1053,7 +638,7 @@ print(f"Date range: {dates['start_date']} to {dates['end_date']}")
 # User can verify interpretation is correct
 ```
 
-**Issue 4: Large Video Files Causing Timeout**
+**Issue 3: Large Video Files Causing Timeout**
 - **Symptom**: Video player generation is slow
 - **Cause**: Attempting to embed large videos as base64
 - **Solution**: Always use server-based video player (already default)
@@ -1070,27 +655,21 @@ video_url = f"http://localhost:{video_server_port}/{relative_path}"
 
 ## Summary
 
-The Tools Module provides essential utilities for agent communication, video playback, and temporal query processing:
+The Tools Module provides utilities for video playback and temporal query processing:
 
 ### Key Takeaways
 
-1. **A2A Protocol**: Standard protocol for agent-to-agent communication following Google's specification
-2. **Video Player Tool**: Interactive HTML5 video player with clickable timeline markers and ADK integration
-3. **Temporal Extraction**: Enhanced pattern recognition for 26 temporal expressions with automatic date resolution
-4. **Agent Discovery**: Automatic capability discovery via standardized agent cards
-5. **Production Ready**: Comprehensive error handling, monitoring, and performance optimization
+1. **Video Player Tool**: Interactive HTML5 video player with clickable timeline markers and ADK integration
+2. **Temporal Extraction**: Enhanced pattern recognition for 26 temporal expressions with automatic date resolution
+3. **Production Ready**: Comprehensive error handling, monitoring, and performance optimization
 
 ### Best Practices
 
-1. **Always use A2AClient** for inter-agent communication to ensure protocol compliance
-2. **Enable video server** (port 8888) before using VideoPlayerTool
-3. **Show detected temporal patterns** to users for verification
-4. **Implement health checks** for agent availability
-5. **Monitor agent response times** to detect performance issues
+1. **Enable video server** (port 8888) before using VideoPlayerTool
+2. **Show detected temporal patterns** to users for verification
 
 ### Integration Points
 
-- **Agents**: RoutingAgent, VideoSearchAgent, SummarizerAgent use A2A protocol
 - **ADK**: VideoPlayerTool integrates with Google ADK for artifact delivery
 - **Query Processing**: Temporal extractor enhances query understanding
 - **UI**: Video player provides interactive result exploration
@@ -1099,15 +678,11 @@ The Tools Module provides essential utilities for agent communication, video pla
 
 **Related Guides:**
 
-- `01_AGENTS_MODULE.md` - Agent implementations using A2A protocol
-
 - `09_SEARCH_RERANKING_MODULE.md` - Search results fed to video player
 
 - `12_UTILS_MODULE.md` - Shared utilities and configuration
 
 **Key Source Files:**
-
-- `libs/agents/cogniverse_agents/tools/a2a_utils.py` - A2A protocol implementation
 
 - `libs/agents/cogniverse_agents/tools/video_player_tool.py` - Interactive video player
 

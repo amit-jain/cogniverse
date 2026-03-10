@@ -37,6 +37,9 @@ dependencies = [
 
     # Utilities
     "msgpack>=1.1.1",
+
+    # A2A Protocol
+    "a2a-sdk[http-server]>=0.3.0",
 ]
 
 [project.optional-dependencies]

@@ -52,8 +52,6 @@ class TestRoutingAgentCacheMetrics:
 
         with (
             patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy),
-            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
-            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
             patch(
                 "cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"
             ),

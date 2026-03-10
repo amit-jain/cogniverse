@@ -1,10 +1,12 @@
 """
-A2A Protocol Agent with Type Safety and Streaming Support
+A2A Protocol Agent with Type Safety
 
-Extends AgentBase with Google A2A protocol support, DSPy integration,
-FastAPI endpoints, and SSE streaming. Type safety is inherited from AgentBase.
+Extends AgentBase with A2A agent configuration and DSPy integration.
+Type safety is inherited from AgentBase.
 
-Streaming: Send {"stream": true} in task to get SSE stream response.
+In the unified runtime, HTTP concerns are handled by the runtime's
+A2AStarletteApplication (a2a-sdk). This class only holds configuration
+metadata (name, capabilities, version) and the optional DSPy module.
 
 Usage:
     class RoutingInput(AgentInput):
@@ -20,33 +22,21 @@ Usage:
 
     class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
         async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
-            # Full type safety, A2A endpoints auto-generated
             return RoutingOutput(recommended_agent="search", confidence=0.9)
-
-    # Non-streaming: POST /tasks/send {"query": "..."}
-    # Streaming: POST /tasks/send {"query": "...", "stream": true}
 """
 
-import json
 import logging
-import time
-import uuid
-from typing import Any, Dict, Generic, List, Optional, Union
+from typing import Any, Dict, Generic, List, Optional
 
 import dspy
-import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cogniverse_core.agents.base import (
     AgentBase,
-    AgentValidationError,
     DepsT,
     InputT,
     OutputT,
 )
-from cogniverse_core.common.a2a_utils import A2AClient, AgentCard
 
 logger = logging.getLogger(__name__)
 
@@ -63,32 +53,19 @@ class A2AAgentConfig(BaseModel):
 
 class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT]):
     """
-    Type-safe agent with A2A protocol support and SSE streaming.
+    Type-safe agent with A2A protocol metadata and DSPy integration.
 
     Combines:
-    - AgentBase: Type-safe input/output with Pydantic
-    - A2A Protocol: Standard endpoints, agent card, inter-agent communication
+    - AgentBase: Type-safe input/output with Pydantic validation
+    - A2A Metadata: Agent name, capabilities, version (used by runtime)
     - DSPy Integration: AI module support with optimization
-    - FastAPI: HTTP server for A2A endpoints
-    - Streaming: SSE support via stream=true in request
+
+    HTTP server concerns are handled by the runtime's A2A server.
 
     Type Parameters:
         InputT: Agent input type (extends AgentInput)
         OutputT: Agent output type (extends AgentOutput)
         DepsT: Agent dependencies type (extends AgentDeps)
-
-    Example:
-        class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
-            async def _process_impl(self, input: MyInput) -> MyOutput:
-                return MyOutput(result=input.query.upper())
-
-        # Usage
-        deps = MyDeps(tenant_id="tenant-1")
-        agent = MyAgent(...)
-        agent.start()  # Starts FastAPI server with A2A endpoints
-
-        # Non-streaming: POST /tasks/send {"query": "..."}
-        # Streaming: POST /tasks/send {"query": "...", "stream": true}
     """
 
     def __init__(
@@ -102,13 +79,11 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
 
         Args:
             deps: Typed agent dependencies
-            config: A2A agent configuration
+            config: A2A agent configuration (name, capabilities, etc.)
             dspy_module: Optional DSPy module for AI processing
         """
-        # Initialize base class (validates deps)
         super().__init__(deps=deps)
 
-        # A2A configuration
         self.config = config
         self.agent_name = config.agent_name
         self.agent_description = config.agent_description
@@ -116,284 +91,13 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
         self.port = config.port
         self.version = config.version
 
-        # DSPy module (optional)
         self.dspy_module = dspy_module
-
-        # A2A client for inter-agent communication
-        self.a2a_client = A2AClient()
-
-        # Performance tracking
-        self.request_count = 0
-        self.total_processing_time = 0.0
-        self.error_count = 0
-
-        # FastAPI app
-        self.app = FastAPI(
-            title=f"{self.agent_name} A2A Agent",
-            description=self.agent_description,
-            version=self.version,
-        )
-
-        # Setup A2A endpoints
-        self._setup_a2a_endpoints()
 
         logger.info(
             f"Initialized {self.agent_name} "
             f"with types: Input={self._input_type.__name__}, "
             f"Output={self._output_type.__name__}"
         )
-
-    def _setup_a2a_endpoints(self) -> None:
-        """Setup standard A2A protocol endpoints."""
-
-        @self.app.get("/.well-known/agent-card.json")
-        async def get_agent_card() -> Dict[str, Any]:
-            """Standard A2A agent card endpoint (Google spec)."""
-            return AgentCard(
-                name=self.agent_name,
-                description=self.agent_description,
-                url=f"http://localhost:{self.port}",
-                version=self.version,
-                protocol="a2a",
-                protocol_version="1.0",
-                capabilities=self.capabilities,
-                skills=self._get_skills(),
-            ).model_dump()
-
-        @self.app.get("/agent.json")
-        async def get_agent_card_legacy() -> Dict[str, Any]:
-            """Legacy agent card endpoint."""
-            return await get_agent_card()
-
-        @self.app.post("/tasks/send", response_model=None)
-        async def handle_task(
-            task: Dict[str, Any],
-        ) -> Union[StreamingResponse, Dict[str, Any]]:
-            """
-            Standard A2A task endpoint with streaming support.
-
-            Flow: A2A Task → Typed Input → process() → Typed Output → A2A Response
-            Streaming: If task["stream"]=True, returns SSE stream instead of JSON.
-            """
-            start_time = time.time()
-            self.request_count += 1
-
-            # Check if streaming is requested
-            stream = task.get("stream", False)
-
-            try:
-                # Extract input from A2A task
-                raw_input = self._extract_input_from_task(task)
-                logger.debug(f"Extracted input: {list(raw_input.keys())}")
-
-                # Validate and convert to typed input
-                typed_input = self.validate_input(raw_input)
-
-                if stream:
-                    # Return SSE streaming response
-                    async def generate():
-                        try:
-                            async for event in self.process(typed_input, stream=True):
-                                yield f"data: {json.dumps(event)}\n\n"
-                        except Exception as e:
-                            error_event = {
-                                "type": "error",
-                                "error": str(e),
-                                "error_type": type(e).__name__,
-                            }
-                            yield f"data: {json.dumps(error_event)}\n\n"
-
-                    return StreamingResponse(generate(), media_type="text/event-stream")
-                else:
-                    # Non-streaming: process and return JSON
-                    typed_output = await self.process(typed_input, stream=False)
-
-                    # Convert to A2A response, passing through per-request context
-                    a2a_response = self._create_a2a_response(
-                        typed_output,
-                        tenant_id=raw_input.get("tenant_id"),
-                        session_id=raw_input.get("session_id"),
-                    )
-
-                    # Track performance
-                    processing_time = time.time() - start_time
-                    self.total_processing_time += processing_time
-
-                    logger.info(
-                        f"Task processed in {processing_time:.3f}s "
-                        f"(avg: {self.total_processing_time / self.request_count:.3f}s)"
-                    )
-
-                    return a2a_response
-
-            except AgentValidationError as e:
-                self.error_count += 1
-                processing_time = time.time() - start_time
-                logger.error(f"Validation failed after {processing_time:.3f}s: {e}")
-
-                return {
-                    "status": "error",
-                    "error": str(e),
-                    "error_type": "ValidationError",
-                    "processing_time": processing_time,
-                    "agent": self.agent_name,
-                }
-
-            except Exception as e:
-                self.error_count += 1
-                processing_time = time.time() - start_time
-                logger.error(f"Task failed after {processing_time:.3f}s: {e}")
-
-                return {
-                    "status": "error",
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "processing_time": processing_time,
-                    "agent": self.agent_name,
-                }
-
-        @self.app.get("/health")
-        async def health_check() -> Dict[str, Any]:
-            """Health check with performance metrics."""
-            return {
-                "status": "healthy",
-                "agent": self.agent_name,
-                "version": self.version,
-                "metrics": {
-                    "requests_processed": self.request_count,
-                    "error_count": self.error_count,
-                    "success_rate": (
-                        (self.request_count - self.error_count) / self.request_count
-                        if self.request_count > 0
-                        else 1.0
-                    ),
-                    "avg_processing_time": (
-                        self.total_processing_time / self.request_count
-                        if self.request_count > 0
-                        else 0.0
-                    ),
-                },
-                "types": {
-                    "input": self._input_type.__name__,
-                    "output": self._output_type.__name__,
-                    "deps": self._deps_type.__name__,
-                },
-            }
-
-        @self.app.get("/metrics")
-        async def get_metrics() -> Dict[str, Any]:
-            """Detailed metrics endpoint."""
-            return {
-                "agent_name": self.agent_name,
-                "performance": {
-                    "total_requests": self.request_count,
-                    "successful_requests": self.request_count - self.error_count,
-                    "error_count": self.error_count,
-                    "success_rate": (
-                        (self.request_count - self.error_count) / self.request_count
-                        if self.request_count > 0
-                        else 1.0
-                    ),
-                    "total_processing_time": self.total_processing_time,
-                    "avg_processing_time": (
-                        self.total_processing_time / self.request_count
-                        if self.request_count > 0
-                        else 0.0
-                    ),
-                },
-                "types": {
-                    "input_schema": self.get_input_schema(),
-                    "output_schema": self.get_output_schema(),
-                },
-                "dspy_module": {
-                    "type": (
-                        type(self.dspy_module).__name__ if self.dspy_module else None
-                    ),
-                    "available": self.dspy_module is not None,
-                },
-            }
-
-        @self.app.get("/schema")
-        async def get_schemas() -> Dict[str, Any]:
-            """Get input/output schemas for this agent."""
-            return {
-                "input": self.get_input_schema(),
-                "output": self.get_output_schema(),
-                "deps": self.get_deps_schema(),
-            }
-
-    def _extract_input_from_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Extract typed input from A2A task format.
-
-        A2A Task Structure:
-        {
-            "id": "task_id",
-            "messages": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"type": "text", "text": "query"},
-                        {"type": "data", "data": {...}},
-                    ]
-                }
-            ]
-        }
-        """
-        extracted = {
-            "task_id": task.get("id", str(uuid.uuid4())),
-        }
-
-        # Extract per-request context (tenant_id, session_id) from task root
-        if "tenant_id" in task:
-            extracted["tenant_id"] = task["tenant_id"]
-        if "session_id" in task:
-            extracted["session_id"] = task["session_id"]
-
-        # Extract from A2A message parts
-        for message in task.get("messages", []):
-            for part in message.get("parts", []):
-                part_type = part.get("type")
-
-                if part_type == "text":
-                    extracted["query"] = part.get("text", "")
-
-                elif part_type == "data":
-                    # Merge data part into extracted input
-                    data = part.get("data", {})
-                    extracted.update(data)
-
-                elif part_type == "video":
-                    extracted["video_data"] = part.get("video_data")
-                    extracted["video_filename"] = part.get("filename")
-
-                elif part_type == "image":
-                    extracted["image_data"] = part.get("image_data")
-                    extracted["image_filename"] = part.get("filename")
-
-                elif part_type == "file":
-                    extracted["file_uri"] = part.get("file_uri")
-                    extracted["mime_type"] = part.get("mime_type")
-
-        return extracted
-
-    def _create_a2a_response(
-        self,
-        output: OutputT,
-        tenant_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Convert typed output to A2A response format."""
-        response = {
-            "status": "success",
-            "agent": self.agent_name,
-            **output.model_dump(),
-        }
-        if tenant_id:
-            response["tenant_id"] = tenant_id
-        if session_id:
-            response["session_id"] = session_id
-        return response
 
     def _get_skills(self) -> List[Dict[str, Any]]:
         """Generate A2A skills from typed schemas."""
@@ -405,53 +109,3 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                 "output_schema": self.get_output_schema(),
             }
         ]
-
-    async def call_agent(
-        self,
-        agent_url: str,
-        query: str,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """
-        Call another A2A agent.
-
-        Args:
-            agent_url: URL of target A2A agent
-            query: Query to send
-            **kwargs: Additional parameters
-
-        Returns:
-            Response from target agent
-        """
-        try:
-            return await self.a2a_client.send_task(agent_url, query, **kwargs)
-        except Exception as e:
-            logger.error(f"Failed to call agent {agent_url}: {e}")
-            return {
-                "error": f"Agent communication failed: {e}",
-                "status": "failed",
-                "target_agent": agent_url,
-            }
-
-    def start(self, host: str = "0.0.0.0") -> None:
-        """Start the A2A agent HTTP server."""
-        logger.info(f"Starting {self.agent_name} on {host}:{self.port}")
-        uvicorn.run(self.app, host=host, port=self.port)
-
-    def get_performance_summary(self) -> Dict[str, Any]:
-        """Get performance summary."""
-        return {
-            "agent": self.agent_name,
-            "requests_processed": self.request_count,
-            "error_count": self.error_count,
-            "success_rate": (
-                (self.request_count - self.error_count) / self.request_count
-                if self.request_count > 0
-                else 1.0
-            ),
-            "avg_processing_time": (
-                self.total_processing_time / self.request_count
-                if self.request_count > 0
-                else 0.0
-            ),
-        }

@@ -36,7 +36,6 @@ from cogniverse_agents.routing_agent import (
     RoutingAgent,
     RoutingDeps,
 )
-from cogniverse_agents.tools.a2a_utils import A2AClient
 
 # Import after routing types to avoid circular dependency
 from cogniverse_agents.workflow_intelligence import (
@@ -165,7 +164,7 @@ class MultiAgentOrchestrator:
 
         self._initialize_dspy_modules()
 
-        self.a2a_client = A2AClient()
+        # A2A client created per-request in _execute_task via a2a-sdk
 
         self.enable_workflow_intelligence = enable_workflow_intelligence
         if enable_workflow_intelligence:
@@ -607,7 +606,16 @@ class MultiAgentOrchestrator:
     async def _execute_task(
         self, task: WorkflowTask, workflow_plan: WorkflowPlan
     ) -> Dict[str, Any]:
-        """Execute individual task by communicating with the assigned agent"""
+        """Execute individual task via A2A JSON-RPC 2.0 message/send."""
+        from a2a.client import A2AClient as A2ASDKClient
+        from a2a.types import (
+            Message,
+            MessageSendParams,
+            Role,
+            SendMessageRequest,
+            TextPart,
+        )
+
         task.status = TaskStatus.RUNNING
         task.start_time = datetime.now()
         self.orchestration_stats["total_tasks_executed"] += 1
@@ -625,28 +633,43 @@ class MultiAgentOrchestrator:
 
             task_context = await self._prepare_task_context(task, workflow_plan)
 
-            context_dict = {
+            metadata = {
+                "agent_name": agent_name,
+                "query": task.query,
+                "tenant_id": self.tenant_id,
                 "task_id": task.task_id,
                 "workflow_id": workflow_plan.workflow_id,
-                "tenant_id": self.tenant_id,
             }
             if task_context:
-                context_dict["dependency_context"] = task_context
+                metadata["dependency_context"] = task_context
+
+            request = SendMessageRequest(
+                id=str(uuid.uuid4()),
+                params=MessageSendParams(
+                    message=Message(
+                        role=Role.user,
+                        message_id=str(uuid.uuid4()),
+                        parts=[TextPart(text=task.query)],
+                    ),
+                    metadata=metadata,
+                ),
+            )
 
             async with httpx.AsyncClient(
                 timeout=task.timeout_seconds or 60.0
-            ) as client:
-                response = await client.post(
-                    f"{agent_endpoint}/agents/{agent_name}/process",
-                    json={
-                        "agent_name": agent_name,
-                        "query": task.query,
-                        "context": context_dict,
-                    },
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
-                result = response.json()
+            ) as httpx_client:
+                import warnings
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    client = A2ASDKClient(
+                        httpx_client=httpx_client,
+                        url=agent_endpoint,
+                    )
+                response = await client.send_message(request)
+
+            # Extract result from A2A response
+            result = self._extract_a2a_result(response)
 
             task.status = TaskStatus.COMPLETED
             task.result = result
@@ -672,6 +695,48 @@ class MultiAgentOrchestrator:
                 return await self._execute_task(task, workflow_plan)
 
             raise e
+
+    def _extract_a2a_result(self, response) -> Dict[str, Any]:
+        """Extract result dict from A2A SendMessageResponse."""
+        from a2a.types import Message as A2AMessage
+        from a2a.types import Task as A2ATask
+
+        result_obj = response.root.result if hasattr(response, "root") else response
+
+        if isinstance(result_obj, A2AMessage):
+            # Message response — extract text from parts
+            texts = []
+            for part in result_obj.parts:
+                if hasattr(part, "root"):
+                    part = part.root
+                if hasattr(part, "text"):
+                    texts.append(part.text)
+            combined = "\n".join(texts)
+            try:
+                return json.loads(combined)
+            except (json.JSONDecodeError, TypeError):
+                return {"status": "success", "result": combined}
+
+        if isinstance(result_obj, A2ATask):
+            # Task response — extract from artifacts or status
+            if result_obj.artifacts:
+                for artifact in result_obj.artifacts:
+                    for part in artifact.parts:
+                        if hasattr(part, "root"):
+                            part = part.root
+                        if hasattr(part, "text"):
+                            try:
+                                return json.loads(part.text)
+                            except (json.JSONDecodeError, TypeError):
+                                return {"status": "success", "result": part.text}
+            return {
+                "status": str(result_obj.status.state.value)
+                if result_obj.status
+                else "unknown",
+                "task_id": result_obj.id,
+            }
+
+        return {"status": "success", "result": str(result_obj)}
 
     async def _prepare_task_context(
         self, task: WorkflowTask, workflow_plan: WorkflowPlan

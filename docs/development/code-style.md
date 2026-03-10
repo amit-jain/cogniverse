@@ -253,7 +253,6 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 # Within package (absolute form - commonly used)
 from cogniverse_core.query.encoders import QueryEncoderFactory
-from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 ```
 
 ### Avoid Star Imports

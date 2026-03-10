@@ -14,7 +14,6 @@ from pydantic import Field
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingOutput
-from cogniverse_agents.tools.a2a_utils import DataPart, Task
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
@@ -23,9 +22,6 @@ from cogniverse_core.common.vlm_interface import VLMInterface
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Input/Output/Dependencies
-# =============================================================================
 
 
 class DetailedReportInput(AgentInput):
@@ -110,24 +106,9 @@ class ReportGenerationModule(dspy.Module):
 
     def forward(self, content: str, query: str, report_type: str = "comprehensive"):
         """Generate report using DSPy"""
-        try:
-            result = self.report_generator(
-                content=content, query=query, report_type=report_type
-            )
-            return result
-        except Exception as e:
-            logger.warning(f"DSPy report generation failed: {e}, using fallback")
-            # Extract total results from content (first line: "Total Results: N")
-            # If this fails, we have a bug - crash instead of returning misleading "0 results"
-            total_results = int(content.split("\n")[0].split(":")[1].strip())
-
-            # Fallback prediction with result count
-            return dspy.Prediction(
-                executive_summary=f"Analysis of {total_results} results for query: {query}",
-                key_findings="Content analysis, Data patterns, Technical insights",
-                recommendations="Further analysis recommended, Validate findings, Review methodology",
-                confidence_score=0.5,
-            )
+        return self.report_generator(
+            content=content, query=query, report_type=report_type
+        )
 
 
 @dataclass
@@ -835,9 +816,6 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         return result
 
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
 
     async def _process_impl(self, input: DetailedReportInput) -> DetailedReportOutput:
         """
@@ -952,27 +930,14 @@ async def get_agent_card():
 
 
 @app.post("/process")
-async def process_task(task: Task):
-    """Process report generation task"""
+async def process_task(task: dict):
+    """Process report generation task via plain dict payload."""
     if not detailed_report_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        # Extract data from task
-        if not task.messages:
-            raise ValueError("Task contains no messages")
+        data = task
 
-        last_message = task.messages[-1]
-        data_part = next(
-            (part for part in last_message.parts if isinstance(part, DataPart)), None
-        )
-
-        if not data_part:
-            raise ValueError("No data part found in message")
-
-        data = data_part.data
-
-        # Create report request
         request = ReportRequest(
             query=data.get("query", ""),
             search_results=data.get("search_results", []),
@@ -984,11 +949,9 @@ async def process_task(task: Task):
             max_results_to_analyze=data.get("max_results_to_analyze", 20),
         )
 
-        # Generate report
         result = await detailed_report_agent.generate_report(request)
 
         return {
-            "task_id": task.id,
             "status": "completed",
             "executive_summary": result.executive_summary,
             "detailed_findings": result.detailed_findings,
@@ -1007,28 +970,6 @@ async def process_task(task: Task):
 
     except Exception as e:
         logger.error(f"Task processing failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/tasks/send")
-async def handle_a2a_task(task: dict):
-    """A2A protocol task handler"""
-    if not detailed_report_agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        # Convert dict to Task object if needed
-        from cogniverse_agents.tools.a2a_utils import Task
-
-        if not isinstance(task, Task):
-            task_obj = Task(**task)
-        else:
-            task_obj = task
-
-        return await process_task(task_obj)
-
-    except Exception as e:
-        logger.error(f"A2A task processing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

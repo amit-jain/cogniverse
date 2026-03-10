@@ -69,7 +69,6 @@ import asyncio
 
 import httpx
 
-from cogniverse_agents.tools.a2a_utils import A2AClient
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -237,8 +236,8 @@ if 'auto_refresh' not in st.session_state:
 # Initialize agent configuration
 @st.cache_resource
 def get_a2a_client():
-    """Initialize A2A client for agent communication"""
-    return A2AClient(timeout=30.0)
+    """Initialize HTTP client for agent communication"""
+    return httpx.AsyncClient(timeout=30.0)
 
 @st.cache_data
 def get_agent_config():

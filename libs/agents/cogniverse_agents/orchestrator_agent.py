@@ -11,6 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import dspy
+import httpx
 from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -24,9 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Input/Output/Dependencies
-# =============================================================================
 
 
 class OrchestratorInput(AgentInput):
@@ -141,28 +139,7 @@ class OrchestrationModule(dspy.Module):
 
     def forward(self, query: str, available_agents: str) -> dspy.Prediction:
         """Create orchestration plan using LLM reasoning"""
-        try:
-            return self.planner(query=query, available_agents=available_agents)
-        except Exception as e:
-            logger.warning(f"Orchestration planning failed: {e}, using fallback")
-            return self._fallback_plan(query, available_agents)
-
-    def _fallback_plan(self, query: str, available_agents: str) -> dspy.Prediction:
-        """Fallback orchestration using simple heuristics"""
-        # Default pipeline: enhancement -> entity extraction -> profile selection -> search
-        agent_sequence = "query_enhancement,entity_extraction,profile_selection,search"
-
-        # Enhancement and entity extraction can run in parallel (step 0,1)
-        # Then profile selection and search run sequentially
-        parallel_steps = "0,1"
-
-        reasoning = "Fallback plan: enhance query and extract entities in parallel, then select profile and search"
-
-        return dspy.Prediction(
-            agent_sequence=agent_sequence,
-            parallel_steps=parallel_steps,
-            reasoning=reasoning,
-        )
+        return self.planner(query=query, available_agents=available_agents)
 
 
 class OrchestratorAgent(
@@ -285,11 +262,11 @@ class OrchestratorAgent(
             )
             self._memory_initialized_tenants.add(tenant_id)
         except Exception as e:
-            logger.warning(f"Memory initialization failed for tenant {tenant_id}: {e}")
+            logger.warning(
+                f"Memory initialization failed for tenant '{tenant_id}': {e}. "
+                "Continuing without memory support."
+            )
 
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
 
     async def _process_impl(
         self, input: Union[OrchestratorInput, Dict[str, Any]]
@@ -548,14 +525,16 @@ class OrchestratorAgent(
                                 dep_agent
                             ]
 
-                # Call agent via A2A HTTP
+                # Call agent via HTTP
                 try:
                     query = agent_input.pop("query", "")
-                    result = await self.a2a_client.send_task(
-                        agent_endpoint.url,
-                        query=query,
-                        **agent_input,
-                    )
+                    async with httpx.AsyncClient(timeout=60.0) as http_client:
+                        response = await http_client.post(
+                            f"{agent_endpoint.url}/process",
+                            json={"query": query, **agent_input},
+                        )
+                        response.raise_for_status()
+                        result = response.json()
                     return agent_name, result
                 except Exception as e:
                     logger.error(

@@ -9,6 +9,7 @@ Tests the durable execution capability of MultiAgentOrchestrator:
 """
 
 import logging
+import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -146,26 +147,38 @@ def mock_checkpoint_storage():
 
 @pytest.fixture
 def mock_a2a_client():
-    """Mock A2A client that returns successful results"""
-    client = AsyncMock()
-    client.send_message = AsyncMock(
-        return_value={"result": "success", "data": "test_data", "confidence": 0.9}
-    )
-    return client
+    """Legacy fixture — kept for signature compatibility but no longer used."""
+    return AsyncMock()
+
+
+def _make_a2a_json_rpc_response():
+    """Build a valid A2A JSON-RPC 2.0 response dict."""
+    return {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "result": {
+            "role": "agent",
+            "messageId": str(uuid.uuid4()),
+            "parts": [
+                {
+                    "kind": "text",
+                    "text": '{"result": "success", "data": "test_data", "confidence": 0.9}',
+                }
+            ],
+        },
+    }
 
 
 @pytest.fixture
 def mock_httpx_success():
-    """Patch httpx.AsyncClient in the checkpoint orchestrator module to return success.
+    """Patch httpx.AsyncClient to return A2A JSON-RPC 2.0 responses.
 
     Required for tests that assert result["status"] == "completed", because the
-    orchestrator now uses httpx (not A2AClient) for task execution.
+    orchestrator uses httpx + a2a-sdk for task execution.
     """
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(
-        return_value={"result": "success", "data": "test_data", "confidence": 0.9}
-    )
+    mock_response.json = MagicMock(side_effect=lambda: _make_a2a_json_rpc_response())
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(return_value=mock_response)
@@ -212,7 +225,7 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         # Execute a workflow
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
@@ -262,7 +275,7 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -303,7 +316,7 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -345,7 +358,7 @@ class TestCheckpointCreation:
             checkpoint_storage=None,  # No storage configured
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -425,7 +438,7 @@ class TestWorkflowResume:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         # Resume the workflow
         result = await orchestrator.process_complex_query(
@@ -480,7 +493,7 @@ class TestWorkflowResume:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         await orchestrator.process_complex_query(
             "Supersede test", resume_from_workflow_id="wf_supersede"
@@ -628,7 +641,7 @@ class TestCheckpointLevels:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-        orchestrator.a2a_client = mock_a2a_client
+
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(

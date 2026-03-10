@@ -71,10 +71,63 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 
-    # 5. Wire agent registry and dependencies to agents router
+    # 5. Wire agent registry and dependencies to agents router + A2A
     agents.set_agent_registry(agent_registry)
     agents.set_agent_dependencies(config_manager, schema_loader)
     logger.info("AgentRegistry and dependencies wired to agents router")
+
+    # 5b. Mount A2A protocol server (JSON-RPC 2.0)
+    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+
+    from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+    dispatcher = agents.get_dispatcher()
+    executor = CogniverseAgentExecutor(dispatcher=dispatcher)
+
+    skills = [
+        AgentSkill(
+            id=name,
+            name=name,
+            description=f"Agent: {name} ({', '.join(agent_registry.get_agent(name).capabilities)})",
+            tags=list(agent_registry.get_agent(name).capabilities),
+        )
+        for name in agent_registry.list_agents()
+        if agent_registry.get_agent(name) is not None
+    ]
+
+    agent_card = AgentCard(
+        name="Cogniverse Runtime",
+        description="Multi-agent AI platform for content intelligence",
+        url="http://localhost:8000/a2a",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=skills or [
+            AgentSkill(
+                id="default",
+                name="default",
+                description="Default agent skill",
+                tags=["general"],
+            )
+        ],
+    )
+
+    a2a_handler = DefaultRequestHandler(
+        agent_executor=executor,
+        task_store=InMemoryTaskStore(),
+    )
+    a2a_server = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=a2a_handler,
+    )
+    app.mount("/a2a", a2a_server.build())
+    logger.info(
+        f"A2A server mounted at /a2a with {len(skills)} skills"
+    )
 
     # 6. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()

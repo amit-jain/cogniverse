@@ -1025,17 +1025,18 @@ class TestRouterToRoutingAgentWiring:
     async def test_execute_routing_task_instantiates_real_agent(
         self, telemetry_manager_without_phoenix
     ):
-        """_execute_routing_task builds RoutingDeps from config and calls route_query."""
-        from cogniverse_runtime.routers.agents import (
-            AgentTask,
-            _execute_routing_task,
-            set_agent_dependencies,
-        )
+        """AgentDispatcher._execute_routing_task builds RoutingDeps from config and calls route_query."""
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        # Inject dependencies
         config_manager = Mock()
         schema_loader = Mock()
-        set_agent_dependencies(config_manager, schema_loader)
+        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        dispatcher = AgentDispatcher(
+            agent_registry=registry,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         # Mock get_config to return a realistic config dict
         test_config = {
@@ -1074,13 +1075,11 @@ class TestRouterToRoutingAgentWiring:
                 mock_agent.route_query = AsyncMock(return_value=mock_routing_output)
                 mock_agent_class.return_value = mock_agent
 
-                task = AgentTask(
-                    agent_name="routing_agent",
+                result = await dispatcher._execute_routing_task(
                     query="find cats in videos",
                     context={"tenant_id": "test_tenant"},
+                    tenant_id="test_tenant",
                 )
-
-                result = await _execute_routing_task(task, "test_tenant")
 
                 # Verify RoutingDeps was constructed correctly
                 call_kwargs = mock_agent_class.call_args[1]
@@ -1108,15 +1107,17 @@ class TestRouterToRoutingAgentWiring:
         self, telemetry_manager_without_phoenix
     ):
         """When enable_memory=True, RoutingDeps includes all memory_* fields."""
-        from cogniverse_runtime.routers.agents import (
-            AgentTask,
-            _execute_routing_task,
-            set_agent_dependencies,
-        )
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
         config_manager = Mock()
         schema_loader = Mock()
-        set_agent_dependencies(config_manager, schema_loader)
+        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        dispatcher = AgentDispatcher(
+            agent_registry=registry,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
         test_config = {
             "llm_config": {
@@ -1152,13 +1153,11 @@ class TestRouterToRoutingAgentWiring:
                 mock_agent.route_query = AsyncMock(return_value=mock_output)
                 mock_agent_class.return_value = mock_agent
 
-                task = AgentTask(
-                    agent_name="routing_agent",
+                await dispatcher._execute_routing_task(
                     query="test",
                     context={"tenant_id": "test_tenant"},
+                    tenant_id="test_tenant",
                 )
-
-                await _execute_routing_task(task, "test_tenant")
 
                 # Verify memory fields in RoutingDeps
                 deps = mock_agent_class.call_args[1]["deps"]

@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cogniverse_agents.tools.a2a_utils import A2AClient, discover_agents
+import httpx
+
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 
@@ -27,7 +28,7 @@ class SystemTester:
     def __init__(self):
         config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
-        self.client = A2AClient()
+        self.client = httpx.AsyncClient(timeout=30.0)
         self.test_results = []
         self.failed_tests = []
         self.passed_tests = []
@@ -150,15 +151,16 @@ class SystemTester:
 
         for url in agent_urls:
             try:
-                agent_card = await self.client.get_agent_card(url)
-                if "error" in agent_card:
+                response = await self.client.get(f"{url}/.well-known/agent-card.json")
+                if response.status_code != 200:
                     self.log_test(
                         f"Agent Connectivity ({url})",
                         False,
-                        f"Failed to connect to agent: {agent_card['error']}",
+                        f"Failed to connect to agent: HTTP {response.status_code}",
                     )
                     all_connected = False
                 else:
+                    agent_card = response.json()
                     self.log_test(
                         f"Agent Connectivity ({url})",
                         True,
@@ -179,7 +181,15 @@ class SystemTester:
                 self.config.get("video_agent_url")
             ]
 
-            discovered_agents = await discover_agents(agent_urls)
+            discovered_agents = {}
+            for url in agent_urls:
+                try:
+                    response = await self.client.get(f"{url}/.well-known/agent-card.json")
+                    if response.status_code == 200:
+                        card = response.json()
+                        discovered_agents[card.get("name", url)] = card
+                except Exception:
+                    pass
 
             if not discovered_agents:
                 self.log_test("Agent Discovery", False, "No agents discovered")
@@ -202,7 +212,11 @@ class SystemTester:
             url = self.config.get("video_agent_url")
             test_query = "test query for video search"
 
-            response = await self.client.send_task(url, test_query, top_k=5)
+            resp = await self.client.post(
+                f"{url}/search",
+                json={"query": test_query, "tenant_id": "default", "top_k": 5},
+            )
+            response = resp.json()
 
             if "error" in response:
                 self.log_test(
@@ -430,13 +444,12 @@ class SystemTester:
             for i, (query, expected_videos) in enumerate(self.test_queries[:5]):
                 print(f"\n[{i+1}/5] Testing query: '{query}'")
 
-                # Call OrchestratorAgent via A2A
-                result = await self.client.send_task(
-                    orchestrator_url,
-                    query=query,
-                    tenant_id="default",
-                    top_k=20,
+                # Call OrchestratorAgent via HTTP
+                resp = await self.client.post(
+                    f"{orchestrator_url}/process",
+                    json={"query": query, "tenant_id": "default", "top_k": 20},
                 )
+                result = resp.json()
 
                 if not result or result.get("status") == "error":
                     print(

@@ -37,6 +37,31 @@ members = [
 ]
 
 [[package]]
+name = "a2a-sdk"
+version = "0.3.24"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/76/cefa956fb2d3911cb91552a1da8ce2dbb339f1759cb475e2982f0ae2332b/a2a_sdk-0.3.24.tar.gz", hash = "sha256:3581e6e8a854cd725808f5732f90b7978e661b6d4e227a4755a8f063a3c1599d", size = 255550, upload-time = "2026-02-20T10:05:43.423Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/6e/cae5f0caea527b39c0abd7204d9416768764573c76649ca03cc345a372be/a2a_sdk-0.3.24-py3-none-any.whl", hash = "sha256:7b248767096bb55311f57deebf6b767349388d94c1b376c60cb8f6b715e053f6", size = 145752, upload-time = "2026-02-20T10:05:41.729Z" },
+]
+
+[package.optional-dependencies]
+http-server = [
+    { name = "fastapi", version = "0.116.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform == 'darwin'" },
+    { name = "fastapi", version = "0.123.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or sys_platform != 'darwin'" },
+    { name = "sse-starlette" },
+    { name = "starlette", version = "0.47.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform == 'darwin'" },
+    { name = "starlette", version = "0.50.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or sys_platform != 'darwin'" },
+]
+
+[[package]]
 name = "absl-py"
 version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -864,6 +889,7 @@ name = "cogniverse"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "a2a-sdk", extra = ["http-server"] },
     { name = "aiofiles" },
     { name = "arize-phoenix" },
     { name = "arize-phoenix-evals" },
@@ -943,6 +969,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "a2a-sdk", extras = ["http-server"], specifier = ">=0.3.0" },
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "arize-phoenix", specifier = ">=12.9.0" },
     { name = "arize-phoenix-evals", specifier = ">=0.26.0" },
@@ -1263,6 +1290,7 @@ name = "cogniverse-runtime"
 version = "0.1.0"
 source = { editable = "libs/runtime" }
 dependencies = [
+    { name = "a2a-sdk", extra = ["http-server"] },
     { name = "cogniverse-core" },
     { name = "cogniverse-sdk" },
     { name = "fastapi", version = "0.116.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform == 'darwin'" },
@@ -1295,6 +1323,7 @@ vespa = [
 
 [package.metadata]
 requires-dist = [
+    { name = "a2a-sdk", extras = ["http-server"], specifier = ">=0.3.0" },
     { name = "cogniverse-agents", marker = "extra == 'agents'", editable = "libs/agents" },
     { name = "cogniverse-agents", marker = "extra == 'all'", editable = "libs/agents" },
     { name = "cogniverse-core", editable = "libs/core" },

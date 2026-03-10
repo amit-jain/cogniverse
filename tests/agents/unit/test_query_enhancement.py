@@ -788,8 +788,6 @@ class TestDSPy30A2ABaseIntegration:
         assert "dspy30_processing" in agent.config.capabilities
         assert "a2a_protocol" in agent.config.capabilities
         assert agent.dspy_module == mock_dspy30_module
-        assert hasattr(agent, "app")  # FastAPI app for A2A
-        assert hasattr(agent, "a2a_client")  # A2A client for inter-agent communication
 
     def test_a2a_to_dspy_conversion_enhanced(self):
         """Test type-safe input/output processing with A2AAgent"""
@@ -2532,128 +2530,6 @@ class TestMultiAgentOrchestrator:
         assert updated_stats["failure_rate"] == 0.2
 
 
-@pytest.mark.unit
-class TestA2AGateway:
-    """Unit tests for A2A Enhanced Gateway (Phase 4.3)"""
-
-    def test_gateway_initialization(self, telemetry_manager_without_phoenix):
-        """Test A2A Enhanced Gateway initialization"""
-        from cogniverse_agents.a2a_gateway import A2AGateway
-
-        # Test direct initialization
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        assert gateway is not None
-        assert hasattr(gateway, "app")
-        assert hasattr(gateway, "gateway_stats")
-
-        # Test with orchestration enabled
-        custom_gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-            enable_orchestration=True,
-        )
-        assert custom_gateway.enable_orchestration is True
-
-    def test_request_response_models(self, telemetry_manager_without_phoenix):
-        """Test A2A request and response data models"""
-        from cogniverse_agents.a2a_gateway import (
-            A2AQueryRequest,
-            A2AQueryResponse,
-            OrchestrationRequest,
-        )
-
-        # Test A2AQueryRequest
-        request = A2AQueryRequest(
-            query="test query",
-            context="test context",
-            user_id="user123",
-            preferences={"pref": "value"},
-        )
-        assert request.query == "test query"
-        assert request.context == "test context"
-        assert request.user_id == "user123"
-        assert request.preferences["pref"] == "value"
-
-        # Test A2AQueryResponse
-        response = A2AQueryResponse(
-            agent="video_search_agent",
-            confidence=0.85,
-            reasoning="test reasoning",
-            enhanced_query="enhanced test query",
-            processing_time_ms=150.0,
-            routing_method="enhanced_dspy",
-        )
-        assert response.agent == "video_search_agent"
-        assert response.confidence == 0.85
-        assert response.needs_orchestration is False  # Default value
-        assert response.routing_method == "enhanced_dspy"
-
-        # Test OrchestrationRequest
-        orch_request = OrchestrationRequest(
-            query="complex orchestration query", force_orchestration=True
-        )
-        assert orch_request.force_orchestration is True
-
-    def test_emergency_response_creation(self, telemetry_manager_without_phoenix):
-        """Test emergency response fallback logic"""
-        from datetime import datetime
-
-        from cogniverse_agents.a2a_gateway import (
-            A2AGateway,
-            A2AQueryRequest,
-        )
-
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )  # Test emergency response
-
-        # Test emergency response for video query
-        video_request = A2AQueryRequest(query="show me videos of robots")
-        response = gateway._create_emergency_response(
-            video_request, datetime.now(), "test error"
-        )
-
-        assert response.agent == "search_agent"  # Unified search agent
-        assert response.confidence == 0.2  # Low emergency confidence
-        assert "Emergency" in response.reasoning
-        assert response.routing_method == "emergency_fallback"
-
-        # Test emergency response for summary query
-        summary_request = A2AQueryRequest(query="summarize the results")
-        summary_response = gateway._create_emergency_response(
-            summary_request, datetime.now(), "test error"
-        )
-
-        assert summary_response.agent == "summarizer_agent"
-
-    def test_response_time_statistics(self, telemetry_manager_without_phoenix):
-        """Test response time statistics tracking"""
-        from cogniverse_agents.a2a_gateway import A2AGateway
-
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-
-        # Initial stats
-        assert gateway.gateway_stats["total_requests"] == 0
-        assert gateway.gateway_stats["average_response_time"] == 0.0
-
-        # Simulate processing times
-        gateway.gateway_stats["total_requests"] = 1
-        gateway._update_response_time_stats(100.0)
-        assert gateway.gateway_stats["average_response_time"] == 100.0
-
-        gateway.gateway_stats["total_requests"] = 2
-        gateway._update_response_time_stats(200.0)
-        assert (
-            gateway.gateway_stats["average_response_time"] == 150.0
-        )  # (100 + 200) / 2
-
 
 @pytest.mark.unit
 class TestWorkflowIntelligence:
@@ -2920,26 +2796,6 @@ class TestSystemIntegration:
         assert mock_decision.metadata["needs_orchestration"] is True
         assert orchestrator is not None
 
-    def test_gateway_to_intelligence_integration(
-        self, telemetry_manager_without_phoenix
-    ):
-        """Test A2A Gateway integration with Workflow Intelligence"""
-        from cogniverse_agents.a2a_gateway import A2AGateway
-
-        # Create gateway with intelligence enabled
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-            enable_orchestration=True,
-        )
-
-        # Verify orchestrator has intelligence
-        if hasattr(gateway, "orchestrator") and gateway.orchestrator:
-            assert gateway.orchestrator.workflow_intelligence is not None
-
-        # Test gateway statistics include intelligence data
-        # This would be tested in integration tests with actual data
-
     def test_dspy_signatures_compatibility(self, telemetry_manager_without_phoenix):
         """Test DSPy signatures work across Phase 4 components"""
         from cogniverse_agents.multi_agent_orchestrator import (
@@ -2998,26 +2854,14 @@ class TestSystemIntegration:
         assert orchestrator is not None
         assert orchestrator.routing_agent is router
 
-        # Test 4: A2A Gateway (depends on router and orchestrator)
-        from cogniverse_agents.a2a_gateway import A2AGateway
-
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-            enable_orchestration=True,
-        )
-        assert gateway is not None
-
     def test_phase4_error_handling_consistency(self, telemetry_manager_without_phoenix):
         """Test error handling consistency across Phase 4 components"""
-        from cogniverse_agents.a2a_gateway import A2AGateway
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.routing_agent import RoutingDeps
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All components should handle initialization errors gracefully
         try:
-            # Test with invalid config that might cause errors
             deps = RoutingDeps(
                 telemetry_config=telemetry_manager_without_phoenix.config,
             )
@@ -3027,16 +2871,10 @@ class TestSystemIntegration:
                 telemetry_manager=telemetry_manager_without_phoenix,
             )
             intelligence = WorkflowIntelligence(enable_persistence=False)
-            gateway = A2AGateway(
-                tenant_id="test_tenant",
-                telemetry_config=telemetry_manager_without_phoenix.config,
-            )
 
-            # Components should be in valid state even if some features fail
             assert router is not None
             assert orchestrator is not None
             assert intelligence is not None
-            assert gateway is not None
 
         except Exception as e:
             pytest.fail(
@@ -3045,7 +2883,6 @@ class TestSystemIntegration:
 
     def test_phase4_statistics_consistency(self, telemetry_manager_without_phoenix):
         """Test statistics reporting consistency across Phase 4 components"""
-        from cogniverse_agents.a2a_gateway import A2AGateway
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.routing_agent import RoutingDeps
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
@@ -3072,14 +2909,6 @@ class TestSystemIntegration:
         intel_stats = intelligence.get_intelligence_statistics()
         assert isinstance(intel_stats, dict)
         assert "total_optimizations" in intel_stats
-
-        gateway = A2AGateway(
-            tenant_id="test_tenant",
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        gateway_stats = gateway.gateway_stats
-        assert isinstance(gateway_stats, dict)
-        assert "total_requests" in gateway_stats
 
 
 

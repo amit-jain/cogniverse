@@ -150,7 +150,6 @@ class TestRealAgentRoutingIntegration:
     @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_agent_routing_with_local_llm(self):
         """Test real agent routing decisions with local Ollama model."""
-        from unittest.mock import patch
 
         # Use real DSPy LM
         test_lm = create_dspy_lm(
@@ -160,11 +159,7 @@ class TestRealAgentRoutingIntegration:
             )
         )
 
-        with (
-            dspy.context(lm=test_lm),
-            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
-            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
-        ):
+        with dspy.context(lm=test_lm):
             telemetry_config = TelemetryConfig(enabled=False)
             deps = RoutingDeps(telemetry_config=telemetry_config)
             routing_agent = RoutingAgent(deps=deps, port=8001)
@@ -226,7 +221,6 @@ class TestRealAgentSpecializationIntegration:
     @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_summarizer_agent_with_local_llm(self):
         """Test real summarization with local Ollama model."""
-        from unittest.mock import patch
 
         from cogniverse_agents.summarizer_agent import SummaryRequest
 
@@ -240,11 +234,7 @@ class TestRealAgentSpecializationIntegration:
             )
         )
 
-        with (
-            dspy.context(lm=test_lm),
-            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
-            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
-        ):
+        with dspy.context(lm=test_lm):
             deps = SummarizerDeps()
             summarizer = SummarizerAgent(deps=deps, config_manager=config_manager)
 
@@ -290,65 +280,59 @@ class TestRealAgentSpecializationIntegration:
     @pytest.mark.timeout(TEST_TIMEOUT)
     async def test_real_detailed_report_agent_with_local_llm(self):
         """Test real detailed report generation with local Ollama model."""
-        from unittest.mock import patch
-
         from cogniverse_agents.detailed_report_agent import ReportRequest
 
         config_manager = create_default_config_manager()
 
         # E2E test - requires real Ollama
-        with (
-            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
-            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
-        ):
-            deps = DetailedReportDeps()
-            report_agent = DetailedReportAgent(deps=deps, config_manager=config_manager)
+        deps = DetailedReportDeps()
+        report_agent = DetailedReportAgent(deps=deps, config_manager=config_manager)
 
-            mock_search_results = [
-                {
-                    "title": "Advances in Neural Architecture Search",
-                    "content": "Recent developments in automated neural architecture design...",
-                    "relevance_score": 0.92,
-                },
-                {
-                    "title": "Efficient Transformer Models",
-                    "content": "New approaches to reducing computational overhead in transformers...",
-                    "relevance_score": 0.88,
-                },
-            ]
+        mock_search_results = [
+            {
+                "title": "Advances in Neural Architecture Search",
+                "content": "Recent developments in automated neural architecture design...",
+                "relevance_score": 0.92,
+            },
+            {
+                "title": "Efficient Transformer Models",
+                "content": "New approaches to reducing computational overhead in transformers...",
+                "relevance_score": 0.88,
+            },
+        ]
 
-            request = ReportRequest(
-                query="machine learning efficiency research",
-                search_results=mock_search_results,
-                report_type="comprehensive",
-                include_visual_analysis=False,
-                include_technical_details=True,
-                include_recommendations=True,
-            )
+        request = ReportRequest(
+            query="machine learning efficiency research",
+            search_results=mock_search_results,
+            report_type="comprehensive",
+            include_visual_analysis=False,
+            include_technical_details=True,
+            include_recommendations=True,
+        )
 
-            report_result = await report_agent.generate_report(request)
+        report_result = await report_agent.generate_report(request)
 
-            assert hasattr(report_result, "executive_summary")
-            assert hasattr(report_result, "detailed_findings")
-            assert hasattr(report_result, "recommendations")
-            assert hasattr(report_result, "confidence_assessment")
+        assert hasattr(report_result, "executive_summary")
+        assert hasattr(report_result, "detailed_findings")
+        assert hasattr(report_result, "recommendations")
+        assert hasattr(report_result, "confidence_assessment")
 
-            assert (
-                len(report_result.executive_summary) > 50
-            ), "Executive summary should be comprehensive"
-            assert (
-                len(report_result.detailed_findings) >= 1
-            ), "Detailed findings should be present"
-            assert (
-                len(report_result.recommendations) >= 1
-            ), "Recommendations should be present"
+        assert (
+            len(report_result.executive_summary) > 50
+        ), "Executive summary should be comprehensive"
+        assert (
+            len(report_result.detailed_findings) >= 1
+        ), "Detailed findings should be present"
+        assert (
+            len(report_result.recommendations) >= 1
+        ), "Recommendations should be present"
 
-            confidence = float(report_result.confidence_assessment.get("overall", 0.0))
-            assert 0.0 <= confidence <= 1.0
+        confidence = float(report_result.confidence_assessment.get("overall", 0.0))
+        assert 0.0 <= confidence <= 1.0
 
-            logger.info(
-                f"Report executive summary: {report_result.executive_summary[:100]}..."
-            )
+        logger.info(
+            f"Report executive summary: {report_result.executive_summary[:100]}..."
+        )
 
 
 class TestRealDSPyOptimizationIntegration:
@@ -448,7 +432,6 @@ class TestRealEndToEndWorkflow:
     @pytest.mark.timeout(TEST_TIMEOUT * 2)
     async def test_real_multi_agent_workflow(self):
         """Test complete multi-agent workflow with real LLMs."""
-        from unittest.mock import patch
 
         from cogniverse_agents.summarizer_agent import SummaryRequest
 
@@ -467,11 +450,7 @@ class TestRealEndToEndWorkflow:
             )
         )
 
-        with (
-            dspy.context(lm=test_lm),
-            patch("cogniverse_core.agents.a2a_agent.FastAPI"),
-            patch("cogniverse_core.agents.a2a_agent.A2AClient"),
-        ):
+        with dspy.context(lm=test_lm):
             telemetry_config = TelemetryConfig(enabled=False)
             routing_deps = RoutingDeps(telemetry_config=telemetry_config)
             routing_agent = RoutingAgent(deps=routing_deps, port=8001)

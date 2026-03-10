@@ -22,8 +22,7 @@
    - [SummarizerAgent](#10-summarizeragent)
    - [AudioAnalysisAgent](#11-audioanalysisagent)
    - [TextAnalysisAgent](#12-textanalysisagent)
-   - [A2ARoutingAgent](#13-a2aroutingagent)
-   - [VideoSearchAgent (Refactored)](#14-videosearchagent-refactored)
+   - [VideoSearchAgent (Refactored)](#13-videosearchagent-refactored)
 4. [Agent Architecture](#agent-architecture)
 5. [Multi-Tenant Integration](#multi-tenant-integration)
 6. [Usage Examples](#usage-examples)
@@ -34,7 +33,6 @@
 11. [Real-Time Event Notifications](#real-time-event-notifications)
 12. [Approval Workflow System](#approval-workflow-system)
 13. [Tools Subsystem](#tools-subsystem)
-    - [A2A Protocol Utilities](#a2a-protocol-utilities)
     - [VideoFileServer](#videofileserver)
     - [VideoPlayerTool](#videoplayertool)
     - [EnhancedTemporalExtractor](#enhancedtemporalextractor)
@@ -63,8 +61,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 10. **SummarizerAgent** - Intelligent summarization with thinking phase
 11. **AudioAnalysisAgent** - Audio search with Whisper transcription
 12. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
-13. **A2ARoutingAgent** - A2A wrapper for standardized agent communication
-14. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
+13. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
 
 ### Design Principles
 
@@ -695,7 +692,7 @@ result = await orchestrator._process_impl(
 - **DSPy Planning**: `OrchestrationModule` uses `dspy.ChainOfThought` to plan agent sequences
 - **Parallel Execution**: Steps can run in parallel groups (e.g., entity extraction + query enhancement)
 - **Agent Discovery**: Uses `AgentRegistry.find_agents_by_capability()` for dynamic agent lookup
-- **A2A Calls**: Executes agents via `A2AClient.send_task(url, query=..., tenant_id=..., session_id=...)`
+- **Agent Calls**: Executes agents via `httpx.AsyncClient` calls to agent process endpoints
 - **Graceful Degradation**: Captures agent failures without stopping the pipeline
 
 ---
@@ -1316,7 +1313,7 @@ with dspy.context(lm=lm):
 
 ---
 
-### 6. OrchestratorAgent
+### OrchestratorAgent (Multi-Agent Workflow Detail)
 
 **Location**: `libs/agents/cogniverse_agents/orchestrator_agent.py`
 **Purpose**: Multi-agent workflow coordination with planning and action phases
@@ -1781,7 +1778,7 @@ User Query → Planning Phase → Action Phase → Post-processing → Results
 
 ---
 
-### 7. SearchAgent (Ensemble Mode)
+### 6. SearchAgent (Ensemble Mode)
 
 **Location**: `libs/agents/cogniverse_agents/search_agent.py`
 **Enhancement**: Added ensemble search with RRF fusion
@@ -2042,7 +2039,7 @@ Ensemble search is handled internally via `_search_ensemble()`. The SearchAgent 
 
 ---
 
-### 8. DetailedReportAgent
+### 7. DetailedReportAgent
 
 **Location:** `libs/agents/cogniverse_agents/detailed_report_agent.py`
 
@@ -2130,7 +2127,7 @@ print(result.confidence_assessment.get("overall", 0.0))
 
 ---
 
-### 9. DocumentAgent
+### 8. DocumentAgent
 
 **Location:** `libs/agents/cogniverse_agents/document_agent.py`
 
@@ -2204,7 +2201,7 @@ for doc in result.results:
 
 ---
 
-### 10. ImageSearchAgent
+### 9. ImageSearchAgent
 
 **Location:** `libs/agents/cogniverse_agents/image_search_agent.py`
 
@@ -2257,7 +2254,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
 ---
 
-### 11. SummarizerAgent
+### 10. SummarizerAgent
 
 **Location:** `libs/agents/cogniverse_agents/summarizer_agent.py`
 
@@ -2325,7 +2322,7 @@ class SummarizerAgent(
 
 ---
 
-### 12. AudioAnalysisAgent
+### 11. AudioAnalysisAgent
 
 **Location:** `libs/agents/cogniverse_agents/audio_analysis_agent.py`
 
@@ -2402,7 +2399,7 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 ---
 
-### 13. TextAnalysisAgent
+### 12. TextAnalysisAgent
 
 **Location:** `libs/agents/cogniverse_agents/text_analysis_agent.py`
 
@@ -2411,7 +2408,6 @@ Text analysis agent with runtime-configurable DSPy modules. Supports dynamic rec
 **Mixins Used:**
 - `DynamicDSPyMixin` - Runtime DSPy module switching
 - `ConfigAPIMixin` - REST API for configuration
-- `A2AEndpointsMixin` - A2A protocol endpoints
 - `HealthCheckMixin` - Health monitoring
 - `TenantAwareAgentMixin` - Multi-tenancy
 
@@ -2428,70 +2424,13 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 config_manager = create_default_config_manager()
 agent = TextAnalysisAgent(tenant_id="acme", config_manager=config_manager)
 
-result = agent.analyze(text="Your text here", analysis_type="sentiment")
-print(f"Result: {result.result}, Confidence: {result.confidence}")
+result = agent.analyze_text(text="Your text here", analysis_type="sentiment")
+print(f"Result: {result}")
 ```
 
 ---
 
-### 14. A2ARoutingAgent
-
-**Location:** `libs/agents/cogniverse_agents/a2a_routing_agent.py`
-
-A2A wrapper for the routing agent that provides standardized A2A communication. Handles message formatting, routing coordination, and response aggregation.
-
-**Constructor:**
-```python
-A2ARoutingAgent(
-    routing_agent: RoutingAgent,  # Required - configured RoutingAgent instance
-    tenant_id: str = "default",
-    config_manager: ConfigManager = None  # Required
-)
-```
-
-**Result Type:**
-```python
-@dataclass
-class RoutingResult:
-    task_id: str
-    routing_decision: Dict[str, Any]
-    agent_responses: Dict[str, Any]
-    final_result: Any
-    execution_time: float
-    success: bool
-    error: Optional[str] = None
-```
-
-**Usage:**
-```python
-from cogniverse_agents.a2a_routing_agent import A2ARoutingAgent
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
-
-config_manager = create_default_config_manager()
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
-        api_base="http://localhost:11434",
-    ),
-)
-routing_agent = RoutingAgent(deps=deps)
-a2a_router = A2ARoutingAgent(
-    routing_agent=routing_agent,
-    tenant_id="acme",
-    config_manager=config_manager
-)
-
-result = await a2a_router.route_query("Find videos about cooking")
-print(f"Routed to: {result.routing_decision}")
-```
-
----
-
-### 15. VideoSearchAgent (Refactored)
+### 13. VideoSearchAgent (Refactored)
 
 **Location:** `libs/agents/cogniverse_agents/video_agent_refactored.py`
 
@@ -2564,16 +2503,18 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 
     Architecture:
     - Generic Types: InputT, OutputT, DepsT for compile-time type checking
-    - A2A Protocol Layer: Standard endpoints for agent communication
     - DSPy 3.0 Core: Advanced AI capabilities and optimization
     - Pydantic Validation: Automatic input/output validation
 
     Features:
     - Type-safe process(input: InputT) -> OutputT method
-    - Standard A2A endpoints (/agent.json, /tasks/send, /health)
     - IDE autocomplete and type checking support
     - Multi-tenant support via tenant_id arriving per-request in A2A task payload
     - Multi-modal support (text, images, video, audio)
+
+    Note: HTTP server concerns (A2A protocol endpoints) are handled by the
+    runtime's A2AStarletteApplication (official a2a-sdk). This class holds
+    configuration metadata and the optional DSPy module only.
     """
 
     def __init__(
@@ -2596,16 +2537,6 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
         self.config = config
         self.dspy_module = dspy_module
 
-        # FastAPI app for A2A endpoints
-        self.app = FastAPI(
-            title=f"{config.agent_name} A2A Agent",
-            description=config.agent_description,
-            version=config.version
-        )
-
-        # A2A Client for inter-agent communication
-        self.a2a_client = A2AClient()
-
     @abstractmethod
     async def _process_impl(self, input: InputT) -> OutputT:
         """
@@ -2623,7 +2554,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 - **Pydantic Validation**: Input/output automatically validated at runtime
 - **Tenant-Agnostic Startup**: `AgentDeps` has no `tenant_id` — agents start without tenant context; `tenant_id` arrives per-request in the A2A task payload
 - **Abstract _process_impl()**: Clear contract with type-safe signature
-- **A2A Protocol**: Built-in FastAPI server with standard endpoints
+- **A2A Protocol**: HTTP server endpoints handled by the runtime's `A2AStarletteApplication` (official a2a-sdk), not embedded in each agent
 
 ### MemoryAwareMixin
 
@@ -4164,17 +4095,12 @@ See [Approval Workflow Module](./approval-workflow.md) for complete documentatio
 
 ## Tools Subsystem
 
-The Tools subsystem provides utilities for agent communication, video playback, and temporal pattern recognition.
+The Tools subsystem provides utilities for video playback and temporal pattern recognition.
 
 **Location:** `libs/agents/cogniverse_agents/tools/`
 
 ```mermaid
 flowchart LR
-    subgraph "A2A Protocol"
-        Client["<span style='color:#000'>A2AClient</span>"]
-        Utils["<span style='color:#000'>A2A Utils</span>"]
-    end
-
     subgraph "Video Tools"
         Server["<span style='color:#000'>VideoFileServer</span>"]
         Player["<span style='color:#000'>VideoPlayerTool</span>"]
@@ -4184,85 +4110,12 @@ flowchart LR
         Temporal["<span style='color:#000'>TemporalExtractor</span>"]
     end
 
-    Client --> Utils
     Server --> Player
     Player --> Temporal
 
-    style Client fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Utils fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Server fill:#90caf9,stroke:#1565c0,color:#000
     style Player fill:#90caf9,stroke:#1565c0,color:#000
     style Temporal fill:#ffcc80,stroke:#ef6c00,color:#000
-```
-
-### A2A Protocol Utilities
-
-**Primary Location:** `libs/core/cogniverse_core/common/a2a_utils.py` (canonical)
-
-**Note:** A duplicate copy exists at `libs/agents/cogniverse_agents/tools/a2a_utils.py` with identical API. Always prefer importing from `cogniverse_core.common.a2a_utils` for consistency.
-
-Implements Google's Agent-to-Agent (A2A) protocol for inter-agent communication.
-
-**Data Models:**
-
-| Model | Purpose |
-|-------|---------|
-| `TextPart` | Text content in A2A messages |
-| `DataPart` | Structured data in A2A messages |
-| `FilePart` | File references with URI and MIME type |
-| `A2AMessage` | Message with role and parts list |
-| `Task` | Task with ID and message list |
-| `AgentCard` | Agent metadata (name, capabilities, skills) |
-
-**A2AClient:**
-
-```python
-from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
-
-client = A2AClient(timeout=60.0)
-
-# Send task to an A2A-compliant agent
-response = await client.send_task(
-    agent_url="http://localhost:8000",
-    query="Search for tutorials",
-    top_k=10
-)
-
-# Get agent capabilities
-card = await client.get_agent_card("http://localhost:8000")
-# Returns: AgentCard with name, capabilities, skills, etc.
-```
-
-**Utility Functions:**
-
-```python
-from cogniverse_core.common.a2a_utils import (
-    A2AClient,
-    format_search_results,
-    create_text_message,
-    create_data_message,
-    create_task,
-    extract_data_from_message,
-    extract_text_from_message,
-    discover_agents,
-)
-
-# Create A2A messages
-msg = create_text_message("Hello", role="user")
-data_msg = create_data_message({"query": "search term"}, role="user")
-
-# Create task
-task = create_task([msg, data_msg])
-
-# Discover agents from URLs
-agents = await discover_agents([
-    "http://agent1:8000",
-    "http://agent2:8000"
-])
-# Returns: Dict[agent_name, AgentCard]
-
-# Format search results for display
-formatted = format_search_results(results, result_type="video")
 ```
 
 ### VideoFileServer

@@ -104,21 +104,17 @@ class TestMultiAgentOrchestrator:
         }
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_default(
         self,
         mock_workflow_intel,
-        mock_a2a,
         mock_routing,
         telemetry_manager_without_phoenix,
     ):
         """Test MultiAgentOrchestrator initialization with defaults"""
         mock_routing_instance = Mock()
         mock_routing.return_value = mock_routing_instance
-        mock_a2a_instance = Mock()
-        mock_a2a.return_value = mock_a2a_instance
         mock_workflow_intel_instance = Mock()
         mock_workflow_intel.return_value = mock_workflow_intel_instance
 
@@ -133,7 +129,6 @@ class TestMultiAgentOrchestrator:
         assert orchestrator.workflow_timeout == timedelta(minutes=15)
         assert orchestrator.enable_workflow_intelligence is True
         assert orchestrator.workflow_intelligence == mock_workflow_intel_instance
-        assert orchestrator.a2a_client == mock_a2a_instance
         assert orchestrator.active_workflows == {}
 
         # Check statistics initialization
@@ -144,11 +139,9 @@ class TestMultiAgentOrchestrator:
         assert stats["average_execution_time"] == 0.0
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_custom_config(
         self,
-        mock_a2a,
         mock_routing,
         sample_agents_config,
         telemetry_manager_without_phoenix,
@@ -173,13 +166,11 @@ class TestMultiAgentOrchestrator:
         assert orchestrator.workflow_intelligence is None
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_get_default_agents(
         self,
         mock_workflow_intel,
-        mock_a2a,
         mock_routing,
         telemetry_manager_without_phoenix,
     ):
@@ -202,12 +193,10 @@ class TestMultiAgentOrchestrator:
         assert "timeout_seconds" in search_agent
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     def test_initialize_dspy_modules(
         self,
         mock_workflow_intel,
-        mock_a2a,
         mock_routing,
         telemetry_manager_without_phoenix,
     ):
@@ -222,13 +211,11 @@ class TestMultiAgentOrchestrator:
         assert hasattr(orchestrator, "result_aggregator")
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     async def test_process_complex_query_basic(
         self,
         mock_workflow_intel,
-        mock_a2a,
         mock_routing,
         mock_routing_agent,
         telemetry_manager_without_phoenix,
@@ -281,7 +268,6 @@ class TestMultiAgentOrchestratorWorkflowExecution:
         """Create orchestrator with mocked dependencies"""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch(
                 "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
             ),
@@ -350,9 +336,8 @@ class TestMultiAgentOrchestratorEdgeCases:
     """Test edge cases and error handling"""
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     def test_orchestrator_with_disabled_workflow_intelligence(
-        self, mock_a2a, mock_routing, telemetry_manager_without_phoenix
+        self, mock_routing, telemetry_manager_without_phoenix
     ):
         """Test orchestrator when workflow intelligence is disabled"""
         orchestrator = MultiAgentOrchestrator(
@@ -365,10 +350,9 @@ class TestMultiAgentOrchestratorEdgeCases:
         assert orchestrator.workflow_intelligence is None
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_agent_utilization_tracking(
-        self, mock_a2a, mock_routing, telemetry_manager_without_phoenix
+        self, mock_routing, telemetry_manager_without_phoenix
     ):
         """Test agent utilization statistics"""
         orchestrator = MultiAgentOrchestrator(
@@ -392,7 +376,6 @@ class TestCrossModalFusion:
         """Create orchestrator for testing fusion"""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
         ):
             return MultiAgentOrchestrator(
                 tenant_id="test_tenant",
@@ -739,14 +722,12 @@ class TestOrchestratorTelemetrySpan:
     """Test orchestration telemetry span instrumentation"""
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
     async def test_span_attributes_set_on_success(
         self,
         mock_workflow_intel,
-        mock_a2a,
         mock_routing,
         telemetry_manager_without_phoenix,
     ):
@@ -817,11 +798,9 @@ class TestOrchestratorTelemetrySpan:
         assert "orchestration.execution_order" in attr_calls
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_determine_execution_pattern(
         self,
-        mock_a2a,
         mock_routing,
         telemetry_manager_without_phoenix,
     ):
@@ -892,7 +871,6 @@ class TestOrchestrationPipelineChain:
         """Construct a real MultiAgentOrchestrator with controlled DSPy mocks."""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
         ):
             mock_routing_instance = Mock()
@@ -914,13 +892,25 @@ class TestOrchestrationPipelineChain:
 
     @pytest.fixture
     def mock_httpx_success(self):
-        """Patch httpx.AsyncClient to return successful responses."""
-        mock_response = Mock()
-        mock_response.json.return_value = {"result": "data", "confidence": 0.8}
-        mock_response.raise_for_status = Mock()
+        """Patch httpx.AsyncClient to return A2A JSON-RPC 2.0 responses."""
+        import uuid
+
+        def _make_a2a_response(*args, **kwargs):
+            mock_response = Mock()
+            mock_response.raise_for_status = Mock()
+            mock_response.json.return_value = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "result": {
+                    "role": "agent",
+                    "messageId": str(uuid.uuid4()),
+                    "parts": [{"kind": "text", "text": '{"result": "data", "confidence": 0.8}'}],
+                },
+            }
+            return mock_response
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.post = AsyncMock(side_effect=_make_a2a_response)
 
         mock_client_cm = Mock()
         mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
@@ -1028,20 +1018,24 @@ class TestOrchestrationPipelineChain:
 
         assert result["status"] == "completed"
 
-        # Verify httpx was called correctly
+        # Verify httpx was called with A2A JSON-RPC request
         mock_httpx_success.post.assert_called_once()
         call_args = mock_httpx_success.post.call_args
 
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert "/agents/search_agent/process" in url
+        # A2A posts to the agent endpoint root
+        assert url is not None
 
         json_body = call_args.kwargs.get("json", {})
-        assert "agent_name" in json_body
-        assert "query" in json_body
-        assert "context" in json_body
-
-        headers = call_args.kwargs.get("headers", {})
-        assert headers.get("Content-Type") == "application/json"
+        # Should be a JSON-RPC 2.0 request
+        assert json_body.get("jsonrpc") == "2.0"
+        assert json_body.get("method") == "message/send"
+        params = json_body.get("params", {})
+        assert "message" in params
+        # Agent metadata passed via params.metadata
+        metadata = params.get("metadata", {})
+        assert metadata.get("agent_name") == "search_agent"
+        assert metadata.get("query") == "find videos"
 
     @pytest.mark.asyncio
     async def test_plan_workflow_resolves_hallucinated_agent_names(
@@ -1060,18 +1054,20 @@ class TestOrchestrationPipelineChain:
 
         assert result["status"] == "completed"
 
-        # Verify httpx calls used resolved agent names, not hallucinated ones
+        # Verify httpx calls used resolved agent names in metadata, not hallucinated ones
         calls = mock_httpx_success.post.call_args_list
-        urls = [
-            c.args[0] if c.args else c.kwargs.get("url", "")
-            for c in calls
-        ]
-        for url in urls:
-            assert "VideoSearchAgent" not in url
-            assert "ContentSummarizer" not in url
+        agent_names_used = []
+        for c in calls:
+            json_body = c.kwargs.get("json", {})
+            metadata = json_body.get("params", {}).get("metadata", {})
+            agent_names_used.append(metadata.get("agent_name", ""))
+
+        for name in agent_names_used:
+            assert "VideoSearchAgent" not in name
+            assert "ContentSummarizer" not in name
         # Should have resolved to valid registered agents
-        url_str = " ".join(urls)
-        assert "search_agent" in url_str or "summarizer_agent" in url_str
+        all_names = " ".join(agent_names_used)
+        assert "search_agent" in all_names or "summarizer_agent" in all_names
 
     @pytest.mark.asyncio
     async def test_workflow_intelligence_post_optimization_validates_agents(
@@ -1080,7 +1076,6 @@ class TestOrchestrationPipelineChain:
         """After workflow intelligence optimization, invalid agents are re-resolved."""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence") as mock_wi_factory,
         ):
             mock_routing_cls.return_value = Mock()
@@ -1111,13 +1106,25 @@ class TestOrchestrationPipelineChain:
                 ])
             )
 
-            # Patch httpx to capture URLs
-            mock_response = Mock()
-            mock_response.json.return_value = {"result": "data", "confidence": 0.8}
-            mock_response.raise_for_status = Mock()
+            # Patch httpx to return A2A JSON-RPC responses
+            import uuid as _uuid
+
+            def _make_response(*args, **kwargs):
+                resp = Mock()
+                resp.raise_for_status = Mock()
+                resp.json.return_value = {
+                    "jsonrpc": "2.0",
+                    "id": str(_uuid.uuid4()),
+                    "result": {
+                        "role": "agent",
+                        "messageId": str(_uuid.uuid4()),
+                        "parts": [{"kind": "text", "text": '{"result": "data", "confidence": 0.8}'}],
+                    },
+                }
+                return resp
 
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.post = AsyncMock(side_effect=_make_response)
 
             mock_client_cm = Mock()
             mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
@@ -1130,9 +1137,10 @@ class TestOrchestrationPipelineChain:
                 result = await orchestrator.process_complex_query("test")
 
             assert result["status"] == "completed"
-            # Verify InvalidAgent was NOT used in the URL
-            call_url = mock_client.post.call_args.args[0]
-            assert "InvalidAgent" not in call_url
+            # Verify InvalidAgent was NOT used in the metadata
+            json_body = mock_client.post.call_args.kwargs.get("json", {})
+            metadata = json_body.get("params", {}).get("metadata", {})
+            assert "InvalidAgent" not in metadata.get("agent_name", "")
 
     @pytest.mark.asyncio
     async def test_task_execution_uses_configured_endpoint_not_default_port(
@@ -1150,7 +1158,6 @@ class TestOrchestrationPipelineChain:
 
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
         ):
             mock_routing_cls.return_value = Mock()
@@ -1167,12 +1174,24 @@ class TestOrchestrationPipelineChain:
                 ])
             )
 
-            mock_response = Mock()
-            mock_response.json.return_value = {"result": "data", "confidence": 0.8}
-            mock_response.raise_for_status = Mock()
+            import uuid as _uuid
+
+            def _make_response(*args, **kwargs):
+                resp = Mock()
+                resp.raise_for_status = Mock()
+                resp.json.return_value = {
+                    "jsonrpc": "2.0",
+                    "id": str(_uuid.uuid4()),
+                    "result": {
+                        "role": "agent",
+                        "messageId": str(_uuid.uuid4()),
+                        "parts": [{"kind": "text", "text": '{"result": "data", "confidence": 0.8}'}],
+                    },
+                }
+                return resp
 
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.post = AsyncMock(side_effect=_make_response)
 
             mock_client_cm = Mock()
             mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
@@ -1185,8 +1204,9 @@ class TestOrchestrationPipelineChain:
                 result = await orchestrator.process_complex_query("test")
 
             assert result["status"] == "completed"
+            # A2AClient posts to the endpoint URL directly
             call_url = mock_client.post.call_args.args[0]
-            assert call_url.startswith("http://myhost:9999/agents/search_agent/process")
+            assert "myhost:9999" in call_url
 
     @pytest.mark.asyncio
     async def test_dependency_context_passed_as_string_not_dict_unpack(
@@ -1201,25 +1221,32 @@ class TestOrchestrationPipelineChain:
             ])
         )
 
+        import uuid as _uuid
+
         call_bodies = []
-
-        first_response = Mock()
-        first_response.json.return_value = {"result": "search data found", "confidence": 0.9}
-        first_response.raise_for_status = Mock()
-
-        second_response = Mock()
-        second_response.json.return_value = {"result": "summary", "confidence": 0.85}
-        second_response.raise_for_status = Mock()
-
         call_count = 0
+
+        def _make_a2a_resp(text):
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {
+                "jsonrpc": "2.0",
+                "id": str(_uuid.uuid4()),
+                "result": {
+                    "role": "agent",
+                    "messageId": str(_uuid.uuid4()),
+                    "parts": [{"kind": "text", "text": text}],
+                },
+            }
+            return resp
 
         async def capture_post(url, json=None, headers=None):
             nonlocal call_count
             call_bodies.append({"url": url, "json": json})
             call_count += 1
             if call_count == 1:
-                return first_response
-            return second_response
+                return _make_a2a_resp('{"result": "search data found", "confidence": 0.9}')
+            return _make_a2a_resp('{"result": "summary", "confidence": 0.85}')
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=capture_post)
@@ -1237,9 +1264,10 @@ class TestOrchestrationPipelineChain:
         assert result["status"] == "completed"
         assert len(call_bodies) == 2
 
-        # Second call should have dependency_context as a string
+        # Second call should have dependency_context in metadata
         second_body = call_bodies[1]["json"]
-        dep_context = second_body["context"].get("dependency_context")
+        metadata = second_body.get("params", {}).get("metadata", {})
+        dep_context = metadata.get("dependency_context")
         assert dep_context is not None
         assert isinstance(dep_context, str), f"Expected str, got {type(dep_context)}"
         assert "search data found" in dep_context
@@ -1304,21 +1332,28 @@ class TestOrchestrationPipelineChain:
             ])
         )
 
+        import uuid as _uuid
+
         call_order = []
 
-        search_response = Mock()
-        search_response.json.return_value = {"result": "video results", "confidence": 0.9}
-        search_response.raise_for_status = Mock()
-
-        summary_response = Mock()
-        summary_response.json.return_value = {"result": "summary of videos", "confidence": 0.85}
-        summary_response.raise_for_status = Mock()
+        def _make_a2a_resp(text):
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {
+                "jsonrpc": "2.0",
+                "id": str(_uuid.uuid4()),
+                "result": {
+                    "role": "agent",
+                    "messageId": str(_uuid.uuid4()),
+                    "parts": [{"kind": "text", "text": text}],
+                },
+            }
+            return resp
 
         async def ordered_post(url, json=None, headers=None):
-            call_order.append(url)
-            if "search_agent" in url:
-                return search_response
-            return summary_response
+            agent_name = (json or {}).get("params", {}).get("metadata", {}).get("agent_name", "")
+            call_order.append(agent_name)
+            return _make_a2a_resp(f'{{"result": "data from {agent_name}", "confidence": 0.9}}')
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=ordered_post)
@@ -1344,8 +1379,8 @@ class TestOrchestrationPipelineChain:
 
         # httpx called exactly 2 times, search_agent before summarizer_agent
         assert len(call_order) == 2
-        assert "search_agent" in call_order[0]
-        assert "summarizer_agent" in call_order[1]
+        assert call_order[0] == "search_agent"
+        assert call_order[1] == "summarizer_agent"
 
 
 if __name__ == "__main__":

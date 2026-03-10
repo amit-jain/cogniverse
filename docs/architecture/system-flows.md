@@ -270,30 +270,29 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant VideoAgent as VideoSearchAgent<br/>cogniverse_agents
-    participant Gateway as A2ARoutingAgent<br/>cogniverse_agents
+    participant Dispatcher as AgentDispatcher<br/>cogniverse_runtime (A2AStarletteApplication)
     participant Summarizer as SummarizerAgent<br/>cogniverse_agents
     participant ReportAgent as DetailedReportAgent<br/>cogniverse_agents
 
-    VideoAgent->>Gateway: Send A2A Message
-    Note over Gateway: Message Format:<br/>{type: "task",<br/>sender: "video_search_agent",<br/>target: "summarizer",<br/>tenant_id: "acme",<br/>data: results}
+    VideoAgent->>Dispatcher: POST /process (dict payload)
+    Note over Dispatcher: A2A routing via<br/>CogniverseAgentExecutor<br/>{target: "summarizer",<br/>tenant_id: "acme",<br/>data: results}
 
-    Gateway->>Gateway: Validate message format
-    Gateway->>Gateway: Route to target agent
+    Dispatcher->>Dispatcher: Validate and route request
 
-    Gateway->>Summarizer: Forward task (tenant_id="acme")
+    Dispatcher->>Summarizer: Forward task (tenant_id="acme")
 
     activate Summarizer
     Summarizer->>Summarizer: Process results
-    Summarizer-->>Gateway: A2A Response
+    Summarizer-->>Dispatcher: Response dict
     deactivate Summarizer
 
-    Gateway->>ReportAgent: Chain to next agent
+    Dispatcher->>ReportAgent: Chain to next agent
     activate ReportAgent
     ReportAgent->>ReportAgent: Generate detailed report
-    ReportAgent-->>Gateway: Final response
+    ReportAgent-->>Dispatcher: Final response dict
     deactivate ReportAgent
 
-    Gateway-->>VideoAgent: Complete A2A workflow
+    Dispatcher-->>VideoAgent: Complete A2A workflow
 ```
 
 ---

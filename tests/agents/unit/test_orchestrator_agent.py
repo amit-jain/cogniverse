@@ -103,21 +103,16 @@ class TestOrchestrationModule:
         assert result.parallel_steps == "0,1"
         assert "parallel" in result.reasoning.lower()
 
-    def test_forward_fallback(self):
-        """Test fallback when DSPy fails"""
+    def test_forward_propagates_error(self):
+        """Test that DSPy failure propagates instead of silently falling back"""
         module = OrchestrationModule()
         module.planner = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(
-            query="Show me videos",
-            available_agents="query_enhancement,entity_extraction,profile_selection,search",
-        )
-
-        # Fallback should have default sequence
-        assert "query_enhancement" in result.agent_sequence
-        assert "entity_extraction" in result.agent_sequence
-        assert "search" in result.agent_sequence
-        assert result.parallel_steps == "0,1"
+        with pytest.raises(Exception, match="DSPy failed"):
+            module.forward(
+                query="Show me videos",
+                available_agents="query_enhancement,entity_extraction,profile_selection,search",
+            )
 
 
 class TestOrchestratorAgent:
@@ -223,14 +218,19 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_execute_plan(self, orchestrator_agent):
-        """Test action phase execution via A2A HTTP calls"""
-        # Mock the A2A client to simulate agent responses
-        orchestrator_agent.a2a_client.send_task = AsyncMock(
-            return_value={
-                "status": "success",
-                "result": "Mock A2A result",
-            }
-        )
+        """Test action phase execution via HTTP calls"""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "status": "success",
+            "result": "Mock result",
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test query",
@@ -252,7 +252,11 @@ class TestOrchestratorAgent:
             reasoning="Test plan",
         )
 
-        results = await orchestrator_agent._execute_plan(plan)
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            results = await orchestrator_agent._execute_plan(plan)
 
         assert len(results) == 2
         assert "query_enhancement" in results
@@ -285,11 +289,12 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_execute_plan_agent_error(self, orchestrator_agent):
-        """Test execution when A2A call to agent raises exception"""
-        # Make A2A client raise on send_task
-        orchestrator_agent.a2a_client.send_task = AsyncMock(
-            side_effect=Exception("Agent failed")
-        )
+        """Test execution when HTTP call to agent raises exception"""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=ConnectionError("Agent failed"))
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test query",
@@ -305,7 +310,11 @@ class TestOrchestratorAgent:
             reasoning="Test plan",
         )
 
-        results = await orchestrator_agent._execute_plan(plan)
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            results = await orchestrator_agent._execute_plan(plan)
 
         assert "search" in results
         assert results["search"]["status"] == "error"
@@ -321,13 +330,25 @@ class TestOrchestratorAgent:
                 reasoning="Enhance then search",
             )
         )
-        orchestrator_agent.a2a_client.send_task = AsyncMock(
-            return_value={"status": "success", "result": "Mock result"}
-        )
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "status": "success",
+            "result": "Mock result",
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        result = await orchestrator_agent._process_impl(
-            OrchestratorInput(query="Show me machine learning videos")
-        )
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            result = await orchestrator_agent._process_impl(
+                OrchestratorInput(query="Show me machine learning videos")
+            )
 
         assert isinstance(result, OrchestratorOutput)
         assert result.query == "Show me machine learning videos"
