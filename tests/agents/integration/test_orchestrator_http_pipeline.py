@@ -411,3 +411,46 @@ class TestOrchestratorHttpPipeline:
         assert result["status"] == "failed"
         # The stub did receive the request (TCP connection was made)
         assert len(_request_log) >= 1
+
+
+@pytest.mark.integration
+class TestConversationAwareOrchestration:
+    """Test conversation history flows through the orchestration pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_conversation_history_accepted(self, orchestrator):
+        """process_complex_query accepts conversation_history without error."""
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=_make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "show more", "dependencies": []},
+            ])
+        )
+
+        history = [
+            {"role": "user", "content": "search for cat videos"},
+            {"role": "agent", "content": "Found 5 results about cats"},
+        ]
+
+        result = await orchestrator.process_complex_query(
+            "show me more like those",
+            conversation_history=history,
+        )
+
+        assert result["status"] == "completed"
+        assert len(_request_log) == 1
+
+    @pytest.mark.asyncio
+    async def test_conversation_history_none_works(self, orchestrator):
+        """process_complex_query works with conversation_history=None (backward compat)."""
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=_make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
+            ])
+        )
+
+        result = await orchestrator.process_complex_query(
+            "test",
+            conversation_history=None,
+        )
+
+        assert result["status"] == "completed"

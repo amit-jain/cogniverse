@@ -2,11 +2,15 @@
 
 Extracted from routers/agents.py so both the REST endpoint and the A2A
 executor can share the same dispatch logic without duplication.
+
+Multi-turn support: The context dict may carry 'context_id' and
+'conversation_history' (list of {role, content} dicts) which are
+forwarded to routing/orchestration and search paths.
 """
 
 import dataclasses
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -31,6 +35,7 @@ class AgentDispatcher:
         self._registry = agent_registry
         self._config_manager = config_manager
         self._schema_loader = schema_loader
+        self._query_rewriter = None  # Lazy-initialized ConversationalQueryRewriteModule
 
     async def dispatch(
         self,
@@ -54,10 +59,14 @@ class AgentDispatcher:
         tenant_id = context.get("tenant_id", "default")
         capabilities = set(agent.capabilities)
 
+        conversation_history = context.get("conversation_history", [])
+
         if "routing" in capabilities:
             return await self._execute_routing_task(query, context, tenant_id)
         elif capabilities & {"search", "video_search", "retrieval"}:
-            return await self._execute_search_task(query, tenant_id, top_k)
+            return await self._execute_search_task(
+                query, tenant_id, top_k, conversation_history=conversation_history
+            )
         elif capabilities & {"image_search", "visual_analysis"}:
             return await self._execute_image_search_task(query, tenant_id, top_k)
         elif capabilities & {"audio_analysis", "transcription"}:
@@ -77,10 +86,27 @@ class AgentDispatcher:
             )
 
     async def _execute_search_task(
-        self, query: str, tenant_id: str, top_k: int
+        self,
+        query: str,
+        tenant_id: str,
+        top_k: int,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         from cogniverse_agents.search.service import SearchService
         from cogniverse_foundation.config.utils import get_config
+
+        # Rewrite query using conversation history to resolve anaphoric references.
+        # If the DSPy rewriter fails (e.g., no LM configured), propagate with
+        # a clear error rather than silently searching with the unresolved query.
+        resolved_query = query
+        if conversation_history:
+            resolved_query = self._rewrite_query_with_history(
+                query, conversation_history
+            )
+            if resolved_query != query:
+                logger.info(
+                    f"Query rewritten: '{query}' -> '{resolved_query}'"
+                )
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         search_service = SearchService(
@@ -92,7 +118,7 @@ class AgentDispatcher:
         profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
 
         results = search_service.search(
-            query=query,
+            query=resolved_query,
             profile=profile,
             tenant_id=tenant_id,
             top_k=top_k,
@@ -103,11 +129,11 @@ class AgentDispatcher:
         result_count = len(result_list)
 
         if result_count > 0:
-            message = f"Found {result_count} results for '{query}'"
+            message = f"Found {result_count} results for '{resolved_query}'"
         else:
-            message = f"No results found for '{query}'"
+            message = f"No results found for '{resolved_query}'"
 
-        return {
+        response: Dict[str, Any] = {
             "status": "success",
             "agent": "search_agent",
             "message": message,
@@ -115,6 +141,40 @@ class AgentDispatcher:
             "results": result_list,
             "profile": profile,
         }
+
+        if resolved_query != query:
+            response["original_query"] = query
+            response["rewritten_query"] = resolved_query
+
+        return response
+
+    def _rewrite_query_with_history(
+        self, query: str, conversation_history: List[Dict[str, str]]
+    ) -> str:
+        """Rewrite a query that may contain anaphoric references using conversation history.
+
+        Uses a DSPy ChainOfThought module to resolve references like 'that',
+        'those', 'more' etc. Raises on failure — callers must handle explicitly.
+        """
+        from cogniverse_agents.search_agent import (
+            ConversationalQueryRewriteModule,
+        )
+
+        if self._query_rewriter is None:
+            self._query_rewriter = ConversationalQueryRewriteModule()
+
+        history_lines = []
+        for turn in conversation_history[-5:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")[:200]
+            history_lines.append(f"{role}: {content}")
+        history_text = "\n".join(history_lines)
+
+        result = self._query_rewriter(
+            query=query, conversation_history=history_text
+        )
+        rewritten = result.rewritten_query.strip()
+        return rewritten if rewritten else query
 
     async def _execute_routing_task(
         self, query: str, context: Dict[str, Any], tenant_id: str
@@ -202,6 +262,7 @@ class AgentDispatcher:
             orch_result = await orchestrator.process_complex_query(
                 query=result.enhanced_query or query,
                 context=context.get("context"),
+                conversation_history=context.get("conversation_history"),
             )
 
             return {

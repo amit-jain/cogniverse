@@ -273,6 +273,7 @@ class MultiAgentOrchestrator:
         preferences: Optional[Dict[str, Any]] = None,
         resume_from_workflow_id: Optional[str] = None,
         stream: bool = False,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         """
         Process a complex query using multi-agent orchestration
@@ -284,6 +285,7 @@ class MultiAgentOrchestrator:
             preferences: User preferences for processing
             resume_from_workflow_id: If provided, resume from latest checkpoint of this workflow
             stream: If True, returns async generator yielding progress events
+            conversation_history: Previous conversation turns for multi-turn context
 
         Returns:
             If stream=False: Orchestrated result dict
@@ -692,7 +694,7 @@ class MultiAgentOrchestrator:
                     self.logger.info("Applied workflow intelligence optimization")
                 except Exception as e:
                     self.logger.warning(
-                        f"Workflow optimization failed, using original plan: {e}"
+                        f"Workflow intelligence optimization failed, using original plan: {e}"
                     )
 
             for task in workflow_plan.tasks:

@@ -309,3 +309,100 @@ class TestErrorHandling:
         assert result.final_output["status"] == "error"
         assert "Empty query" in result.final_output["message"]
         assert len(result.plan_steps) == 0
+
+
+@pytest.mark.unit
+class TestConversationHistory:
+    """Test conversation history flows through the orchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_receives_conversation_history(self, orchestrator):
+        """conversation_history from input is passed to the DSPy planner."""
+        captured_kwargs = {}
+
+        def mock_forward(**kwargs):
+            captured_kwargs.update(kwargs)
+            return dspy.Prediction(
+                agent_sequence="search",
+                parallel_steps="",
+                reasoning="Search based on context",
+            )
+
+        orchestrator.dspy_module.forward = mock_forward
+
+        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+
+        history = [
+            {"role": "user", "content": "search for cat videos"},
+            {"role": "agent", "content": "Found 5 results about cats"},
+        ]
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            await orchestrator._process_impl(
+                OrchestratorInput(
+                    query="show me longer ones",
+                    conversation_history=history,
+                )
+            )
+
+        assert "conversation_context" in captured_kwargs
+        ctx = captured_kwargs["conversation_context"]
+        assert "cat videos" in ctx
+        assert "Found 5 results" in ctx
+
+    @pytest.mark.asyncio
+    async def test_first_turn_empty_conversation_context(self, orchestrator):
+        """First turn (no history) passes empty conversation_context to planner."""
+        captured_kwargs = {}
+
+        def mock_forward(**kwargs):
+            captured_kwargs.update(kwargs)
+            return dspy.Prediction(
+                agent_sequence="search",
+                parallel_steps="",
+                reasoning="Direct search",
+            )
+
+        orchestrator.dspy_module.forward = mock_forward
+
+        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            await orchestrator._process_impl(
+                OrchestratorInput(query="search for dogs")
+            )
+
+        assert captured_kwargs["conversation_context"] == ""
+
+    def test_format_conversation_context_truncates(self, orchestrator):
+        """_format_conversation_context truncates to last 5 turns, 200 chars each."""
+        history = [
+            {"role": "user", "content": f"Turn {i}: {'x' * 300}"}
+            for i in range(10)
+        ]
+
+        result = orchestrator._format_conversation_context(history)
+
+        # Only last 5 turns
+        lines = result.strip().split("\n")
+        assert len(lines) == 5
+
+        # Each content truncated to 200 chars
+        for line in lines:
+            # "user: Turn N: xxx..." — total line is "user: " + 200 chars max
+            content_part = line.split(": ", 1)[1]
+            assert len(content_part) <= 200
+
+    def test_format_conversation_context_none(self, orchestrator):
+        """None history returns empty string."""
+        assert orchestrator._format_conversation_context(None) == ""
+
+    def test_format_conversation_context_empty(self, orchestrator):
+        """Empty list returns empty string."""
+        assert orchestrator._format_conversation_context([]) == ""

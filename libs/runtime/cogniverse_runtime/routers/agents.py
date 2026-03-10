@@ -73,12 +73,18 @@ def get_dispatcher() -> AgentDispatcher:
 
 
 class AgentTask(BaseModel):
-    """Task request for agent processing."""
+    """Task request for agent processing.
+
+    Multi-turn support: Pass context_id and conversation_history for
+    multi-turn conversations via REST (mirrors A2A contextId semantics).
+    """
 
     agent_name: str
     query: str
     context: Dict[str, Any] = {}
     top_k: int = 10
+    context_id: Optional[str] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None
 
 
 class AgentRegistrationData(BaseModel):
@@ -227,11 +233,18 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     """
     dispatcher = _ensure_dispatcher()
 
+    # Merge multi-turn fields into context dict for dispatcher
+    dispatch_context = dict(task.context)
+    if task.context_id is not None:
+        dispatch_context["context_id"] = task.context_id
+    if task.conversation_history is not None:
+        dispatch_context["conversation_history"] = task.conversation_history
+
     try:
         return await dispatcher.dispatch(
             agent_name=agent_name,
             query=task.query,
-            context=task.context,
+            context=dispatch_context,
             top_k=task.top_k,
         )
     except ValueError as e:

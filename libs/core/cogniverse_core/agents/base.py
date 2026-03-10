@@ -47,9 +47,23 @@ from typing import (
     overload,
 )
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+class ConversationTurn(BaseModel):
+    """A single turn in a multi-turn conversation.
+
+    Extracted from A2A Task.history messages for threading through
+    the agent pipeline.
+    """
+
+    role: str = Field(..., description="Message role: 'user' or 'agent'")
+    content: str = Field(..., description="Text content of the message")
+    agent_name: Optional[str] = Field(
+        default=None, description="Agent that produced this turn (for agent roles)"
+    )
 
 
 class AgentInput(BaseModel):

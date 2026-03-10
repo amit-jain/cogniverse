@@ -243,6 +243,7 @@ class MultiAgentOrchestrator:
         context: Optional[str] = None,
         user_id: Optional[str] = None,
         preferences: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Process a complex query using multi-agent orchestration
@@ -252,6 +253,7 @@ class MultiAgentOrchestrator:
             context: Additional context
             user_id: User identifier
             preferences: User preferences for processing
+            conversation_history: Previous conversation turns for multi-turn context
 
         Returns:
             Orchestrated result from multiple agents
@@ -469,7 +471,7 @@ class MultiAgentOrchestrator:
                     self.logger.info("Applied workflow intelligence optimization")
                 except Exception as e:
                     self.logger.warning(
-                        f"Workflow optimization failed, using original plan: {e}"
+                        f"Workflow intelligence optimization failed, using original plan: {e}"
                     )
 
             # Validate all agent names after optimization

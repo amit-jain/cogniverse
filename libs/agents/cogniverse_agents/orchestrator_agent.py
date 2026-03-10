@@ -37,6 +37,9 @@ class OrchestratorInput(AgentInput):
     session_id: Optional[str] = Field(
         default=None, description="Session identifier (per-request)"
     )
+    conversation_history: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Previous conversation turns for multi-turn context"
+    )
 
 
 class OrchestratorOutput(AgentOutput):
@@ -120,6 +123,9 @@ class OrchestrationSignature(dspy.Signature):
     available_agents: str = dspy.InputField(
         desc="Comma-separated list of available agents"
     )
+    conversation_context: str = dspy.InputField(
+        desc="Summary of previous conversation turns. Empty string if first turn."
+    )
 
     agent_sequence: str = dspy.OutputField(
         desc="Comma-separated sequence of agents to invoke (e.g., 'entity_extraction,profile_selection,search')"
@@ -137,9 +143,18 @@ class OrchestrationModule(dspy.Module):
         super().__init__()
         self.planner = dspy.ChainOfThought(OrchestrationSignature)
 
-    def forward(self, query: str, available_agents: str) -> dspy.Prediction:
+    def forward(
+        self,
+        query: str,
+        available_agents: str,
+        conversation_context: str = "",
+    ) -> dspy.Prediction:
         """Create orchestration plan using LLM reasoning"""
-        return self.planner(query=query, available_agents=available_agents)
+        return self.planner(
+            query=query,
+            available_agents=available_agents,
+            conversation_context=conversation_context,
+        )
 
 
 class OrchestratorAgent(
@@ -307,8 +322,13 @@ class OrchestratorAgent(
         if memory_context:
             logger.info(f"Retrieved memory context for query: {query[:50]}...")
 
+        # Format conversation history for DSPy planner
+        conversation_context = self._format_conversation_context(
+            input.conversation_history
+        )
+
         # Phase 1: Planning
-        plan = await self._create_plan(query)
+        plan = await self._create_plan(query, conversation_context)
 
         # Phase 2: Action — execute via A2A HTTP, passing tenant_id/session_id
         agent_results = await self._execute_plan(
@@ -341,12 +361,15 @@ class OrchestratorAgent(
             execution_summary=execution_summary,
         )
 
-    async def _create_plan(self, query: str) -> OrchestrationPlan:
+    async def _create_plan(
+        self, query: str, conversation_context: str = ""
+    ) -> OrchestrationPlan:
         """
         Planning Phase: Create execution plan using LLM reasoning
 
         Args:
             query: User query to analyze
+            conversation_context: Formatted previous conversation turns
 
         Returns:
             OrchestrationPlan with agent sequence and parallelization
@@ -356,7 +379,9 @@ class OrchestratorAgent(
 
         # Use DSPy to create plan
         result = self.dspy_module.forward(
-            query=query, available_agents=available_agents
+            query=query,
+            available_agents=available_agents,
+            conversation_context=conversation_context,
         )
 
         # Parse agent sequence
@@ -556,6 +581,24 @@ class OrchestratorAgent(
                 executed[step_idx] = True
 
         return agent_results
+
+    def _format_conversation_context(
+        self, conversation_history: Optional[List[Dict[str, Any]]]
+    ) -> str:
+        """Format conversation history as text for the DSPy planner.
+
+        Truncates to last 5 turns, 200 chars each, to keep prompt size manageable.
+        """
+        if not conversation_history:
+            return ""
+
+        lines = []
+        for turn in conversation_history[-5:]:
+            role = turn.get("role", "user")
+            content = str(turn.get("content", ""))[:200]
+            lines.append(f"{role}: {content}")
+
+        return "\n".join(lines)
 
     def _aggregate_results(
         self, query: str, agent_results: Dict[str, Any]

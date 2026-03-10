@@ -41,6 +41,34 @@ from cogniverse_core.registries.backend_registry import get_backend_registry
 logger = logging.getLogger(__name__)
 
 
+class ConversationalQueryRewriteSignature(dspy.Signature):
+    """Rewrite a query that contains anaphoric references using conversation history."""
+
+    query: str = dspy.InputField(
+        desc="Current query, may contain references like 'that', 'those', 'more', 'longer'"
+    )
+    conversation_history: str = dspy.InputField(
+        desc="Recent conversation turns formatted as 'role: content' lines"
+    )
+    rewritten_query: str = dspy.OutputField(
+        desc="Self-contained query with references resolved. Return original query unchanged if no references to resolve."
+    )
+
+
+class ConversationalQueryRewriteModule(dspy.Module):
+    """DSPy module that rewrites queries containing anaphoric references.
+
+    Uses conversation history to resolve pronouns and references like
+    'that', 'those', 'more like it', 'longer ones' etc. into
+    self-contained search queries.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.rewriter = dspy.ChainOfThought(ConversationalQueryRewriteSignature)
+
+    def forward(self, query: str, conversation_history: str) -> dspy.Prediction:
+        return self.rewriter(query=query, conversation_history=conversation_history)
 
 
 class SearchInput(AgentInput):
