@@ -780,8 +780,10 @@ class MultiAgentOrchestrator:
                     "total_tasks": len(workflow_plan.tasks),
                     "completed_tasks": len(completed_tasks),
                     "execution_time": (
-                        workflow_plan.end_time - workflow_plan.start_time
-                    ).total_seconds(),
+                        (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                        if workflow_plan.end_time and workflow_plan.start_time
+                        else 0.0
+                    ),
                     "agents_used": list(set(t.agent_name for t in completed_tasks)),
                 },
             }

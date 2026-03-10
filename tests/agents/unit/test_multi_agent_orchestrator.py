@@ -5,6 +5,7 @@ Unit tests for MultiAgentOrchestrator with DSPy integration
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from cogniverse_agents.multi_agent_orchestrator import (
@@ -13,7 +14,12 @@ from cogniverse_agents.multi_agent_orchestrator import (
     ResultAggregatorSignature,
     WorkflowPlannerSignature,
 )
-from cogniverse_agents.workflow_types import TaskStatus, WorkflowStatus, WorkflowTask
+from cogniverse_agents.workflow_types import (
+    TaskStatus,
+    WorkflowPlan,
+    WorkflowStatus,
+    WorkflowTask,
+)
 
 
 @pytest.mark.unit
@@ -841,6 +847,504 @@ class TestOrchestratorTelemetrySpan:
 
         # Mix = mixed
         assert orchestrator._determine_execution_pattern([t1, t3]) == "mixed"
+
+
+@pytest.mark.unit
+class TestOrchestrationPipelineIntegration:
+    """Integration tests that mock ONLY at the system boundary (httpx.AsyncClient).
+
+    All internal methods (_plan_workflow, _execute_workflow, _execute_task,
+    _prepare_task_context, _aggregate_results) run with REAL code.
+    The DSPy modules (workflow_planner, result_aggregator) are replaced with
+    controllable mocks since no LLM is available in tests.
+    """
+
+    @pytest.fixture
+    def agents_config(self):
+        """Agent configuration for pipeline tests."""
+        return {
+            "search_agent": {
+                "capabilities": ["video_content_search", "multimodal_retrieval"],
+                "endpoint": "http://localhost:8000",
+                "timeout_seconds": 30,
+                "parallel_capacity": 2,
+            },
+            "summarizer_agent": {
+                "capabilities": ["content_summarization", "report_generation"],
+                "endpoint": "http://localhost:8000",
+                "timeout_seconds": 30,
+                "parallel_capacity": 2,
+            },
+        }
+
+    def _make_planner_result(self, tasks_data, strategy="sequential"):
+        """Create a Mock mimicking DSPy workflow_planner.forward() output."""
+        result = Mock()
+        result.workflow_tasks = tasks_data
+        result.execution_strategy = strategy
+        result.expected_outcome = "results"
+        result.reasoning = "test"
+        return result
+
+    @pytest.fixture
+    def pipeline_orchestrator(self, telemetry_manager_without_phoenix, agents_config):
+        """Construct a real MultiAgentOrchestrator with controlled DSPy mocks."""
+        with (
+            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
+            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
+            patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
+        ):
+            mock_routing_instance = Mock()
+            mock_routing_instance.route_query = AsyncMock()
+            mock_routing_cls.return_value = mock_routing_instance
+
+            orchestrator = MultiAgentOrchestrator(
+                tenant_id="test_tenant",
+                telemetry_manager=telemetry_manager_without_phoenix,
+                available_agents=agents_config,
+                enable_workflow_intelligence=False,
+            )
+
+            # Replace DSPy modules with controllable mocks
+            orchestrator.workflow_planner = Mock()
+            orchestrator.result_aggregator = Mock()
+
+            return orchestrator
+
+    @pytest.fixture
+    def mock_httpx_success(self):
+        """Patch httpx.AsyncClient to return successful responses."""
+        mock_response = Mock()
+        mock_response.json.return_value = {"result": "data", "confidence": 0.8}
+        mock_response.raise_for_status = Mock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        mock_client_cm = Mock()
+        mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            return_value=mock_client_cm,
+        ):
+            yield mock_client
+
+    @pytest.mark.asyncio
+    async def test_execute_workflow_abort_sets_end_time(
+        self, pipeline_orchestrator, agents_config
+    ):
+        """When all tasks fail and workflow aborts, no TypeError on end_time."""
+        orchestrator = pipeline_orchestrator
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=self._make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "q1", "dependencies": []},
+                {"task_id": "t2", "agent": "search_agent", "query": "q2", "dependencies": []},
+            ])
+        )
+
+        # httpx always raises → both tasks fail → ≥50% → abort
+        error_response = Mock()
+        error_response.status_code = 500
+        error_response.request = Mock(url="http://test")
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "Server error", request=Mock(url="http://test"), response=error_response
+            )
+        )
+        mock_client_cm = Mock()
+        mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            return_value=mock_client_cm,
+        ):
+            # Set max_retries=0 on tasks after planning to avoid backoff
+            original_plan = orchestrator._plan_workflow
+
+            async def plan_then_zero_retries(*args, **kwargs):
+                plan = await original_plan(*args, **kwargs)
+                for task in plan.tasks:
+                    task.max_retries = 0
+                return plan
+
+            orchestrator._plan_workflow = plan_then_zero_retries
+
+            # Should not crash with TypeError about NoneType - datetime
+            result = await orchestrator.process_complex_query("test")
+
+        assert result["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_fallback_passes_tenant_id(self, pipeline_orchestrator):
+        """When planning fails, fallback calls route_query with tenant_id."""
+        orchestrator = pipeline_orchestrator
+
+        # Force planning to fail → triggers fallback
+        orchestrator.workflow_planner.forward = Mock(
+            side_effect=RuntimeError("planning failed")
+        )
+
+        # Mock route_query to return a valid RoutingOutput
+        from cogniverse_agents.routing_agent import RoutingOutput
+
+        mock_routing_output = RoutingOutput(
+            query="test",
+            recommended_agent="search_agent",
+            confidence=0.8,
+            reasoning="fallback",
+            enhanced_query="test",
+        )
+        orchestrator.routing_agent.route_query = AsyncMock(return_value=mock_routing_output)
+
+        result = await orchestrator.process_complex_query("test")
+
+        assert result["status"] == "failed"
+        assert "fallback_result" in result
+        orchestrator.routing_agent.route_query.assert_called_once()
+        call_kwargs = orchestrator.routing_agent.route_query.call_args
+        assert call_kwargs.kwargs.get("tenant_id") == "test_tenant" or (
+            len(call_kwargs.args) >= 3 and call_kwargs.args[2] == "test_tenant"
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_task_uses_httpx_to_correct_endpoint(
+        self, pipeline_orchestrator, mock_httpx_success
+    ):
+        """_execute_task calls httpx with correct URL, headers, and JSON body."""
+        orchestrator = pipeline_orchestrator
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=self._make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "find videos", "dependencies": []},
+            ])
+        )
+
+        result = await orchestrator.process_complex_query("find videos")
+
+        assert result["status"] == "completed"
+
+        # Verify httpx was called correctly
+        mock_httpx_success.post.assert_called_once()
+        call_args = mock_httpx_success.post.call_args
+
+        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+        assert "/agents/search_agent/process" in url
+
+        json_body = call_args.kwargs.get("json", {})
+        assert "agent_name" in json_body
+        assert "query" in json_body
+        assert "context" in json_body
+
+        headers = call_args.kwargs.get("headers", {})
+        assert headers.get("Content-Type") == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_plan_workflow_resolves_hallucinated_agent_names(
+        self, pipeline_orchestrator, mock_httpx_success
+    ):
+        """Planner proposes unknown agent names → resolved to registered agents."""
+        orchestrator = pipeline_orchestrator
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=self._make_planner_result([
+                {"task_id": "t1", "agent": "VideoSearchAgent", "query": "search", "dependencies": []},
+                {"task_id": "t2", "agent": "ContentSummarizer", "query": "summarize", "dependencies": ["t1"]},
+            ])
+        )
+
+        result = await orchestrator.process_complex_query("test")
+
+        assert result["status"] == "completed"
+
+        # Verify httpx calls used resolved agent names, not hallucinated ones
+        calls = mock_httpx_success.post.call_args_list
+        urls = [
+            c.args[0] if c.args else c.kwargs.get("url", "")
+            for c in calls
+        ]
+        for url in urls:
+            assert "VideoSearchAgent" not in url
+            assert "ContentSummarizer" not in url
+        # Should have resolved to valid registered agents
+        url_str = " ".join(urls)
+        assert "search_agent" in url_str or "summarizer_agent" in url_str
+
+    @pytest.mark.asyncio
+    async def test_workflow_intelligence_post_optimization_validates_agents(
+        self, telemetry_manager_without_phoenix, agents_config
+    ):
+        """After workflow intelligence optimization, invalid agents are re-resolved."""
+        with (
+            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
+            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
+            patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence") as mock_wi_factory,
+        ):
+            mock_routing_cls.return_value = Mock()
+
+            # Create mock workflow intelligence that corrupts agent names
+            mock_wi = AsyncMock()
+
+            async def corrupt_plan(query, plan, ctx):
+                """Simulate optimizer returning an invalid agent name."""
+                for task in plan.tasks:
+                    task.agent_name = "InvalidAgent"
+                return plan
+
+            mock_wi.optimize_workflow_plan = AsyncMock(side_effect=corrupt_plan)
+            mock_wi_factory.return_value = mock_wi
+
+            orchestrator = MultiAgentOrchestrator(
+                tenant_id="test_tenant",
+                telemetry_manager=telemetry_manager_without_phoenix,
+                available_agents=agents_config,
+                enable_workflow_intelligence=True,
+            )
+
+            orchestrator.workflow_planner = Mock()
+            orchestrator.workflow_planner.forward = Mock(
+                return_value=self._make_planner_result([
+                    {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
+                ])
+            )
+
+            # Patch httpx to capture URLs
+            mock_response = Mock()
+            mock_response.json.return_value = {"result": "data", "confidence": 0.8}
+            mock_response.raise_for_status = Mock()
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            mock_client_cm = Mock()
+            mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+            with patch(
+                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+                return_value=mock_client_cm,
+            ):
+                result = await orchestrator.process_complex_query("test")
+
+            assert result["status"] == "completed"
+            # Verify InvalidAgent was NOT used in the URL
+            call_url = mock_client.post.call_args.args[0]
+            assert "InvalidAgent" not in call_url
+
+    @pytest.mark.asyncio
+    async def test_task_execution_uses_configured_endpoint_not_default_port(
+        self, telemetry_manager_without_phoenix
+    ):
+        """_execute_task uses agent's configured endpoint, not a default."""
+        custom_agents = {
+            "search_agent": {
+                "capabilities": ["video_content_search"],
+                "endpoint": "http://myhost:9999",
+                "timeout_seconds": 30,
+                "parallel_capacity": 1,
+            },
+        }
+
+        with (
+            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
+            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
+            patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
+        ):
+            mock_routing_cls.return_value = Mock()
+            orchestrator = MultiAgentOrchestrator(
+                tenant_id="test_tenant",
+                telemetry_manager=telemetry_manager_without_phoenix,
+                available_agents=custom_agents,
+                enable_workflow_intelligence=False,
+            )
+            orchestrator.workflow_planner = Mock()
+            orchestrator.workflow_planner.forward = Mock(
+                return_value=self._make_planner_result([
+                    {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
+                ])
+            )
+
+            mock_response = Mock()
+            mock_response.json.return_value = {"result": "data", "confidence": 0.8}
+            mock_response.raise_for_status = Mock()
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            mock_client_cm = Mock()
+            mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+            with patch(
+                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+                return_value=mock_client_cm,
+            ):
+                result = await orchestrator.process_complex_query("test")
+
+            assert result["status"] == "completed"
+            call_url = mock_client.post.call_args.args[0]
+            assert call_url.startswith("http://myhost:9999/agents/search_agent/process")
+
+    @pytest.mark.asyncio
+    async def test_dependency_context_passed_as_string_not_dict_unpack(
+        self, pipeline_orchestrator
+    ):
+        """Task 2's context.dependency_context is a string, not a dict."""
+        orchestrator = pipeline_orchestrator
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=self._make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "search data", "dependencies": []},
+                {"task_id": "t2", "agent": "summarizer_agent", "query": "summarize", "dependencies": ["t1"]},
+            ])
+        )
+
+        call_bodies = []
+
+        first_response = Mock()
+        first_response.json.return_value = {"result": "search data found", "confidence": 0.9}
+        first_response.raise_for_status = Mock()
+
+        second_response = Mock()
+        second_response.json.return_value = {"result": "summary", "confidence": 0.85}
+        second_response.raise_for_status = Mock()
+
+        call_count = 0
+
+        async def capture_post(url, json=None, headers=None):
+            nonlocal call_count
+            call_bodies.append({"url": url, "json": json})
+            call_count += 1
+            if call_count == 1:
+                return first_response
+            return second_response
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=capture_post)
+
+        mock_client_cm = Mock()
+        mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            return_value=mock_client_cm,
+        ):
+            result = await orchestrator.process_complex_query("test")
+
+        assert result["status"] == "completed"
+        assert len(call_bodies) == 2
+
+        # Second call should have dependency_context as a string
+        second_body = call_bodies[1]["json"]
+        dep_context = second_body["context"].get("dependency_context")
+        assert dep_context is not None
+        assert isinstance(dep_context, str), f"Expected str, got {type(dep_context)}"
+        assert "search data found" in dep_context
+
+    @pytest.mark.asyncio
+    async def test_aggregate_results_handles_null_workflow_timestamps(
+        self, pipeline_orchestrator
+    ):
+        """_aggregate_results with None start_time/end_time does not TypeError."""
+        from datetime import datetime
+
+        orchestrator = pipeline_orchestrator
+
+        # Construct a WorkflowPlan with None timestamps
+        workflow_plan = WorkflowPlan(
+            workflow_id="test-workflow",
+            original_query="test query",
+            status=WorkflowStatus.COMPLETED,
+            tasks=[],
+            start_time=None,
+            end_time=None,
+        )
+
+        # Add 2 completed tasks with valid timestamps
+        for i, agent in enumerate(["search_agent", "summarizer_agent"]):
+            task = WorkflowTask(
+                task_id=f"task_{i}",
+                agent_name=agent,
+                query="test",
+                dependencies=set(),
+            )
+            task.status = TaskStatus.COMPLETED
+            task.start_time = datetime.now()
+            task.end_time = datetime.now()
+            task.result = {"content": f"result from {agent}", "confidence": 0.8}
+            workflow_plan.tasks.append(task)
+
+        # Should not raise TypeError: unsupported operand type(s) for -: 'NoneType' and 'NoneType'
+        try:
+            result = await orchestrator._aggregate_results(workflow_plan)
+            # If it returns successfully, verify execution_time is a number
+            exec_time = result.get("workflow_metadata", {}).get("execution_time", 0)
+            assert isinstance(exec_time, (int, float))
+        except TypeError as e:
+            if "NoneType" in str(e):
+                pytest.fail(
+                    f"_aggregate_results crashed on null timestamps: {e}. "
+                    "Line 783 needs a None guard for workflow_plan.end_time - workflow_plan.start_time"
+                )
+            raise
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_plan_execute_aggregate_chain(
+        self, pipeline_orchestrator
+    ):
+        """Full pipeline: plan → execute → aggregate with 2 dependent tasks."""
+        orchestrator = pipeline_orchestrator
+        orchestrator.workflow_planner.forward = Mock(
+            return_value=self._make_planner_result([
+                {"task_id": "t1", "agent": "search_agent", "query": "find videos", "dependencies": []},
+                {"task_id": "t2", "agent": "summarizer_agent", "query": "summarize findings", "dependencies": ["t1"]},
+            ])
+        )
+
+        call_order = []
+
+        search_response = Mock()
+        search_response.json.return_value = {"result": "video results", "confidence": 0.9}
+        search_response.raise_for_status = Mock()
+
+        summary_response = Mock()
+        summary_response.json.return_value = {"result": "summary of videos", "confidence": 0.85}
+        summary_response.raise_for_status = Mock()
+
+        async def ordered_post(url, json=None, headers=None):
+            call_order.append(url)
+            if "search_agent" in url:
+                return search_response
+            return summary_response
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=ordered_post)
+
+        mock_client_cm = Mock()
+        mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            return_value=mock_client_cm,
+        ):
+            result = await orchestrator.process_complex_query("find videos and summarize")
+
+        assert result["status"] == "completed"
+        summary = result["execution_summary"]
+        assert summary["total_tasks"] == 2
+        assert summary["completed_tasks"] == 2
+        assert summary["execution_time"] > 0
+        agents_used = summary["agents_used"]
+        assert "search_agent" in agents_used
+        assert "summarizer_agent" in agents_used
+
+        # httpx called exactly 2 times, search_agent before summarizer_agent
+        assert len(call_order) == 2
+        assert "search_agent" in call_order[0]
+        assert "summarizer_agent" in call_order[1]
 
 
 if __name__ == "__main__":
