@@ -850,11 +850,12 @@ class TestOrchestratorTelemetrySpan:
 
 
 @pytest.mark.unit
-class TestOrchestrationPipelineIntegration:
-    """Integration tests that mock ONLY at the system boundary (httpx.AsyncClient).
+class TestOrchestrationPipelineChain:
+    """Tests that exercise the internal method chain with mocked system boundaries.
 
     All internal methods (_plan_workflow, _execute_workflow, _execute_task,
     _prepare_task_context, _aggregate_results) run with REAL code.
+    httpx.AsyncClient is mocked — no real TCP connections are made.
     The DSPy modules (workflow_planner, result_aggregator) are replaced with
     controllable mocks since no LLM is available in tests.
     """
