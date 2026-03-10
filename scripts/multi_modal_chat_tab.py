@@ -110,7 +110,13 @@ async def route_and_process_query(
     """
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            # Prepare task data
+            history = []
+            for msg in st.session_state.get("chat_messages", [])[-10:]:
+                role = "user" if msg["role"] == "user" else "agent"
+                content = msg.get("content", "")
+                if content:
+                    history.append({"role": role, "content": content[:200]})
+
             task_data = {
                 "agent_name": "routing_agent",
                 "query": query,
@@ -121,14 +127,12 @@ async def route_and_process_query(
                     "timestamp": datetime.now().isoformat(),
                 },
                 "top_k": 10,
+                "conversation_history": history if history else None,
             }
 
-            # Add file info if available
             if file_info:
                 task_data["context"]["file"] = file_info
 
-            # Call routing agent process endpoint
-            # Memory is handled internally by the agent if enabled
             response = await client.post(
                 f"{routing_agent_url}/agents/routing_agent/process",
                 json=task_data,
@@ -190,7 +194,6 @@ def process_uploaded_file(uploaded_file) -> Optional[Dict[str, Any]]:
     file_name = uploaded_file.name
     file_size = uploaded_file.size
 
-    # Determine file category
     if file_type.startswith("video/"):
         category = "video"
     elif file_type.startswith("image/"):
@@ -202,10 +205,8 @@ def process_uploaded_file(uploaded_file) -> Optional[Dict[str, Any]]:
     else:
         category = "unknown"
 
-    # Read file content
     file_content = uploaded_file.read()
 
-    # Create temporary file for video/image processing
     temp_path = None
     if category in ["video", "image"]:
         temp_dir = tempfile.mkdtemp()
@@ -226,34 +227,28 @@ def render_message(message: Dict[str, Any], index: int):
     """Render a single chat message with appropriate styling."""
     is_user = message["role"] == "user"
 
-    # Create message container
     with st.container():
         col1, col2, col3 = st.columns([1, 10, 1])
 
         with col2:
-            # Message header
             if is_user:
                 st.markdown(f"**You** · {message.get('timestamp', '')}")
             else:
                 agent_name = message.get("agent", "Assistant")
                 st.markdown(f"**{agent_name}** · {message.get('timestamp', '')}")
 
-            # Message content
             content = message.get("content", "")
 
-            # Display file info if present
             file_info = message.get("file_info")
             if file_info:
                 st.info(f"📎 {file_info['file_name']} ({file_info['category']})")
 
-            # Display message text
             if content:
                 if is_user:
                     st.markdown(f"<div style='background-color: #e3f2fd; padding: 10px; border-radius: 10px;'>{content}</div>", unsafe_allow_html=True)
                 else:
                     st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 10px;'>{content}</div>", unsafe_allow_html=True)
 
-            # Display results if present
             result = message.get("result")
             if result:
                 with st.expander("View Details"):
@@ -274,14 +269,11 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
         return
 
-    # Initialize state
     initialize_chat_state()
 
-    # Sidebar configuration
     with st.sidebar:
         st.subheader("Chat Configuration")
 
-        # Tenant selector
         tenant_id = st.text_input(
             "Tenant ID",
             value=st.session_state.chat_tenant_id,
@@ -290,7 +282,6 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
             key="chat_tenant_input",
         )
 
-        # Validate and update tenant
         if tenant_id != st.session_state.chat_tenant_id:
             if validate_tenant_id(tenant_id):
                 st.session_state.chat_tenant_id = tenant_id
@@ -299,9 +290,10 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
             else:
                 st.error("❌ Invalid format. Use: org_name:tenant_name")
 
-        # Check agent memory capability
         if st.button("🔍 Check Memory Status", use_container_width=True):
-            routing_agent_url = agent_config.get("routing_agent_url", "http://localhost:8001")
+            if "routing_agent_url" not in agent_config:
+                raise KeyError("agent_config missing required key 'routing_agent_url'")
+            routing_agent_url = agent_config["routing_agent_url"]
             with st.spinner("Checking agent capabilities..."):
                 result = run_async_in_streamlit(
                     check_agent_memory_capability(routing_agent_url)
@@ -319,24 +311,19 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
                         "when starting the runtime."
                     )
 
-        # Clear conversation button
         if st.button("🗑️ Clear Conversation", use_container_width=True):
             st.session_state.chat_messages = []
             import uuid
             st.session_state.chat_session_id = str(uuid.uuid4())
             st.rerun()
 
-        # Display message count
         st.info(f"📊 Messages: {len(st.session_state.chat_messages)}")
 
-    # Main chat interface
     st.subheader("💬 Conversation")
 
-    # Display message history
     for idx, message in enumerate(st.session_state.chat_messages):
         render_message(message, idx)
 
-    # Input section
     st.subheader("📝 New Message")
 
     col1, col2 = st.columns([3, 1])
@@ -350,7 +337,6 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         )
 
     with col2:
-        # File upload
         uploaded_file = st.file_uploader(
             "Attach file (optional)",
             type=["mp4", "avi", "mov", "png", "jpg", "jpeg", "pdf", "txt"],
@@ -361,7 +347,6 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         if uploaded_file:
             st.success(f"✅ {uploaded_file.name}")
 
-    # Send button
     send_button = st.button(
         "🚀 Send",
         type="primary",
@@ -369,16 +354,15 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         use_container_width=True,
     )
 
-    # Process message
     if send_button:
-        routing_agent_url = agent_config.get("routing_agent_url", "http://localhost:8001")
+        if "routing_agent_url" not in agent_config:
+            raise KeyError("agent_config missing required key 'routing_agent_url'")
+        routing_agent_url = agent_config["routing_agent_url"]
 
-        # Process file if uploaded
         file_info = None
         if uploaded_file:
             file_info = process_uploaded_file(uploaded_file)
 
-        # Add user message to history
         user_message = {
             "role": "user",
             "content": user_input,
@@ -387,8 +371,6 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         }
         st.session_state.chat_messages.append(user_message)
 
-        # Route and process query
-        # Memory is handled automatically by the agent if enabled in config
         with st.spinner("Processing your request..."):
             result = run_async_in_streamlit(
                 route_and_process_query(
@@ -399,7 +381,6 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
                 )
             )
 
-            # Add assistant response to history
             assistant_message = {
                 "role": "assistant",
                 "agent": result.get("agent", "Routing Agent"),
@@ -409,5 +390,4 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
             }
             st.session_state.chat_messages.append(assistant_message)
 
-        # Rerun to display new messages
         st.rerun()
