@@ -87,7 +87,8 @@ class TestQueryRewriteWithRealLLM:
             word in rewritten for word in ["italian", "cooking", "recipe"]
         ), f"Rewritten query '{result.rewritten_query}' should reference Italian cooking from history"
 
-    def test_dispatcher_rewrite_with_real_llm(self, dspy_lm):
+    @pytest.mark.asyncio
+    async def test_dispatcher_rewrite_with_real_llm(self, dspy_lm):
         """AgentDispatcher._rewrite_query_with_history produces a resolved string."""
         from unittest.mock import MagicMock
 
@@ -102,7 +103,7 @@ class TestQueryRewriteWithRealLLM:
             {"role": "agent", "content": "Found 5 cat video results"},
         ]
 
-        rewritten = dispatcher._rewrite_query_with_history(
+        rewritten = await dispatcher._rewrite_query_with_history(
             "show me more like those", history
         )
 

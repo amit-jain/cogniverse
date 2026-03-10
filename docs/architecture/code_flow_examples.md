@@ -198,7 +198,7 @@ downstream_result = await self._execute_downstream_agent(
 
 # 4. Inside _execute_search_task, query rewrite happens
 # ConversationalQueryRewriteModule resolves anaphoric references
-rewritten = self._rewrite_query_with_history(
+rewritten = await self._rewrite_query_with_history(
     query="show me longer ones",
     conversation_history=[...],
 )

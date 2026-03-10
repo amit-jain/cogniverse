@@ -2,7 +2,7 @@
 Unit tests for SearchAgent
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
 import numpy as np
@@ -1892,7 +1892,8 @@ class TestConversationalQueryRewrite:
         # No call happens — the guard in _execute_search_task prevents it
 
     @pytest.mark.ci_fast
-    def test_rewrite_failure_raises(self):
+    @pytest.mark.asyncio
+    async def test_rewrite_failure_raises(self):
         """When rewrite module raises, error propagates (no silent fallback)."""
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
@@ -1902,13 +1903,13 @@ class TestConversationalQueryRewrite:
             schema_loader=Mock(),
         )
 
-        # Inject a broken rewriter
+        # Inject a broken rewriter whose acall raises
         broken_module = Mock()
-        broken_module.side_effect = RuntimeError("LLM unavailable")
+        broken_module.acall = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
         dispatcher._query_rewriter = broken_module
 
         with pytest.raises(RuntimeError, match="LLM unavailable"):
-            dispatcher._rewrite_query_with_history(
+            await dispatcher._rewrite_query_with_history(
                 "show me more",
                 [{"role": "user", "content": "cat videos"}],
             )

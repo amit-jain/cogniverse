@@ -100,7 +100,7 @@ class AgentDispatcher:
         # a clear error rather than silently searching with the unresolved query.
         resolved_query = query
         if conversation_history:
-            resolved_query = self._rewrite_query_with_history(
+            resolved_query = await self._rewrite_query_with_history(
                 query, conversation_history
             )
             if resolved_query != query:
@@ -148,7 +148,7 @@ class AgentDispatcher:
 
         return response
 
-    def _rewrite_query_with_history(
+    async def _rewrite_query_with_history(
         self, query: str, conversation_history: List[Dict[str, str]]
     ) -> str:
         """Rewrite a query that may contain anaphoric references using conversation history.
@@ -170,7 +170,7 @@ class AgentDispatcher:
             history_lines.append(f"{role}: {content}")
         history_text = "\n".join(history_lines)
 
-        result = self._query_rewriter(
+        result = await self._query_rewriter.acall(
             query=query, conversation_history=history_text
         )
         rewritten = result.rewritten_query.strip()

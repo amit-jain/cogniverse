@@ -70,6 +70,9 @@ class ConversationalQueryRewriteModule(dspy.Module):
     def forward(self, query: str, conversation_history: str) -> dspy.Prediction:
         return self.rewriter(query=query, conversation_history=conversation_history)
 
+    async def aforward(self, query: str, conversation_history: str) -> dspy.Prediction:
+        return await self.rewriter.acall(query=query, conversation_history=conversation_history)
+
 
 class SearchInput(AgentInput):
     """Type-safe input for search operations.
