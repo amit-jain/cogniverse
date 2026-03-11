@@ -1546,9 +1546,7 @@ class VespaSchemaManager:
             remaining_tenant_schemas = self._get_existing_tenant_schemas()
             all_schemas = metadata_schemas + remaining_tenant_schemas
 
-            app_package = ApplicationPackage(
-                name="cogniverse", schema=all_schemas
-            )
+            app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
             self._deploy_package(app_package, allow_schema_removal=True)
 
             self._logger.info(
