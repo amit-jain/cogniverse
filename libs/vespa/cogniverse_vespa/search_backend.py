@@ -156,10 +156,8 @@ class ConnectionPool:
         self._lock = threading.Lock()
         self._stop_health_check = threading.Event()
 
-        # Initialize minimum connections
         self._initialize_connections()
 
-        # Start health check thread
         self._health_check_thread = threading.Thread(
             target=self._health_check_loop, daemon=True
         )
@@ -262,50 +260,49 @@ class VespaSearchBackend(SearchBackend):
         self,
         backend_url: str = None,
         backend_port: int = None,
-        schema_name: str = None,  # DEPRECATED - schema determined at query time
-        profile: str = None,  # DEPRECATED - profile determined at query time
+        schema_name: str = None,
+        profile: str = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
         pool_config: Optional[ConnectionPoolConfig] = None,
         retry_config: Optional[RetryConfig] = None,
-        config: Optional[Dict[str, Any]] = None,  # NEW: Accept config dict
-        config_manager=None,  # ConfigManager instance for dependency injection
-        schema_loader=None,  # SchemaLoader instance for dependency injection
+        config: Optional[Dict[str, Any]] = None,
+        config_manager=None,
+        schema_loader=None,
     ):
         """
-        Initialize Vespa search backend with ALL profiles.
-        Schema is determined at query time, not initialization time.
+        Initialize Vespa search backend.
+
+        When config is provided, backend_url/backend_port/schema_name/profile are ignored.
+        Schema and profile are resolved at query time from search() parameters.
 
         Args:
-            backend_url: Backend URL (or use config)
-            backend_port: Backend port (or use config)
-            schema_name: DEPRECATED - schema determined at query time from search() parameter
-            profile: DEPRECATED - profile determined at query time from search() parameter
+            backend_url: Backend URL (used when config is None)
+            backend_port: Backend port (used when config is None)
+            schema_name: Schema name (used when config is None; set per-query otherwise)
+            profile: Profile name (used when config is None; set per-query otherwise)
             query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
             pool_config: Connection pool configuration
             retry_config: Retry configuration
-            config: Backend configuration dict (NEW - preferred way)
+            config: Backend configuration dict (preferred; takes precedence)
+            config_manager: ConfigManager for dependency injection
+            schema_loader: SchemaLoader for dependency injection
         """
-        # Store config_manager and schema_loader
         self._config_manager = config_manager
         self._schema_loader = schema_loader
 
-        # If config provided, extract from it (new approach)
         if config is not None:
             self.backend_url = config.get("url", "http://localhost")
             self.backend_port = config.get("port", 8080)
-            # Store ALL profiles - schema determined at query time
             self.profiles = config.get("profiles", {})
             self.default_profiles = config.get("default_profiles", {})
-            # No schema-specific initialization
-            self.schema_name = None  # Will be set per-query
-            self.profile = None  # Will be set per-query
+            self.schema_name = None
+            self.profile = None
             self.query_encoder = query_encoder or config.get("query_encoder")
         else:
-            # Legacy initialization with individual parameters
             self.backend_url = backend_url
             self.backend_port = backend_port
             self.schema_name = schema_name
@@ -314,25 +311,19 @@ class VespaSearchBackend(SearchBackend):
             self.profiles = {}
             self.default_profiles = {}
 
-        # Combine URL and port
         full_url = f"{self.backend_url}:{self.backend_port}"
-
-        # Initialize output manager
         self.output_manager = OutputManager()
 
-        # Setup connection pool
         if enable_connection_pool:
             self.pool = ConnectionPool(full_url, pool_config or ConnectionPoolConfig())
         else:
             self.pool = None
             self.vespa = Vespa(url=self.backend_url, port=self.backend_port)
 
-        # Setup retry configuration
         self.retry_config = retry_config or RetryConfig(
             max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
         )
 
-        # Initialize metrics
         if enable_metrics:
             self.metrics = SearchMetrics()
         else:
@@ -351,7 +342,6 @@ class VespaSearchBackend(SearchBackend):
         Args:
             config: Configuration with keys url, port, schema_name, profile, tenant_id, config_manager
         """
-        # Extract config values
         self.backend_url = config.get("url", "http://localhost")
         self.backend_port = config.get("port", 8080)
         self.schema_name = config.get("schema_name")
@@ -365,10 +355,7 @@ class VespaSearchBackend(SearchBackend):
         # Initialize output manager
         self.output_manager = OutputManager()
 
-        # Setup connection pool
         self.pool = ConnectionPool(full_url, ConnectionPoolConfig())
-
-        # Setup retry config
         self.retry_config = RetryConfig(
             max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
         )
@@ -394,8 +381,7 @@ class VespaSearchBackend(SearchBackend):
         if not document_ids:
             return []
 
-        # Use schema's id field for matching (convention: all schemas should have id field)
-        # TODO: Implement proper schema field mapping/registry system for text/id field conventions
+        # Uses Vespa's built-in document URI for matching (works across all schemas)
         doc_id_conditions = " OR ".join(
             [f'id contains "{doc_id}"' for doc_id in document_ids]
         )
@@ -404,19 +390,16 @@ class VespaSearchBackend(SearchBackend):
         query_params = {"yql": yql, "hits": len(document_ids), "timeout": "10s"}
 
         try:
-            # Execute batch query
             if self.pool:
                 with self.pool.get_connection() as conn:
                     response = conn.query(body=query_params)
             else:
                 response = self.vespa.query(body=query_params)
 
-            # Build results dictionary for fast lookup
             results_dict = {}
             if response and hasattr(response, "hits"):
                 for hit in response.hits:
                     fields = hit.get("fields", {})
-                    # Extract document ID from Vespa document id format
                     full_doc_id = hit.get("id", "")
                     doc_id = full_doc_id.split("::")[-1]
 
@@ -427,62 +410,17 @@ class VespaSearchBackend(SearchBackend):
                         status=ProcessingStatus.COMPLETED,
                     )
 
-                    # Add all fields as metadata
                     for key, value in fields.items():
                         if value is not None:
                             doc.add_metadata(key, value)
 
                     results_dict[doc_id] = doc
 
-            # Return results in the same order as input document_ids
             return [results_dict.get(doc_id) for doc_id in document_ids]
 
         except Exception as e:
             logger.error(f"Batch document retrieval failed: {e}")
-            # Fallback to individual retrieval if batch fails
-            return self._fallback_individual_get(document_ids)
-
-    def _fallback_individual_get(
-        self, document_ids: List[str]
-    ) -> List[Optional[Document]]:
-        """Fallback method for individual document retrieval when batch query fails."""
-        results = []
-        for doc_id in document_ids:
-            try:
-                if self.pool:
-                    with self.pool.get_connection() as conn:
-                        response = conn.vespa.get_data(
-                            schema=self.schema_name, data_id=doc_id, namespace="video"
-                        )
-                else:
-                    response = self.vespa.get_data(
-                        schema=self.schema_name, data_id=doc_id, namespace="video"
-                    )
-
-                if response and response.status_code == 200:
-                    data = response.json()
-                    fields = data.get("fields", {})
-
-                    doc = Document(
-                        id=doc_id,
-                        content_type=ContentType.VIDEO,
-                        text_content=fields.get("content", ""),
-                        status=ProcessingStatus.COMPLETED,
-                    )
-
-                    for key, value in fields.items():
-                        if value is not None:
-                            doc.add_metadata(key, value)
-
-                    results.append(doc)
-                else:
-                    results.append(None)
-
-            except Exception as e:
-                logger.error(f"Failed to retrieve document {doc_id}: {e}")
-                results.append(None)
-
-        return results
+            raise
 
     def get_statistics(self) -> Dict[str, Any]:
         """
@@ -742,21 +680,17 @@ class VespaSearchBackend(SearchBackend):
             else:
                 raise ValueError(f"No strategies found in profile '{profile_name}'")
 
-        # Update instance state for this query
         self.schema_name = schema_name
         self.profile = profile_name
-        # No longer need strategy object - we use internal ranking strategies
 
         logger.info(
             f"[{correlation_id}] Query resolved: type={content_type}, profile={profile_name}, "
             f"schema={schema_name}, strategy={strategy_name}"
         )
 
-        # Continue with search execution
         start_time = time.time()
 
         try:
-            # Log search request
             logger.info(
                 f"[{correlation_id}] Search request: query='{query_text}', "
                 f"limit={top_k}, profile={profile_name}, strategy={strategy_name}"
@@ -967,10 +901,7 @@ class VespaSearchBackend(SearchBackend):
             else:
                 query_params["yql"] = f"select * from {schema_name} where true"
 
-        # Add tensor embeddings based on what the strategy says it needs
-        # NO MORE HARDCODED CHECKS!
         if query_embeddings is not None:
-            # Check what tensors this ranking strategy needs from its inputs
             inputs_needed = rank_config.get("inputs", {})
 
             logger.error(
@@ -1047,13 +978,11 @@ class VespaSearchBackend(SearchBackend):
                         f"Known input names: 'qt' (float), 'qtb' (binary), 'q' (generic)."
                     )
 
-        # Add schema to query body to avoid conflicts with other schemas
-        query_params["model.restrict"] = schema_name  # Must be string, not list!
+        query_params["model.restrict"] = schema_name
         logger.info(
             f"[{correlation_id}] Set model.restrict='{query_params['model.restrict']}'"
         )
 
-        # Log the query parameters for debugging
         logger.info(
             f"[{correlation_id}] Query params keys: {list(query_params.keys())}"
         )
@@ -1082,27 +1011,21 @@ class VespaSearchBackend(SearchBackend):
         """Convert Vespa result to Document object."""
         fields = result.get("fields", {})
 
-        # Extract document ID
         doc_id = result.get("id", "").split("::")[-1]
 
-        # Create Document using new generic structure
         document = Document(
             id=doc_id, content_type=ContentType.VIDEO, status=ProcessingStatus.COMPLETED
         )
 
-        # Map Vespa text fields to Document.text_content
-        # Try common text field names in order of priority
         for text_field_name in ["text", "transcription", "text_content", "content"]:
             if text_field_name in fields and fields[text_field_name]:
                 document.text_content = fields[text_field_name]
                 break
 
-        # Add all fields as metadata
         for key, value in fields.items():
             if value is not None:
                 document.add_metadata(key, value)
 
-        # Add source_id to metadata
         document.add_metadata("source_id", fields.get("video_id", doc_id.split("_")[0]))
 
         return document
@@ -1394,17 +1317,10 @@ class VespaSearchBackend(SearchBackend):
         schema_strategies = cache.get(schema_name, {})
 
         if not schema_strategies:
-            logger.warning(
+            raise ValueError(
                 f"No ranking strategies found for schema '{schema_name}'. "
                 f"Available schemas: {list(cache.keys())}"
             )
-            # Return defaults - assume float embeddings needed
-            return {
-                "needs_float": True,
-                "needs_binary": False,
-                "float_field": "embedding",
-                "binary_field": "embedding_binary",
-            }
 
         # Analyze what embeddings are needed across all strategies
         needs_float = False
@@ -1497,7 +1413,7 @@ class VespaSearchBackend(SearchBackend):
             return strategies
         except Exception as e:
             logger.error(f"Failed to load ranking strategies: {e}")
-            return {}
+            raise
 
 
 # Factory function for creating search backend

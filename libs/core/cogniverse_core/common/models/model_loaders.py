@@ -11,7 +11,6 @@ reducing memory usage and enabling better scaling.
 """
 
 import logging
-import os
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -166,14 +165,7 @@ class RemoteInferenceClient:
 
         except Exception as e:
             self.logger.error(f"Remote inference failed: {e}")
-            # Return mock data for development/testing
-            self.logger.warning("Falling back to mock embeddings")
-            return {
-                "embeddings": np.random.rand(
-                    len(images), 128, 768
-                ),  # (batch, patches, dim)
-                "processing_time": 0.5,
-            }
+            raise
 
     @retry_with_backoff(
         config=RetryConfig(
@@ -272,12 +264,7 @@ class RemoteInferenceClient:
 
         except Exception as e:
             self.logger.error(f"Remote video inference failed: {e}")
-            # Return mock data for development/testing
-            self.logger.warning("Falling back to mock embeddings")
-            return {
-                "embeddings": np.random.rand(256, 768),  # (patches, dim)
-                "processing_time": 1.0,
-            }
+            raise
 
 
 class RemoteColPaliLoader(ModelLoader):
@@ -296,13 +283,7 @@ class RemoteColPaliLoader(ModelLoader):
     ):
         super().__init__(model_name, config, logger)
 
-        # Extract remote inference config
-        # TODO: Add these fields to config schema in configs/config.json:
-        # - remote_inference_url: URL of the inference endpoint
-        # - remote_inference_api_key: Optional API key
-        # - remote_inference_provider: "infinity", "modal", "custom"
-        # Location: Top level around line 164 and/or in video_processing_profiles
-
+        # Remote inference config (fields defined in configs/config.json)
         self.remote_url = config.get("remote_inference_url")
         self.api_key = config.get("remote_inference_api_key")
 
@@ -516,45 +497,10 @@ class VideoPrismModelLoader(ModelLoader):
         try:
             self.logger.info(f"Loading VideoPrism model: {self.model_name}")
 
-            # Set JAX platform if needed (for Apple Silicon compatibility)
-            if os.environ.get("JAX_PLATFORM_NAME") is None:
-                import platform
+            # JAX_PLATFORM_NAME must be set before importing JAX (at startup boundary,
+            # e.g. via JAX_PLATFORM_NAME=cpu env var or in __main__ before model loading).
 
-                if platform.system() == "Darwin" and platform.processor() == "arm":
-                    os.environ["JAX_PLATFORM_NAME"] = "cpu"
-                    self.logger.info("Set JAX_PLATFORM_NAME=cpu for Apple Silicon")
-
-            # Import VideoPrism loader with better path handling
-            import sys
-
-            # Try multiple parent levels to find the module
-            videoprism_loader = None
-            for parent_level in [1, 2, 3]:
-                parent_dir = Path(__file__)
-                for _ in range(parent_level):
-                    parent_dir = parent_dir.parent
-
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                try:
-                    from videoprism_loader import get_videoprism_loader
-
-                    videoprism_loader = get_videoprism_loader
-                    break
-                except ImportError:
-                    continue
-
-            if videoprism_loader is None:
-                # If not found in parent directories, try direct import
-                try:
-                    from .videoprism_loader import get_videoprism_loader
-
-                    videoprism_loader = get_videoprism_loader
-                except ImportError:
-                    raise ImportError(
-                        "Could not import videoprism_loader from any location"
-                    )
+            from .videoprism_loader import get_videoprism_loader as videoprism_loader
 
             # Get loader instance with proper config
             loader_config = self.config.copy()
@@ -570,15 +516,14 @@ class VideoPrismModelLoader(ModelLoader):
             loader = videoprism_loader(self.model_name, loader_config)
             loader.load_model()
 
-            # For global models, also load text encoder if available
-            if hasattr(loader, "load_text_encoder") and loader_config.get(
-                "load_text_encoder"
-            ):
-                try:
-                    loader.load_text_encoder()
-                    self.logger.info("VideoPrism text encoder loaded successfully")
-                except Exception as e:
-                    self.logger.warning(f"Could not load text encoder: {e}")
+            if loader_config.get("load_text_encoder"):
+                if not hasattr(loader, "load_text_encoder"):
+                    raise AttributeError(
+                        f"VideoPrism loader {type(loader).__name__} does not implement "
+                        "load_text_encoder(), which is required for global/lvt models."
+                    )
+                loader.load_text_encoder()
+                self.logger.info("VideoPrism text encoder loaded successfully")
 
             self.model = loader
             self.processor = None  # VideoPrism doesn't use a separate processor
@@ -603,14 +548,6 @@ class ModelLoaderFactory:
 
         If remote_inference_url is present in config, creates a remote loader.
         Otherwise, creates a local loader.
-
-        TODO: Add these fields to config schema in configs/config.json:
-        - remote_inference_url: URL of the inference endpoint
-        - remote_inference_api_key: Optional API key
-        - remote_inference_provider: "infinity", "modal", "custom"
-
-        These should be added at the top level of the config file (around line 164)
-        and optionally in each video_processing_profile for profile-specific endpoints.
         """
 
         model_name_lower = model_name.lower()

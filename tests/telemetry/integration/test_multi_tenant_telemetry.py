@@ -10,6 +10,7 @@ These tests validate:
 """
 
 import time
+import uuid
 
 import pytest
 
@@ -420,25 +421,32 @@ class TestPhoenixIntegrationWithRealServer:
         CRITICAL TEST: Validate tenant isolation with real Phoenix.
 
         This test:
-        1. Creates spans for tenant-alpha and tenant-beta
+        1. Creates spans for tenant-alpha and tenant-beta tagged with a unique run ID
         2. Flushes to Phoenix
-        3. Queries Phoenix API to verify spans in correct projects
-        4. Validates no cross-contamination
+        3. Queries Phoenix API and filters to only this run's spans
+        4. Validates count and no cross-contamination
+
+        Uses a per-run UUID in span names so the test is idempotent against a
+        persistent Phoenix instance that accumulates spans across test runs.
         """
         # Reset singleton
         TelemetryManager._instance = None
 
         manager = TelemetryManager(phoenix_config)
 
+        # Unique ID for this test run so we can isolate our spans from previous runs
+        run_id = uuid.uuid4().hex[:8]
+
         # Create spans for tenant-alpha
         for i in range(5):
             with manager.span(
-                name=f"alpha_operation_{i}",
+                name=f"alpha_op_{run_id}_{i}",
                 tenant_id="tenant-alpha",
                 project_name="routing",
                 attributes={
                     "operation_id": i,
                     "tenant": "alpha",
+                    "test_run_id": run_id,
                     "test_timestamp": time.time(),
                 },
             ) as span:
@@ -447,12 +455,13 @@ class TestPhoenixIntegrationWithRealServer:
         # Create spans for tenant-beta
         for i in range(5):
             with manager.span(
-                name=f"beta_operation_{i}",
+                name=f"beta_op_{run_id}_{i}",
                 tenant_id="tenant-beta",
                 project_name="routing",
                 attributes={
                     "operation_id": i,
                     "tenant": "beta",
+                    "test_run_id": run_id,
                     "test_timestamp": time.time(),
                 },
             ) as span:
@@ -465,10 +474,43 @@ class TestPhoenixIntegrationWithRealServer:
         # Wait for Phoenix to process
         wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
-        # TODO: Query Phoenix API to verify:
-        # - Project "tenant-alpha-routing" has 5 spans
-        # - Project "tenant-beta-routing" has 5 spans
-        # - No cross-contamination
+        # Query Phoenix API to verify tenant isolation
+        import phoenix as px
+
+        client = px.Client(endpoint=phoenix_config.provider_config["http_endpoint"])
+
+        # Verify tenant-alpha spans — filter to this run's spans by name prefix
+        alpha_project = phoenix_config.get_project_name("tenant-alpha", "routing")
+        all_alpha_spans = client.get_spans_dataframe(project_name=alpha_project)
+        assert all_alpha_spans is not None, f"No spans found in project {alpha_project}"
+        alpha_spans = all_alpha_spans[
+            all_alpha_spans["name"].str.startswith(f"alpha_op_{run_id}_")
+        ]
+        assert len(alpha_spans) == 5, (
+            f"Expected 5 spans with run_id={run_id} in {alpha_project}, got {len(alpha_spans)}"
+        )
+
+        # Verify tenant-beta spans — filter to this run's spans by name prefix
+        beta_project = phoenix_config.get_project_name("tenant-beta", "routing")
+        all_beta_spans = client.get_spans_dataframe(project_name=beta_project)
+        assert all_beta_spans is not None, f"No spans found in project {beta_project}"
+        beta_spans = all_beta_spans[
+            all_beta_spans["name"].str.startswith(f"beta_op_{run_id}_")
+        ]
+        assert len(beta_spans) == 5, (
+            f"Expected 5 spans with run_id={run_id} in {beta_project}, got {len(beta_spans)}"
+        )
+
+        # Verify no cross-contamination: alpha spans must not appear in beta project
+        # and vice versa (using this run's unique prefix).
+        alpha_run_names = set(alpha_spans["name"].tolist())
+        assert all(f"alpha_op_{run_id}" in name for name in alpha_run_names), (
+            f"Cross-contamination: alpha project has non-alpha spans for run {run_id}: {alpha_run_names}"
+        )
+        beta_run_names = set(beta_spans["name"].tolist())
+        assert all(f"beta_op_{run_id}" in name for name in beta_run_names), (
+            f"Cross-contamination: beta project has non-beta spans for run {run_id}: {beta_run_names}"
+        )
 
         # Cleanup
         manager.shutdown()

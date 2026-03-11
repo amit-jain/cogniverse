@@ -43,15 +43,32 @@ class ValidatedEntityQueryGenerator(dspy.Module):
         """
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
 
+        # Build a flat list of meaningful words from all entities (length > 3 to exclude
+        # stop words like "the", "and", "for"). A query is valid if any of these words
+        # appears in it — an entity "Neural Networks Tutorial" is mentioned when any of
+        # "Neural", "Networks", or "Tutorial" appears.
+        entity_words = [
+            word.lower()
+            for entity in entity_list
+            for word in entity.split()
+            if len(word) > 3
+        ]
+        if not entity_words:
+            # All entity words are short (e.g. single-char abbreviations) — fall back to
+            # exact entity substring matching.
+            entity_words = [e.lower() for e in entity_list]
+
         for attempt in range(self.max_retries):
             # Generate query
             result = self.generate(
                 topics=topics, entities=entities, entity_types=entity_types
             )
 
-            # Validate: at least one entity must appear in query (case-insensitive)
+            # Validate: at least one meaningful entity word must appear in query
+            # (case-insensitive). Multi-word entities ("Neural Networks") match when
+            # any constituent word is present.
             query_lower = result.query.lower()
-            if any(entity.lower() in query_lower for entity in entity_list):
+            if any(word in query_lower for word in entity_words):
                 logger.debug(
                     f"Generated valid query on attempt {attempt + 1}: {result.query}"
                 )

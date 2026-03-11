@@ -39,21 +39,21 @@ class DummyLM(dspy.LM):
         ):
             response_text = '{"query": "find machine learning tutorial video"}'
         elif "entities" in prompt_text.lower() or "entity_types" in prompt_text.lower():
-            # Extract the first entity from the prompt to ensure it appears in the query
-            entity_name = "TensorFlow"  # default
+            # Extract the first entity from the prompt to ensure it appears in the query.
+            # Parse the "Entities:" field from the DSPy-formatted prompt.
+            import re as _re
 
-            # Try to extract actual entities from prompt
-            for possible_entity in [
-                "TensorFlow",
-                "PyTorch",
-                "Python",
-                "Networks",
-                "Tutorial",
-                "Learn",
-            ]:
-                if possible_entity in prompt_text:
-                    entity_name = possible_entity
-                    break
+            entity_name = "TensorFlow"  # default fallback
+            # DSPy formats the field as "[[ ## entities ## ]]\nEntityA, EntityB, ..."
+            entities_match = _re.search(
+                r"## entities ##\s*\]\]\s*\n([^\n\[]+)", prompt_text
+            )
+            if entities_match:
+                raw_entities = entities_match.group(1).strip()
+                # Take the first comma-separated entity
+                first_entity = raw_entities.split(",")[0].strip()
+                if first_entity:
+                    entity_name = first_entity
 
             # Generate query that explicitly contains the entity, with reasoning for ChainOfThought
             response_text = f'{{"reasoning": "Including {entity_name} as the primary entity since it is a key technology", "query": "find {entity_name} machine learning tutorial"}}'

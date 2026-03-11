@@ -594,7 +594,6 @@ class DSPyModuleConfig:
 
     signature_class: str  # Fully qualified class name
     module_type: str = "ChainOfThought"  # DSPy module type
-    compiled_path: Optional[str] = None  # Path to optimized module
     lm_config: Dict[str, Any] = field(default_factory=dict)  # LLM settings
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -603,7 +602,6 @@ class DSPyModuleConfig:
         return {
             "signature_class": self.signature_class,
             "module_type": self.module_type,
-            "compiled_path": self.compiled_path,
             "lm_config": self.lm_config,
             "metadata": self.metadata,
         }
@@ -614,7 +612,6 @@ class DSPyModuleConfig:
         return cls(
             signature_class=data["signature_class"],
             module_type=data.get("module_type", "ChainOfThought"),
-            compiled_path=data.get("compiled_path"),
             lm_config=data.get("lm_config", {}),
             metadata=data.get("metadata", {}),
         )

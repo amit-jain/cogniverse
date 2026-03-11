@@ -4,11 +4,8 @@ Integration tests for Multi-Modal Optimization: Multi-Modal Optimization
 Tests the complete workflow from span collection through optimization.
 """
 
-import shutil
-import tempfile
 from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -21,18 +18,20 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_synthetic import ModalityExampleSchema
 
 
+def _mock_telemetry_provider():
+    """Create a mock telemetry provider for testing."""
+    provider = Mock()
+    provider.datasets = Mock()
+    provider.datasets.create_dataset = AsyncMock(return_value="mock-dataset-id")
+    provider.datasets.get_dataset = AsyncMock(return_value=None)
+    return provider
+
+
 class TestModalityOptimizationIntegration:
     """Integration tests for Multi-Modal Optimization components"""
 
-    @pytest.fixture
-    def temp_model_dir(self):
-        """Create temporary directory for models"""
-        temp_dir = Path(tempfile.mkdtemp())
-        yield temp_dir
-        shutil.rmtree(temp_dir)
-
     @pytest.mark.asyncio
-    async def test_end_to_end_optimization_workflow(self, temp_model_dir):
+    async def test_end_to_end_optimization_workflow(self):
         """Test complete optimization workflow from spans to training"""
         # Mock Phoenix client to avoid external dependencies
         with patch(
@@ -41,8 +40,8 @@ class TestModalityOptimizationIntegration:
             # Step 1: Initialize components
             optimizer = ModalityOptimizer(
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_mock_telemetry_provider(),
                 tenant_id="test-tenant",
-                model_dir=temp_model_dir,
                 vespa_client=None,
             )
 
@@ -94,9 +93,7 @@ class TestModalityOptimizationIntegration:
             assert len(optimizer.training_history[QueryModality.VIDEO]) == 1
 
     @pytest.mark.asyncio
-    async def test_synthetic_data_augmentation(
-        self, temp_model_dir, test_generator_config
-    ):
+    async def test_synthetic_data_augmentation(self, test_generator_config):
         """Test synthetic data generation directly using SyntheticDataService"""
         from cogniverse_synthetic import SyntheticDataRequest, SyntheticDataService
 
@@ -123,13 +120,12 @@ class TestModalityOptimizationIntegration:
         assert len(unique_queries) >= 3  # Should have some variety
 
     @pytest.mark.asyncio
-    async def test_cross_modal_fusion_workflow(
-        self, temp_model_dir, telemetry_manager_without_phoenix
-    ):
+    async def test_cross_modal_fusion_workflow(self, telemetry_manager_without_phoenix):
         """Test cross-modal fusion recommendation workflow"""
         # Initialize optimizer with telemetry configured
         fusion_optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant", model_dir=temp_model_dir
+            telemetry_provider=_mock_telemetry_provider(),
+            tenant_id="test-tenant",
         )
 
         # Test fusion recommendation with high benefit
@@ -172,15 +168,15 @@ class TestModalityOptimizationIntegration:
             assert pair in fusion_optimizer.fusion_success_rates
 
     @pytest.mark.asyncio
-    async def test_modality_optimizer_with_synthetic_strategy(self, temp_model_dir):
+    async def test_modality_optimizer_with_synthetic_strategy(self):
         """Test optimizer with synthetic training strategy"""
         with patch(
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_mock_telemetry_provider(),
                 tenant_id="test-tenant",
-                model_dir=temp_model_dir,
                 vespa_client=None,
             )
 
@@ -237,15 +233,15 @@ class TestModalityOptimizationIntegration:
                 assert result["examples_count"] > 0
 
     @pytest.mark.asyncio
-    async def test_optimize_all_modalities(self, temp_model_dir):
+    async def test_optimize_all_modalities(self):
         """Test optimizing multiple modalities"""
         with patch(
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_mock_telemetry_provider(),
                 tenant_id="test-tenant",
-                model_dir=temp_model_dir,
                 vespa_client=None,
             )
 
@@ -299,13 +295,12 @@ class TestModalityOptimizationIntegration:
             assert QueryModality.VIDEO in results
             assert QueryModality.DOCUMENT in results
 
-    def test_fusion_statistics_and_export(
-        self, temp_model_dir, telemetry_manager_without_phoenix
-    ):
-        """Test fusion statistics collection and export"""
-        # Initialize optimizer with telemetry configured
+    def test_fusion_statistics(self, telemetry_manager_without_phoenix):
+        """Test fusion statistics collection"""
+        # Initialize optimizer with mock telemetry
         fusion_optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant", model_dir=temp_model_dir
+            telemetry_provider=_mock_telemetry_provider(),
+            tenant_id="test-tenant",
         )
 
         # Record multiple fusion results
@@ -332,23 +327,16 @@ class TestModalityOptimizationIntegration:
         assert "video+document" in stats["modality_pairs"]
         assert stats["modality_pairs"]["video+document"]["count"] == 5
 
-        # Export data
-        export_path = temp_model_dir / "fusion_export.json"
-        success = fusion_optimizer.export_fusion_data(export_path)
-
-        assert success is True
-        assert export_path.exists()
-
     @pytest.mark.asyncio
-    async def test_optimization_summary(self, temp_model_dir):
+    async def test_optimization_summary(self):
         """Test getting optimization summary"""
         with patch(
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_mock_telemetry_provider(),
                 tenant_id="test-tenant",
-                model_dir=temp_model_dir,
                 vespa_client=None,
             )
 
@@ -368,15 +356,15 @@ class TestModalityOptimizationIntegration:
             assert "video" in summary["modalities"]
             assert summary["modalities"]["video"]["training_count"] == 1
 
-    def test_modality_context_building(self, temp_model_dir):
+    def test_modality_context_building(self):
         """Test building modeling context from examples"""
         with patch(
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
                 llm_config=LLMEndpointConfig(model="ollama/test-model"),
+                telemetry_provider=_mock_telemetry_provider(),
                 tenant_id="test-tenant",
-                model_dir=temp_model_dir,
                 vespa_client=None,
             )
 

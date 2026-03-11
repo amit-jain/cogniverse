@@ -83,11 +83,9 @@ class ModalityGenerator(BaseGenerator):
 
         logger.info(f"Generating {target_count} ModalityExamples for {modality}")
 
-        # Extract patterns from content
         if self.pattern_extractor and sampled_content:
             patterns = self.pattern_extractor.extract(sampled_content)
         else:
-            # Use fallback patterns
             patterns = {
                 "topics": ["machine learning", "neural networks", "data science"],
                 "entities": ["TensorFlow", "PyTorch", "Python"],
@@ -95,17 +93,12 @@ class ModalityGenerator(BaseGenerator):
                 "content_types": ["tutorial", "guide"],
             }
 
-        # Get agent for this modality using configuration
         correct_agent = self._get_agent_for_modality(modality)
-
-        # Get or initialize DSPy query generator
         query_generator = self._get_query_generator()
 
-        # Generate examples
         examples = []
 
         for i in range(target_count):
-            # Pick random topic and context
             topic = (
                 random.choice(patterns["topics"])
                 if patterns["topics"]
@@ -117,7 +110,6 @@ class ModalityGenerator(BaseGenerator):
                 else "tutorial"
             )
 
-            # Generate query using DSPy
             topics_str = (
                 ", ".join(patterns["topics"][:3]) if patterns["topics"] else topic
             )
@@ -126,7 +118,6 @@ class ModalityGenerator(BaseGenerator):
             )
             query = result.query
 
-            # Add optional temporal/entity modifiers (20% chance)
             if random.random() < 0.2 and patterns["temporal"]:
                 temporal = random.choice(patterns["temporal"])
                 query = f"{query} {temporal}"
@@ -135,7 +126,6 @@ class ModalityGenerator(BaseGenerator):
                 entity = random.choice(patterns["entities"])
                 query = f"{query} with {entity}"
 
-            # Create example
             example = ModalityExampleSchema(
                 query=query,
                 modality=modality,
@@ -175,31 +165,16 @@ class ModalityGenerator(BaseGenerator):
                 f"Available modules: {list(self.optimizer_config.dspy_modules.keys())}"
             )
 
-        # Load signature class
         from cogniverse_synthetic.dspy_signatures import GenerateModalityQuery
 
-        # Check if compiled module exists
-        if module_config.compiled_path:
-            try:
-                self.query_generator = dspy.ChainOfThought(GenerateModalityQuery)
-                self.query_generator.load(module_config.compiled_path)
-                logger.info(
-                    f"Loaded compiled DSPy module from {module_config.compiled_path}"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to load compiled module: {e}, using uncompiled")
-                self.query_generator = None
-
-        # Initialize uncompiled module if needed
-        if self.query_generator is None:
-            module_type = module_config.module_type
-            if module_type == "ChainOfThought":
-                self.query_generator = dspy.ChainOfThought(GenerateModalityQuery)
-            elif module_type == "Predict":
-                self.query_generator = dspy.Predict(GenerateModalityQuery)
-            else:
-                raise ValueError(f"Unknown DSPy module type: {module_type}")
-            logger.info(f"Initialized {module_type} DSPy module for query generation")
+        module_type = module_config.module_type
+        if module_type == "ChainOfThought":
+            self.query_generator = dspy.ChainOfThought(GenerateModalityQuery)
+        elif module_type == "Predict":
+            self.query_generator = dspy.Predict(GenerateModalityQuery)
+        else:
+            raise ValueError(f"Unknown DSPy module type: {module_type}")
+        logger.info(f"Initialized {module_type} DSPy module for query generation")
 
         return self.query_generator
 

@@ -361,14 +361,23 @@ class CrossModalOptimizer:
         result = self.fusion_model.train(contexts, benefits)
 
         if result["status"] == "success":
-            # Save trained model to telemetry
+            # Save trained model to telemetry.
+            # Use a thread-level event loop approach that works both inside and
+            # outside an existing async context (avoids RuntimeError from nested
+            # run_until_complete when called from pytest-asyncio or similar).
             import asyncio
+            import concurrent.futures
 
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(self.fusion_model.save_to_telemetry())
-            finally:
-                loop.close()
+            def _save_in_thread():
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(self.fusion_model.save_to_telemetry())
+                finally:
+                    loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(_save_in_thread).result(timeout=30)
+
             logger.info(
                 f"Trained fusion model on {len(self.fusion_history)} examples "
                 f"(MAE: {result.get('mae', 0):.3f})"

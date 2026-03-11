@@ -10,7 +10,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -32,6 +32,18 @@ from cogniverse_agents.routing.strategies import (
     LLMRoutingStrategy,
 )
 
+_TEST_TENANT = "test_tenant"
+
+
+def _mock_telemetry():
+    """Create a mock TelemetryProvider that satisfies ArtifactManager requirements."""
+    provider = Mock()
+    # ArtifactManager calls provider.datasets.create_dataset / get_dataset
+    provider.datasets = Mock()
+    provider.datasets.create_dataset = AsyncMock(return_value="mock-dataset-id")
+    provider.datasets.get_dataset = AsyncMock(return_value=None)
+    return provider
+
 
 class TestOptimizationMetrics:
     """Test optimization metrics calculation."""
@@ -41,7 +53,7 @@ class TestOptimizationMetrics:
     def test_metrics_calculation_accuracy(self):
         """Test accurate calculation of performance metrics."""
         config = OptimizationConfig(min_samples_for_optimization=10)
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Add sample predictions with ground truth
         samples = [
@@ -76,7 +88,7 @@ class TestOptimizationMetrics:
     def test_precision_recall_calculation(self):
         """Test precision and recall calculation for each modality."""
         config = OptimizationConfig()
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Create samples with various TP, FP, FN scenarios
         samples = [
@@ -123,7 +135,7 @@ class TestOptimizationMetrics:
     def test_confidence_correlation(self):
         """Test correlation between confidence scores and accuracy."""
         config = OptimizationConfig()
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # High confidence + correct = positive correlation
         samples = [
@@ -161,7 +173,7 @@ class TestOptimizationTriggers:
         config = OptimizationConfig(
             min_samples_for_optimization=5, optimization_interval_seconds=1
         )
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Not enough samples
         optimizer.performance_history = deque([{} for _ in range(3)])
@@ -180,7 +192,7 @@ class TestOptimizationTriggers:
             performance_degradation_threshold=0.1,  # 10% drop
             min_samples_for_optimization=5,
         )
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Set baseline with good performance
         optimizer.baseline_metrics = OptimizationMetrics(
@@ -238,7 +250,7 @@ class TestOptimizationTriggers:
         config = OptimizationConfig(
             optimization_interval_seconds=3600, min_samples_for_optimization=5  # 1 hour
         )
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Add enough samples
         optimizer.performance_history = deque([{} for _ in range(10)])
@@ -266,6 +278,8 @@ class TestAutoTuningOptimizer:
 
         optimizer = AutoTuningOptimizer(
             mock_strategy,
+            _mock_telemetry(),
+            _TEST_TENANT,
             OptimizationConfig(
                 min_samples_for_optimization=5,
                 optimization_interval_seconds=1,
@@ -310,8 +324,7 @@ class TestAutoTuningOptimizer:
         mock_strategy = Mock(spec=GLiNERRoutingStrategy)
         mock_strategy.config = {}
 
-        optimizer = AutoTuningOptimizer(
-            mock_strategy, OptimizationConfig(max_history_size=100)
+        optimizer = AutoTuningOptimizer(mock_strategy, _mock_telemetry(), _TEST_TENANT, OptimizationConfig(max_history_size=100)
         )
 
         # Record multiple performance samples
@@ -354,6 +367,8 @@ class TestGLiNEROptimization:
 
         optimizer = AutoTuningOptimizer(
             mock_strategy,
+            _mock_telemetry(),
+            _TEST_TENANT,
             OptimizationConfig(
                 gliner_threshold_optimization=True,
                 gliner_threshold_step=0.05,
@@ -399,6 +414,8 @@ class TestGLiNEROptimization:
 
         optimizer = AutoTuningOptimizer(
             mock_strategy,
+            _mock_telemetry(),
+            _TEST_TENANT,
             OptimizationConfig(
                 gliner_label_optimization=True, min_samples_for_optimization=5
             ),
@@ -436,6 +453,8 @@ class TestLLMOptimization:
 
         optimizer = AutoTuningOptimizer(
             mock_strategy,
+            _mock_telemetry(),
+            _TEST_TENANT,
             OptimizationConfig(
                 dspy_enabled=True,
                 dspy_max_bootstrapped_demos=5,
@@ -478,8 +497,7 @@ class TestLLMOptimization:
         mock_strategy = Mock(spec=LLMRoutingStrategy)
         mock_strategy.config = {"temperature": 0.1}
 
-        optimizer = AutoTuningOptimizer(
-            mock_strategy, OptimizationConfig(min_samples_for_optimization=5)
+        optimizer = AutoTuningOptimizer(mock_strategy, _mock_telemetry(), _TEST_TENANT, OptimizationConfig(min_samples_for_optimization=5)
         )
 
         # Track performance at different temperatures
@@ -503,14 +521,18 @@ class TestCheckpointingAndRecovery:
     @pytest.mark.local_only
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_save_checkpoint(self, tmp_path):
-        """Test saving optimization checkpoint."""
+    async def test_save_checkpoint(self):
+        """Test saving optimization checkpoint via telemetry artifact manager."""
         mock_strategy = Mock(spec=GLiNERRoutingStrategy)
         mock_strategy.config = {}
         mock_strategy.__class__.__name__ = "GLiNERRoutingStrategy"
 
+        mock_telemetry = _mock_telemetry()
         optimizer = AutoTuningOptimizer(
-            mock_strategy, OptimizationConfig(checkpoint_dir=tmp_path / "checkpoints")
+            mock_strategy,
+            mock_telemetry,
+            _TEST_TENANT,
+            OptimizationConfig(),
         )
 
         # Add some performance data
@@ -524,16 +546,16 @@ class TestCheckpointingAndRecovery:
             }
         ]
 
-        # Save checkpoint
-        optimizer.save_checkpoint(tmp_path / "checkpoints" / "test_checkpoint.json")
+        # Save checkpoint — persists to telemetry artifact manager via datasets.create_dataset
+        await optimizer.save_checkpoint()
 
-        checkpoint_path = tmp_path / "checkpoints" / "test_checkpoint.json"
-        assert checkpoint_path.exists()
-
-        # Load and verify
-        with open(checkpoint_path) as f:
-            checkpoint = json.load(f)
-
+        # Verify the dataset store was called to persist checkpoint
+        mock_telemetry.datasets.create_dataset.assert_called_once()
+        call_kwargs = mock_telemetry.datasets.create_dataset.call_args
+        # create_dataset is called with name=..., data=df, metadata=...
+        data_frame = call_kwargs.kwargs.get("data")
+        assert data_frame is not None, "create_dataset must receive a 'data' DataFrame"
+        checkpoint = json.loads(data_frame.iloc[0]["content"])
         assert "strategy_name" in checkpoint
         assert "strategy_config" in checkpoint
         assert "optimization_attempts" in checkpoint
@@ -542,13 +564,8 @@ class TestCheckpointingAndRecovery:
     @pytest.mark.local_only
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_load_checkpoint(self, tmp_path):
-        """Test loading optimization checkpoint."""
-        # Create checkpoint file
-        checkpoint_dir = tmp_path / "checkpoints"
-        checkpoint_dir.mkdir(parents=True)
-        checkpoint_file = checkpoint_dir / "test_checkpoint.json"
-
+    async def test_load_checkpoint(self):
+        """Test loading optimization checkpoint from telemetry artifact manager."""
         checkpoint_data = {
             "strategy_name": "GLiNERRoutingStrategy",
             "strategy_config": {"gliner_threshold": 0.35},
@@ -559,17 +576,24 @@ class TestCheckpointingAndRecovery:
             "timestamp": datetime.now().isoformat(),
         }
 
-        with open(checkpoint_file, "w") as f:
-            json.dump(checkpoint_data, f)
-
-        # Load checkpoint
         mock_strategy = Mock(spec=GLiNERRoutingStrategy)
         mock_strategy.config = {}
 
-        optimizer = AutoTuningOptimizer(
-            mock_strategy, OptimizationConfig(checkpoint_dir=tmp_path / "checkpoints")
+        # Set up telemetry to return checkpoint data via datasets.get_dataset
+        import pandas as pd
+
+        mock_telemetry = _mock_telemetry()
+        mock_telemetry.datasets.get_dataset = AsyncMock(
+            return_value=pd.DataFrame([{"content": json.dumps(checkpoint_data)}])
         )
-        optimizer.load_checkpoint(checkpoint_file)
+
+        optimizer = AutoTuningOptimizer(
+            mock_strategy,
+            mock_telemetry,
+            _TEST_TENANT,
+            OptimizationConfig(),
+        )
+        await optimizer.load_checkpoint()
 
         assert optimizer.optimization_attempts == 5
         assert optimizer.best_performance == 0.85
@@ -588,7 +612,7 @@ class TestPerformanceBenchmarking:
             max_history_size=10000, min_samples_for_optimization=1000
         )
 
-        optimizer = RoutingOptimizer(config)
+        optimizer = RoutingOptimizer(_mock_telemetry(), _TEST_TENANT, config)
 
         # Generate large dataset
         start = time.time()
@@ -627,8 +651,7 @@ class TestPerformanceBenchmarking:
         mock_strategy = Mock(spec=GLiNERRoutingStrategy)
         mock_strategy.config = {}
 
-        optimizer = AutoTuningOptimizer(
-            mock_strategy, OptimizationConfig(min_samples_for_optimization=10)
+        optimizer = AutoTuningOptimizer(mock_strategy, _mock_telemetry(), _TEST_TENANT, OptimizationConfig(min_samples_for_optimization=10)
         )
 
         # Create multiple concurrent optimization requests
@@ -683,8 +706,7 @@ class TestRealModelIntegration:
 
         # Create optimizer with first available strategy
         first_strategy = list(router.strategies.values())[0]
-        optimizer = AutoTuningOptimizer(
-            first_strategy, OptimizationConfig(min_samples_for_optimization=5)
+        optimizer = AutoTuningOptimizer(first_strategy, _mock_telemetry(), _TEST_TENANT, OptimizationConfig(min_samples_for_optimization=5)
         )
 
         # Test queries

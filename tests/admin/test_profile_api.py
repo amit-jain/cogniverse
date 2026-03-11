@@ -976,12 +976,8 @@ class TestProfileAPISchemaDeployment:
                 f"Ingestion failed: {ingest_results}"
             )
 
-            # Step 4: Query for the ingested document
-            # TODO: Once config refactoring is complete (see docs/plan/config-management-issues.md),
-            # use backend.search() here instead of direct YQL. Currently backend.search() fails because
-            # profiles created via admin API aren't visible to backend registry (chicken-and-egg problem).
-            # After consolidating ConfigManagers and implementing dependency injection, this should work:
-            #   search_results = backend.search({"query": "test_video_001", "type": "video", "top_k": 10})
+            # Step 4: Query for the ingested document via direct YQL
+            # (backend.search() requires backend registry visibility which admin-created profiles don't have)
             yql_query = f"select * from sources {tenant_schema_name} where video_id contains 'test_video_001'"
             query_url = f"http://localhost:{vespa_instance['http_port']}/search/"
             query_response = requests.get(

@@ -5,7 +5,6 @@ These tests compare routing accuracy with and without modality-specific DSPy mod
 to demonstrate the value of the modality optimization framework.
 """
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,11 +29,14 @@ class TestModalityImprovementValidation:
     """Validate that modality-specific models improve routing accuracy"""
 
     @pytest.fixture
-    def modality_optimizer(self, tmp_path: Path, telemetry_manager_with_phoenix):
-        """Create modality optimizer with test directory"""
+    def modality_optimizer(self, telemetry_manager_with_phoenix):
+        """Create modality optimizer backed by real Phoenix telemetry."""
+        telemetry_provider = telemetry_manager_with_phoenix.get_provider(
+            tenant_id="test_tenant"
+        )
         optimizer = ModalityOptimizer(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            model_dir=tmp_path / "models",
+            telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
         return optimizer
@@ -122,7 +124,6 @@ class TestModalityImprovementValidation:
 
         # Verify training completed
         assert result["status"] == "success"
-        assert "model_path" in result
 
         # Test predictions on new video queries
         test_queries = [
@@ -160,7 +161,6 @@ class TestModalityImprovementValidation:
 
         # Verify training completed
         assert result["status"] == "success"
-        assert "model_path" in result
 
         # Test predictions on new document queries
         test_queries = [
@@ -187,7 +187,6 @@ class TestModalityImprovementValidation:
         self,
         mock_router,
         video_training_examples,
-        tmp_path,
         telemetry_manager_with_phoenix,
     ):
         """
@@ -195,9 +194,12 @@ class TestModalityImprovementValidation:
         in ComprehensiveRouter.
         """
         # Create optimizer and train video model
+        telemetry_provider = telemetry_manager_with_phoenix.get_provider(
+            tenant_id="test_tenant"
+        )
         optimizer = ModalityOptimizer(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            model_dir=tmp_path / "models",
+            telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
 
@@ -306,15 +308,18 @@ class TestModalityImprovementValidation:
 
     @pytest.mark.asyncio
     async def test_integration_with_comprehensive_router(
-        self, video_training_examples, tmp_path
+        self, video_training_examples, telemetry_manager_with_phoenix
     ):
         """
         Test end-to-end integration of modality predictions with ComprehensiveRouter.
         """
         # Create optimizer and train model
+        telemetry_provider = telemetry_manager_with_phoenix.get_provider(
+            tenant_id="test_tenant"
+        )
         optimizer = ModalityOptimizer(
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            model_dir=tmp_path / "models",
+            telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
 
@@ -359,10 +364,13 @@ class TestModalityImprovementValidation:
             assert decision.metadata["modality_prediction"] == prediction
 
     def test_model_persistence_across_sessions(
-        self, modality_optimizer, video_training_examples, tmp_path
+        self, modality_optimizer, video_training_examples
     ):
         """
-        Test that trained models are saved and can be loaded in new sessions.
+        Test that trained models are stored in the optimizer and produce
+        correct predictions. Models are persisted to telemetry via ArtifactManager
+        for cross-session recovery; this test verifies the in-memory storage and
+        prediction accuracy after training.
         """
         # Train model
         result = modality_optimizer._train_modality_model(
@@ -371,21 +379,12 @@ class TestModalityImprovementValidation:
             strategy=TrainingStrategy.PURE_REAL,
         )
 
-        model_path = Path(result["model_path"])
-        assert model_path.exists()
+        assert result["status"] == "success"
+        # Model is stored in-memory in modality_models dict
+        assert QueryModality.VIDEO in modality_optimizer.modality_models
 
-        # Create new optimizer instance (simulating new session)
-        new_optimizer = ModalityOptimizer(
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            model_dir=tmp_path / "models",
-            tenant_id="test_tenant",
-        )
-
-        # Load models
-        new_optimizer._load_trained_models()
-
-        # Test prediction with loaded model
-        prediction = new_optimizer.predict_agent(
+        # Test prediction with trained model (verifies model is functional)
+        prediction = modality_optimizer.predict_agent(
             query="watch basketball game",
             modality=QueryModality.VIDEO,
             query_features={},

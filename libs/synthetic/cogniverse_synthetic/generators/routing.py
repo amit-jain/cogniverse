@@ -80,7 +80,6 @@ class RoutingGenerator(BaseGenerator):
 
         logger.info(f"Generating {target_count} RoutingExperience examples")
 
-        # Extract patterns
         if self.pattern_extractor and sampled_content:
             patterns = self.pattern_extractor.extract(sampled_content)
         else:
@@ -191,7 +190,6 @@ class RoutingGenerator(BaseGenerator):
 
     def _infer_entity_type(self, entity_text: str) -> str:
         """Infer entity type from text"""
-        # Simple heuristic-based typing
         if any(
             tech in entity_text for tech in ["Flow", "Torch", "Python", "Java", "Go"]
         ):
@@ -242,7 +240,6 @@ class RoutingGenerator(BaseGenerator):
                 topics=topics_str, entities=entities_str, entity_types=entity_types_str
             )
 
-            # Extract generation metadata from DSPy result
             metadata = {
                 "_generation_metadata": {
                     "retry_count": getattr(result, "_retry_count", 0),
@@ -255,23 +252,9 @@ class RoutingGenerator(BaseGenerator):
             return result.query, metadata
 
         except ValueError as e:
-            # If validation fails after retries, log and use a simple fallback
-            # (this should rarely happen with a real LLM)
-            logger.warning(f"Failed to generate valid entity query: {e}")
-
-            # Use first entity as minimal fallback
-            fallback_query = f"find {entities[0]['text']} {topics_str.split(',')[0]}"
-
-            metadata = {
-                "_generation_metadata": {
-                    "retry_count": query_generator.max_retries,
-                    "max_retries": query_generator.max_retries,
-                    "fallback_used": True,
-                    "error": str(e),
-                }
-            }
-
-            return fallback_query, metadata
+            raise ValueError(
+                f"Failed to generate valid entity query after {query_generator.max_retries} retries: {e}"
+            ) from e
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""
@@ -332,26 +315,9 @@ class RoutingGenerator(BaseGenerator):
                 f"Available modules: {list(self.optimizer_config.dspy_modules.keys())}"
             )
 
-        # Use validated module that ensures entities appear in query
         from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 
-        # Check if compiled module exists
-        if module_config.compiled_path:
-            try:
-                self.query_generator = ValidatedEntityQueryGenerator()
-                # TODO: Load compiled version if available
-                logger.info(
-                    "Using ValidatedEntityQueryGenerator (compiled version not yet supported)"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to load compiled module: {e}, using uncompiled")
-                self.query_generator = None
-
-        # Initialize uncompiled module if needed
-        if self.query_generator is None:
-            self.query_generator = ValidatedEntityQueryGenerator(max_retries=3)
-            logger.info(
-                "Initialized ValidatedEntityQueryGenerator with retry validation"
-            )
+        self.query_generator = ValidatedEntityQueryGenerator(max_retries=3)
+        logger.info("Initialized ValidatedEntityQueryGenerator with retry validation")
 
         return self.query_generator

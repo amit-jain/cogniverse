@@ -98,18 +98,14 @@ class ProfileValidator:
         """Check if profile name is unique for tenant."""
         errors = []
 
-        try:
-            existing = self.config_manager.get_backend_profile(
-                tenant_id=tenant_id,
-                profile_name=profile.profile_name,
+        existing = self.config_manager.get_backend_profile(
+            tenant_id=tenant_id,
+            profile_name=profile.profile_name,
+        )
+        if existing:
+            errors.append(
+                f"Profile '{profile.profile_name}' already exists for tenant '{tenant_id}'"
             )
-            if existing:
-                errors.append(
-                    f"Profile '{profile.profile_name}' already exists for tenant '{tenant_id}'"
-                )
-        except Exception:
-            # Profile doesn't exist (which is good for new profiles)
-            pass
 
         return errors
 
@@ -339,10 +335,6 @@ class ProfileValidator:
             errors.append(
                 f"Embedding dimension {embedding_dim} out of reasonable range (1-100000)"
             )
-
-        # TODO: Validate against model's actual output dimension
-        # This would require loading the model or querying a model registry
-        # For now, just check it's a reasonable value
 
         return errors
 

@@ -572,16 +572,24 @@ class ModalityOptimizer:
                 model_json = model_path.read_text()
 
             import asyncio
+            import concurrent.futures
 
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(
-                    self._artifact_manager.save_blob(
-                        "modality_model", modality.value, model_json
+            model_json_captured = model_json
+            modality_value = modality.value
+
+            def _save_blob_in_thread():
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(
+                        self._artifact_manager.save_blob(
+                            "modality_model", modality_value, model_json_captured
+                        )
                     )
-                )
-            finally:
-                loop.close()
+                finally:
+                    loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(_save_blob_in_thread).result(timeout=30)
 
             logger.info(f"Saved {modality.value} model to telemetry")
 

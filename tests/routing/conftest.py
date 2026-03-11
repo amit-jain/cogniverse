@@ -94,8 +94,9 @@ if str(parent_tests_dir) not in sys.path:
 # Use absolute import to avoid confusion with root conftest.py
 sys.path.insert(0, str(parent_tests_dir.parent))  # Add project root
 
-# Import Phoenix fixtures from parent tests/conftest.py
+# Import Phoenix fixtures and backend config fixtures from parent tests/conftest.py
 from tests.conftest import (
+    backend_config_env,
     phoenix_client,
     phoenix_container,
     telemetry_config_with_phoenix,
@@ -104,6 +105,7 @@ from tests.conftest import (
 )
 
 __all__ = [
+    "backend_config_env",
     "phoenix_client",
     "phoenix_container",
     "telemetry_config_with_phoenix",

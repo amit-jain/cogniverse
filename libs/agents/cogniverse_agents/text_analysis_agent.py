@@ -10,6 +10,7 @@ import dspy
 import uvicorn
 from fastapi import FastAPI
 
+from cogniverse_core.agents.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
@@ -38,6 +39,7 @@ class TextAnalysisSignature(dspy.Signature):
 
 
 class TextAnalysisAgent(
+    A2AEndpointsMixin,
     DynamicDSPyMixin,
     ConfigAPIMixin,
     HealthCheckMixin,

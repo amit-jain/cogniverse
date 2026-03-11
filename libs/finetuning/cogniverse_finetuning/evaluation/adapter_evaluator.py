@@ -14,6 +14,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Literal
 
 import torch
@@ -151,23 +152,22 @@ class AdapterEvaluator:
             TraceToInstructionConverter,
         )
 
-        # Get data from telemetry (TODO: implement time-based split for test set)
-        # Future: Filter to last 7 days assuming training used older data
-        # Extract examples
+        # Time-based split: test set uses last 7 days of data,
+        # assuming training used older data before this window
+        now = datetime.now(tz=timezone.utc)
+        test_start_time = now - timedelta(days=7)
+
         converter = TraceToInstructionConverter(self.provider)
 
-        try:
-            dataset = await converter.convert(
-                project=project,
-                agent_type=self.agent_type,
-                min_annotations=1,  # Get whatever is available
-            )
-        except Exception as e:
-            logger.warning(f"Failed to extract test set from telemetry: {e}")
-            return []
+        dataset = await converter.convert(
+            project=project,
+            agent_type=self.agent_type,
+            min_annotations=1,
+            start_time=test_start_time,
+            end_time=now,
+        )
 
         if not dataset.examples:
-            logger.warning("No examples found in telemetry for test set")
             return []
 
         # Take random sample
@@ -221,7 +221,6 @@ class AdapterEvaluator:
         for example in test_set:
             start_time = time.time()
 
-            # Generate prediction
             inputs = tokenizer(
                 example["input"],
                 return_tensors="pt",
@@ -240,19 +239,16 @@ class AdapterEvaluator:
 
             prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-            # Extract answer (after "### Response:")
             if "### Response:" in prediction:
                 prediction = prediction.split("### Response:")[-1].strip()
 
             latency_ms = (time.time() - start_time) * 1000
             total_latency_ms += latency_ms
 
-            # Parse JSON prediction (for routing/profile selection)
             try:
                 pred_json = json.loads(prediction)
                 expected_json = json.loads(example["expected_output"])
 
-                # Check accuracy (agent/profile match)
                 if self.agent_type == "routing":
                     correct_prediction = pred_json.get(
                         "recommended_agent"
@@ -279,7 +275,6 @@ class AdapterEvaluator:
                 # Invalid JSON or missing fields = hallucination
                 hallucinations += 1
 
-        # Compute metrics
         accuracy = correct / len(test_set)
         avg_confidence = total_confidence / len(test_set)
         error_rate = 1.0 - accuracy
@@ -353,7 +348,6 @@ class AdapterEvaluator:
         adapter_metrics: EvaluationMetrics,
     ) -> ComparisonResult:
         """Compare base vs adapter metrics."""
-        # Compute improvements
         accuracy_improvement = adapter_metrics.accuracy - base_metrics.accuracy
         confidence_improvement = (
             adapter_metrics.avg_confidence - base_metrics.avg_confidence

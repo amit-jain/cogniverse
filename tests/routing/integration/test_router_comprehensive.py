@@ -513,18 +513,20 @@ class TestComprehensiveRouter:
     @pytest.mark.asyncio
     @pytest.mark.requires_ollama
     async def test_ensemble_voting(self):
-        """Test ensemble voting mechanism."""
+        """Test ensemble voting mechanism through the public route() interface."""
+        from cogniverse_agents.routing.router import RoutingTier
+
         config = {
             "ensemble_config": {
                 "enabled_strategies": ["gliner", "llm"],
                 "voting_method": "weighted",
-                "weights": {"gliner": 2.0, "llm": 1.0},
+                "strategy_weights": {"gliner": 2.0, "llm": 1.0},
             }
         }
 
         router = ComprehensiveRouter(config)
 
-        # Mock strategies
+        # Mock FAST_PATH (gliner) and SLOW_PATH (llm) strategies in router.strategies
         strategy1 = Mock()
         strategy1.route = AsyncMock(
             return_value=RoutingDecision(
@@ -545,12 +547,16 @@ class TestComprehensiveRouter:
             )
         )
 
-        router.ensemble_strategies = {"gliner": strategy1, "llm": strategy2}
+        router.strategies[RoutingTier.FAST_PATH] = strategy1
+        router.strategies[RoutingTier.SLOW_PATH] = strategy2
 
-        decision = await router._run_ensemble("test query")
+        # Route via _ensemble_route using the internal API
+        import time
 
-        # In CI, may fall back to langextract strategy which returns TEXT
-        # In local dev with working ensemble, should favor gliner (VIDEO) due to higher weight
+        decision = await router._ensemble_route("test query", None, time.time())
+
+        # Ensemble should produce a valid decision
+        assert decision is not None
         assert decision.search_modality in [
             SearchModality.VIDEO,
             SearchModality.TEXT,

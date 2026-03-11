@@ -86,7 +86,7 @@ def phoenix_container():
 
     container_name = f"phoenix_routing_annotation_test_{int(time.time() * 1000)}"
 
-    # Clean up old containers
+    # Clean up old containers by name pattern
     try:
         result = subprocess.run(
             [
@@ -112,6 +112,27 @@ def phoenix_container():
             logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
     except Exception as e:
         logger.warning(f"Error cleaning up old containers: {e}")
+
+    # Also kill any container already bound to ports 26006/24317 to prevent
+    # "port already in use" errors when multiple test modules use the same ports
+    # (e.g., test_routing_span_evaluator_integration uses the same ports).
+    for name_pattern in ["phoenix_routing_span_eval_test", "phoenix_orchestration_test"]:
+        try:
+            ps_result = subprocess.run(
+                ["docker", "ps", "-q", "--filter", f"name={name_pattern}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            for cid in ps_result.stdout.strip().splitlines():
+                subprocess.run(
+                    ["docker", "rm", "-f", cid],
+                    check=False,
+                    capture_output=True,
+                    timeout=10,
+                )
+        except Exception:
+            pass
 
     try:
         # Create temporary directory for Phoenix data

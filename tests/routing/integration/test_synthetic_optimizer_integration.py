@@ -41,14 +41,20 @@ class TestCrossModalOptimizerIntegration:
 
     def test_cross_modal_optimizer_initialization(self):
         """Test CrossModalOptimizer can be initialized"""
-        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
+        optimizer = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
         assert optimizer is not None
         assert isinstance(optimizer.fusion_history, list)
 
     @pytest.mark.asyncio
     async def test_generate_synthetic_cross_modal_data(self):
         """Test generating synthetic data for CrossModalOptimizer"""
-        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
+        optimizer = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         # Generate small batch without Vespa (uses mock data)
         count = await optimizer.generate_synthetic_training_data(count=10)
@@ -59,7 +65,10 @@ class TestCrossModalOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_cross_modal_data_structure(self):
         """Test generated data has correct structure"""
-        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
+        optimizer = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         await optimizer.generate_synthetic_training_data(count=5)
 
@@ -74,7 +83,10 @@ class TestCrossModalOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_cross_modal_training_after_synthetic_generation(self):
         """Test that CrossModalOptimizer can train on synthetic data"""
-        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
+        optimizer = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
 
         # Generate synthetic data
         await optimizer.generate_synthetic_training_data(count=50)
@@ -235,7 +247,10 @@ class TestMultiOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_all_optimizers_can_generate_data(self, test_generator_config):
         """Test that all optimizers can generate synthetic data"""
-        cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
+        cross_modal = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
         routing = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
@@ -257,7 +272,10 @@ class TestMultiOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_synthetic_data_is_independent(self, test_generator_config):
         """Test that each optimizer gets independent data"""
-        cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
+        cross_modal = CrossModalOptimizer(
+            tenant_id="test-tenant",
+            telemetry_provider=_make_mock_telemetry_provider(),
+        )
         routing = AdvancedRoutingOptimizer(
             tenant_id="test_tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),

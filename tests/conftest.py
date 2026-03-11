@@ -216,6 +216,7 @@ def phoenix_container():
     - gRPC: 14317 (instead of 4317)
 
     Sets OTLP_ENDPOINT env var for tests and resets TelemetryManager.
+    Kills any leftover containers on those ports before starting.
     """
     import subprocess
 
@@ -225,6 +226,22 @@ def phoenix_container():
 
     original_endpoint = os.environ.get("OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
+
+    # Kill any leftover phoenix_test_* containers from previous runs that
+    # are holding ports 16006/14317 and would cause "port already in use" (exit 125).
+    leftover = subprocess.run(
+        ["docker", "ps", "-q", "--filter", "name=phoenix_test_"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    for cid in leftover.stdout.strip().splitlines():
+        subprocess.run(
+            ["docker", "rm", "-f", cid],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
 
     # Set environment for tests
     os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"

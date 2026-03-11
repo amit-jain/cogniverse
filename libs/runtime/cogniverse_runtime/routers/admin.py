@@ -246,32 +246,31 @@ async def create_profile(
         tenant_schema_name = None
 
         if request.deploy_schema:
-            try:
-                backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_ingestion_backend(
-                    "vespa",
-                    tenant_id=request.tenant_id,
-                    config_manager=config_manager,
-                    schema_loader=schema_loader,
+            backend_registry = BackendRegistry.get_instance()
+            backend = backend_registry.get_ingestion_backend(
+                "vespa",
+                tenant_id=request.tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
+            if not backend:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Backend not available for schema deployment",
                 )
 
-                if backend:
-                    backend.schema_registry.deploy_schema(
-                        tenant_id=request.tenant_id,
-                        base_schema_name=request.schema_name,
-                    )
-                    schema_deployed = True
-                    tenant_schema_name = backend.get_tenant_schema_name(
-                        request.tenant_id, request.schema_name
-                    )
-                    logger.info(
-                        f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
-                    )
-                else:
-                    logger.warning("Backend not available for schema deployment")
-
-            except Exception as e:
-                logger.error(f"Schema deployment failed: {e}")
+            backend.schema_registry.deploy_schema(
+                tenant_id=request.tenant_id,
+                base_schema_name=request.schema_name,
+            )
+            schema_deployed = True
+            tenant_schema_name = backend.get_tenant_schema_name(
+                request.tenant_id, request.schema_name
+            )
+            logger.info(
+                f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
+            )
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
@@ -447,7 +446,7 @@ async def get_profile(
             model_specific=profile.model_specific,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
-            created_at=datetime.now().isoformat(),  # TODO: Get actual creation time
+            created_at=config_entry.created_at.isoformat() if config_entry else datetime.now().isoformat(),
             version=config_version,
         )
 
@@ -621,22 +620,22 @@ async def delete_profile(
                     f"other profiles using it: {other_profiles_using_schema}",
                 )
 
-            # Delete schema
-            try:
-                backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_ingestion_backend(
-                    "vespa",
-                    tenant_id=tenant_id,
-                    config_manager=config_manager,
-                    schema_loader=schema_loader,
+            backend_registry = BackendRegistry.get_instance()
+            backend = backend_registry.get_ingestion_backend(
+                "vespa",
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+            if not backend:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Backend not available for schema deletion",
                 )
-                if backend:
-                    deleted_schemas = backend.delete_schema(
-                        schema_name=profile.schema_name, tenant_id=tenant_id
-                    )
-                    schema_deleted = len(deleted_schemas) > 0
-            except Exception as e:
-                logger.error(f"Failed to delete schema: {e}")
+            deleted_schemas = backend.delete_schema(
+                schema_name=profile.schema_name, tenant_id=tenant_id
+            )
+            schema_deleted = len(deleted_schemas) > 0
 
         success = config_manager.delete_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"

@@ -541,13 +541,22 @@ class TestLLMStrictParsing:
     @pytest.mark.requires_models
     def test_llm_dspy_optimization_integration(self):
         """Test that LLM strategy integrates with DSPy optimization system."""
+        from unittest.mock import AsyncMock, Mock
+
         from cogniverse_agents.routing.strategies import LLMRoutingStrategy
+
+        mock_provider = Mock()
+        mock_provider.datasets = Mock()
+        mock_provider.datasets.create_dataset = AsyncMock(return_value="mock-id")
+        mock_provider.datasets.get_dataset = AsyncMock(return_value=None)
 
         config = {
             "provider": "local",
             "model": "smollm2:1.7b",
             "endpoint": "http://localhost:11434",
             "enable_dspy_optimization": True,  # Enable DSPy
+            "tenant_id": "test-tenant",
+            "telemetry_provider": mock_provider,
         }
 
         llm_strategy = LLMRoutingStrategy(config)
