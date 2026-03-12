@@ -428,7 +428,7 @@
       },
       "audio_clap_semantic": {
         "type": "audio",
-        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and SentenceTransformer semantic embeddings (768-dim) from transcripts.",
+        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and GTE-ModernColBERT semantic embeddings (128-dim multi-vector) from transcripts.",
         "schema_name": "audio_content",
         "embedding_model": "laion/clap-htsat-unfused",
         "pipeline_config": {
@@ -461,14 +461,15 @@
         "schema_config": {
           "schema_name": "audio_content",
           "acoustic_embedding_dim": 512,
-          "semantic_embedding_dim": 768
+          "semantic_embedding_dim": 128,
+          "semantic_binary_dim": 16
         }
       },
       "document_text_semantic": {
         "type": "document",
-        "description": "Document text extraction with SentenceTransformer semantic embeddings (768-dim). Supports PDF, TXT, and Markdown files.",
+        "description": "Document text extraction with GTE-ModernColBERT multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
         "schema_name": "document_text",
-        "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+        "embedding_model": "lightonai/GTE-ModernColBERT-v1",
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": false,
@@ -495,10 +496,11 @@
             "params": {}
           }
         },
-        "embedding_type": "document_semantic",
+        "embedding_type": "document_colbert",
         "schema_config": {
           "schema_name": "document_text",
-          "semantic_embedding_dim": 768
+          "embedding_dim": 128,
+          "binary_dim": 16
         }
       },
       "video_colqwen_omni_mv_chunk_30s": {

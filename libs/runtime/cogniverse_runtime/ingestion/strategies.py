@@ -213,34 +213,33 @@ class AudioFileSegmentationStrategy(BaseStrategy):
 
 
 class AudioEmbeddingStrategy(BaseStrategy):
-    """Generate acoustic (CLAP 512-dim) and semantic (768-dim) embeddings for audio."""
+    """Generate acoustic (CLAP 512-dim) and ColBERT semantic (128-dim multi-vector) embeddings for audio."""
 
     def __init__(
         self,
         clap_model: str = "laion/clap-htsat-unfused",
-        semantic_model: str = "sentence-transformers/all-mpnet-base-v2",
+        colbert_model: str = "lightonai/GTE-ModernColBERT-v1",
     ):
         self.clap_model = clap_model
-        self.semantic_model = semantic_model
+        self.colbert_model = colbert_model
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         return {
             "embedding": {
                 "type": "audio",
                 "clap_model": self.clap_model,
-                "semantic_model": self.semantic_model,
+                "colbert_model": self.colbert_model,
             }
         }
 
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate audio embeddings using AudioEmbeddingGenerator."""
+        """Generate acoustic (CLAP) + ColBERT semantic embeddings for audio."""
         from .processors.audio_embedding_generator import AudioEmbeddingGenerator
 
         generator = AudioEmbeddingGenerator(
             clap_model=self.clap_model,
-            semantic_model=self.semantic_model,
         )
 
         audio_files = results.get("audio_files", [])
@@ -252,18 +251,28 @@ class AudioEmbeddingStrategy(BaseStrategy):
             )
         transcript_text = transcript_data.get("full_text", "")
 
+        from pylate import models as pylate_models
+
+        colbert = pylate_models.ColBERT(self.colbert_model)
+
         embedded_docs = []
         for audio_file_info in audio_files:
             audio_path = Path(audio_file_info["path"])
-            acoustic_emb, semantic_emb = generator.generate_embeddings(
-                audio_path=audio_path,
-                transcript=transcript_text,
-            )
+            acoustic_emb = generator.generate_acoustic_embedding(audio_path=audio_path)
+
+            if not transcript_text.strip():
+                raise ValueError(
+                    f"Audio file {audio_path.name!r} has no transcript text. "
+                    "AudioEmbeddingStrategy requires transcription to produce non-empty text "
+                    "before generating semantic embeddings."
+                )
+            semantic_emb = colbert.encode([transcript_text], is_query=False)[0]
+
             embedded_docs.append({
                 "audio_id": audio_file_info.get("audio_id", audio_path.stem),
                 "audio_path": str(audio_path),
                 "acoustic_embedding": acoustic_emb.tolist(),
-                "semantic_embedding": semantic_emb.tolist(),
+                "semantic_embedding": [tok.tolist() for tok in semantic_emb],
             })
 
         if not hasattr(pipeline_context, "video_path"):
@@ -297,29 +306,29 @@ class DocumentSegmentationStrategy(BaseStrategy):
 
 
 class DocumentTextEmbeddingStrategy(BaseStrategy):
-    """Generate semantic embeddings (768-dim) for document text using SentenceTransformer."""
+    """Generate ColBERT multi-vector embeddings (128-dim per token) for document text."""
 
     def __init__(
         self,
-        semantic_model: str = "sentence-transformers/all-mpnet-base-v2",
+        colbert_model: str = "lightonai/GTE-ModernColBERT-v1",
     ):
-        self.semantic_model = semantic_model
+        self.colbert_model = colbert_model
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         return {
             "embedding": {
                 "type": "document_text",
-                "semantic_model": self.semantic_model,
+                "colbert_model": self.colbert_model,
             }
         }
 
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate text embeddings for documents using SentenceTransformer."""
-        from sentence_transformers import SentenceTransformer
+        """Generate ColBERT token-level embeddings for documents."""
+        from pylate import models as pylate_models
 
-        model = SentenceTransformer(self.semantic_model)
+        model = pylate_models.ColBERT(self.colbert_model)
 
         document_files = results.get("document_files", [])
 
@@ -332,15 +341,11 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
                     "Cannot generate embeddings for empty documents."
                 )
 
-            embedding = model.encode(
-                text[:8192],
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-            )
+            token_embeddings = model.encode([text[:8192]], is_query=False)[0]
             embedded_docs.append({
                 "document_id": doc_info.get("document_id", Path(doc_info["path"]).stem),
                 "document_path": doc_info["path"],
-                "text_embedding": embedding.tolist(),
+                "embedding": [tok.tolist() for tok in token_embeddings],
                 "text_length": len(text),
             })
 
@@ -374,17 +379,14 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "MultiVectorEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
         wrapped_results = {
-            "video_id": (
-                pipeline_context.video_path.stem
-                if hasattr(pipeline_context, "video_path")
-                else "unknown"
-            ),
-            "video_path": (
-                str(pipeline_context.video_path)
-                if hasattr(pipeline_context, "video_path")
-                else ""
-            ),
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
             "results": results,
         }
 
@@ -405,17 +407,14 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "SingleVectorEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
         wrapped_results = {
-            "video_id": (
-                pipeline_context.video_path.stem
-                if hasattr(pipeline_context, "video_path")
-                else "unknown"
-            ),
-            "video_path": (
-                str(pipeline_context.video_path)
-                if hasattr(pipeline_context, "video_path")
-                else ""
-            ),
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
             "results": {},
         }
 

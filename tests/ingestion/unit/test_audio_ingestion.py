@@ -55,16 +55,16 @@ class TestAudioEmbeddingStrategy:
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "audio"
         assert processors["embedding"]["clap_model"] == "laion/clap-htsat-unfused"
-        assert processors["embedding"]["semantic_model"] == "sentence-transformers/all-mpnet-base-v2"
+        assert processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
 
     def test_custom_models(self):
         strategy = AudioEmbeddingStrategy(
             clap_model="custom/clap",
-            semantic_model="custom/semantic",
+            colbert_model="custom/colbert",
         )
         processors = strategy.get_required_processors()
         assert processors["embedding"]["clap_model"] == "custom/clap"
-        assert processors["embedding"]["semantic_model"] == "custom/semantic"
+        assert processors["embedding"]["colbert_model"] == "custom/colbert"
 
 
 class TestAudioProfileConfig:
@@ -107,7 +107,8 @@ class TestAudioProfileConfig:
             "schema_config"
         ]
         assert schema_config["acoustic_embedding_dim"] == 512
-        assert schema_config["semantic_embedding_dim"] == 768
+        assert schema_config["semantic_embedding_dim"] == 128
+        assert schema_config["semantic_binary_dim"] == 16
 
 
 class TestAudioSchemaFile:
@@ -127,22 +128,29 @@ class TestAudioSchemaFile:
         assert "audio_language" in field_names
         assert "acoustic_embedding" in field_names
         assert "semantic_embedding" in field_names
+        assert "semantic_embedding_binary" in field_names
 
     def test_audio_schema_embedding_dimensions(self):
         with open("configs/schemas/audio_content_schema.json") as f:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
         assert fields["acoustic_embedding"]["type"] == "tensor<float>(v[512])"
-        assert fields["semantic_embedding"]["type"] == "tensor<float>(v[768])"
+        assert fields["semantic_embedding"]["type"] == "tensor<bfloat16>(token{}, v[128])"
+        assert fields["semantic_embedding_binary"]["type"] == "tensor<int8>(token{}, v[16])"
 
-    def test_audio_schema_hnsw_index(self):
+    def test_audio_schema_acoustic_hnsw_index(self):
         with open("configs/schemas/audio_content_schema.json") as f:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
         assert "index" in fields["acoustic_embedding"]["indexing"]
         assert "hnsw" in fields["acoustic_embedding"]["index"]
-        assert "index" in fields["semantic_embedding"]["indexing"]
-        assert "hnsw" in fields["semantic_embedding"]["index"]
+
+    def test_audio_schema_semantic_colbert_index(self):
+        with open("configs/schemas/audio_content_schema.json") as f:
+            schema = json.load(f)
+        fields = {f["name"]: f for f in schema["document"]["fields"]}
+        assert "index" in fields["semantic_embedding_binary"]["indexing"]
+        assert fields["semantic_embedding"]["indexing"] == ["attribute"]
 
     def test_audio_schema_rank_profiles(self):
         with open("configs/schemas/audio_content_schema.json") as f:
@@ -151,8 +159,10 @@ class TestAudioSchemaFile:
         assert "default" in profile_names
         assert "transcript_search" in profile_names
         assert "acoustic_similarity" in profile_names
-        assert "semantic_similarity" in profile_names
-        assert "hybrid_audio" in profile_names
+        assert "semantic_float" in profile_names
+        assert "semantic_binary" in profile_names
+        assert "phased_semantic" in profile_names
+        assert "hybrid_semantic_bm25" in profile_names
         assert "hybrid_acoustic_bm25" in profile_names
 
 

@@ -80,18 +80,19 @@
         "index": "enable-bm25"
       },
       {
-        "name": "text_embedding",
-        "type": "tensor<float>(v[768])",
+        "name": "embedding",
+        "type": "tensor<bfloat16>(token{}, v[128])",
+        "indexing": [
+          "attribute"
+        ]
+      },
+      {
+        "name": "embedding_binary",
+        "type": "tensor<int8>(token{}, v[16])",
         "indexing": [
           "attribute",
           "index"
-        ],
-        "index": {
-          "hnsw": {
-            "max-links-per-node": 16,
-            "neighbors-to-explore-at-insert": 200
-          }
-        }
+        ]
       }
     ]
   },
@@ -110,11 +111,17 @@
       "name": "default",
       "inputs": [
         {
-          "name": "query(text_query)",
-          "type": "tensor<float>(v[768])"
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
         }
       ],
-      "first_phase": "closeness(field, text_embedding)",
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
       "timeout": 2.0
     },
     {
@@ -123,56 +130,133 @@
       "timeout": 2.0
     },
     {
-      "name": "semantic_similarity",
+      "name": "float_float",
       "inputs": [
         {
-          "name": "query(text_query)",
-          "type": "tensor<float>(v[768])"
-        }
-      ],
-      "first_phase": "closeness(field, text_embedding)",
-      "timeout": 2.0
-    },
-    {
-      "name": "hybrid_bm25_semantic",
-      "inputs": [
-        {
-          "name": "query(text_query)",
-          "type": "tensor<float>(v[768])"
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
         }
       ],
       "functions": [
         {
-          "name": "semantic_score",
-          "expression": "closeness(field, text_embedding)"
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "binary_binary",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
+    },
+    {
+      "name": "float_binary",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * unpack_bits(attribute(embedding_binary)), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "phased",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        },
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        },
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "second_phase": {
+        "expression": "max_sim",
+        "rerank_count": 100
+      },
+      "timeout": 5.0
+    },
+    {
+      "name": "hybrid_float_bm25",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "colbert_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
         },
         {
           "name": "text_score",
           "expression": "bm25(document_title) + bm25(full_text) + bm25(section_headings)"
         }
       ],
-      "first_phase": "0.5 * semantic_score + 0.5 * text_score",
+      "first_phase": "colbert_sim",
+      "second_phase": {
+        "expression": "text_score",
+        "rerank_count": 100
+      },
       "timeout": 2.0
     },
     {
-      "name": "title_weighted",
+      "name": "hybrid_binary_bm25",
       "inputs": [
         {
-          "name": "query(text_query)",
-          "type": "tensor<float>(v[768])"
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
         }
       ],
       "functions": [
         {
-          "name": "semantic_score",
-          "expression": "closeness(field, text_embedding)"
+          "name": "colbert_sim",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
         },
         {
           "name": "text_score",
-          "expression": "2.0 * bm25(document_title) + bm25(full_text) + bm25(section_headings)"
+          "expression": "bm25(document_title) + bm25(full_text) + bm25(section_headings)"
         }
       ],
-      "first_phase": "0.4 * semantic_score + 0.6 * text_score",
+      "first_phase": "colbert_sim",
+      "second_phase": {
+        "expression": "text_score",
+        "rerank_count": 100
+      },
       "timeout": 2.0
     }
   ]

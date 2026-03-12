@@ -85,12 +85,12 @@ class TestDocumentTextEmbeddingStrategy:
         processors = strategy.get_required_processors()
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "document_text"
-        assert processors["embedding"]["semantic_model"] == "sentence-transformers/all-mpnet-base-v2"
+        assert processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
 
     def test_custom_model(self):
-        strategy = DocumentTextEmbeddingStrategy(semantic_model="custom/model")
+        strategy = DocumentTextEmbeddingStrategy(colbert_model="custom/colbert")
         processors = strategy.get_required_processors()
-        assert processors["embedding"]["semantic_model"] == "custom/model"
+        assert processors["embedding"]["colbert_model"] == "custom/colbert"
 
 
 class TestDocumentProfileConfig:
@@ -132,7 +132,8 @@ class TestDocumentProfileConfig:
         schema_config = config["backend"]["profiles"]["document_text_semantic"][
             "schema_config"
         ]
-        assert schema_config["semantic_embedding_dim"] == 768
+        assert schema_config["embedding_dim"] == 128
+        assert schema_config["binary_dim"] == 16
 
 
 class TestDocumentSchemaFile:
@@ -151,20 +152,22 @@ class TestDocumentSchemaFile:
         assert "page_count" in field_names
         assert "full_text" in field_names
         assert "section_headings" in field_names
-        assert "text_embedding" in field_names
+        assert "embedding" in field_names
+        assert "embedding_binary" in field_names
 
     def test_document_schema_embedding_dimensions(self):
         with open("configs/schemas/document_text_schema.json") as f:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
-        assert fields["text_embedding"]["type"] == "tensor<float>(v[768])"
+        assert fields["embedding"]["type"] == "tensor<bfloat16>(token{}, v[128])"
+        assert fields["embedding_binary"]["type"] == "tensor<int8>(token{}, v[16])"
 
-    def test_document_schema_hnsw_index(self):
+    def test_document_schema_colbert_index(self):
         with open("configs/schemas/document_text_schema.json") as f:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
-        assert "index" in fields["text_embedding"]["indexing"]
-        assert "hnsw" in fields["text_embedding"]["index"]
+        assert "index" in fields["embedding_binary"]["indexing"]
+        assert fields["embedding"]["indexing"] == ["attribute"]
 
     def test_document_schema_bm25_fields(self):
         with open("configs/schemas/document_text_schema.json") as f:
@@ -180,9 +183,12 @@ class TestDocumentSchemaFile:
         profile_names = [rp["name"] for rp in schema["rank_profiles"]]
         assert "default" in profile_names
         assert "bm25_only" in profile_names
-        assert "semantic_similarity" in profile_names
-        assert "hybrid_bm25_semantic" in profile_names
-        assert "title_weighted" in profile_names
+        assert "float_float" in profile_names
+        assert "binary_binary" in profile_names
+        assert "float_binary" in profile_names
+        assert "phased" in profile_names
+        assert "hybrid_float_bm25" in profile_names
+        assert "hybrid_binary_bm25" in profile_names
 
 
 class TestStrategyFactoryDocumentProfile:
