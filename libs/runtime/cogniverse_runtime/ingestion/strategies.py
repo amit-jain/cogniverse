@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-New strategy implementations extending BaseStrategy.
+Strategy implementations extending BaseStrategy.
 
 These strategies work with the pluggable ProcessorManager.
+Supports video, image, audio, and document content types.
 """
 
 from pathlib import Path
 from typing import Any
 
 from .processor_base import BaseStrategy
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
 
 class FrameSegmentationStrategy(BaseStrategy):
@@ -95,7 +98,6 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
         transcript_data: dict | None = None,
     ) -> dict[str, Any]:
         """Process video with single-vector processor."""
-        # Get processor from processor manager (no fallback)
         if not hasattr(pipeline_context, "processor_manager"):
             raise ValueError("Pipeline context missing processor_manager")
 
@@ -112,7 +114,6 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
             video_path=video_path, transcript_data=transcript_data
         )
 
-        # Convert VideoSegment objects to dictionaries for consistency
         processed_data_serializable = processed_data.copy()
         processed_data_serializable["segments"] = [
             seg.to_dict() for seg in processed_data["segments"]
@@ -144,6 +145,25 @@ class VLMDescriptionStrategy(BaseStrategy):
         """VLM description requires VLM processor."""
         return {"vlm": {"model_name": self.model_name, "batch_size": self.batch_size}}
 
+    async def generate_descriptions(
+        self,
+        segments: Any,
+        video_path: Path,
+        pipeline_context: Any,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate frame descriptions via the VLM processor."""
+        if not hasattr(pipeline_context, "processor_manager"):
+            raise ValueError("Pipeline context missing processor_manager")
+        processor = pipeline_context.processor_manager.get_processor("vlm")
+        if processor is None:
+            raise ValueError(
+                f"VLMDescriptionStrategy requires a 'vlm' processor but none was "
+                f"initialised in ProcessorManager for profile "
+                f"{getattr(pipeline_context, 'schema_name', 'unknown')!r}."
+            )
+        return processor.generate_descriptions(segments)
+
 
 class NoDescriptionStrategy(BaseStrategy):
     """No descriptions needed."""
@@ -151,6 +171,29 @@ class NoDescriptionStrategy(BaseStrategy):
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """No processors required."""
         return {}
+
+
+class NoTranscriptionStrategy(BaseStrategy):
+    """No transcription needed (for non-video content like images)."""
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {}
+
+
+class ImageSegmentationStrategy(BaseStrategy):
+    """Load images from a directory and present them as keyframes for ColPali embedding.
+
+    Each image becomes one "keyframe" in the same format that FrameSegmentationStrategy
+    produces, so the downstream MultiVectorEmbeddingStrategy works unchanged.
+    """
+
+    def __init__(self, max_images: int = 10000, **kwargs):
+        self.max_images = max_images
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        """Image segmentation uses a special 'image' processor key so
+        ProcessingStrategySet dispatches to _process_segmentation correctly."""
+        return {"image": {"max_images": self.max_images}}
 
 
 class MultiVectorEmbeddingStrategy(BaseStrategy):
@@ -167,7 +210,6 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
-        # Prepare data for embedding generation
         wrapped_results = {
             "video_id": (
                 pipeline_context.video_path.stem
@@ -199,7 +241,6 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
-        # Prepare data for embedding generation
         wrapped_results = {
             "video_id": (
                 pipeline_context.video_path.stem
@@ -214,7 +255,6 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
             "results": {},
         }
 
-        # Map single-vector results
         if "single_vector_processing" in results:
             wrapped_results["results"]["single_vector_processing"] = results[
                 "single_vector_processing"

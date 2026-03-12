@@ -386,6 +386,46 @@
           "binary_dim": 16
         }
       },
+      "image_colpali_mv": {
+        "type": "image",
+        "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
+        "schema_name": "image_colpali_mv",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "ImageSegmentationStrategy",
+            "params": {
+              "max_images": 10000
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "frame_based",
+        "schema_config": {
+          "schema_name": "image_colpali",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
         "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",

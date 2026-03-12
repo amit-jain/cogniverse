@@ -10,8 +10,6 @@ from typing import Any
 
 from .processor_base import BaseStrategy
 
-# Logging imported where needed
-
 
 class ProcessingStrategySet:
     """Dynamic container for processing strategies - no hardcoded strategy types."""
@@ -23,7 +21,6 @@ class ProcessingStrategySet:
         Args:
             **strategies: Named strategies (e.g., segmentation=FrameStrategy(), transcription=AudioStrategy())
         """
-        # Store strategies dynamically
         self._strategies: dict[str, BaseStrategy] = {}
 
         for name, strategy in strategies.items():
@@ -56,25 +53,20 @@ class ProcessingStrategySet:
             all_requirements.update(requirements)
         return all_requirements
 
-    # Backward compatibility properties
     @property
     def segmentation(self):
-        """Backward compatibility for segmentation strategy."""
         return self.get_strategy("segmentation")
 
     @property
     def transcription(self):
-        """Backward compatibility for transcription strategy."""
         return self.get_strategy("transcription")
 
     @property
     def description(self):
-        """Backward compatibility for description strategy."""
         return self.get_strategy("description")
 
     @property
     def embedding(self):
-        """Backward compatibility for embedding strategy."""
         return self.get_strategy("embedding")
 
     async def process(
@@ -98,7 +90,6 @@ class ProcessingStrategySet:
 
         results = {}
 
-        # Process strategies in a defined order (configurable in the future)
         strategy_order = ["segmentation", "transcription", "description", "embedding"]
 
         for strategy_name in strategy_order:
@@ -108,27 +99,20 @@ class ProcessingStrategySet:
                     f"Processing {strategy_name} strategy: {type(strategy).__name__}"
                 )
 
-                try:
-                    # Process through the strategy
-                    strategy_result = await self._process_strategy(
-                        strategy_name,
-                        strategy,
-                        video_path,
-                        processor_manager,
-                        pipeline_context,
-                        results,
+                strategy_result = await self._process_strategy(
+                    strategy_name,
+                    strategy,
+                    video_path,
+                    processor_manager,
+                    pipeline_context,
+                    results,
+                )
+
+                if isinstance(strategy_result, dict):
+                    results.update(strategy_result)
+                    pipeline_context.logger.info(
+                        f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
                     )
-
-                    # Merge results
-                    if isinstance(strategy_result, dict):
-                        results.update(strategy_result)
-                        pipeline_context.logger.info(
-                            f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
-                        )
-
-                except Exception as e:
-                    pipeline_context.logger.error(f"  ❌ {strategy_name} failed: {e}")
-                    results[f"{strategy_name}_error"] = str(e)
 
         pipeline_context.logger.info(
             f"🏁 ProcessingStrategySet completed with: {list(results.keys())}"
@@ -145,8 +129,6 @@ class ProcessingStrategySet:
         accumulated_results: dict[str, Any],
     ) -> dict[str, Any]:
         """Process a single strategy with proper method dispatch."""
-
-        # For backward compatibility, handle known strategy types
         if strategy_name == "segmentation":
             return await self._process_segmentation(
                 strategy, video_path, processor_manager, pipeline_context
@@ -176,18 +158,17 @@ class ProcessingStrategySet:
                 accumulated_results,
             )
         else:
-            # Future: could have strategies implement a generic process() method
-            pipeline_context.logger.warning(f"Unknown strategy type: {strategy_name}")
-            return {}
+            raise ValueError(
+                f"Unknown strategy type '{strategy_name}'. "
+                f"Supported types: segmentation, transcription, description, embedding."
+            )
 
     async def _process_segmentation(
         self, strategy, video_path: Path, processor_manager, pipeline_context
     ) -> dict[str, Any]:
         """Process segmentation strategy."""
-        # Get the required processor type from strategy requirements
         requirements = strategy.get_required_processors()
 
-        # Process based on what processor is required
         if "keyframe" in requirements:
             processor = processor_manager.get_processor("keyframe")
             if processor:
@@ -211,11 +192,8 @@ class ProcessingStrategySet:
                 return {"video_chunks": result}
 
         elif "single_vector" in requirements:
-            # Handle single-vector processing through strategy's segment method
-            transcript_data = None  # Transcript data handled by strategy
-
             result = await strategy.segment(
-                video_path, pipeline_context, transcript_data
+                video_path, pipeline_context, None
             )
             num_segments = (
                 len(result.get("single_vector_processing", {}).get("segments", []))
@@ -227,25 +205,71 @@ class ProcessingStrategySet:
             )
             return result
 
-        elif hasattr(strategy, "segment") and callable(strategy.segment):
-            # Handle strategies that do their own processing (like SingleVectorSegmentationStrategy)
-            transcript_data = None  # Transcript data handled by strategy
+        elif "image" in requirements:
+            import shutil
+            import time as _time
 
-            result = await strategy.segment(
-                video_path, pipeline_context, transcript_data
+            content_path = video_path
+            image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+            if content_path.is_dir():
+                image_files = sorted(
+                    f for f in content_path.iterdir()
+                    if f.suffix.lower() in image_extensions
+                )
+            elif content_path.suffix.lower() in image_extensions:
+                image_files = [content_path]
+            else:
+                raise ValueError(
+                    f"Expected image file or directory, got: {content_path}"
+                )
+
+            max_images = requirements["image"].get("max_images", 10000)
+            image_files = image_files[:max_images]
+
+            if not image_files:
+                raise ValueError(f"No image files found at {content_path}")
+
+            content_id = content_path.stem
+            output_dir = pipeline_context.profile_output_dir
+            keyframes_dir = output_dir / "keyframes" / content_id
+            keyframes_dir.mkdir(parents=True, exist_ok=True)
+
+            keyframes = []
+            for idx, img_path in enumerate(image_files):
+                dest = keyframes_dir / f"frame_{idx:04d}{img_path.suffix}"
+                shutil.copy2(img_path, dest)
+                keyframes.append({
+                    "frame_id": idx,
+                    "original_frame_number": idx,
+                    "timestamp": 0.0,
+                    "path": str(dest),
+                    "filename": dest.name,
+                    "source_image": str(img_path),
+                })
+
+            result = {
+                "video_id": content_id,
+                "video_path": str(content_path),
+                "keyframes": keyframes,
+                "stats": {
+                    "total_keyframes": len(keyframes),
+                    "total_frames": len(keyframes),
+                    "extraction_method": "image_load",
+                },
+                "created_at": _time.time(),
+            }
+            pipeline_context.logger.info(
+                f"  Loaded {len(keyframes)} images as keyframes"
             )
-            if "single_vector_processing" in result:
-                num_segments = (
-                    len(result.get("single_vector_processing", {}).get("segments", []))
-                    if result
-                    else 0
-                )
-                pipeline_context.logger.info(
-                    f"  📦 Processed {num_segments} single-vector segments"
-                )
-            return result
+            return {"keyframes": result}
 
-        return {}
+        else:
+            processor_keys = list(requirements.keys())
+            raise ValueError(
+                f"Segmentation strategy {type(strategy).__name__!r} requires unknown "
+                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, image."
+            )
 
     async def _process_transcription(
         self,
@@ -264,7 +288,6 @@ class ProcessingStrategySet:
         if "audio" in requirements:
             processor = processor_manager.get_processor("audio")
             if processor:
-                # Pass cache to processor for caching support
                 cache = getattr(pipeline_context, "cache", None)
                 result = processor.transcribe_audio(
                     video_path, pipeline_context.profile_output_dir, cache
@@ -288,13 +311,16 @@ class ProcessingStrategySet:
         requirements = strategy.get_required_processors()
 
         if "vlm" in requirements:
-            # Use the existing strategy's generate_descriptions method
-            if hasattr(strategy, "generate_descriptions"):
-                segments = accumulated_results.get("segments", {})
-                result = await strategy.generate_descriptions(
-                    segments, video_path, pipeline_context, {}
+            if not hasattr(strategy, "generate_descriptions"):
+                raise AttributeError(
+                    f"Strategy {type(strategy).__name__!r} requires 'vlm' processor "
+                    "but does not implement generate_descriptions()."
                 )
-                return {"descriptions": result} if result else {}
+            segments = accumulated_results.get("segments", {})
+            result = await strategy.generate_descriptions(
+                segments, video_path, pipeline_context, {}
+            )
+            return {"descriptions": result} if result else {}
 
         return {}
 
@@ -317,16 +343,17 @@ class ProcessingStrategySet:
             f"  Data available: {list(accumulated_results.keys())}"
         )
 
-        # Use existing strategy's generate_embeddings_with_processor method
-        if hasattr(strategy, "generate_embeddings_with_processor"):
-            embeddings = await strategy.generate_embeddings_with_processor(
-                accumulated_results, pipeline_context, processor_manager
+        if not hasattr(strategy, "generate_embeddings_with_processor"):
+            raise AttributeError(
+                f"Strategy {type(strategy).__name__!r} does not implement "
+                "generate_embeddings_with_processor()."
             )
-            if isinstance(embeddings, dict):
-                docs_fed = embeddings.get("documents_fed", 0)
-                pipeline_context.logger.info(
-                    f"  ✅ Embeddings generated: {docs_fed} documents fed to backend"
-                )
-            return {"embeddings": embeddings}
-
-        return {}
+        embeddings = await strategy.generate_embeddings_with_processor(
+            accumulated_results, pipeline_context, processor_manager
+        )
+        if isinstance(embeddings, dict):
+            docs_fed = embeddings.get("documents_fed", 0)
+            pipeline_context.logger.info(
+                f"  ✅ Embeddings generated: {docs_fed} documents fed to backend"
+            )
+        return {"embeddings": embeddings}
