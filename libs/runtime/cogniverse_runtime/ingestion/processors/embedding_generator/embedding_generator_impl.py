@@ -17,10 +17,10 @@ from PIL import Image
 
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
-from .embedding_generator import EmbeddingGenerator, EmbeddingResult
+from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult
 
 
-class EmbeddingGeneratorImpl(EmbeddingGenerator):
+class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     """
     Embedding generator that processes all segment types uniformly.
 
@@ -45,9 +45,12 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         super().__init__(config, logger)
 
         self.profile_config = config
-        self.model_name = self.profile_config.get(
-            "embedding_model", "vidore/colsmol-500m"
-        )
+        self.model_name = self.profile_config.get("embedding_model")
+        if not self.model_name:
+            raise ValueError(
+                f"Profile config missing 'embedding_model'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
         self.backend_client = backend_client
         self.schema_name = self.profile_config.get("schema_name")
 
@@ -67,36 +70,50 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     def _should_load_model(self) -> bool:
         """Check if model should be loaded during initialization."""
         # Frame-based processing loads model later when processing frames
-        processing_type = self.profile_config.get("embedding_type", "frame_based")
-        return processing_type != "frame_based"
+        embedding_type = self.profile_config.get("embedding_type")
+        if not embedding_type:
+            raise ValueError(
+                f"Profile config missing 'embedding_type'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
+        return embedding_type != "frame_based"
 
     def _load_model(self):
         """Load the embedding model based on configuration."""
         from cogniverse_core.common.models import get_or_load_model
 
-        embedding_type = self.profile_config.get("embedding_type", "frame_based")
+        embedding_type = self.profile_config.get("embedding_type")
+        if not embedding_type:
+            raise ValueError(
+                f"Profile config missing 'embedding_type'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
 
         try:
             if embedding_type == "audio_dual":
-                # Audio needs ColBERT for semantic embeddings;
-                # CLAP acoustic model is lazy-loaded by AudioEmbeddingGenerator.
-                semantic_model = self.profile_config.get(
-                    "semantic_model", "lightonai/GTE-ModernColBERT-v1"
-                )
+                semantic_model = self.profile_config.get("semantic_model")
+                if not semantic_model:
+                    raise ValueError(
+                        "audio_dual embedding_type requires 'semantic_model' in profile config."
+                    )
                 self.colbert_model, _ = get_or_load_model(
                     semantic_model, self.profile_config, self.logger
                 )
-            elif "colbert" in self.model_name.lower():
+            elif embedding_type == "document_colbert":
                 self.colbert_model, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
-            elif "videoprism" in self.model_name.lower():
+            elif embedding_type in ("direct_video_segment", "single_vector"):
                 self.videoprism_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
-            else:
+            elif embedding_type in ("frame_based", "video_chunks"):
                 self.model, self.processor = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
+                )
+            else:
+                raise ValueError(
+                    f"Unknown embedding_type={embedding_type!r} in profile config."
                 )
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
@@ -569,8 +586,9 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     def _generate_chunk_embeddings(self, chunk_path: Path) -> np.ndarray | None:
         """Generate embeddings for a video chunk."""
         try:
-            if "colqwen" in self.model_name.lower():
-                # ColQwen processes video chunks
+            embedding_type = self.profile_config.get("embedding_type")
+            if embedding_type == "video_chunks":
+                # ColQwen/video-chunk model processes video chunks
                 import cv2
 
                 cap = cv2.VideoCapture(str(chunk_path))

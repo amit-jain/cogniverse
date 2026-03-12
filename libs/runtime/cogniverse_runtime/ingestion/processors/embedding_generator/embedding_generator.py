@@ -61,10 +61,18 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         super().__init__(config, logger)
 
         self.profile_config = profile_config or {}
-        self.process_type = self.profile_config.get("process_type", "frame_based")
-        self.model_name = self.profile_config.get(
-            "embedding_model", "vidore/colsmol-500m"
-        )
+        self.process_type = self.profile_config.get("process_type")
+        if not self.process_type:
+            raise ValueError(
+                f"Profile config missing 'process_type'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
+        self.model_name = self.profile_config.get("embedding_model")
+        if not self.model_name:
+            raise ValueError(
+                f"Profile config missing 'embedding_model'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
         self.backend_client = backend_client
 
         # Get schema name from backend client (it knows its own schema)
@@ -94,15 +102,27 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         )
 
     def _load_model(self):
-        """Load the appropriate model"""
+        """Load the appropriate model using embedding_type from profile config."""
+        embedding_type = self.profile_config.get("embedding_type")
+        if not embedding_type:
+            raise ValueError(
+                f"Profile config missing 'embedding_type'. "
+                f"Got keys: {sorted(self.profile_config.keys())}"
+            )
+
         try:
-            if "videoprism" in self.model_name.lower():
+            if embedding_type in ("direct_video_segment", "single_vector"):
                 self.videoprism_loader, _ = get_or_load_model(
-                    self.model_name, self.config, self.logger
+                    self.model_name, self.profile_config, self.logger
+                )
+            elif embedding_type in ("frame_based", "video_chunks"):
+                self.model, self.processor = get_or_load_model(
+                    self.model_name, self.profile_config, self.logger
                 )
             else:
-                self.model, self.processor = get_or_load_model(
-                    self.model_name, self.config, self.logger
+                raise ValueError(
+                    f"EmbeddingGenerator does not handle embedding_type={embedding_type!r}. "
+                    f"Use EmbeddingGeneratorImpl for document/audio content types."
                 )
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
@@ -592,29 +612,17 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for frame-based processing"""
-        # Similar implementation but for frames
-        # Not shown for brevity - would follow same pattern
-        pass
-
-    def process_segment(self, segment_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Process a single segment - implements abstract method"""
-        # Handled by specific methods above
-        pass
-
-    def create_document(
-        self, segment_data: dict[str, Any], embeddings: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Create document - implements abstract method"""
-        # Handled by document builder
-        pass
+        raise NotImplementedError(
+            "frame_based processing is handled by EmbeddingGeneratorImpl, not EmbeddingGenerator. "
+            "Use EmbeddingGeneratorImpl for frame_based embedding_type."
+        )
 
     def _feed_single_document(self, document: dict[str, Any]) -> bool:
-        """Feed single document - implements abstract method"""
+        """Feed a single document to the backend client."""
         if self.backend_client:
             return self.backend_client.feed_document(document)
         return False
 
-    # Helper methods (same as before)
     def _get_video_path(self, video_data: dict[str, Any]) -> Path | None:
         """Get video file path"""
         video_id = video_data.get("video_id", "")

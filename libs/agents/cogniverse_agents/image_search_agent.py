@@ -22,10 +22,6 @@ from cogniverse_core.query.encoders import ColPaliQueryEncoder
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Models
-# =============================================================================
-
 
 class ImageResult(AgentOutput):
     """Result from image search"""
@@ -137,7 +133,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         """Lazy load ColPali model"""
         if self._colpali_model is None:
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {"colpali_model": self._colpali_model_name}
+            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based"}
             self._colpali_model, self._colpali_processor = get_or_load_model(
                 self._colpali_model_name, config, logger
             )
@@ -358,10 +354,6 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             )
 
         return results
-
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
 
     async def _process_impl(self, input: ImageSearchInput) -> ImageSearchOutput:
         """

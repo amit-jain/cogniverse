@@ -196,7 +196,7 @@ class TestCrossModalFusionIntegration:
 
         # Load models
         print("\n📦 Loading models...")
-        colpali_config = {"colpali_model": "vidore/colsmol-500m"}
+        colpali_config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based"}
         colpali_model, colpali_processor = get_or_load_model(
             "vidore/colsmol-500m", colpali_config, None
         )

@@ -23,9 +23,6 @@ from cogniverse_core.query.encoders import ColPaliQueryEncoder
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Type-Safe Models
-# =============================================================================
 
 
 class DocumentResult(AgentOutput):
@@ -202,7 +199,7 @@ class DocumentAgent(
         """Lazy load ColPali model for visual strategy"""
         if self._colpali_model is None:
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {"colpali_model": self._colpali_model_name}
+            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based"}
             self._colpali_model, self._colpali_processor = get_or_load_model(
                 self._colpali_model_name, config, logger
             )
@@ -567,10 +564,6 @@ class DocumentAgent(
             results.append(doc)
 
         return results
-
-    # ==========================================================================
-    # Type-safe process method (required by AgentBase)
-    # ==========================================================================
 
     async def _process_impl(self, input: DocumentSearchInput) -> DocumentSearchOutput:
         """

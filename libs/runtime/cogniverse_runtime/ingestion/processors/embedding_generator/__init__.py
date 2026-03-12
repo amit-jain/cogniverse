@@ -1,7 +1,7 @@
 """Embedding generation pipeline for video processing."""
 
-# Import new generic Document only
 from cogniverse_core.common.models import (
+    ColBERTModelLoader,
     ColPaliModelLoader,
     ColQwenModelLoader,
     ModelLoader,
@@ -12,7 +12,12 @@ from cogniverse_core.common.models import (
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .backend_factory import BackendFactory
-from .embedding_generator import EmbeddingGenerator, EmbeddingResult, ProcessingConfig
+from .embedding_generator import (
+    BaseEmbeddingGenerator,
+    EmbeddingGenerator,
+    EmbeddingResult,
+    ProcessingConfig,
+)
 from .embedding_generator_factory import (
     EmbeddingGeneratorFactory,
     create_embedding_generator,
@@ -20,14 +25,9 @@ from .embedding_generator_factory import (
 from .embedding_generator_impl import EmbeddingGeneratorImpl
 from .embedding_processors import EmbeddingProcessor
 
-# Document builders no longer needed - backend handles this internally
-
-
-# VespaPyClient is now in backends/vespa/ingestion_client.py
-
-
 __all__ = [
     # Main classes
+    "BaseEmbeddingGenerator",
     "EmbeddingGenerator",
     "EmbeddingGeneratorImpl",
     "EmbeddingGeneratorFactory",
@@ -40,6 +40,7 @@ __all__ = [
     "get_or_load_model",
     "ModelLoaderFactory",
     "ModelLoader",
+    "ColBERTModelLoader",
     "ColPaliModelLoader",
     "ColQwenModelLoader",
     "VideoPrismModelLoader",

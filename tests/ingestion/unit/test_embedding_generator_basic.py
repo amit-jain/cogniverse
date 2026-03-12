@@ -119,7 +119,20 @@ class TestEmbeddingGenerator:
 
     @pytest.fixture
     def profile_config(self):
-        return {"process_type": "frame_based", "embedding_model": "test_model"}
+        return {
+            "process_type": "frame_based",
+            "embedding_model": "test_model",
+            "embedding_type": "frame_based",
+        }
+
+    @pytest.fixture
+    def noop_profile_config(self):
+        """Profile config for tests that don't trigger model loading."""
+        return {
+            "process_type": "frame_based",
+            "embedding_model": "test_model",
+            "embedding_type": "frame_based",
+        }
 
     @patch(
         "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
@@ -141,7 +154,11 @@ class TestEmbeddingGenerator:
         mock_processor = Mock()
         mock_processor_class.return_value = mock_processor
 
-        profile_config = {"process_type": "not_direct_video"}
+        profile_config = {
+            "process_type": "frame_based",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+        }
 
         generator = EmbeddingGenerator(
             basic_config, mock_logger, profile_config, mock_backend_client
@@ -150,8 +167,8 @@ class TestEmbeddingGenerator:
         assert generator.config == basic_config
         assert generator.logger == mock_logger
         assert generator.profile_config == profile_config
-        assert generator.process_type == "not_direct_video"
-        assert generator.model_name == "vidore/colsmol-500m"  # default
+        assert generator.process_type == "frame_based"
+        assert generator.model_name == "vidore/colsmol-500m"
         assert generator.backend_client == mock_backend_client
         assert generator.schema_name == "test_schema"
         assert generator.model is None  # Should not load model
@@ -189,6 +206,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "direct_video_global",
             "embedding_model": "custom_model",
+            "embedding_type": "direct_video_segment",
         }
 
         generator = EmbeddingGenerator(
@@ -197,11 +215,11 @@ class TestEmbeddingGenerator:
 
         assert generator.process_type == "direct_video_global"
         assert generator.model_name == "custom_model"
-        assert generator.model == mock_model
-        assert generator.processor == mock_model_processor
+        assert generator.videoprism_loader == mock_model
+        assert generator.model is None
 
         mock_get_model.assert_called_once_with(
-            "custom_model", basic_config, mock_logger
+            "custom_model", profile_config, mock_logger
         )
 
     @patch(
@@ -233,6 +251,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "direct_video_global",
             "embedding_model": "videoprism_large",
+            "embedding_type": "direct_video_segment",
         }
 
         generator = EmbeddingGenerator(
@@ -240,7 +259,7 @@ class TestEmbeddingGenerator:
         )
 
         assert generator.videoprism_loader == mock_loader
-        assert generator.model is None  # VideoLLAMA uses loader, not model
+        assert generator.model is None
 
     @patch(
         "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
@@ -266,10 +285,18 @@ class TestEmbeddingGenerator:
         mock_get_model.return_value = (Mock(), Mock())
 
         # Test cases that should load model
-        test_cases = ["direct_video_global", "direct_video_local", "video_chunks"]
+        load_cases = [
+            ("direct_video_global", "direct_video_segment"),
+            ("direct_video_local", "direct_video_segment"),
+            ("video_chunks", "video_chunks"),
+        ]
 
-        for process_type in test_cases:
-            profile_config = {"process_type": process_type}
+        for process_type, embedding_type in load_cases:
+            profile_config = {
+                "process_type": process_type,
+                "embedding_model": "test_model",
+                "embedding_type": embedding_type,
+            }
             generator = EmbeddingGenerator(
                 basic_config, mock_logger, profile_config, mock_backend_client
             )
@@ -277,19 +304,21 @@ class TestEmbeddingGenerator:
             assert (
                 generator._should_load_model() is True
             ), f"Should load model for {process_type}"
-            # Model should actually be loaded during init
             assert (
                 generator.model is not None or generator.videoprism_loader is not None
             )
 
-        # Reset mock for next tests
         mock_get_model.reset_mock()
 
         # Test cases that should NOT load model
-        test_cases = ["frame_based", "single_vector", "other_type"]
+        no_load_cases = ["frame_based", "single_vector", "other_type"]
 
-        for process_type in test_cases:
-            profile_config = {"process_type": process_type}
+        for process_type in no_load_cases:
+            profile_config = {
+                "process_type": process_type,
+                "embedding_model": "test_model",
+                "embedding_type": "frame_based",
+            }
             generator = EmbeddingGenerator(
                 basic_config, mock_logger, profile_config, mock_backend_client
             )
@@ -297,7 +326,6 @@ class TestEmbeddingGenerator:
             assert (
                 generator._should_load_model() is False
             ), f"Should NOT load model for {process_type}"
-            # Model should NOT be loaded
             assert generator.model is None and generator.videoprism_loader is None
 
     @patch(
@@ -323,7 +351,11 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
         mock_get_model.side_effect = Exception("Model loading failed")
 
-        profile_config = {"process_type": "direct_video_global"}
+        profile_config = {
+            "process_type": "direct_video_global",
+            "embedding_model": "test_model",
+            "embedding_type": "direct_video_segment",
+        }
 
         with pytest.raises(Exception, match="Model loading failed"):
             EmbeddingGenerator(
@@ -353,7 +385,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         video_data = {"video_id": "test_video", "processing_type": "unknown_type"}
@@ -383,7 +415,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         # Mock all processing methods
@@ -458,7 +490,11 @@ class TestEmbeddingGenerator:
         mock_factory.create_builder.return_value = Mock()
         mock_processor_class.return_value = Mock()
 
-        profile_config = {"process_type": "frame_based"}
+        profile_config = {
+            "process_type": "frame_based",
+            "embedding_model": "test_model",
+            "embedding_type": "frame_based",
+        }
         generator = EmbeddingGenerator(
             basic_config, mock_logger, profile_config, mock_backend_client
         )
@@ -492,7 +528,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with patch.object(
@@ -579,7 +615,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with patch("pathlib.Path.exists", return_value=True):
@@ -609,7 +645,7 @@ class TestEmbeddingGenerator:
 
         config_with_dir = {**basic_config, "video_data_dir": "/videos"}
         generator = EmbeddingGenerator(
-            config_with_dir, mock_logger, {}, mock_backend_client
+            config_with_dir, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with (
@@ -648,7 +684,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with (
@@ -691,7 +727,7 @@ class TestEmbeddingGenerator:
         mock_cv2.return_value = mock_cap
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         video_info = generator._get_video_info(Path("/test/video.mp4"))
@@ -720,7 +756,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
         generator.videoprism_loader = Mock()  # Set as VideoPrism
         generator.embedding_processor = Mock()
@@ -763,7 +799,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
         generator.model = Mock()  # Set as ColQwen
         generator.processor = Mock()
@@ -807,7 +843,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
         generator.model = Mock()
         generator.processor = Mock()
@@ -843,7 +879,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with patch.object(generator, "_get_video_path", return_value=None):
@@ -876,7 +912,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         # Mock dependencies
@@ -926,7 +962,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         # Mock dependencies
@@ -972,7 +1008,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         with patch.object(
@@ -1007,7 +1043,7 @@ class TestEmbeddingGenerator:
         mock_processor_class.return_value = Mock()
 
         generator = EmbeddingGenerator(
-            basic_config, mock_logger, {}, mock_backend_client
+            basic_config, mock_logger, {"process_type": "frame_based", "embedding_model": "test_model", "embedding_type": "frame_based"}, mock_backend_client
         )
 
         # Test with backend client

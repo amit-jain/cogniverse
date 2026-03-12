@@ -237,7 +237,7 @@ class TestContentTypeVespaSchemas:
 
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
-        config = {"colpali_model": "vidore/colsmol-500m"}
+        config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based"}
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
         print("✅ ColPali model loaded")
 
@@ -534,7 +534,7 @@ class TestContentTypeVespaSchemas:
 
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
-        config = {"colpali_model": "vidore/colsmol-500m"}
+        config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based"}
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
         print("✅ ColPali model loaded")
 

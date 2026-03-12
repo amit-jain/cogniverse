@@ -33,8 +33,7 @@ class ColPaliQueryEncoder(QueryEncoder):
     """Query encoder for ColPali models"""
 
     def __init__(self, model_name: str = "vidore/colsmol-500m"):
-        # Use v2 model loader for consistency
-        config = {"colpali_model": model_name}
+        config = {"colpali_model": model_name, "embedding_type": "frame_based"}
         self.model, self.processor = get_or_load_model(model_name, config, logger)
 
         # Get device from model
@@ -58,8 +57,7 @@ class ColQwenQueryEncoder(QueryEncoder):
     """Query encoder for ColQwen models"""
 
     def __init__(self, model_name: str = "vidore/colqwen-omni-v0.1"):
-        # Use v2 model loader for consistency
-        config = {"colpali_model": model_name}
+        config = {"colpali_model": model_name, "embedding_type": "video_chunks"}
         self.model, self.processor = get_or_load_model(model_name, config, logger)
 
         # Get device from model
@@ -95,7 +93,7 @@ class VideoPrismQueryEncoder(QueryEncoder):
             self.num_patches = 4096  # For patch-based models
 
         # Use v2 model loader - it returns the videoprism loader instance
-        config = {"colpali_model": model_name, "model_name": model_name}
+        config = {"colpali_model": model_name, "model_name": model_name, "embedding_type": "single_vector"}
         logger.info(f"Creating VideoPrism loader for model: {model_name}")
         self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
         logger.info(f"Got loader type: {type(self.videoprism_loader).__name__}")
