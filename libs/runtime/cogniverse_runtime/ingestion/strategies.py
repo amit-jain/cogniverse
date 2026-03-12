@@ -12,6 +12,7 @@ from typing import Any
 from .processor_base import BaseStrategy
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
 
 
 class FrameSegmentationStrategy(BaseStrategy):
@@ -194,6 +195,90 @@ class ImageSegmentationStrategy(BaseStrategy):
         """Image segmentation uses a special 'image' processor key so
         ProcessingStrategySet dispatches to _process_segmentation correctly."""
         return {"image": {"max_images": self.max_images}}
+
+
+class AudioFileSegmentationStrategy(BaseStrategy):
+    """Discover audio files in a directory for audio ingestion.
+
+    Each audio file becomes one item for transcription and embedding.
+    Analogous to ImageSegmentationStrategy for images.
+    """
+
+    def __init__(self, max_files: int = 10000):
+        self.max_files = max_files
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {"audio_file": {"max_files": self.max_files}}
+
+
+class AudioEmbeddingStrategy(BaseStrategy):
+    """Generate acoustic (CLAP 512-dim) and semantic (768-dim) embeddings for audio."""
+
+    def __init__(
+        self,
+        clap_model: str = "laion/clap-htsat-unfused",
+        semantic_model: str = "sentence-transformers/all-mpnet-base-v2",
+    ):
+        self.clap_model = clap_model
+        self.semantic_model = semantic_model
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {
+            "embedding": {
+                "type": "audio",
+                "clap_model": self.clap_model,
+                "semantic_model": self.semantic_model,
+            }
+        }
+
+    async def generate_embeddings_with_processor(
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
+        """Generate audio embeddings using AudioEmbeddingGenerator."""
+        from .processors.audio_embedding_generator import AudioEmbeddingGenerator
+
+        generator = AudioEmbeddingGenerator(
+            clap_model=self.clap_model,
+            semantic_model=self.semantic_model,
+        )
+
+        audio_files = results.get("audio_files", [])
+        transcript_data = results.get("transcript", {})
+        if not isinstance(transcript_data, dict):
+            raise TypeError(
+                f"Expected transcript_data to be a dict, got {type(transcript_data).__name__!r}. "
+                "AudioEmbeddingStrategy requires the transcription step to produce a dict."
+            )
+        transcript_text = transcript_data.get("full_text", "")
+
+        embedded_docs = []
+        for audio_file_info in audio_files:
+            audio_path = Path(audio_file_info["path"])
+            acoustic_emb, semantic_emb = generator.generate_embeddings(
+                audio_path=audio_path,
+                transcript=transcript_text,
+            )
+            embedded_docs.append({
+                "audio_id": audio_file_info.get("audio_id", audio_path.stem),
+                "audio_path": str(audio_path),
+                "acoustic_embedding": acoustic_emb.tolist(),
+                "semantic_embedding": semantic_emb.tolist(),
+            })
+
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "AudioEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
+        content_path = pipeline_context.video_path
+        wrapped_results = {
+            "video_id": content_path.stem,
+            "video_path": str(content_path),
+            "results": results,
+            "audio_embeddings": embedded_docs,
+        }
+
+        return await pipeline_context.generate_embeddings(wrapped_results)
 
 
 class MultiVectorEmbeddingStrategy(BaseStrategy):

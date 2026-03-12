@@ -1,0 +1,199 @@
+{
+  "name": "audio_content",
+  "document": {
+    "name": "audio_content",
+    "fields": [
+      {
+        "name": "audio_id",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "audio_title",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "creation_timestamp",
+        "type": "long",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "audio_transcript",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "audio_path",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "audio_duration",
+        "type": "double",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "audio_language",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "acoustic_embedding",
+        "type": "tensor<float>(v[512])",
+        "indexing": [
+          "attribute",
+          "index"
+        ],
+        "index": {
+          "hnsw": {
+            "max-links-per-node": 16,
+            "neighbors-to-explore-at-insert": 200
+          }
+        }
+      },
+      {
+        "name": "semantic_embedding",
+        "type": "tensor<float>(v[768])",
+        "indexing": [
+          "attribute",
+          "index"
+        ],
+        "index": {
+          "hnsw": {
+            "max-links-per-node": 16,
+            "neighbors-to-explore-at-insert": 200
+          }
+        }
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": [
+        "audio_title",
+        "audio_transcript"
+      ]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[512])"
+        }
+      ],
+      "first_phase": "closeness(field, acoustic_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "transcript_search",
+      "first_phase": "bm25(audio_title) + bm25(audio_transcript)",
+      "timeout": 2.0
+    },
+    {
+      "name": "acoustic_similarity",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[512])"
+        }
+      ],
+      "first_phase": "closeness(field, acoustic_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "semantic_similarity",
+      "inputs": [
+        {
+          "name": "query(semantic_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "first_phase": "closeness(field, semantic_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_audio",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[512])"
+        },
+        {
+          "name": "query(semantic_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "acoustic_score",
+          "expression": "closeness(field, acoustic_embedding)"
+        },
+        {
+          "name": "semantic_score",
+          "expression": "closeness(field, semantic_embedding)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(audio_title) + bm25(audio_transcript)"
+        }
+      ],
+      "first_phase": "0.3 * acoustic_score + 0.4 * semantic_score + 0.3 * text_score",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_acoustic_bm25",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[512])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "acoustic_score",
+          "expression": "closeness(field, acoustic_embedding)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(audio_title) + bm25(audio_transcript)"
+        }
+      ],
+      "first_phase": "0.5 * acoustic_score + 0.5 * text_score",
+      "timeout": 2.0
+    }
+  ]
+}

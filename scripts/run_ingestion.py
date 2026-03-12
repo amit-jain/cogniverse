@@ -22,6 +22,7 @@ from cogniverse_runtime.ingestion.pipeline_builder import (
 
 IMAGE_EXTENSIONS = {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp"}
 VIDEO_EXTENSIONS = {"*.mp4", "*.avi", "*.mov", "*.mkv"}
+AUDIO_EXTENSIONS = {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac", "*.wma"}
 
 
 def discover_content_files(content_dir: Path, content_type: str) -> list[Path]:
@@ -31,11 +32,11 @@ def discover_content_files(content_dir: Path, content_type: str) -> list[Path]:
     For image: returns the directory itself (all images processed as one batch).
     """
     if content_type == "image":
-        # For images, the directory itself is the content item.
-        # ImageSegmentationStrategy will discover individual files inside.
         return [content_dir]
 
-    # Default: discover video files
+    if content_type == "audio":
+        return [content_dir]
+
     files = []
     for ext in VIDEO_EXTENSIONS:
         files.extend(content_dir.glob(ext))

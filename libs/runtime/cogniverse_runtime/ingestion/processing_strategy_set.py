@@ -205,6 +205,42 @@ class ProcessingStrategySet:
             )
             return result
 
+        elif "audio_file" in requirements:
+            content_path = video_path
+            audio_extensions = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
+
+            if content_path.is_dir():
+                audio_files = sorted(
+                    f for f in content_path.iterdir()
+                    if f.suffix.lower() in audio_extensions
+                )
+            elif content_path.suffix.lower() in audio_extensions:
+                audio_files = [content_path]
+            else:
+                raise ValueError(
+                    f"Expected audio file or directory, got: {content_path}"
+                )
+
+            max_files = requirements["audio_file"].get("max_files", 10000)
+            audio_files = audio_files[:max_files]
+
+            if not audio_files:
+                raise ValueError(f"No audio files found at {content_path}")
+
+            audio_file_list = []
+            for idx, audio_path in enumerate(audio_files):
+                audio_file_list.append({
+                    "audio_id": audio_path.stem,
+                    "file_index": idx,
+                    "path": str(audio_path),
+                    "filename": audio_path.name,
+                })
+
+            pipeline_context.logger.info(
+                f"  Discovered {len(audio_file_list)} audio files"
+            )
+            return {"audio_files": audio_file_list}
+
         elif "image" in requirements:
             import shutil
             import time as _time
@@ -268,7 +304,7 @@ class ProcessingStrategySet:
             processor_keys = list(requirements.keys())
             raise ValueError(
                 f"Segmentation strategy {type(strategy).__name__!r} requires unknown "
-                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, image."
+                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, image, audio_file."
             )
 
     async def _process_transcription(

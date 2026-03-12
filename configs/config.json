@@ -426,6 +426,44 @@
           "binary_dim": 16
         }
       },
+      "audio_clap_semantic": {
+        "type": "audio",
+        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and SentenceTransformer semantic embeddings (768-dim) from transcripts.",
+        "schema_name": "audio_content",
+        "embedding_model": "laion/clap-htsat-unfused",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": true,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "AudioFileSegmentationStrategy",
+            "params": {
+              "max_files": 10000
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "AudioEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "audio_dual",
+        "schema_config": {
+          "schema_name": "audio_content",
+          "acoustic_embedding_dim": 512,
+          "semantic_embedding_dim": 768
+        }
+      },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
         "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",
