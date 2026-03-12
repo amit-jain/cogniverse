@@ -1,668 +1,720 @@
 """
-Integration tests for multi-modal content processing pipelines.
+Integration tests for multi-modal content schema deployment, feeding, and retrieval.
 
-Tests the full ProcessingStrategySet.process() round-trip for:
-- Image ingestion: ImageSegmentationStrategy → MultiVectorEmbeddingStrategy
-- Audio ingestion: AudioFileSegmentationStrategy → AudioTranscriptionStrategy → AudioEmbeddingStrategy
-- Document ingestion: DocumentSegmentationStrategy → DocumentTextEmbeddingStrategy
-
-Each test constructs its own test files, exercises the real dispatch path in
-_process_segmentation, and mocks only external ML models (ColBERT, CLAP).
+Tests the full round-trip against a real Vespa Docker instance:
+1. Deploy document_text and audio_content schemas (built programmatically via pyvespa)
+2. Construct embeddings with numpy (matching ColBERT 128-dim multi-vector format)
+3. Convert via VespaEmbeddingProcessor to hex bfloat16 / binary
+4. Feed documents to Vespa via pyvespa feed_data_point
+5. Query with MaxSim, BM25, hamming, and hybrid rank profiles
+6. Verify retrieval correctness
 """
 
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+import time
 
+import numpy as np
 import pytest
-
-from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
-from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
-from cogniverse_runtime.ingestion.strategies import (
-    AudioEmbeddingStrategy,
-    AudioFileSegmentationStrategy,
-    AudioTranscriptionStrategy,
-    DocumentSegmentationStrategy,
-    DocumentTextEmbeddingStrategy,
-    ImageSegmentationStrategy,
-    MultiVectorEmbeddingStrategy,
-    NoDescriptionStrategy,
-    NoTranscriptionStrategy,
+from vespa.application import Vespa
+from vespa.package import (
+    HNSW,
+    ApplicationPackage,
+    Document,
+    Field,
+    FieldSet,
+    Function,
+    RankProfile,
+    Schema,
+    SecondPhaseRanking,
 )
 
+from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from tests.system.vespa_test_manager import VespaTestManager
+from tests.utils.docker_utils import generate_unique_ports
 
-@pytest.fixture
-def image_dir(tmp_path):
-    """Create a directory with minimal PNG images (valid 1x1 pixel)."""
-    img_dir = tmp_path / "test_images"
-    img_dir.mkdir()
-
-    # Minimal valid 8x8 PNG — smallest valid PNG structure
-    # PNG signature + IHDR + IDAT (uncompressed 1x1 red pixel) + IEND
-    import struct
-    import zlib
-
-    def make_png(width=1, height=1, r=255, g=0, b=0):
-        """Create a minimal valid PNG file in memory."""
-        signature = b"\x89PNG\r\n\x1a\n"
-
-        # IHDR chunk
-        ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-        ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-        ihdr = struct.pack(">I", 13) + b"IHDR" + ihdr_data + struct.pack(">I", ihdr_crc)
-
-        # IDAT chunk — raw pixel data: filter byte (0) + RGB per pixel per row
-        raw_data = b""
-        for _ in range(height):
-            raw_data += b"\x00"  # filter byte
-            for _ in range(width):
-                raw_data += bytes([r, g, b])
-        compressed = zlib.compress(raw_data)
-        idat_crc = zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF
-        idat = struct.pack(">I", len(compressed)) + b"IDAT" + compressed + struct.pack(">I", idat_crc)
-
-        # IEND chunk
-        iend_crc = zlib.crc32(b"IEND") & 0xFFFFFFFF
-        iend = struct.pack(">I", 0) + b"IEND" + struct.pack(">I", iend_crc)
-
-        return signature + ihdr + idat + iend
-
-    (img_dir / "photo_001.png").write_bytes(make_png(r=255, g=0, b=0))
-    (img_dir / "photo_002.jpg").write_bytes(make_png(r=0, g=255, b=0))  # .jpg ext, valid PNG content
-    (img_dir / "photo_003.png").write_bytes(make_png(r=0, g=0, b=255))
-
-    return img_dir
+MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
 
-@pytest.fixture
-def audio_dir(tmp_path):
-    """Create a directory with dummy audio files."""
-    a_dir = tmp_path / "test_audio"
-    a_dir.mkdir()
-    for i, ext in enumerate([".mp3", ".wav", ".flac"]):
-        (a_dir / f"recording_{i:03d}{ext}").write_bytes(b"\x00" * 128)
-    return a_dir
-
-
-@pytest.fixture
-def document_dir(tmp_path):
-    """Create a directory with real document files containing extractable text."""
-    doc_dir = tmp_path / "test_docs"
-    doc_dir.mkdir()
-
-    (doc_dir / "report.txt").write_text(
-        "Quarterly revenue grew 15% year-over-year driven by enterprise adoption.",
-        encoding="utf-8",
-    )
-    (doc_dir / "design.md").write_text(
-        "# System Design\n\nThe architecture uses event-driven microservices.",
-        encoding="utf-8",
-    )
-
-    # Minimal valid PDF with extractable text
-    pdf_content = (
-        b"%PDF-1.4\n"
-        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
-        b"/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n"
-        b"4 0 obj<</Length 44>>stream\n"
-        b"BT /F1 12 Tf 72 720 Td (Hello PDF) Tj ET\n"
-        b"endstream\nendobj\n"
-        b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n"
-        b"xref\n0 6\n"
-        b"0000000000 65535 f \n"
-        b"0000000009 00000 n \n"
-        b"0000000058 00000 n \n"
-        b"0000000115 00000 n \n"
-        b"0000000266 00000 n \n"
-        b"0000000362 00000 n \n"
-        b"trailer<</Size 6/Root 1 0 R>>\n"
-        b"startxref\n436\n%%EOF"
-    )
-    (doc_dir / "whitepaper.pdf").write_bytes(pdf_content)
-
-    return doc_dir
-
-
-
-def make_pipeline_context(
-    content_path: Path,
-    output_dir: Path,
-    *,
-    transcribe_audio: bool = False,
-    generate_descriptions: bool = False,
-    generate_embeddings: bool = True,
-):
-    """Build a mock pipeline context with the fields ProcessingStrategySet.process() needs."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    config = SimpleNamespace(
-        transcribe_audio=transcribe_audio,
-        generate_descriptions=generate_descriptions,
-        generate_embeddings=generate_embeddings,
+def _build_document_text_schema() -> Schema:
+    """Build document_text schema matching configs/schemas/document_text_schema.json."""
+    return Schema(
+        name="document_text",
+        document=Document(
+            fields=[
+                Field(name="document_id", type="string",
+                      indexing=["summary", "attribute"], attribute=["fast-search"]),
+                Field(name="document_title", type="string",
+                      indexing=["summary", "index"], index="enable-bm25"),
+                Field(name="creation_timestamp", type="long",
+                      indexing=["summary", "attribute"], attribute=["fast-search"]),
+                Field(name="document_type", type="string",
+                      indexing=["summary", "attribute"], attribute=["fast-search"]),
+                Field(name="document_path", type="string",
+                      indexing=["summary", "attribute"]),
+                Field(name="page_count", type="int",
+                      indexing=["summary", "attribute"]),
+                Field(name="full_text", type="string",
+                      indexing=["summary", "index"], index="enable-bm25"),
+                Field(name="section_headings", type="string",
+                      indexing=["summary", "index"], index="enable-bm25"),
+                Field(name="embedding", type="tensor<bfloat16>(token{}, v[128])",
+                      indexing=["attribute"]),
+                Field(name="embedding_binary", type="tensor<int8>(token{}, v[16])",
+                      indexing=["attribute", "index"]),
+            ]
+        ),
+        fieldsets=[FieldSet(name="default", fields=["document_title", "full_text", "section_headings"])],
+        rank_profiles=[
+            RankProfile(
+                name="default",
+                inputs=[("query(qtb)", "tensor<int8>(querytoken{}, v[16])")],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)")
+                ],
+                first_phase="max_sim_hamming",
+            ),
+            RankProfile(
+                name="bm25_only",
+                first_phase="bm25(document_title) + bm25(full_text) + bm25(section_headings)",
+            ),
+            RankProfile(
+                name="float_float",
+                inputs=[("query(qt)", "tensor<float>(querytoken{}, v[128])")],
+                functions=[
+                    Function(name="max_sim",
+                             expression="sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)")
+                ],
+                first_phase="max_sim",
+            ),
+            RankProfile(
+                name="binary_binary",
+                inputs=[("query(qtb)", "tensor<int8>(querytoken{}, v[16])")],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)")
+                ],
+                first_phase="max_sim_hamming",
+            ),
+            RankProfile(
+                name="phased",
+                inputs=[
+                    ("query(qtb)", "tensor<int8>(querytoken{}, v[16])"),
+                    ("query(qt)", "tensor<float>(querytoken{}, v[128])"),
+                ],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"),
+                    Function(name="max_sim",
+                             expression="sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"),
+                ],
+                first_phase="max_sim_hamming",
+                second_phase=SecondPhaseRanking(expression="max_sim", rerank_count=100),
+            ),
+            RankProfile(
+                name="hybrid_float_bm25",
+                inputs=[("query(qt)", "tensor<float>(querytoken{}, v[128])")],
+                functions=[
+                    Function(name="colbert_sim",
+                             expression="sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"),
+                    Function(name="text_score",
+                             expression="bm25(document_title) + bm25(full_text) + bm25(section_headings)"),
+                ],
+                first_phase="colbert_sim",
+                second_phase=SecondPhaseRanking(expression="text_score", rerank_count=100),
+            ),
+        ],
     )
 
-    logger = MagicMock()
 
-    ctx = SimpleNamespace(
-        config=config,
-        logger=logger,
-        profile_output_dir=output_dir,
-        video_path=content_path,
-        schema_name="test_schema",
-        cache=None,
-        generate_embeddings=AsyncMock(return_value={"documents_fed": 3}),
-        processor_manager=MagicMock(),
+def _build_audio_content_schema() -> Schema:
+    """Build audio_content schema matching configs/schemas/audio_content_schema.json."""
+    return Schema(
+        name="audio_content",
+        document=Document(
+            fields=[
+                Field(name="audio_id", type="string",
+                      indexing=["summary", "attribute"], attribute=["fast-search"]),
+                Field(name="audio_title", type="string",
+                      indexing=["summary", "index"], index="enable-bm25"),
+                Field(name="creation_timestamp", type="long",
+                      indexing=["summary", "attribute"], attribute=["fast-search"]),
+                Field(name="audio_transcript", type="string",
+                      indexing=["summary", "index"], index="enable-bm25"),
+                Field(name="audio_path", type="string",
+                      indexing=["summary", "attribute"]),
+                Field(name="audio_duration", type="double",
+                      indexing=["summary", "attribute"]),
+                Field(name="audio_language", type="string",
+                      indexing=["summary", "attribute"]),
+                Field(name="acoustic_embedding", type="tensor<float>(v[512])",
+                      indexing=["attribute", "index"],
+                      ann=HNSW(max_links_per_node=16, neighbors_to_explore_at_insert=200)),
+                Field(name="semantic_embedding", type="tensor<bfloat16>(token{}, v[128])",
+                      indexing=["attribute"]),
+                Field(name="semantic_embedding_binary", type="tensor<int8>(token{}, v[16])",
+                      indexing=["attribute", "index"]),
+            ]
+        ),
+        fieldsets=[FieldSet(name="default", fields=["audio_title", "audio_transcript"])],
+        rank_profiles=[
+            RankProfile(
+                name="default",
+                inputs=[("query(qtb)", "tensor<int8>(querytoken{}, v[16])")],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v)), max, token), querytoken)")
+                ],
+                first_phase="max_sim_hamming",
+            ),
+            RankProfile(
+                name="transcript_search",
+                first_phase="bm25(audio_title) + bm25(audio_transcript)",
+            ),
+            RankProfile(
+                name="acoustic_similarity",
+                inputs=[("query(acoustic_query)", "tensor<float>(v[512])")],
+                first_phase="closeness(field, acoustic_embedding)",
+            ),
+            RankProfile(
+                name="semantic_float",
+                inputs=[("query(qt)", "tensor<float>(querytoken{}, v[128])")],
+                functions=[
+                    Function(name="max_sim",
+                             expression="sum(reduce(sum(query(qt) * cell_cast(attribute(semantic_embedding), float), v), max, token), querytoken)")
+                ],
+                first_phase="max_sim",
+            ),
+            RankProfile(
+                name="semantic_binary",
+                inputs=[("query(qtb)", "tensor<int8>(querytoken{}, v[16])")],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v)), max, token), querytoken)")
+                ],
+                first_phase="max_sim_hamming",
+            ),
+            RankProfile(
+                name="phased_semantic",
+                inputs=[
+                    ("query(qtb)", "tensor<int8>(querytoken{}, v[16])"),
+                    ("query(qt)", "tensor<float>(querytoken{}, v[128])"),
+                ],
+                functions=[
+                    Function(name="max_sim_hamming",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v)), max, token), querytoken)"),
+                    Function(name="max_sim",
+                             expression="sum(reduce(sum(query(qt) * cell_cast(attribute(semantic_embedding), float), v), max, token), querytoken)"),
+                ],
+                first_phase="max_sim_hamming",
+                second_phase=SecondPhaseRanking(expression="max_sim", rerank_count=100),
+            ),
+            RankProfile(
+                name="hybrid_semantic_bm25",
+                inputs=[("query(qtb)", "tensor<int8>(querytoken{}, v[16])")],
+                functions=[
+                    Function(name="semantic_sim",
+                             expression="sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v)), max, token), querytoken)"),
+                    Function(name="text_score",
+                             expression="bm25(audio_title) + bm25(audio_transcript)"),
+                ],
+                first_phase="semantic_sim",
+                second_phase=SecondPhaseRanking(expression="text_score", rerank_count=100),
+            ),
+        ],
     )
-    return ctx
 
+
+@pytest.fixture(scope="module")
+def vespa_with_schemas():
+    """Module-scoped Vespa instance with document_text + audio_content schemas deployed."""
+    manager = VespaTestManager(
+        app_name="test-multimodal",
+        http_port=MULTIMODAL_HTTP_PORT,
+        config_port=MULTIMODAL_CONFIG_PORT,
+    )
+
+    if not manager.setup_application_directory():
+        raise RuntimeError("Failed to setup application directory — check VespaTestManager logs")
+
+    if not manager.deploy_test_application():
+        raise RuntimeError("Failed to deploy Vespa test application — check Docker/Vespa logs")
+
+    # Deploy both content schemas alongside existing metadata schemas
+    schema_manager = VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=manager.config_port,
+    )
+
+    doc_schema = _build_document_text_schema()
+    audio_schema = _build_audio_content_schema()
+
+    app_package = ApplicationPackage(
+        name="cogniverse", schema=[doc_schema, audio_schema]
+    )
+    schema_manager._deploy_package(
+        app_package, allow_schema_removal=True
+    )
+
+    time.sleep(8)
+
+    app = Vespa(url=f"http://localhost:{manager.http_port}")
+
+    yield {
+        "app": app,
+        "http_port": manager.http_port,
+        "config_port": manager.config_port,
+    }
+
+    manager.cleanup()
+
+
+def make_colbert_embeddings(num_tokens: int, dim: int = 128, seed: int = 42) -> np.ndarray:
+    """Construct deterministic ColBERT-style multi-vector embeddings.
+
+    Returns shape (num_tokens, dim) — same format as PyLate ColBERT output.
+    """
+    rng = np.random.RandomState(seed)
+    emb = rng.randn(num_tokens, dim).astype(np.float32)
+    norms = np.linalg.norm(emb, axis=1, keepdims=True)
+    return emb / norms
+
+
+def make_acoustic_embedding(dim: int = 512, seed: int = 99) -> list:
+    """Construct a CLAP-style single-vector acoustic embedding as a float list."""
+    rng = np.random.RandomState(seed)
+    emb = rng.randn(dim).astype(np.float32)
+    emb = emb / np.linalg.norm(emb)
+    return emb.tolist()
 
 
 @pytest.mark.integration
-class TestImageIngestionPipeline:
-    """Full round-trip: image dir → segmentation → embedding."""
+@pytest.mark.requires_vespa
+class TestDocumentSchemaDeployAndFeed:
+    """Deploy document_text schema, feed documents with ColBERT embeddings, query."""
 
-    @pytest.mark.asyncio
-    async def test_image_segmentation_produces_keyframes_for_embedding(self, image_dir, tmp_path):
-        """Segmentation discovers images and formats them as keyframes that the
-        embedding strategy can consume via pipeline_context.generate_embeddings."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(max_images=100),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=MultiVectorEmbeddingStrategy(model_name="test/model"),
-        )
+    def test_feed_document_with_colbert_embeddings(self, vespa_with_schemas):
+        """Feed a document with 128-dim multi-vector embeddings and verify it's stored."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
 
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(
-            image_dir, output_dir, generate_embeddings=True,
-        )
+        raw_emb = make_colbert_embeddings(num_tokens=5, dim=128, seed=10)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
+        float_dict = processor._convert_to_float_dict(raw_emb)
+        binary_dict = processor._convert_to_binary_dict(raw_emb)
 
-        # Mock the embedding strategy's generate_embeddings_with_processor so we
-        # don't need a real ColPali model, but still verify it receives correct data.
-        embedding_call_args = {}
+        assert isinstance(float_dict, dict)
+        assert len(float_dict) == 5
+        assert isinstance(binary_dict, dict)
+        assert len(binary_dict) == 5
 
-        async def capture_embedding_call(results, pipeline_context, processor_manager):
-            embedding_call_args["results"] = results
-            return {"documents_fed": 3}
-
-        strategy_set.embedding.generate_embeddings_with_processor = capture_embedding_call
-
-        processor_manager = MagicMock()
-        results = await strategy_set.process(image_dir, processor_manager, ctx)
-
-        # Verify segmentation produced keyframes
-        assert "keyframes" in results
-        keyframes_data = results["keyframes"]
-        assert keyframes_data["video_id"] == image_dir.stem
-        assert len(keyframes_data["keyframes"]) == 3
-        assert keyframes_data["stats"]["extraction_method"] == "image_load"
-
-        # Verify each keyframe has required fields
-        for kf in keyframes_data["keyframes"]:
-            assert "frame_id" in kf
-            assert "path" in kf
-            assert "filename" in kf
-            assert "source_image" in kf
-            assert Path(kf["path"]).exists()
-
-        # Verify embedding strategy received the segmentation output
-        assert "keyframes" in embedding_call_args["results"]
-
-        # Verify embeddings result was captured
-        assert "embeddings" in results
-        assert results["embeddings"]["documents_fed"] == 3
-
-    @pytest.mark.asyncio
-    async def test_image_segmentation_respects_max_images(self, image_dir, tmp_path):
-        """max_images parameter limits how many images are processed."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(max_images=2),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=MultiVectorEmbeddingStrategy(),
-        )
-
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(image_dir, output_dir, generate_embeddings=False)
-
-        processor_manager = MagicMock()
-        results = await strategy_set.process(image_dir, processor_manager, ctx)
-
-        assert len(results["keyframes"]["keyframes"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_image_single_file_processing(self, image_dir, tmp_path):
-        """A single image file path works directly."""
-        single_image = image_dir / "photo_001.png"
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=MultiVectorEmbeddingStrategy(),
-        )
-
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(single_image, output_dir, generate_embeddings=False)
-
-        processor_manager = MagicMock()
-        results = await strategy_set.process(single_image, processor_manager, ctx)
-
-        assert len(results["keyframes"]["keyframes"]) == 1
-        assert results["keyframes"]["keyframes"][0]["source_image"] == str(single_image)
-
-    @pytest.mark.asyncio
-    async def test_image_non_image_file_raises(self, tmp_path):
-        """Passing a non-image file raises ValueError."""
-        bad_file = tmp_path / "data.csv"
-        bad_file.write_text("a,b,c")
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(),
-        )
-
-        ctx = make_pipeline_context(bad_file, tmp_path / "out", generate_embeddings=False)
-
-        with pytest.raises(ValueError, match="Expected image file or directory"):
-            await strategy_set.process(bad_file, MagicMock(), ctx)
-
-    @pytest.mark.asyncio
-    async def test_image_empty_dir_raises(self, tmp_path):
-        """Empty directory raises ValueError."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(),
-        )
-
-        ctx = make_pipeline_context(empty, tmp_path / "out", generate_embeddings=False)
-
-        with pytest.raises(ValueError, match="No image files found"):
-            await strategy_set.process(empty, MagicMock(), ctx)
-
-
-
-@pytest.mark.integration
-class TestAudioIngestionPipeline:
-    """Full round-trip: audio dir → segmentation → transcription → embedding."""
-
-    @pytest.mark.asyncio
-    async def test_audio_pipeline_data_flow(self, audio_dir, tmp_path):
-        """Segmentation discovers audio files, transcription processes them,
-        and embedding receives both segmentation + transcription results."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(max_files=100),
-            transcription=AudioTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=AudioEmbeddingStrategy(),
-        )
-
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(
-            audio_dir, output_dir,
-            transcribe_audio=True,
-            generate_embeddings=True,
-        )
-
-        # Mock audio processor for transcription
-        mock_audio_processor = MagicMock()
-        mock_audio_processor.transcribe_audio.return_value = {
-            "full_text": "This is a test transcription of the audio files.",
-            "segments": [{"start": 0.0, "end": 5.0, "text": "This is a test"}],
-            "language": "en",
+        fields = {
+            "document_id": "test_doc_001",
+            "document_title": "Quarterly Earnings Report Q3 2025",
+            "creation_timestamp": int(time.time()),
+            "document_type": "txt",
+            "document_path": "/test/quarterly_report.txt",
+            "page_count": 1,
+            "full_text": "Revenue grew 15% year-over-year driven by enterprise adoption and cloud services expansion.",
+            "section_headings": "Executive Summary Financial Highlights",
+            "embedding": float_dict,
+            "embedding_binary": binary_dict,
         }
 
-        processor_manager = MagicMock()
-        processor_manager.get_processor.return_value = mock_audio_processor
+        response = app.feed_data_point(schema=schema, data_id="test_doc_001", fields=fields)
+        assert response.status_code == 200
 
-        # Capture what embedding receives
-        embedding_call_args = {}
+    def test_feed_multiple_documents(self, vespa_with_schemas):
+        """Feed multiple documents with different embeddings."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        async def capture_embedding(results, pipeline_context, processor_manager):
-            embedding_call_args.update(results)
-            return {"documents_fed": 3}
+        docs = [
+            {
+                "id": "doc_design",
+                "title": "System Architecture Design",
+                "text": "The architecture uses event-driven microservices with message queues for decoupling.",
+                "headings": "Architecture Overview Message Queues",
+                "seed": 20, "tokens": 8,
+            },
+            {
+                "id": "doc_security",
+                "title": "Security Audit Report",
+                "text": "All endpoints require TLS 1.3 and OAuth2 bearer tokens for authentication.",
+                "headings": "Authentication Encryption",
+                "seed": 30, "tokens": 6,
+            },
+        ]
 
-        strategy_set.embedding.generate_embeddings_with_processor = capture_embedding
+        for doc in docs:
+            raw_emb = make_colbert_embeddings(num_tokens=doc["tokens"], dim=128, seed=doc["seed"])
+            fields = {
+                "document_id": doc["id"],
+                "document_title": doc["title"],
+                "creation_timestamp": int(time.time()),
+                "document_type": "md",
+                "document_path": f"/test/{doc['id']}.md",
+                "page_count": 1,
+                "full_text": doc["text"],
+                "section_headings": doc["headings"],
+                "embedding": processor._convert_to_float_dict(raw_emb),
+                "embedding_binary": processor._convert_to_binary_dict(raw_emb),
+            }
+            response = app.feed_data_point(schema=schema, data_id=doc["id"], fields=fields)
+            assert response.status_code == 200
 
-        results = await strategy_set.process(audio_dir, processor_manager, ctx)
+    def test_bm25_query_retrieves_documents(self, vespa_with_schemas):
+        """BM25 text search retrieves fed documents by content."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
+        time.sleep(2)
 
-        # Verify segmentation discovered all audio files
-        assert "audio_files" in results
-        assert len(results["audio_files"]) == 3
-        for af in results["audio_files"]:
-            assert "audio_id" in af
-            assert "path" in af
-            assert "filename" in af
-            assert Path(af["path"]).exists()
+        body = {
+            "yql": f"select document_id, document_title, full_text from {schema} where userQuery()",
+            "query": "revenue enterprise",
+            "hits": 10,
+            "ranking": "bm25_only",
+            "model.restrict": schema,
+        }
 
-        # Verify transcription flowed through
-        assert "transcript" in results
+        response = app.query(body=body)
+        assert response.is_successful()
+        hits = response.hits
+        assert len(hits) > 0
+        doc_ids = [hit["fields"]["document_id"] for hit in hits]
+        assert "test_doc_001" in doc_ids
 
-        # Verify embedding received both audio_files and transcript
-        assert "audio_files" in embedding_call_args
-        assert "transcript" in embedding_call_args
+    def test_colbert_float_query(self, vespa_with_schemas):
+        """MaxSim float-float rank profile returns all documents with relevance scores."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
 
-    @pytest.mark.asyncio
-    async def test_audio_segmentation_only(self, audio_dir, tmp_path):
-        """Segmentation alone produces correct audio file list."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=AudioEmbeddingStrategy(),
-        )
+        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(
-            audio_dir, output_dir,
-            transcribe_audio=False,
-            generate_embeddings=False,
-        )
+        body = {
+            "yql": f"select document_id, document_title from {schema} where true",
+            "hits": 10,
+            "ranking": "float_float",
+            "model.restrict": schema,
+            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+        }
 
-        results = await strategy_set.process(audio_dir, MagicMock(), ctx)
+        response = app.query(body=body)
+        assert response.is_successful()
+        hits = response.hits
+        assert len(hits) == 3
+        doc_ids = {hit["fields"]["document_id"] for hit in hits}
+        assert doc_ids == {"test_doc_001", "doc_design", "doc_security"}
+        assert all(hit["relevance"] > 0 for hit in hits)
 
-        assert "audio_files" in results
-        filenames = {af["filename"] for af in results["audio_files"]}
-        assert filenames == {"recording_000.mp3", "recording_001.wav", "recording_002.flac"}
+    def test_colbert_binary_query(self, vespa_with_schemas):
+        """Hamming distance binary-binary rank profile returns results."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
 
-    @pytest.mark.asyncio
-    async def test_audio_single_file_processing(self, audio_dir, tmp_path):
-        """Single audio file works directly."""
-        single = audio_dir / "recording_000.mp3"
+        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(),
-        )
+        body = {
+            "yql": f"select document_id from {schema} where true",
+            "hits": 10,
+            "ranking": "binary_binary",
+            "model.restrict": schema,
+            "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
+        }
 
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(single, output_dir, generate_embeddings=False)
+        response = app.query(body=body)
+        assert response.is_successful()
+        assert len(response.hits) > 0
 
-        results = await strategy_set.process(single, MagicMock(), ctx)
+    def test_phased_ranking_binary_then_float(self, vespa_with_schemas):
+        """Phased ranking: hamming first-phase, MaxSim second-phase rerank."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
 
-        assert len(results["audio_files"]) == 1
-        assert results["audio_files"][0]["filename"] == "recording_000.mp3"
+        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-    @pytest.mark.asyncio
-    async def test_audio_respects_max_files(self, audio_dir, tmp_path):
-        """max_files limits discovery."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(max_files=1),
-        )
+        body = {
+            "yql": f"select document_id from {schema} where true",
+            "hits": 10,
+            "ranking": "phased",
+            "model.restrict": schema,
+            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
+        }
 
-        ctx = make_pipeline_context(audio_dir, tmp_path / "out", generate_embeddings=False)
+        response = app.query(body=body)
+        assert response.is_successful()
+        assert len(response.hits) > 0
 
-        results = await strategy_set.process(audio_dir, MagicMock(), ctx)
-        assert len(results["audio_files"]) == 1
+    def test_hybrid_float_bm25_query(self, vespa_with_schemas):
+        """Hybrid ColBERT + BM25 rank profile combines both signals."""
+        app = vespa_with_schemas["app"]
+        schema = "document_text"
 
-    @pytest.mark.asyncio
-    async def test_audio_non_audio_file_raises(self, tmp_path):
-        """Non-audio file raises ValueError."""
-        bad = tmp_path / "image.png"
-        bad.write_bytes(b"\x89PNG" + b"\x00" * 64)
+        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(),
-        )
+        body = {
+            "yql": f"select document_id, document_title from {schema} where userQuery()",
+            "query": "revenue",
+            "hits": 10,
+            "ranking": "hybrid_float_bm25",
+            "model.restrict": schema,
+            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+        }
 
-        ctx = make_pipeline_context(bad, tmp_path / "out", generate_embeddings=False)
-
-        with pytest.raises(ValueError, match="Expected audio file or directory"):
-            await strategy_set.process(bad, MagicMock(), ctx)
-
-    @pytest.mark.asyncio
-    async def test_audio_empty_dir_raises(self, tmp_path):
-        """Empty directory raises ValueError."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(),
-        )
-
-        ctx = make_pipeline_context(empty, tmp_path / "out", generate_embeddings=False)
-
-        with pytest.raises(ValueError, match="No audio files found"):
-            await strategy_set.process(empty, MagicMock(), ctx)
-
+        response = app.query(body=body)
+        assert response.is_successful()
 
 
 @pytest.mark.integration
-class TestDocumentIngestionPipeline:
-    """Full round-trip: document dir → segmentation (with text extraction) → embedding."""
+@pytest.mark.requires_vespa
+class TestAudioSchemaDeployAndFeed:
+    """Deploy audio_content schema, feed audio docs with CLAP + ColBERT embeddings, query."""
 
-    @pytest.mark.asyncio
-    async def test_document_pipeline_data_flow(self, document_dir, tmp_path):
-        """Segmentation discovers documents, extracts text, and embedding
-        receives the extracted text for ColBERT tokenization."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(max_files=100),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=DocumentTextEmbeddingStrategy(),
-        )
+    def test_feed_audio_with_acoustic_and_semantic_embeddings(self, vespa_with_schemas):
+        """Feed an audio document with CLAP (512-dim) + ColBERT (128-dim multi-vector)."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        output_dir = tmp_path / "output"
-        ctx = make_pipeline_context(
-            document_dir, output_dir, generate_embeddings=True,
-        )
+        acoustic_emb = make_acoustic_embedding(dim=512, seed=50)
+        semantic_emb = make_colbert_embeddings(num_tokens=10, dim=128, seed=51)
 
-        # Capture what embedding receives
-        embedding_call_args = {}
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        async def capture_embedding(results, pipeline_context, processor_manager):
-            embedding_call_args.update(results)
-            return {"documents_fed": 3}
+        fields = {
+            "audio_id": "podcast_ep42",
+            "audio_title": "Deep Learning in Production Systems",
+            "creation_timestamp": int(time.time()),
+            "audio_transcript": "Today we discuss deploying deep learning models at scale with GPU orchestration and model serving.",
+            "audio_path": "/test/podcast_ep42.mp3",
+            "audio_duration": 1847.5,
+            "audio_language": "en",
+            "acoustic_embedding": acoustic_emb,
+            "semantic_embedding": processor._convert_to_float_dict(semantic_emb),
+            "semantic_embedding_binary": processor._convert_to_binary_dict(semantic_emb),
+        }
 
-        strategy_set.embedding.generate_embeddings_with_processor = capture_embedding
+        response = app.feed_data_point(schema=schema, data_id="podcast_ep42", fields=fields)
+        assert response.status_code == 200
 
-        results = await strategy_set.process(document_dir, MagicMock(), ctx)
+    def test_feed_multiple_audio_documents(self, vespa_with_schemas):
+        """Feed multiple audio documents with different content."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        # Verify segmentation discovered all documents
-        assert "document_files" in results
-        assert len(results["document_files"]) == 3
+        audios = [
+            {"id": "lecture_ml101", "title": "Introduction to Machine Learning",
+             "transcript": "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
+             "duration": 3600.0, "language": "en", "a_seed": 60, "s_seed": 61, "tokens": 12},
+            {"id": "interview_cto", "title": "CTO Interview on Cloud Infrastructure",
+             "transcript": "Our cloud infrastructure handles millions of requests using Kubernetes and auto-scaling.",
+             "duration": 2100.0, "language": "en", "a_seed": 70, "s_seed": 71, "tokens": 8},
+        ]
 
-        # Verify text was extracted from each document
-        doc_by_name = {df["filename"]: df for df in results["document_files"]}
+        for audio in audios:
+            acoustic = make_acoustic_embedding(dim=512, seed=audio["a_seed"])
+            semantic = make_colbert_embeddings(num_tokens=audio["tokens"], dim=128, seed=audio["s_seed"])
+            fields = {
+                "audio_id": audio["id"],
+                "audio_title": audio["title"],
+                "creation_timestamp": int(time.time()),
+                "audio_transcript": audio["transcript"],
+                "audio_path": f"/test/{audio['id']}.mp3",
+                "audio_duration": audio["duration"],
+                "audio_language": audio["language"],
+                "acoustic_embedding": acoustic,
+                "semantic_embedding": processor._convert_to_float_dict(semantic),
+                "semantic_embedding_binary": processor._convert_to_binary_dict(semantic),
+            }
+            response = app.feed_data_point(schema=schema, data_id=audio["id"], fields=fields)
+            assert response.status_code == 200
 
-        assert "Quarterly revenue" in doc_by_name["report.txt"]["extracted_text"]
-        assert doc_by_name["report.txt"]["document_type"] == "txt"
+    def test_transcript_bm25_search(self, vespa_with_schemas):
+        """BM25 search on audio transcript retrieves matching documents."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
+        time.sleep(2)
 
-        assert "# System Design" in doc_by_name["design.md"]["extracted_text"]
-        assert doc_by_name["design.md"]["document_type"] == "md"
+        body = {
+            "yql": f"select audio_id, audio_title from {schema} where userQuery()",
+            "query": "deep learning production GPU",
+            "hits": 10,
+            "ranking": "transcript_search",
+            "model.restrict": schema,
+        }
 
-        assert doc_by_name["whitepaper.pdf"]["document_type"] == "pdf"
-        assert len(doc_by_name["whitepaper.pdf"]["extracted_text"]) > 0
+        response = app.query(body=body)
+        assert response.is_successful()
+        hits = response.hits
+        assert len(hits) > 0
+        audio_ids = [hit["fields"]["audio_id"] for hit in hits]
+        assert "podcast_ep42" in audio_ids
 
-        # Verify each document has all required fields
-        for df in results["document_files"]:
-            assert "document_id" in df
-            assert "path" in df
-            assert "filename" in df
-            assert "extracted_text" in df
-            assert "text_length" in df
-            assert df["text_length"] > 0
+    def test_semantic_float_maxsim_query(self, vespa_with_schemas):
+        """Semantic MaxSim float query returns all audio documents with relevance scores."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        # Verify embedding received the document_files data
-        assert "document_files" in embedding_call_args
+        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        # Verify embeddings result was captured
-        assert "embeddings" in results
+        body = {
+            "yql": f"select audio_id, audio_title from {schema} where true",
+            "hits": 10,
+            "ranking": "semantic_float",
+            "model.restrict": schema,
+            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+        }
 
-    @pytest.mark.asyncio
-    async def test_document_segmentation_only(self, document_dir, tmp_path):
-        """Segmentation produces correct document file list with extracted text."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=DocumentTextEmbeddingStrategy(),
-        )
+        response = app.query(body=body)
+        assert response.is_successful()
+        hits = response.hits
+        assert len(hits) == 3
+        audio_ids = {hit["fields"]["audio_id"] for hit in hits}
+        assert audio_ids == {"podcast_ep42", "lecture_ml101", "interview_cto"}
+        assert all(hit["relevance"] > 0 for hit in hits)
 
-        ctx = make_pipeline_context(
-            document_dir, tmp_path / "out", generate_embeddings=False,
-        )
+    def test_semantic_binary_hamming_query(self, vespa_with_schemas):
+        """Hamming distance query on binary ColBERT embeddings."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        results = await strategy_set.process(document_dir, MagicMock(), ctx)
+        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        assert "document_files" in results
-        filenames = {df["filename"] for df in results["document_files"]}
-        assert filenames == {"report.txt", "design.md", "whitepaper.pdf"}
+        body = {
+            "yql": f"select audio_id from {schema} where true",
+            "hits": 10,
+            "ranking": "semantic_binary",
+            "model.restrict": schema,
+            "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
+        }
 
-    @pytest.mark.asyncio
-    async def test_document_single_file(self, document_dir, tmp_path):
-        """Single document file works directly."""
-        single = document_dir / "report.txt"
+        response = app.query(body=body)
+        assert response.is_successful()
+        assert len(response.hits) > 0
 
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-        )
+    def test_acoustic_similarity_query(self, vespa_with_schemas):
+        """HNSW nearest-neighbor query on CLAP acoustic embeddings."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        ctx = make_pipeline_context(single, tmp_path / "out", generate_embeddings=False)
+        query_acoustic = make_acoustic_embedding(dim=512, seed=50)
 
-        results = await strategy_set.process(single, MagicMock(), ctx)
+        body = {
+            "yql": f"select audio_id, audio_title from {schema} where "
+                   f"({{targetHits:10}}nearestNeighbor(acoustic_embedding, acoustic_query))",
+            "hits": 10,
+            "ranking": "acoustic_similarity",
+            "model.restrict": schema,
+            "input.query(acoustic_query)": query_acoustic,
+        }
 
-        assert len(results["document_files"]) == 1
-        assert results["document_files"][0]["filename"] == "report.txt"
-        assert "Quarterly revenue" in results["document_files"][0]["extracted_text"]
+        response = app.query(body=body)
+        assert response.is_successful()
+        hits = response.hits
+        assert len(hits) > 0
+        assert hits[0]["fields"]["audio_id"] == "podcast_ep42"
 
-    @pytest.mark.asyncio
-    async def test_document_respects_max_files(self, document_dir, tmp_path):
-        """max_files limits discovery."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(max_files=2),
-        )
+    def test_phased_semantic_ranking(self, vespa_with_schemas):
+        """Phased ranking: hamming first-phase, MaxSim rerank."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        ctx = make_pipeline_context(document_dir, tmp_path / "out", generate_embeddings=False)
+        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        results = await strategy_set.process(document_dir, MagicMock(), ctx)
-        assert len(results["document_files"]) == 2
+        body = {
+            "yql": f"select audio_id from {schema} where true",
+            "hits": 10,
+            "ranking": "phased_semantic",
+            "model.restrict": schema,
+            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
+        }
 
-    @pytest.mark.asyncio
-    async def test_document_non_document_file_raises(self, tmp_path):
-        """Non-document file raises ValueError."""
-        bad = tmp_path / "video.mp4"
-        bad.write_bytes(b"\x00" * 64)
+        response = app.query(body=body)
+        assert response.is_successful()
+        assert len(response.hits) > 0
 
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-        )
+    def test_hybrid_semantic_bm25_query(self, vespa_with_schemas):
+        """Hybrid ColBERT + BM25 combines embedding similarity with text matching."""
+        app = vespa_with_schemas["app"]
+        schema = "audio_content"
 
-        ctx = make_pipeline_context(bad, tmp_path / "out", generate_embeddings=False)
+        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
+        processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        with pytest.raises(ValueError, match="Expected document file or directory"):
-            await strategy_set.process(bad, MagicMock(), ctx)
+        body = {
+            "yql": f"select audio_id, audio_title from {schema} where userQuery()",
+            "query": "deep learning",
+            "hits": 10,
+            "ranking": "hybrid_semantic_bm25",
+            "model.restrict": schema,
+            "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
+        }
 
-    @pytest.mark.asyncio
-    async def test_document_empty_dir_raises(self, tmp_path):
-        """Empty directory raises ValueError."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-        )
-
-        ctx = make_pipeline_context(empty, tmp_path / "out", generate_embeddings=False)
-
-        with pytest.raises(ValueError, match="No document files found"):
-            await strategy_set.process(empty, MagicMock(), ctx)
-
-    @pytest.mark.asyncio
-    async def test_pdf_text_extraction_round_trip(self, document_dir, tmp_path):
-        """PDF text extraction produces non-empty text that flows to embedding."""
-        pdf_file = document_dir / "whitepaper.pdf"
-
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=DocumentTextEmbeddingStrategy(),
-        )
-
-        embedding_received = {}
-
-        async def capture(results, pipeline_context, processor_manager):
-            embedding_received.update(results)
-            return {"documents_fed": 1}
-
-        strategy_set.embedding.generate_embeddings_with_processor = capture
-
-        ctx = make_pipeline_context(pdf_file, tmp_path / "out", generate_embeddings=True)
-
-        await strategy_set.process(pdf_file, MagicMock(), ctx)
-
-        # Verify PDF text was extracted and reached embedding
-        doc = embedding_received["document_files"][0]
-        assert doc["document_type"] == "pdf"
-        assert "Hello PDF" in doc["extracted_text"]
-
+        response = app.query(body=body)
+        assert response.is_successful()
 
 
 @pytest.mark.integration
-class TestStrategyConfigurationPropagation:
-    """Verify that strategy parameters propagate correctly through ProcessorManager."""
+@pytest.mark.requires_vespa
+class TestEmbeddingFormatConsistency:
+    """Verify that VespaEmbeddingProcessor output format matches schema expectations."""
 
-    def test_image_strategy_config_reaches_processor_manager(self):
-        """ImageSegmentationStrategy config is visible to ProcessorManager."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=ImageSegmentationStrategy(max_images=42),
-            embedding=MultiVectorEmbeddingStrategy(model_name="test/colpali"),
-        )
+    def test_colbert_float_dict_dimensions(self):
+        """Float dict has correct number of tokens with correct hex length per token."""
+        raw = make_colbert_embeddings(num_tokens=7, dim=128, seed=1)
+        processor = VespaEmbeddingProcessor(schema_name="document_text")
+        result = processor._convert_to_float_dict(raw)
 
-        all_reqs = strategy_set.get_all_required_processors()
-        assert all_reqs["image"]["max_images"] == 42
-        assert all_reqs["embedding"]["model_name"] == "test/colpali"
+        assert len(result) == 7
+        for idx in range(7):
+            hex_str = result[idx]
+            # 128 dims x 4 hex chars per bfloat16 = 512 hex chars
+            assert len(hex_str) == 128 * 4, f"Token {idx}: expected 512 hex chars, got {len(hex_str)}"
 
-    def test_audio_strategy_config_reaches_processor_manager(self):
-        """AudioFileSegmentationStrategy + AudioEmbeddingStrategy configs propagate."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=AudioFileSegmentationStrategy(max_files=77),
-            transcription=AudioTranscriptionStrategy(model="whisper-tiny"),
-            description=NoDescriptionStrategy(),
-            embedding=AudioEmbeddingStrategy(
-                clap_model="custom/clap",
-                colbert_model="custom/colbert",
-            ),
-        )
+    def test_colbert_binary_dict_dimensions(self):
+        """Binary dict has correct number of tokens with 16 bytes (128 bits packed) each."""
+        raw = make_colbert_embeddings(num_tokens=7, dim=128, seed=1)
+        processor = VespaEmbeddingProcessor(schema_name="document_text")
+        result = processor._convert_to_binary_dict(raw)
 
-        all_reqs = strategy_set.get_all_required_processors()
-        assert all_reqs["audio_file"]["max_files"] == 77
-        assert all_reqs["audio"]["model"] == "whisper-tiny"
-        assert all_reqs["embedding"]["clap_model"] == "custom/clap"
-        assert all_reqs["embedding"]["colbert_model"] == "custom/colbert"
+        assert len(result) == 7
+        for idx in range(7):
+            hex_str = result[idx]
+            # 128 dims -> 16 bytes -> 32 hex chars
+            assert len(hex_str) == 32, f"Token {idx}: expected 32 hex chars, got {len(hex_str)}"
 
-    def test_document_strategy_config_reaches_processor_manager(self):
-        """DocumentSegmentationStrategy + DocumentTextEmbeddingStrategy configs propagate."""
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(max_files=500),
-            embedding=DocumentTextEmbeddingStrategy(colbert_model="custom/colbert"),
-        )
+    def test_acoustic_single_vector_format(self):
+        """CLAP 512-dim embedding is a plain float list, not hex dict."""
+        emb = make_acoustic_embedding(dim=512, seed=1)
+        assert isinstance(emb, list)
+        assert len(emb) == 512
+        assert all(isinstance(v, float) for v in emb)
 
-        all_reqs = strategy_set.get_all_required_processors()
-        assert all_reqs["document_file"]["max_files"] == 500
-        assert all_reqs["embedding"]["colbert_model"] == "custom/colbert"
+    def test_binarization_preserves_sign_information(self):
+        """Binary quantization maps positive -> 1, negative -> 0 correctly."""
+        padded = np.zeros((2, 128), dtype=np.float32)
+        padded[0, :8] = [1.0, -0.5, 0.3, -0.8, 0.0, 0.1, -0.2, 0.9]
+        padded[0, 8:] = np.random.RandomState(0).randn(120).astype(np.float32)
+        padded[1, :] = np.random.RandomState(1).randn(128).astype(np.float32)
 
-    def test_processor_manager_rejects_unknown_processor_types(self):
-        """ProcessorManager raises ValueError for processor types without registered classes.
+        processor = VespaEmbeddingProcessor(schema_name="document_text")
+        binary = processor._convert_to_binary_dict(padded)
 
-        Document/audio/image segmentation is handled inline in _process_segmentation,
-        NOT via ProcessorManager. So ProcessorManager correctly rejects these unknown types.
-        """
-        strategy_set = ProcessingStrategySet(
-            segmentation=DocumentSegmentationStrategy(),
-            transcription=NoTranscriptionStrategy(),
-            description=NoDescriptionStrategy(),
-            embedding=DocumentTextEmbeddingStrategy(),
-        )
+        assert isinstance(binary, dict)
+        assert len(binary) == 2
 
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
-            logger = MagicMock()
-            manager = ProcessorManager(logger)
-            with pytest.raises(ValueError, match="Unknown processor type: document_file"):
-                manager.initialize_from_strategies(strategy_set)
+        # First byte of token 0: bits for first 8 values
+        # positive(1), negative(0), positive(1), negative(0), zero(0), positive(1), negative(0), positive(1)
+        # = 10100101 = 0xa5
+        first_byte_hex = binary[0][:2]
+        assert first_byte_hex == "a5", f"Expected 'a5', got '{first_byte_hex}'"
