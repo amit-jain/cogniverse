@@ -13,6 +13,7 @@ from .processor_base import BaseStrategy
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
+DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc", ".rtf"}
 
 
 class FrameSegmentationStrategy(BaseStrategy):
@@ -276,6 +277,84 @@ class AudioEmbeddingStrategy(BaseStrategy):
             "video_path": str(content_path),
             "results": results,
             "audio_embeddings": embedded_docs,
+        }
+
+        return await pipeline_context.generate_embeddings(wrapped_results)
+
+
+class DocumentSegmentationStrategy(BaseStrategy):
+    """Discover document files in a directory for text-based ingestion.
+
+    Each document file is discovered and its text extracted for embedding.
+    Supports PDF (via PyPDF2), plain text, and markdown files.
+    """
+
+    def __init__(self, max_files: int = 10000):
+        self.max_files = max_files
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {"document_file": {"max_files": self.max_files}}
+
+
+class DocumentTextEmbeddingStrategy(BaseStrategy):
+    """Generate semantic embeddings (768-dim) for document text using SentenceTransformer."""
+
+    def __init__(
+        self,
+        semantic_model: str = "sentence-transformers/all-mpnet-base-v2",
+    ):
+        self.semantic_model = semantic_model
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {
+            "embedding": {
+                "type": "document_text",
+                "semantic_model": self.semantic_model,
+            }
+        }
+
+    async def generate_embeddings_with_processor(
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
+        """Generate text embeddings for documents using SentenceTransformer."""
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer(self.semantic_model)
+
+        document_files = results.get("document_files", [])
+
+        embedded_docs = []
+        for doc_info in document_files:
+            text = doc_info.get("extracted_text", "")
+            if not text.strip():
+                raise ValueError(
+                    f"Document {doc_info['filename']!r} has no extracted text. "
+                    "Cannot generate embeddings for empty documents."
+                )
+
+            embedding = model.encode(
+                text[:8192],
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+            embedded_docs.append({
+                "document_id": doc_info.get("document_id", Path(doc_info["path"]).stem),
+                "document_path": doc_info["path"],
+                "text_embedding": embedding.tolist(),
+                "text_length": len(text),
+            })
+
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "DocumentTextEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
+        content_path = pipeline_context.video_path
+        wrapped_results = {
+            "video_id": content_path.stem,
+            "video_path": str(content_path),
+            "results": results,
+            "document_embeddings": embedded_docs,
         }
 
         return await pipeline_context.generate_embeddings(wrapped_results)

@@ -1,0 +1,179 @@
+{
+  "name": "document_text",
+  "document": {
+    "name": "document_text",
+    "fields": [
+      {
+        "name": "document_id",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "document_title",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "creation_timestamp",
+        "type": "long",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "document_type",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "document_path",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "page_count",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "full_text",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "section_headings",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "text_embedding",
+        "type": "tensor<float>(v[768])",
+        "indexing": [
+          "attribute",
+          "index"
+        ],
+        "index": {
+          "hnsw": {
+            "max-links-per-node": 16,
+            "neighbors-to-explore-at-insert": 200
+          }
+        }
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": [
+        "document_title",
+        "full_text",
+        "section_headings"
+      ]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "inputs": [
+        {
+          "name": "query(text_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "first_phase": "closeness(field, text_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "bm25_only",
+      "first_phase": "bm25(document_title) + bm25(full_text) + bm25(section_headings)",
+      "timeout": 2.0
+    },
+    {
+      "name": "semantic_similarity",
+      "inputs": [
+        {
+          "name": "query(text_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "first_phase": "closeness(field, text_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_bm25_semantic",
+      "inputs": [
+        {
+          "name": "query(text_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "semantic_score",
+          "expression": "closeness(field, text_embedding)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(document_title) + bm25(full_text) + bm25(section_headings)"
+        }
+      ],
+      "first_phase": "0.5 * semantic_score + 0.5 * text_score",
+      "timeout": 2.0
+    },
+    {
+      "name": "title_weighted",
+      "inputs": [
+        {
+          "name": "query(text_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "semantic_score",
+          "expression": "closeness(field, text_embedding)"
+        },
+        {
+          "name": "text_score",
+          "expression": "2.0 * bm25(document_title) + bm25(full_text) + bm25(section_headings)"
+        }
+      ],
+      "first_phase": "0.4 * semantic_score + 0.6 * text_score",
+      "timeout": 2.0
+    }
+  ]
+}

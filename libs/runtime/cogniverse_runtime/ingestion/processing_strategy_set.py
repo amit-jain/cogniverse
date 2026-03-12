@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .processor_base import BaseStrategy
+from .strategies import DOCUMENT_EXTENSIONS
 
 
 class ProcessingStrategySet:
@@ -205,6 +206,45 @@ class ProcessingStrategySet:
             )
             return result
 
+        elif "document_file" in requirements:
+            content_path = video_path
+
+            if content_path.is_dir():
+                doc_files = sorted(
+                    f for f in content_path.iterdir()
+                    if f.suffix.lower() in DOCUMENT_EXTENSIONS
+                )
+            elif content_path.suffix.lower() in DOCUMENT_EXTENSIONS:
+                doc_files = [content_path]
+            else:
+                raise ValueError(
+                    f"Expected document file or directory, got: {content_path}"
+                )
+
+            max_files = requirements["document_file"].get("max_files", 10000)
+            doc_files = doc_files[:max_files]
+
+            if not doc_files:
+                raise ValueError(f"No document files found at {content_path}")
+
+            document_file_list = []
+            for idx, doc_path in enumerate(doc_files):
+                extracted_text = self._extract_document_text(doc_path)
+                document_file_list.append({
+                    "document_id": doc_path.stem,
+                    "file_index": idx,
+                    "path": str(doc_path),
+                    "filename": doc_path.name,
+                    "document_type": doc_path.suffix.lstrip("."),
+                    "extracted_text": extracted_text,
+                    "text_length": len(extracted_text),
+                })
+
+            pipeline_context.logger.info(
+                f"  Discovered {len(document_file_list)} document files"
+            )
+            return {"document_files": document_file_list}
+
         elif "audio_file" in requirements:
             content_path = video_path
             audio_extensions = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
@@ -304,7 +344,7 @@ class ProcessingStrategySet:
             processor_keys = list(requirements.keys())
             raise ValueError(
                 f"Segmentation strategy {type(strategy).__name__!r} requires unknown "
-                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, image, audio_file."
+                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, document_file, audio_file, image."
             )
 
     async def _process_transcription(
@@ -393,3 +433,35 @@ class ProcessingStrategySet:
                 f"  ✅ Embeddings generated: {docs_fed} documents fed to backend"
             )
         return {"embeddings": embeddings}
+
+    @staticmethod
+    def _extract_document_text(doc_path: Path) -> str:
+        """Extract text content from a document file.
+
+        Supports PDF (via PyPDF2), plain text (.txt, .md, .rtf), and raises
+        ValueError for unsupported formats.
+        """
+        suffix = doc_path.suffix.lower()
+
+        if suffix == ".pdf":
+            import PyPDF2
+
+            text = ""
+            with open(doc_path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            return text.strip()
+
+        if suffix in {".txt", ".md", ".rtf"}:
+            return doc_path.read_text(encoding="utf-8").strip()
+
+        if suffix in {".docx", ".doc"}:
+            raise ValueError(
+                f"Document type {suffix!r} requires python-docx. "
+                f"Install it with: pip install python-docx"
+            )
+
+        raise ValueError(f"Unsupported document type: {suffix!r} for {doc_path}")

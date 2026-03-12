@@ -464,6 +464,43 @@
           "semantic_embedding_dim": 768
         }
       },
+      "document_text_semantic": {
+        "type": "document",
+        "description": "Document text extraction with SentenceTransformer semantic embeddings (768-dim). Supports PDF, TXT, and Markdown files.",
+        "schema_name": "document_text",
+        "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "DocumentSegmentationStrategy",
+            "params": {
+              "max_files": 10000
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "DocumentTextEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "document_semantic",
+        "schema_config": {
+          "schema_name": "document_text",
+          "semantic_embedding_dim": 768
+        }
+      },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
         "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",

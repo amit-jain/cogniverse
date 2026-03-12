@@ -37,6 +37,9 @@ def discover_content_files(content_dir: Path, content_type: str) -> list[Path]:
     if content_type == "audio":
         return [content_dir]
 
+    if content_type == "document":
+        return [content_dir]
+
     files = []
     for ext in VIDEO_EXTENSIONS:
         files.extend(content_dir.glob(ext))
