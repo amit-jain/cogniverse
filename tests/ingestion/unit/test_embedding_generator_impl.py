@@ -40,6 +40,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
             "embedding_type": "video_chunks",
+            "model_loader": "colqwen",
         }
 
     @pytest.fixture
@@ -48,7 +49,8 @@ class TestEmbeddingGeneratorImpl:
             "schema_name": "test_schema",
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
-            "embedding_type": "frame_based",  # Will NOT load model
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
         }
 
     @patch("cogniverse_core.common.models.get_or_load_model")
@@ -99,6 +101,7 @@ class TestEmbeddingGeneratorImpl:
             "schema_name": "test_schema",
             "embedding_model": "videoprism_large",
             "embedding_type": "direct_video_segment",
+            "model_loader": "videoprism",
         }
 
         mock_loader = Mock()
@@ -126,7 +129,7 @@ class TestEmbeddingGeneratorImpl:
     def test_should_load_model_logic(self, mock_logger, mock_backend_client):
         """Test _should_load_model logic for different embedding types."""
         # Frame-based should NOT load model
-        config = {"embedding_type": "frame_based", "embedding_model": "vidore/colsmol-500m"}
+        config = {"embedding_type": "frame_based", "embedding_model": "vidore/colsmol-500m", "model_loader": "colpali"}
         with patch(
             "cogniverse_core.common.models.get_or_load_model",
             return_value=(Mock(), Mock()),
@@ -135,9 +138,14 @@ class TestEmbeddingGeneratorImpl:
             assert generator._should_load_model() is False
 
         # Other valid types should load model
-        test_cases = ["video_chunks", "direct_video_segment", "single_vector", "document_colbert"]
-        for embedding_type in test_cases:
-            config = {"embedding_type": embedding_type, "embedding_model": "test_model"}
+        test_cases = [
+            ("video_chunks", "colqwen"),
+            ("direct_video_segment", "videoprism"),
+            ("single_vector", "videoprism"),
+            ("document_colbert", "colbert"),
+        ]
+        for embedding_type, model_loader in test_cases:
+            config = {"embedding_type": embedding_type, "embedding_model": "test_model", "model_loader": model_loader}
             with patch(
                 "cogniverse_core.common.models.get_or_load_model",
                 return_value=(Mock(), Mock()),
@@ -793,7 +801,7 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings with ColQwen model."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "fps": 1.0, "embedding_type": "video_chunks"}
+        config = {**frame_based_config, "fps": 1.0, "embedding_type": "video_chunks", "model_loader": "colqwen"}
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
         generator.model = Mock()
@@ -875,7 +883,7 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings when no frames extracted."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "embedding_type": "video_chunks"}
+        config = {**frame_based_config, "embedding_type": "video_chunks", "model_loader": "colqwen"}
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
         generator.model = Mock()
@@ -898,7 +906,7 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings error handling."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "embedding_type": "video_chunks"}
+        config = {**frame_based_config, "embedding_type": "video_chunks", "model_loader": "colqwen"}
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
 
@@ -1109,6 +1117,7 @@ class TestEmbeddingGeneratorImpl:
             "schema_name": "document_text",
             "embedding_model": "lightonai/GTE-ModernColBERT-v1",
             "embedding_type": "document_colbert",
+            "model_loader": "colbert",
         }
         mock_colbert = Mock()
         mock_get_model.return_value = (mock_colbert, None)
@@ -1129,6 +1138,7 @@ class TestEmbeddingGeneratorImpl:
             "schema_name": "audio_content",
             "embedding_model": "laion/clap-htsat-unfused",
             "embedding_type": "audio_dual",
+            "model_loader": "colbert",
             "semantic_model": "lightonai/GTE-ModernColBERT-v1",
         }
         mock_colbert = Mock()
@@ -1149,7 +1159,8 @@ class TestEmbeddingGeneratorImpl:
         config = {
             "schema_name": "document_text",
             "embedding_model": "lightonai/GTE-ModernColBERT-v1",
-            "embedding_type": "frame_based",  # Skip auto-load
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
 
@@ -1182,7 +1193,7 @@ class TestEmbeddingGeneratorImpl:
         self, mock_logger, mock_backend_client
     ):
         """Test _process_document_segments raises on empty text."""
-        config = {"embedding_type": "frame_based", "embedding_model": "test_model"}
+        config = {"embedding_type": "frame_based", "embedding_model": "test_model", "model_loader": "colpali"}
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.colbert_model = Mock()
 
@@ -1200,10 +1211,10 @@ class TestEmbeddingGeneratorImpl:
 
 @pytest.mark.unit
 @pytest.mark.ci_safe
-class TestModelLoaderFactoryEmbeddingType:
-    """Test ModelLoaderFactory dispatches on embedding_type from config."""
+class TestModelLoaderFactoryModelLoader:
+    """Test ModelLoaderFactory dispatches on model_loader from config."""
 
-    def test_document_colbert_routes_to_colbert_loader(self):
+    def test_colbert_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ColBERTModelLoader,
             ModelLoaderFactory,
@@ -1211,25 +1222,12 @@ class TestModelLoaderFactoryEmbeddingType:
 
         loader = ModelLoaderFactory.create_loader(
             "lightonai/GTE-ModernColBERT-v1",
-            {"embedding_type": "document_colbert"},
+            {"model_loader": "colbert"},
             None,
         )
         assert isinstance(loader, ColBERTModelLoader)
 
-    def test_audio_dual_routes_to_colbert_loader(self):
-        from cogniverse_core.common.models.model_loaders import (
-            ColBERTModelLoader,
-            ModelLoaderFactory,
-        )
-
-        loader = ModelLoaderFactory.create_loader(
-            "lightonai/GTE-ModernColBERT-v1",
-            {"embedding_type": "audio_dual"},
-            None,
-        )
-        assert isinstance(loader, ColBERTModelLoader)
-
-    def test_frame_based_routes_to_colpali_loader(self):
+    def test_colpali_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ColPaliModelLoader,
             ModelLoaderFactory,
@@ -1237,12 +1235,12 @@ class TestModelLoaderFactoryEmbeddingType:
 
         loader = ModelLoaderFactory.create_loader(
             "vidore/colsmol-500m",
-            {"embedding_type": "frame_based"},
+            {"model_loader": "colpali"},
             None,
         )
         assert isinstance(loader, ColPaliModelLoader)
 
-    def test_video_chunks_routes_to_colqwen_loader(self):
+    def test_colqwen_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ColQwenModelLoader,
             ModelLoaderFactory,
@@ -1250,25 +1248,12 @@ class TestModelLoaderFactoryEmbeddingType:
 
         loader = ModelLoaderFactory.create_loader(
             "vidore/colqwen-omni-v0.1",
-            {"embedding_type": "video_chunks"},
+            {"model_loader": "colqwen"},
             None,
         )
         assert isinstance(loader, ColQwenModelLoader)
 
-    def test_single_vector_routes_to_videoprism_loader(self):
-        from cogniverse_core.common.models.model_loaders import (
-            ModelLoaderFactory,
-            VideoPrismModelLoader,
-        )
-
-        loader = ModelLoaderFactory.create_loader(
-            "videoprism_lvt_public_v1_base",
-            {"embedding_type": "single_vector"},
-            None,
-        )
-        assert isinstance(loader, VideoPrismModelLoader)
-
-    def test_direct_video_segment_routes_to_videoprism_loader(self):
+    def test_videoprism_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ModelLoaderFactory,
             VideoPrismModelLoader,
@@ -1276,21 +1261,21 @@ class TestModelLoaderFactoryEmbeddingType:
 
         loader = ModelLoaderFactory.create_loader(
             "videoprism_public_v1_base_hf",
-            {"embedding_type": "direct_video_segment"},
+            {"model_loader": "videoprism"},
             None,
         )
         assert isinstance(loader, VideoPrismModelLoader)
 
-    def test_missing_embedding_type_raises(self):
+    def test_missing_model_loader_raises(self):
         from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
 
-        with pytest.raises(ValueError, match="must contain 'embedding_type'"):
+        with pytest.raises(ValueError, match="must contain 'model_loader'"):
             ModelLoaderFactory.create_loader("some-model", {}, None)
 
-    def test_unknown_embedding_type_raises(self):
+    def test_unknown_model_loader_raises(self):
         from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
 
-        with pytest.raises(ValueError, match="Unknown embedding_type='bogus'"):
+        with pytest.raises(ValueError, match="Unknown model_loader='bogus'"):
             ModelLoaderFactory.create_loader(
-                "some-model", {"embedding_type": "bogus"}, None
+                "some-model", {"model_loader": "bogus"}, None
             )

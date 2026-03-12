@@ -571,22 +571,19 @@ class ColBERTModelLoader(ModelLoader):
 
 
 class ModelLoaderFactory:
-    """Factory for creating model loaders based on embedding_type from config."""
+    """Factory for creating model loaders based on model_loader key from config."""
 
-    EMBEDDING_TYPE_TO_LOADER: Dict[str, type] = {
-        "frame_based": ColPaliModelLoader,
-        "video_chunks": ColQwenModelLoader,
-        "direct_video_segment": VideoPrismModelLoader,
-        "single_vector": VideoPrismModelLoader,
-        "document_colbert": ColBERTModelLoader,
-        "audio_dual": ColBERTModelLoader,
+    LOADERS: Dict[str, type] = {
+        "colpali": ColPaliModelLoader,
+        "colqwen": ColQwenModelLoader,
+        "videoprism": VideoPrismModelLoader,
+        "colbert": ColBERTModelLoader,
     }
 
-    EMBEDDING_TYPE_TO_REMOTE_LOADER: Dict[str, type] = {
-        "frame_based": RemoteColPaliLoader,
-        "video_chunks": RemoteColPaliLoader,
-        "direct_video_segment": RemoteVideoPrismLoader,
-        "single_vector": RemoteVideoPrismLoader,
+    REMOTE_LOADERS: Dict[str, type] = {
+        "colpali": RemoteColPaliLoader,
+        "colqwen": RemoteColPaliLoader,
+        "videoprism": RemoteVideoPrismLoader,
     }
 
     @staticmethod
@@ -594,17 +591,17 @@ class ModelLoaderFactory:
         model_name: str, config: Dict[str, Any], logger: Optional[logging.Logger] = None
     ) -> ModelLoader:
         """
-        Create appropriate model loader based on embedding_type in config.
+        Create model loader based on config["model_loader"].
 
-        Raises ValueError if embedding_type is missing or unrecognized.
-        If remote_inference_url is present in config, creates a remote loader.
+        Raises ValueError if model_loader is missing or unrecognized.
+        If remote_inference_url is present, creates a remote loader.
         """
-        embedding_type = config.get("embedding_type")
-        if not embedding_type:
+        loader_key = config.get("model_loader")
+        if not loader_key:
             raise ValueError(
-                f"Config must contain 'embedding_type' to select model loader. "
+                f"Config must contain 'model_loader' to select model loader. "
                 f"Got config keys: {sorted(config.keys())}. "
-                f"Valid embedding_types: {sorted(ModelLoaderFactory.EMBEDDING_TYPE_TO_LOADER.keys())}"
+                f"Valid model_loaders: {sorted(ModelLoaderFactory.LOADERS.keys())}"
             )
 
         if config.get("remote_inference_url"):
@@ -612,21 +609,19 @@ class ModelLoaderFactory:
                 logger.info(
                     f"Using remote inference for {model_name} at {config['remote_inference_url']}"
                 )
-            remote_cls = ModelLoaderFactory.EMBEDDING_TYPE_TO_REMOTE_LOADER.get(
-                embedding_type
-            )
+            remote_cls = ModelLoaderFactory.REMOTE_LOADERS.get(loader_key)
             if not remote_cls:
                 raise ValueError(
-                    f"No remote loader for embedding_type={embedding_type!r}. "
-                    f"Available: {sorted(ModelLoaderFactory.EMBEDDING_TYPE_TO_REMOTE_LOADER.keys())}"
+                    f"No remote loader for model_loader={loader_key!r}. "
+                    f"Available: {sorted(ModelLoaderFactory.REMOTE_LOADERS.keys())}"
                 )
             return remote_cls(model_name, config, logger)
 
-        loader_cls = ModelLoaderFactory.EMBEDDING_TYPE_TO_LOADER.get(embedding_type)
+        loader_cls = ModelLoaderFactory.LOADERS.get(loader_key)
         if not loader_cls:
             raise ValueError(
-                f"Unknown embedding_type={embedding_type!r}. "
-                f"Valid types: {sorted(ModelLoaderFactory.EMBEDDING_TYPE_TO_LOADER.keys())}"
+                f"Unknown model_loader={loader_key!r}. "
+                f"Valid loaders: {sorted(ModelLoaderFactory.LOADERS.keys())}"
             )
         return loader_cls(model_name, config, logger)
 

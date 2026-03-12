@@ -33,12 +33,11 @@ class ColPaliQueryEncoder(QueryEncoder):
     """Query encoder for ColPali models"""
 
     def __init__(self, model_name: str = "vidore/colsmol-500m"):
-        config = {"colpali_model": model_name, "embedding_type": "frame_based"}
+        config = {"colpali_model": model_name, "embedding_type": "frame_based", "model_loader": "colpali"}
         self.model, self.processor = get_or_load_model(model_name, config, logger)
 
-        # Get device from model
         self.device = next(self.model.parameters()).device
-        self.embedding_dim = 128  # ColPali uses 128-dim embeddings
+        self.embedding_dim = 128
         logger.info(f"Loaded ColPali query encoder: {model_name} on {self.device}")
 
     def encode(self, query: str) -> np.ndarray:
@@ -57,12 +56,11 @@ class ColQwenQueryEncoder(QueryEncoder):
     """Query encoder for ColQwen models"""
 
     def __init__(self, model_name: str = "vidore/colqwen-omni-v0.1"):
-        config = {"colpali_model": model_name, "embedding_type": "video_chunks"}
+        config = {"colpali_model": model_name, "embedding_type": "video_chunks", "model_loader": "colqwen"}
         self.model, self.processor = get_or_load_model(model_name, config, logger)
 
-        # Get device from model
         self.device = next(self.model.parameters()).device
-        self.embedding_dim = 128  # ColQwen uses 128-dim embeddings
+        self.embedding_dim = 128
         logger.info(f"Loaded ColQwen query encoder: {model_name} on {self.device}")
 
     def encode(self, query: str) -> np.ndarray:
@@ -93,7 +91,7 @@ class VideoPrismQueryEncoder(QueryEncoder):
             self.num_patches = 4096  # For patch-based models
 
         # Use v2 model loader - it returns the videoprism loader instance
-        config = {"colpali_model": model_name, "model_name": model_name, "embedding_type": "single_vector"}
+        config = {"colpali_model": model_name, "model_name": model_name, "embedding_type": "single_vector", "model_loader": "videoprism"}
         logger.info(f"Creating VideoPrism loader for model: {model_name}")
         self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
         logger.info(f"Got loader type: {type(self.videoprism_loader).__name__}")

@@ -45,7 +45,7 @@ class VisualRelevanceEvaluator(Evaluator):
         self.query_encoder = ColPaliQueryEncoder(model_name)
 
         # Get the same model and processor for image encoding
-        config = {"colpali_model": model_name, "embedding_type": "frame_based"}
+        config = {"colpali_model": model_name, "embedding_type": "frame_based", "model_loader": "colpali"}
         self.model, self.processor = get_or_load_model(model_name, config, logger)
         self.device = next(self.model.parameters()).device
 

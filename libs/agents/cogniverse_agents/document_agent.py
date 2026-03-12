@@ -199,7 +199,7 @@ class DocumentAgent(
         """Lazy load ColPali model for visual strategy"""
         if self._colpali_model is None:
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based"}
+            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based", "model_loader": "colpali"}
             self._colpali_model, self._colpali_processor = get_or_load_model(
                 self._colpali_model_name, config, logger
             )
