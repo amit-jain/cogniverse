@@ -213,7 +213,14 @@ class AudioFileSegmentationStrategy(BaseStrategy):
 
 
 class AudioEmbeddingStrategy(BaseStrategy):
-    """Generate acoustic (CLAP 512-dim) and ColBERT semantic (128-dim multi-vector) embeddings for audio."""
+    """Generate acoustic (CLAP 512-dim) and ColBERT semantic (128-dim multi-vector) embeddings for audio.
+
+    Models are loaded through the model loader infrastructure:
+    - CLAP: Loaded by AudioEmbeddingGenerator (lazy, via transformers)
+    - ColBERT: Loaded by ModelLoaderFactory → ColBERTModelLoader in EmbeddingGeneratorImpl
+
+    This strategy wraps the results and delegates to the pipeline's embedding generator.
+    """
 
     def __init__(
         self,
@@ -235,59 +242,19 @@ class AudioEmbeddingStrategy(BaseStrategy):
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate acoustic (CLAP) + ColBERT semantic embeddings for audio."""
-        from .processors.audio_embedding_generator import AudioEmbeddingGenerator
-
-        generator = AudioEmbeddingGenerator(
-            clap_model=self.clap_model,
-        )
-
-        audio_files = results.get("audio_files", [])
-        transcript_data = results.get("transcript", {})
-        if not isinstance(transcript_data, dict):
-            raise TypeError(
-                f"Expected transcript_data to be a dict, got {type(transcript_data).__name__!r}. "
-                "AudioEmbeddingStrategy requires the transcription step to produce a dict."
-            )
-        transcript_text = transcript_data.get("full_text", "")
-
-        from pylate import models as pylate_models
-
-        colbert = pylate_models.ColBERT(self.colbert_model)
-
-        embedded_docs = []
-        for audio_file_info in audio_files:
-            audio_path = Path(audio_file_info["path"])
-            acoustic_emb = generator.generate_acoustic_embedding(audio_path=audio_path)
-
-            if not transcript_text.strip():
-                raise ValueError(
-                    f"Audio file {audio_path.name!r} has no transcript text. "
-                    "AudioEmbeddingStrategy requires transcription to produce non-empty text "
-                    "before generating semantic embeddings."
-                )
-            semantic_emb = colbert.encode([transcript_text], is_query=False)[0]
-
-            embedded_docs.append({
-                "audio_id": audio_file_info.get("audio_id", audio_path.stem),
-                "audio_path": str(audio_path),
-                "acoustic_embedding": acoustic_emb.tolist(),
-                "semantic_embedding": [tok.tolist() for tok in semantic_emb],
-            })
-
+        """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
         if not hasattr(pipeline_context, "video_path"):
             raise AttributeError(
                 "AudioEmbeddingStrategy requires pipeline_context.video_path to be set. "
                 "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
             )
-        content_path = pipeline_context.video_path
         wrapped_results = {
-            "video_id": content_path.stem,
-            "video_path": str(content_path),
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
             "results": results,
-            "audio_embeddings": embedded_docs,
+            "audio_files": results.get("audio_files", []),
+            "transcript": results.get("transcript", {}),
         }
-
         return await pipeline_context.generate_embeddings(wrapped_results)
 
 
@@ -306,7 +273,13 @@ class DocumentSegmentationStrategy(BaseStrategy):
 
 
 class DocumentTextEmbeddingStrategy(BaseStrategy):
-    """Generate ColBERT multi-vector embeddings (128-dim per token) for document text."""
+    """Generate ColBERT multi-vector embeddings (128-dim per token) for document text.
+
+    The ColBERT model is loaded through the model loader infrastructure
+    (ModelLoaderFactory → ColBERTModelLoader) in EmbeddingGeneratorImpl.
+    This strategy only wraps the results and delegates embedding generation
+    to the pipeline's embedding generator.
+    """
 
     def __init__(
         self,
@@ -325,43 +298,18 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate ColBERT token-level embeddings for documents."""
-        from pylate import models as pylate_models
-
-        model = pylate_models.ColBERT(self.colbert_model)
-
-        document_files = results.get("document_files", [])
-
-        embedded_docs = []
-        for doc_info in document_files:
-            text = doc_info.get("extracted_text", "")
-            if not text.strip():
-                raise ValueError(
-                    f"Document {doc_info['filename']!r} has no extracted text. "
-                    "Cannot generate embeddings for empty documents."
-                )
-
-            token_embeddings = model.encode([text[:8192]], is_query=False)[0]
-            embedded_docs.append({
-                "document_id": doc_info.get("document_id", Path(doc_info["path"]).stem),
-                "document_path": doc_info["path"],
-                "embedding": [tok.tolist() for tok in token_embeddings],
-                "text_length": len(text),
-            })
-
+        """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
         if not hasattr(pipeline_context, "video_path"):
             raise AttributeError(
                 "DocumentTextEmbeddingStrategy requires pipeline_context.video_path to be set. "
                 "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
             )
-        content_path = pipeline_context.video_path
         wrapped_results = {
-            "video_id": content_path.stem,
-            "video_path": str(content_path),
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
             "results": results,
-            "document_embeddings": embedded_docs,
+            "document_files": results.get("document_files", []),
         }
-
         return await pipeline_context.generate_embeddings(wrapped_results)
 
 

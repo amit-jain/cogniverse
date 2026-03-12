@@ -58,6 +58,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self.model = None
         self.processor = None
         self.videoprism_loader = None
+        self.colbert_model = None
 
         # Load model if needed
         if self._should_load_model():
@@ -73,8 +74,23 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         """Load the embedding model based on configuration."""
         from cogniverse_core.common.models import get_or_load_model
 
+        embedding_type = self.profile_config.get("embedding_type", "frame_based")
+
         try:
-            if "videoprism" in self.model_name.lower():
+            if embedding_type == "audio_dual":
+                # Audio needs ColBERT for semantic embeddings;
+                # CLAP acoustic model is lazy-loaded by AudioEmbeddingGenerator.
+                semantic_model = self.profile_config.get(
+                    "semantic_model", "lightonai/GTE-ModernColBERT-v1"
+                )
+                self.colbert_model, _ = get_or_load_model(
+                    semantic_model, self.profile_config, self.logger
+                )
+            elif "colbert" in self.model_name.lower():
+                self.colbert_model, _ = get_or_load_model(
+                    self.model_name, self.profile_config, self.logger
+                )
+            elif "videoprism" in self.model_name.lower():
                 self.videoprism_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
@@ -118,15 +134,17 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             f"📊 Processing {len(segments)} segments for {video_id} (schema: {self.schema_name})"
         )
 
-        # Determine storage mode
-        storage_mode = video_data.get("storage_mode", self.storage_mode)
-
-        if storage_mode == "single_doc":
-            # Process all segments and create one document
-            result = self._process_single_document(video_data, segments)
+        if "document_files" in video_data:
+            result = self._process_document_segments(video_data, segments)
+        elif "audio_files" in video_data:
+            result = self._process_audio_segments(video_data, segments)
         else:
-            # Process each segment as a separate document
-            result = self._process_multi_documents(video_data, segments)
+            storage_mode = video_data.get("storage_mode", self.storage_mode)
+
+            if storage_mode == "single_doc":
+                result = self._process_single_document(video_data, segments)
+            else:
+                result = self._process_multi_documents(video_data, segments)
 
         result.processing_time = time.time() - start_time
         self.logger.info(
@@ -146,7 +164,13 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         - 'frames' (frame-based alternative)
         - 'chunks' (chunk-based)
         - 'video_chunks' (chunk-based alternative)
+        - 'document_files' (document content)
+        - 'audio_files' (audio content)
         """
+        for key in ["document_files", "audio_files"]:
+            if key in video_data:
+                return video_data[key]
+
         # Try different keys in order of preference
         for key in ["segments", "keyframes", "frames", "chunks", "video_chunks"]:
             if key in video_data:
@@ -301,6 +325,175 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             processing_time=0,
             errors=errors,
             metadata={"num_segments": len(segments)},
+        )
+
+    def _process_document_segments(
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process document files: encode text with ColBERT, create Documents, feed to backend."""
+        content_id = video_data.get("video_id", "unknown")
+
+        if not self.colbert_model:
+            self._load_model()
+        if not self.colbert_model:
+            raise RuntimeError(
+                f"ColBERT model not loaded for document embedding. "
+                f"Expected embedding_model containing 'colbert', got: {self.model_name!r}"
+            )
+
+        documents_processed = 0
+        documents_fed = 0
+        errors = []
+
+        for idx, doc_info in enumerate(segments):
+            try:
+                text = doc_info.get("extracted_text", "")
+                if not text.strip():
+                    raise ValueError(
+                        f"Document {doc_info.get('filename', idx)!r} has no extracted text."
+                    )
+
+                token_embeddings = self.colbert_model.encode(
+                    [text[:8192]], is_query=False
+                )[0]
+                embeddings_np = np.array(token_embeddings, dtype=np.float32)
+
+                self.logger.info(
+                    f"  📄 Document {doc_info.get('filename', idx)}: "
+                    f"embeddings shape={embeddings_np.shape}"
+                )
+
+                doc = Document(
+                    id=f"{content_id}_{doc_info.get('document_id', idx)}",
+                    content_type=ContentType.DOCUMENT,
+                    content_id=content_id,
+                    status=ProcessingStatus.COMPLETED,
+                )
+                doc.add_embedding(
+                    "embedding", embeddings_np, {"type": "float", "raw": True}
+                )
+                doc.add_metadata("document_id", doc_info.get("document_id", ""))
+                doc.add_metadata("document_title", doc_info.get("filename", ""))
+                doc.add_metadata("document_type", doc_info.get("document_type", ""))
+                doc.add_metadata("document_path", doc_info.get("path", ""))
+                doc.add_metadata("full_text", text)
+                doc.add_metadata("page_count", doc_info.get("page_count", 1))
+
+                documents_processed += 1
+                if self._feed_document(doc):
+                    documents_fed += 1
+
+            except Exception as e:
+                self.logger.error(f"Error processing document {idx}: {e}")
+                errors.append(f"Document {idx}: {str(e)}")
+
+        return EmbeddingResult(
+            video_id=content_id,
+            total_documents=len(segments),
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={"num_documents": len(segments)},
+        )
+
+    def _process_audio_segments(
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process audio files: CLAP acoustic + ColBERT semantic embeddings."""
+        from ..audio_embedding_generator import AudioEmbeddingGenerator
+
+        content_id = video_data.get("video_id", "unknown")
+
+        if not self.colbert_model:
+            self._load_model()
+        if not self.colbert_model:
+            raise RuntimeError(
+                "ColBERT model not loaded for audio semantic embedding. "
+                "Ensure 'semantic_model' is set in the audio profile config."
+            )
+
+        clap_model_name = self.profile_config.get(
+            "embedding_model", "laion/clap-htsat-unfused"
+        )
+        audio_generator = AudioEmbeddingGenerator(clap_model=clap_model_name)
+
+        transcript_data = video_data.get("transcript", {})
+        if not isinstance(transcript_data, dict):
+            raise TypeError(
+                f"Expected transcript_data to be a dict, got {type(transcript_data).__name__!r}."
+            )
+        transcript_text = transcript_data.get("full_text", "")
+
+        documents_processed = 0
+        documents_fed = 0
+        errors = []
+
+        for idx, audio_info in enumerate(segments):
+            try:
+                audio_path = Path(audio_info["path"])
+
+                # Generate CLAP acoustic embedding (512-dim float list)
+                acoustic_emb = audio_generator.generate_acoustic_embedding(
+                    audio_path=audio_path
+                )
+
+                if not transcript_text.strip():
+                    raise ValueError(
+                        f"Audio file {audio_path.name!r} has no transcript text. "
+                        "Transcription must run before audio embedding."
+                    )
+                semantic_tokens = self.colbert_model.encode(
+                    [transcript_text[:8192]], is_query=False
+                )[0]
+                semantic_np = np.array(semantic_tokens, dtype=np.float32)
+
+                self.logger.info(
+                    f"  🔊 Audio {audio_info.get('filename', idx)}: "
+                    f"acoustic={acoustic_emb.shape}, semantic={semantic_np.shape}"
+                )
+
+                # Create Document with dual embeddings
+                doc = Document(
+                    id=f"{content_id}_{audio_info.get('audio_id', idx)}",
+                    content_type=ContentType.AUDIO,
+                    content_id=content_id,
+                    status=ProcessingStatus.COMPLETED,
+                )
+
+                # Semantic ColBERT embedding goes through standard embedding path
+                doc.add_embedding(
+                    "embedding", semantic_np, {"type": "float", "raw": True}
+                )
+
+                # Acoustic CLAP embedding stored as pre-formatted Vespa field in metadata.
+                # The ingestion client's generic metadata→field mapping picks this up
+                # because 'acoustic_embedding' matches the schema field name.
+                doc.add_metadata("acoustic_embedding", acoustic_emb.tolist())
+
+                doc.add_metadata(
+                    "audio_id", audio_info.get("audio_id", audio_path.stem)
+                )
+                doc.add_metadata("audio_title", audio_path.stem)
+                doc.add_metadata("audio_path", str(audio_path))
+                doc.add_metadata("audio_transcript", transcript_text)
+
+                documents_processed += 1
+                if self._feed_document(doc):
+                    documents_fed += 1
+
+            except Exception as e:
+                self.logger.error(f"Error processing audio {idx}: {e}")
+                errors.append(f"Audio {idx}: {str(e)}")
+
+        return EmbeddingResult(
+            video_id=content_id,
+            total_documents=len(segments),
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={"num_audio_files": len(segments)},
         )
 
     def _generate_segment_embeddings(

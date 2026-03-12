@@ -669,7 +669,15 @@ class VideoIngestionPipeline:
         video_data = self._extract_base_video_data(results)
         video_data = self._add_strategy_metadata(video_data)
 
-        # Determine processing type and extract appropriate data
+        if "document_files" in results:
+            video_data["document_files"] = results["document_files"]
+            return video_data
+        elif "audio_files" in results:
+            video_data["audio_files"] = results["audio_files"]
+            if "transcript" in results:
+                video_data["transcript"] = results["transcript"]
+            return video_data
+
         # Handle both 'chunks' and 'video_chunks' keys
         if "chunks" in results.get("results", {}) or "video_chunks" in results.get(
             "results", {}

@@ -458,6 +458,7 @@
           }
         },
         "embedding_type": "audio_dual",
+        "semantic_model": "lightonai/GTE-ModernColBERT-v1",
         "schema_config": {
           "schema_name": "audio_content",
           "acoustic_embedding_dim": 512,

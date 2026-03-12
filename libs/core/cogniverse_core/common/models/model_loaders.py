@@ -536,6 +536,40 @@ class VideoPrismModelLoader(ModelLoader):
             raise  # Re-raise for retry
 
 
+class ColBERTModelLoader(ModelLoader):
+    """Loader for ColBERT multi-vector models (e.g., lightonai/GTE-ModernColBERT-v1).
+
+    Uses PyLate internally for per-token embedding extraction with the model's
+    built-in linear projection (768 → 128 dims).
+    """
+
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            exceptions=(Exception,),
+        )
+    )
+    def load_model(self) -> Tuple[Any, Any]:
+        """Load ColBERT model via PyLate and return (model, None)."""
+        try:
+            self.logger.info(f"Loading ColBERT model: {self.model_name}")
+            from pylate import models as pylate_models
+
+            device = self.get_device()
+            self.logger.info(f"Using device: {device}")
+
+            model = pylate_models.ColBERT(self.model_name, device=device)
+
+            self.model = model
+            self.logger.info("ColBERT model loaded successfully")
+            return model, None
+
+        except Exception as e:
+            self.logger.error(f"Failed to load ColBERT model: {e}")
+            raise
+
+
 class ModelLoaderFactory:
     """Factory for creating model loaders"""
 
@@ -569,9 +603,11 @@ class ModelLoaderFactory:
                     f"No remote loader available for model type: {model_name}"
                 )
 
-        # Local loaders
+        # Local loaders — order matters: more specific matches first
         if "videoprism" in model_name_lower:
             return VideoPrismModelLoader(model_name, config, logger)
+        elif "colbert" in model_name_lower:
+            return ColBERTModelLoader(model_name, config, logger)
         elif "colqwen" in model_name_lower:
             return ColQwenModelLoader(model_name, config, logger)
         elif "col" in model_name_lower:  # ColPali models

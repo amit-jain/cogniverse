@@ -1017,3 +1017,218 @@ class TestEmbeddingGeneratorImpl:
         )
 
         assert result is None
+
+    def test_extract_segments_document_files(
+        self, frame_based_config, mock_logger, mock_backend_client
+    ):
+        """Test _extract_segments with document_files key."""
+        generator = EmbeddingGeneratorImpl(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+        doc_files = [
+            {"document_id": "doc1", "extracted_text": "Hello", "path": "/a.txt"},
+            {"document_id": "doc2", "extracted_text": "World", "path": "/b.md"},
+        ]
+        segments = generator._extract_segments({"document_files": doc_files})
+        assert len(segments) == 2
+        assert segments[0]["document_id"] == "doc1"
+        assert segments[1]["extracted_text"] == "World"
+
+    def test_extract_segments_audio_files(
+        self, frame_based_config, mock_logger, mock_backend_client
+    ):
+        """Test _extract_segments with audio_files key."""
+        generator = EmbeddingGeneratorImpl(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+        audio_files = [
+            {"audio_id": "clip1", "path": "/a.mp3"},
+            {"audio_id": "clip2", "path": "/b.wav"},
+        ]
+        segments = generator._extract_segments({"audio_files": audio_files})
+        assert len(segments) == 2
+        assert segments[0]["audio_id"] == "clip1"
+
+    def test_generate_embeddings_dispatches_document_content(
+        self, frame_based_config, mock_logger, mock_backend_client
+    ):
+        """Test generate_embeddings dispatches to _process_document_segments."""
+        generator = EmbeddingGeneratorImpl(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+        doc_files = [{"document_id": "d1", "extracted_text": "x", "path": "/a.txt"}]
+        video_data = {"video_id": "test", "document_files": doc_files}
+
+        expected = EmbeddingResult(
+            video_id="test", total_documents=1, documents_processed=1,
+            documents_fed=1, processing_time=0, errors=[], metadata={},
+        )
+        with patch.object(
+            generator, "_process_document_segments", return_value=expected
+        ) as mock_doc:
+            result = generator.generate_embeddings(video_data, Path("/tmp"))
+            mock_doc.assert_called_once_with(video_data, doc_files)
+            assert result.video_id == "test"
+
+    def test_generate_embeddings_dispatches_audio_content(
+        self, frame_based_config, mock_logger, mock_backend_client
+    ):
+        """Test generate_embeddings dispatches to _process_audio_segments."""
+        generator = EmbeddingGeneratorImpl(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+        audio_files = [{"audio_id": "a1", "path": "/a.mp3"}]
+        video_data = {"video_id": "test", "audio_files": audio_files}
+
+        expected = EmbeddingResult(
+            video_id="test", total_documents=1, documents_processed=1,
+            documents_fed=1, processing_time=0, errors=[], metadata={},
+        )
+        with patch.object(
+            generator, "_process_audio_segments", return_value=expected
+        ) as mock_audio:
+            result = generator.generate_embeddings(video_data, Path("/tmp"))
+            mock_audio.assert_called_once_with(video_data, audio_files)
+            assert result.video_id == "test"
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    def test_load_model_colbert(self, mock_get_model, mock_logger, mock_backend_client):
+        """Test _load_model loads ColBERT model when model name contains 'colbert'."""
+        config = {
+            "schema_name": "document_text",
+            "embedding_model": "lightonai/GTE-ModernColBERT-v1",
+            "embedding_type": "document_colbert",
+        }
+        mock_colbert = Mock()
+        mock_get_model.return_value = (mock_colbert, None)
+
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+
+        assert generator.colbert_model == mock_colbert
+        assert generator.model is None
+        assert generator.videoprism_loader is None
+        mock_get_model.assert_called_once_with(
+            "lightonai/GTE-ModernColBERT-v1", config, mock_logger
+        )
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    def test_load_model_audio_dual(self, mock_get_model, mock_logger, mock_backend_client):
+        """Test _load_model loads ColBERT for semantic when embedding_type is audio_dual."""
+        config = {
+            "schema_name": "audio_content",
+            "embedding_model": "laion/clap-htsat-unfused",
+            "embedding_type": "audio_dual",
+            "semantic_model": "lightonai/GTE-ModernColBERT-v1",
+        }
+        mock_colbert = Mock()
+        mock_get_model.return_value = (mock_colbert, None)
+
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+
+        assert generator.colbert_model == mock_colbert
+        assert generator.model is None
+        mock_get_model.assert_called_once_with(
+            "lightonai/GTE-ModernColBERT-v1", config, mock_logger
+        )
+
+    def test_process_document_segments_calls_colbert(
+        self, mock_logger, mock_backend_client
+    ):
+        """Test _process_document_segments uses ColBERT model to encode text."""
+        config = {
+            "schema_name": "document_text",
+            "embedding_model": "lightonai/GTE-ModernColBERT-v1",
+            "embedding_type": "frame_based",  # Skip auto-load
+        }
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+
+        mock_colbert = Mock()
+        mock_colbert.encode.return_value = [np.random.rand(10, 128)]
+        generator.colbert_model = mock_colbert
+        mock_backend_client.ingest_documents.return_value = {"success_count": 1}
+
+        doc_files = [
+            {
+                "document_id": "doc1",
+                "filename": "readme.txt",
+                "path": "/tmp/readme.txt",
+                "document_type": "txt",
+                "extracted_text": "This is test document content.",
+            }
+        ]
+        video_data = {"video_id": "content_dir", "document_files": doc_files}
+
+        result = generator._process_document_segments(video_data, doc_files)
+
+        assert result.documents_processed == 1
+        assert result.documents_fed == 1
+        mock_colbert.encode.assert_called_once_with(
+            ["This is test document content."], is_query=False
+        )
+        mock_backend_client.ingest_documents.assert_called_once()
+
+    def test_process_document_segments_empty_text_raises(
+        self, mock_logger, mock_backend_client
+    ):
+        """Test _process_document_segments raises on empty text."""
+        config = {"embedding_type": "frame_based"}
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator.colbert_model = Mock()
+
+        doc_files = [
+            {"document_id": "d1", "filename": "empty.txt", "path": "/tmp/e.txt",
+             "extracted_text": "   "}
+        ]
+        result = generator._process_document_segments(
+            {"video_id": "test", "document_files": doc_files}, doc_files
+        )
+        assert result.documents_processed == 0
+        assert len(result.errors) == 1
+        assert "no extracted text" in result.errors[0]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestModelLoaderFactoryColBERT:
+    """Test ModelLoaderFactory routes ColBERT model names correctly."""
+
+    def test_colbert_model_routes_to_colbert_loader(self):
+        from cogniverse_core.common.models.model_loaders import (
+            ColBERTModelLoader,
+            ModelLoaderFactory,
+        )
+
+        loader = ModelLoaderFactory.create_loader(
+            "lightonai/GTE-ModernColBERT-v1", {}, None
+        )
+        assert isinstance(loader, ColBERTModelLoader)
+
+    def test_colbert_before_colpali_in_routing(self):
+        """Verify 'colbert' matches ColBERTModelLoader, not ColPaliModelLoader."""
+        from cogniverse_core.common.models.model_loaders import (
+            ColBERTModelLoader,
+            ColPaliModelLoader,
+            ModelLoaderFactory,
+        )
+
+        loader = ModelLoaderFactory.create_loader("my-colbert-model", {}, None)
+        assert isinstance(loader, ColBERTModelLoader)
+        assert not isinstance(loader, ColPaliModelLoader)
+
+    def test_colpali_still_routes_correctly(self):
+        from cogniverse_core.common.models.model_loaders import (
+            ColPaliModelLoader,
+            ModelLoaderFactory,
+        )
+
+        loader = ModelLoaderFactory.create_loader("vidore/colsmol-500m", {}, None)
+        assert isinstance(loader, ColPaliModelLoader)
+
+    def test_colqwen_still_routes_correctly(self):
+        from cogniverse_core.common.models.model_loaders import (
+            ColQwenModelLoader,
+            ModelLoaderFactory,
+        )
+
+        loader = ModelLoaderFactory.create_loader("vidore/colqwen-omni-v0.1", {}, None)
+        assert isinstance(loader, ColQwenModelLoader)
