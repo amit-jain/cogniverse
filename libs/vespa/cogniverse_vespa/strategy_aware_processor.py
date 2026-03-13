@@ -1,6 +1,7 @@
 """
 Strategy-aware document processor for Vespa ingestion.
-This shows how processing should use the extracted ranking strategies.
+Formats documents and selects embedding fields based on ranking strategy requirements
+extracted from schema JSON files.
 """
 
 import json
@@ -32,7 +33,6 @@ class StrategyAwareProcessor:
 
     def _load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
         """Load ranking strategies from JSON file"""
-        # Get schemas directory from injected schema_loader
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         if not isinstance(self.schema_loader, FilesystemSchemaLoader):
@@ -66,7 +66,6 @@ class StrategyAwareProcessor:
 
         schema_strategies = self.ranking_strategies[schema_name]
 
-        # Check what any strategy needs
         needs_float = any(
             s.get("needs_float_embeddings", False) for s in schema_strategies.values()
         )
@@ -99,12 +98,21 @@ class StrategyAwareProcessor:
                 if field and "binary" in field:
                     binary_fields.add(field)
 
-        # Use the most common or first field name found
+        # Select the float field that pairs with the binary field. ColBERT/patch
+        # embeddings always come in float+binary pairs (e.g., semantic_embedding and
+        # semantic_embedding_binary). HNSW-only fields like acoustic_embedding have
+        # no binary counterpart and must not be selected as the primary float field.
         result = {}
-        if float_fields:
-            result["float_field"] = next(iter(float_fields))
         if binary_fields:
             result["binary_field"] = next(iter(binary_fields))
+            # Derive the float field from the binary field base name
+            binary_base = result["binary_field"].replace("_binary", "")
+            if binary_base in float_fields:
+                result["float_field"] = binary_base
+            elif float_fields:
+                result["float_field"] = next(iter(float_fields))
+        elif float_fields:
+            result["float_field"] = next(iter(float_fields))
 
         return result
 
@@ -224,39 +232,3 @@ class StrategyAwareProcessor:
 
         return {"cells": cells}
 
-
-# Example usage in processing pipeline
-def process_with_strategy_awareness(video_path: str, profile: str, schema_loader):
-    """Example of how to use strategy-aware processing"""
-
-    # Initialize processor with injected schema_loader
-    processor = StrategyAwareProcessor(schema_loader)
-
-    # Schema name is the same as profile name
-    schema_name = profile
-
-    # Check what's needed
-    requirements = processor.get_required_embeddings(schema_name)
-    print(f"Schema {schema_name} requires:")
-    print(f"  Float embeddings: {requirements['needs_float']}")
-    print(f"  Binary embeddings: {requirements['needs_binary']}")
-
-    # Get tensor information
-    tensor_info = processor.get_tensor_info(schema_name)
-    print(f"  Tensor dimensions: {tensor_info}")
-
-    # Process video and generate embeddings
-    # ... (video processing code)
-    embeddings = np.random.randn(16, 128)  # Example
-
-    # Format document based on strategy requirements
-    document = processor.format_document(
-        schema_name=schema_name,
-        video_id="test_video",
-        embeddings=embeddings,
-        metadata={"frame_id": 1, "start_time": 0.0, "end_time": 1.0},
-    )
-
-    print(f"Generated document fields: {list(document.keys())}")
-
-    return document

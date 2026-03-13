@@ -34,12 +34,24 @@ class JsonSchemaParser:
             "indexing": field_config.get("indexing", []),
         }
 
-        # Add optional parameters
         if "attribute" in field_config:
             field_params["attribute"] = field_config["attribute"]
 
         if "index" in field_config:
-            field_params["index"] = field_config["index"]
+            index_val = field_config["index"]
+            if isinstance(index_val, dict) and "hnsw" in index_val:
+                # HNSW index configuration → pyvespa ann parameter
+                from vespa.package import HNSW
+
+                hnsw_config = index_val["hnsw"]
+                field_params["ann"] = HNSW(
+                    max_links_per_node=hnsw_config.get("max-links-per-node", 16),
+                    neighbors_to_explore_at_insert=hnsw_config.get(
+                        "neighbors-to-explore-at-insert", 200
+                    ),
+                )
+            else:
+                field_params["index"] = index_val
 
         if "summary" in field_config:
             field_params["summary"] = field_config["summary"]
@@ -61,53 +73,43 @@ class JsonSchemaParser:
 
         rank_params = {"name": rp_config["name"]}
 
-        # Parse inputs
         if "inputs" in rp_config:
             rank_params["inputs"] = [
                 (inp["name"], inp["type"]) for inp in rp_config["inputs"]
             ]
 
-        # Parse functions
         if "functions" in rp_config:
             rank_params["functions"] = [
                 self.parse_function(func_config)
                 for func_config in rp_config["functions"]
             ]
 
-        # Parse first phase
         if "first_phase" in rp_config:
             first_phase = rp_config["first_phase"]
             if isinstance(first_phase, dict):
-                # Complex first phase with expression
                 rank_params["first_phase"] = FirstPhaseRanking(
                     expression=first_phase["expression"],
                     keep_rank_count=first_phase.get("keep_rank_count"),
                     rank_score_drop_limit=first_phase.get("rank_score_drop_limit"),
                 )
             else:
-                # Simple first phase expression
                 rank_params["first_phase"] = FirstPhaseRanking(expression=first_phase)
 
-        # Parse second phase
         if "second_phase" in rp_config:
             second_phase = rp_config["second_phase"]
             if isinstance(second_phase, dict):
-                # Complex second phase with rerank count
                 rank_params["second_phase"] = SecondPhaseRanking(
                     expression=second_phase["expression"],
                     rerank_count=second_phase.get("rerank_count", 100),
                 )
             else:
-                # Simple second phase expression
                 rank_params["second_phase"] = SecondPhaseRanking(
                     expression=second_phase, rerank_count=100
                 )
 
-        # Parse inheritance
         if "inherits" in rp_config:
             rank_params["inherits"] = rp_config["inherits"]
 
-        # Parse other optional parameters
         for param in [
             "constants",
             "summary_features",
@@ -136,10 +138,8 @@ class JsonSchemaParser:
     def parse_schema(self, schema_config: Dict[str, Any]) -> Schema:
         """Parse a complete schema configuration from JSON to PyVespa Schema object"""
 
-        # Parse document
         document = self.parse_document(schema_config["document"])
 
-        # Parse rank profiles
         rank_profiles = []
         if "rank_profiles" in schema_config:
             rank_profiles = [
@@ -147,7 +147,6 @@ class JsonSchemaParser:
                 for rp_config in schema_config["rank_profiles"]
             ]
 
-        # Parse fieldsets
         fieldsets = []
         if "fieldsets" in schema_config:
             fieldsets = [
@@ -155,21 +154,17 @@ class JsonSchemaParser:
                 for fieldset_config in schema_config["fieldsets"]
             ]
 
-        # Create schema first without rank profiles
         schema_params = {"name": schema_config["name"], "document": document}
 
-        # Add fieldsets if present
         if fieldsets:
             schema_params["fieldsets"] = fieldsets
 
-        # Add other optional schema-level parameters
         for param in ["imports", "annotations"]:
             if param in schema_config:
                 schema_params[param] = schema_config[param]
 
         schema = Schema(**schema_params)
 
-        # Add rank profiles using add_rank_profile method
         for rank_profile in rank_profiles:
             schema.add_rank_profile(rank_profile)
 
@@ -210,7 +205,6 @@ class JsonSchemaParser:
 
         errors = []
 
-        # Check required fields
         if "name" not in schema_config:
             errors.append("Schema must have a 'name' field")
 
@@ -223,7 +217,6 @@ class JsonSchemaParser:
             elif not isinstance(doc_config["fields"], list):
                 errors.append("Document 'fields' must be an array")
 
-        # Validate rank profiles
         if "rank_profiles" in schema_config:
             if not isinstance(schema_config["rank_profiles"], list):
                 errors.append("'rank_profiles' must be an array")

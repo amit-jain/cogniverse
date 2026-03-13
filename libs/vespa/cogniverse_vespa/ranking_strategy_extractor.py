@@ -37,12 +37,9 @@ class RankingStrategyInfo:
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
     description: str = ""
-    # New comprehensive fields
-    inputs: Dict[str, str] = field(default_factory=dict)  # Full input definitions
-    query_tensors_needed: List[str] = field(
-        default_factory=list
-    )  # List of tensor names needed
-    schema_name: str = ""  # Schema this strategy belongs to
+    inputs: Dict[str, str] = field(default_factory=dict)
+    query_tensors_needed: List[str] = field(default_factory=list)
+    schema_name: str = ""
 
 
 class RankingStrategyExtractor:
@@ -60,7 +57,6 @@ class RankingStrategyExtractor:
         schema_name = schema_json.get("schema", schema_json.get("name", ""))
         is_single_vector = "_sv_" in schema_name.lower()
 
-        # Extract field information
         fields = {f["name"]: f for f in schema_json["document"]["fields"]}
 
         strategies = {}
@@ -86,24 +82,20 @@ class RankingStrategyExtractor:
 
         profile_name = profile["name"]
 
-        # Parse inputs to determine what's needed
+        # Parse inputs: strip the "query(name)" wrapper to get the bare parameter name
         inputs = {}
         for input_def in profile.get("inputs", []):
             input_name = input_def["name"]
-            # Extract parameter name from "query(qt)" -> "qt"
             if "(" in input_name and ")" in input_name:
                 param_name = input_name[input_name.find("(") + 1 : input_name.find(")")]
             else:
                 param_name = input_name
             inputs[param_name] = input_def["type"]
 
-        # Determine what the profile needs
         needs_float_embeddings = any("float" in t for t in inputs.values())
         needs_binary_embeddings = any("int8" in t for t in inputs.values())
 
-        # Detect if it needs text query based on profile name or first phase expression
         first_phase = profile.get("first-phase", profile.get("first_phase", {}))
-        # Handle both string and dict formats
         if isinstance(first_phase, dict):
             first_phase_expr = first_phase.get("expression", "")
         else:
@@ -116,7 +108,6 @@ class RankingStrategyExtractor:
             or "text" in profile_name.lower()
         )
 
-        # Determine strategy type
         if needs_text_query and not (needs_float_embeddings or needs_binary_embeddings):
             strategy_type = SearchStrategyType.PURE_TEXT
         elif (
@@ -126,9 +117,8 @@ class RankingStrategyExtractor:
         else:
             strategy_type = SearchStrategyType.HYBRID
 
-        # Determine if uses nearestNeighbor based on schema and strategy
-        # Single-vector schemas (containing _sv_ in name) use nearestNeighbor
-        # for efficient ANN search, unlike multi-vector patch-based schemas
+        # Single-vector schemas (_sv_ in name) use nearestNeighbor for ANN search;
+        # multi-vector patch-based schemas use MaxSim over all patches instead.
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
@@ -149,7 +139,6 @@ class RankingStrategyExtractor:
             ]:
                 use_nearestneighbor = True
 
-                # Determine field and tensor based on profile
                 if profile_name == "float_float":
                     nearestneighbor_field = "embedding"
                     nearestneighbor_tensor = "qt"
@@ -165,26 +154,34 @@ class RankingStrategyExtractor:
                     nearestneighbor_field = "embedding_binary"
                     nearestneighbor_tensor = "qtb"
 
-        # Determine primary embedding field and query tensor
-        embedding_field = None
         query_tensor_name = None
 
         if "q" in inputs:
             query_tensor_name = "q"
-            embedding_field = "embeddings"  # Note: plural for chunks schema
         elif "qt" in inputs:
             query_tensor_name = "qt"
-            embedding_field = "embedding"
         elif "qtb" in inputs:
             query_tensor_name = "qtb"
-            embedding_field = "embedding_binary"
+        else:
+            for inp_name in inputs:
+                query_tensor_name = inp_name
+                break
 
-        # Generate description
+        embedding_field = self._extract_embedding_field(profile, query_tensor_name)
+
+        # If expression parsing yields nothing, fall back to convention-based names
+        if not embedding_field:
+            if query_tensor_name == "q":
+                embedding_field = "embeddings"  # plural for chunks schema
+            elif query_tensor_name == "qt":
+                embedding_field = "embedding"
+            elif query_tensor_name == "qtb":
+                embedding_field = "embedding_binary"
+
         description = self._generate_description(
             profile_name, strategy_type, needs_float_embeddings, needs_binary_embeddings
         )
 
-        # Build list of query tensors needed
         query_tensors_needed = list(inputs.keys())
 
         return RankingStrategyInfo(
@@ -204,6 +201,55 @@ class RankingStrategyExtractor:
             query_tensors_needed=query_tensors_needed,
             schema_name=schema_name,
         )
+
+    def _extract_embedding_field(
+        self, profile: Dict[str, Any], query_tensor_name: str | None
+    ) -> str | None:
+        """Extract the actual embedding field name from rank profile expressions.
+
+        Parses attribute(field_name) and closeness(field, field_name) references
+        from function expressions, first-phase, and second-phase to find the
+        real schema field being queried — rather than assuming hardcoded names.
+        """
+        import re
+
+        all_expressions = []
+        for func in profile.get("functions", []):
+            all_expressions.append(func.get("expression", ""))
+
+        first_phase = profile.get("first_phase", profile.get("first-phase", ""))
+        if isinstance(first_phase, dict):
+            all_expressions.append(first_phase.get("expression", ""))
+        elif isinstance(first_phase, str):
+            all_expressions.append(first_phase)
+
+        second_phase = profile.get("second_phase", profile.get("second-phase", {}))
+        if isinstance(second_phase, dict):
+            all_expressions.append(second_phase.get("expression", ""))
+
+        # Extract attribute(field_name) and closeness(field, field_name) references
+        attr_fields = []
+        for expr in all_expressions:
+            attr_fields.extend(re.findall(r"attribute\((\w+)\)", expr))
+            attr_fields.extend(re.findall(r"closeness\(field,\s*(\w+)\)", expr))
+
+        if not attr_fields:
+            return None
+
+        # Match the field to the query tensor type
+        if query_tensor_name in ("qt", "q"):
+            # Float tensor — prefer non-binary embedding field
+            for f in attr_fields:
+                if "binary" not in f:
+                    return f
+        elif query_tensor_name == "qtb":
+            # Binary tensor — prefer binary embedding field
+            for f in attr_fields:
+                if "binary" in f:
+                    return f
+
+        # Return first field found as fallback
+        return attr_fields[0] if attr_fields else None
 
     def _generate_description(
         self,
