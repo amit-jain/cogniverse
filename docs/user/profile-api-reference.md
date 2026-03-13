@@ -39,7 +39,7 @@ Or for validation errors:
     "message": "Invalid request",
     "errors": [
       "Field 'profile_name' is required",
-      "Field 'embedding_type' must be one of: frame_based, video_chunks, direct_video_segment, single_vector"
+      "Field 'embedding_type' must be one of: frame_based, video_chunks, direct_video_segment, single_vector, document_colbert, audio_dual"
     ]
   }
 }
@@ -74,7 +74,8 @@ Create a new backend profile for a tenant.
   "type": "string (optional, default: 'video')",
   "schema_name": "string (required)",
   "embedding_model": "string (required)",
-  "embedding_type": "string (required, enum: frame_based|video_chunks|direct_video_segment|single_vector)",
+  "embedding_type": "string (required, enum: frame_based|video_chunks|direct_video_segment|single_vector|document_colbert|audio_dual)",
+  "model_loader": "string (required, enum: colpali|colqwen|videoprism|colbert)",
   "description": "string (optional, default: '')",
   "strategies": {
     "segmentation": {
@@ -111,6 +112,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "vidore/colsmol-500m",
     "embedding_type": "frame_based",
+    "model_loader": "colpali",
     "description": "ColPali model with frame-based embedding for video search",
     "strategies": {
       "segmentation": {
@@ -148,10 +150,11 @@ curl -X POST http://localhost:8000/admin/profiles \
 
 - `profile_name`: Must be unique within tenant, alphanumeric + underscore + hyphen
 - `tenant_id`: Optional (defaults to "default"), non-empty if provided
-- `type`: Optional (defaults to "video"), typically "video", "image", "audio", or "text"
+- `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "text", "document"
 - `schema_name`: Must exist in schema directory
 - `embedding_model`: Format `org/model` or `model-name`
-- `embedding_type`: Must be `frame_based`, `video_chunks`, `direct_video_segment`, or `single_vector`
+- `embedding_type`: Must be `frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`, `document_colbert`, or `audio_dual`
+- `model_loader`: Must be `colpali`, `colqwen`, `videoprism`, or `colbert` — directly selects the model loader class in `ModelLoaderFactory`
 - `strategies`: Optional (defaults to empty dict), must be valid JSON object
 - `pipeline_config`: Optional (defaults to empty dict), must be valid JSON object
 - `model_specific`: Optional (defaults to null), must be valid JSON object
@@ -312,15 +315,15 @@ Update mutable fields of an existing profile.
 
 **Immutable Fields** (cannot be updated, create new profile instead):
 
-- `profile_name`
-
 - `type`
 
 - `schema_name`
 
 - `embedding_model`
 
-- `embedding_type`
+- `schema_config`
+
+- `model_loader`
 
 **Example Request:**
 
@@ -520,7 +523,8 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   type?: string,               // Optional (default: "video")
   schema_name: string,         // Required, must exist in schema dir
   embedding_model: string,     // Required (e.g., "vidore/colpali")
-  embedding_type: "frame_based" | "video_chunks" | "direct_video_segment" | "single_vector",  // Required
+  embedding_type: "frame_based" | "video_chunks" | "direct_video_segment" | "single_vector" | "document_colbert" | "audio_dual",  // Required
+  model_loader: "colpali" | "colqwen" | "videoprism" | "colbert",  // Required
   description?: string,        // Optional (default: "")
   strategies?: object,         // Optional (default: {}, Dict[str, Any])
   pipeline_config?: object,    // Optional (default: {}, Dict[str, Any])
@@ -564,6 +568,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   schema_name: string,
   embedding_model: string,
   embedding_type: string,
+  model_loader: string,
   description: string,
   strategies: object,              // Dict[str, Any]
   pipeline_config: object,         // Dict[str, Any]
@@ -649,6 +654,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "vidore/colsmol-500m",
     "embedding_type": "frame_based",
+    "model_loader": "colpali",
     "description": "Test profile for development"
   }'
 ```
@@ -768,7 +774,8 @@ profile = client.create_profile({
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "vidore/colsmol-500m",
-    "embedding_type": "frame_based"
+    "embedding_type": "frame_based",
+    "model_loader": "colpali"
 })
 ```
 
@@ -821,7 +828,8 @@ const profile = await client.createProfile({
   type: "video",
   schema_name: "video_colpali_smol500_mv_frame",
   embedding_model: "vidore/colsmol-500m",
-  embedding_type: "frame_based"
+  embedding_type: "frame_based",
+  model_loader: "colpali"
 });
 ```
 

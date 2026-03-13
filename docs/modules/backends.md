@@ -252,6 +252,7 @@ profile = BackendProfileConfig(
     description="Frame-based ColPali processing",
     schema_name="video_colpali_smol500_mv_frame",  # Vespa schema name
     embedding_model="vidore/colsmol-500m",
+    model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
         "transcribe_audio": True,
@@ -275,9 +276,10 @@ profile = BackendProfileConfig(
 - `profile_name`: Unique identifier for the profile
 - `schema_name`: Vespa schema name (without tenant suffix)
 - `embedding_model`: HuggingFace model ID or local path
+- `model_loader`: Loader class key (`colpali`, `colqwen`, `videoprism`, `colbert`)
 - `pipeline_config`: Video processing pipeline settings
 - `strategies`: Processing strategy classes and params
-- `embedding_type`: Type of embeddings (frame_based, video_chunks, direct_video_segment)
+- `embedding_type`: Type of embeddings (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`, `document_colbert`, `audio_dual`)
 - `schema_config`: Schema-specific metadata (dimensions, patches, etc.)
 
 #### BackendConfig Dataclass
@@ -430,6 +432,7 @@ tenant_profile = BackendProfileConfig(
     profile_name="acme_high_fps",
     schema_name="video_colpali_smol500_mv_frame",
     embedding_model="vidore/colsmol-500m",
+    model_loader="colpali",
     pipeline_config={"keyframe_fps": 5.0},  # 5 FPS instead of 1 FPS
     embedding_type="frame_based"
 )
@@ -588,12 +591,14 @@ flowchart TB
 
 ### What is a Profile?
 
-A **profile** is a complete video processing configuration that defines:
-1. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen-Omni)
-2. **Processing Pipeline**: Keyframe extraction, transcription, description generation
-3. **Segmentation Strategy**: Frame-based, chunk-based, or direct video
-4. **Vespa Schema**: Which schema structure to use
-5. **Ranking Strategies**: How to score and rank results
+A **profile** is a complete content processing configuration that defines:
+1. **Model Loader**: Which loader class to use (`colpali`, `colqwen`, `videoprism`, `colbert`) — the `model_loader` config key
+2. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen, ColBERT)
+3. **Embedding Type**: Processing mode (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`, `document_colbert`, `audio_dual`)
+4. **Processing Pipeline**: Keyframe extraction, transcription, description generation
+5. **Segmentation Strategy**: Frame-based, chunk-based, direct video, document segments, or audio segments
+6. **Vespa Schema**: Which schema structure to use (`document_text`, `audio_content`, or video schemas)
+7. **Ranking Strategies**: How to score and rank results
 
 ### Profile Types
 
@@ -705,6 +710,7 @@ custom_profile = BackendProfileConfig(
     profile_name="acme_ultra_high_quality",
     schema_name="video_colpali_smol500_mv_frame",  # Reuse existing schema
     embedding_model="vidore/colsmol-500m",
+    model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
         "keyframe_fps": 10.0,  # 10 FPS for ultra-high temporal resolution

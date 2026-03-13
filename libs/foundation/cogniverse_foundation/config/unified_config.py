@@ -213,9 +213,8 @@ class SystemConfig:
             ),
             ingestion_api_url=data.get("ingestion_api_url", "http://localhost:8000"),
             search_backend=data.get("search_backend", "vespa"),
-            backend_url=data.get("backend_url") or data.get("backend", {}).get("url"),
-            backend_port=data.get("backend_port")
-            or data.get("backend", {}).get("port"),
+            backend_url=data.get("backend_url", "http://localhost"),
+            backend_port=data.get("backend_port", 8080),
             llm_model=data.get("llm_model", "gpt-4"),
             base_url=data.get("base_url", "http://localhost:11434"),
             llm_api_key=data.get("llm_api_key"),
@@ -396,6 +395,7 @@ class BackendProfileConfig:
     schema_config: Dict[str, Any] = field(default_factory=dict)
     model_specific: Dict[str, Any] = field(default_factory=dict)
     process_type: Optional[str] = None
+    model_loader: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -413,6 +413,8 @@ class BackendProfileConfig:
             result["model_specific"] = self.model_specific
         if self.process_type:
             result["process_type"] = self.process_type
+        if self.model_loader:
+            result["model_loader"] = self.model_loader
         return result
 
     @classmethod
@@ -432,6 +434,7 @@ class BackendProfileConfig:
             schema_config=data.get("schema_config", {}),
             model_specific=data.get("model_specific", {}),
             process_type=data.get("process_type"),
+            model_loader=data.get("model_loader", ""),
         )
 
 

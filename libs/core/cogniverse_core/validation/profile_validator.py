@@ -28,10 +28,12 @@ class ProfileValidator:
         "video_chunks",
         "direct_video_segment",
         "single_vector",
+        "document_colbert",
+        "audio_dual",
     ]
 
     # Valid profile types
-    VALID_PROFILE_TYPES = ["video", "image", "audio", "text"]
+    VALID_PROFILE_TYPES = ["video", "image", "audio", "text", "document"]
 
     def __init__(
         self,
@@ -65,29 +67,15 @@ class ProfileValidator:
         """
         errors = []
 
-        # Check uniqueness (only for new profiles)
         if not is_update:
             errors.extend(self._validate_uniqueness(profile, tenant_id))
 
-        # Validate profile name format
         errors.extend(self._validate_profile_name(profile.profile_name))
-
-        # Validate profile type
         errors.extend(self._validate_profile_type(profile.type))
-
-        # Validate schema template exists
         errors.extend(self._validate_schema_template(profile.schema_name))
-
-        # Validate embedding model
         errors.extend(self._validate_embedding_model(profile.embedding_model))
-
-        # Validate embedding type
         errors.extend(self._validate_embedding_type(profile.embedding_type))
-
-        # Validate strategy classes
         errors.extend(self._validate_strategies(profile.strategies))
-
-        # Validate embedding dimensions (if specified)
         errors.extend(self._validate_embedding_dimensions(profile))
 
         return errors
@@ -121,7 +109,6 @@ class ProfileValidator:
             errors.append(f"Profile name must be string, got {type(profile_name)}")
             return errors
 
-        # Allow alphanumeric, underscore, hyphen
         if not profile_name.replace("_", "").replace("-", "").isalnum():
             errors.append(
                 f"Invalid profile name '{profile_name}': "
@@ -247,7 +234,6 @@ class ProfileValidator:
                 )
                 continue
 
-            # Check for 'class' field
             strategy_class = strategy_config.get("class")
             if not strategy_class:
                 errors.append(
@@ -306,9 +292,6 @@ class ProfileValidator:
         except ImportError as e:
             logger.warning(f"Cannot import strategy class '{class_path}': {e}")
             return False
-        except Exception as e:
-            logger.warning(f"Error checking strategy class '{class_path}': {e}")
-            return False
 
     def _validate_embedding_dimensions(
         self, profile: "BackendProfileConfig"
@@ -316,7 +299,6 @@ class ProfileValidator:
         """Validate embedding dimensions match schema."""
         errors = []
 
-        # Check if schema_config has embedding_dim
         embedding_dim = profile.schema_config.get("embedding_dim")
         if embedding_dim is None:
             # Not specified, skip validation
@@ -353,7 +335,7 @@ class ProfileValidator:
         errors = []
 
         # Fields that cannot be updated
-        immutable_fields = {"schema_name", "embedding_model", "schema_config", "type"}
+        immutable_fields = {"schema_name", "embedding_model", "schema_config", "type", "model_loader"}
 
         for field in immutable_fields:
             if field in update_fields:

@@ -148,7 +148,7 @@ class TestProfileTypeValidation:
 
     def test_valid_profile_types(self, validator: ProfileValidator):
         """Valid profile types should pass validation."""
-        valid_types = ["video", "image", "audio", "text"]
+        valid_types = ["video", "image", "audio", "text", "document"]
 
         for profile_type in valid_types:
             errors = validator._validate_profile_type(profile_type)
@@ -156,7 +156,7 @@ class TestProfileTypeValidation:
 
     def test_invalid_profile_types(self, validator: ProfileValidator):
         """Invalid profile types should fail validation."""
-        invalid_types = ["", "document", "pdf", "unknown"]
+        invalid_types = ["", "pdf", "unknown", "spreadsheet"]
 
         for profile_type in invalid_types:
             errors = validator._validate_profile_type(profile_type)
@@ -234,6 +234,8 @@ class TestEmbeddingTypeValidation:
             "video_chunks",
             "direct_video_segment",
             "single_vector",
+            "document_colbert",
+            "audio_dual",
         ]
 
         for embedding_type in valid_types:
@@ -348,7 +350,7 @@ class TestUpdateFieldValidation:
 
     def test_immutable_field_updates(self, validator: ProfileValidator):
         """Immutable fields should not be allowed in updates."""
-        immutable_fields = ["schema_name", "embedding_model", "schema_config", "type"]
+        immutable_fields = ["schema_name", "embedding_model", "schema_config", "type", "model_loader"]
 
         for field in immutable_fields:
             updates = {field: "new_value"}

@@ -2,7 +2,7 @@
 
 **Package:** `cogniverse_runtime` (Application Layer)
 **Module Location:** `libs/runtime/cogniverse_runtime/ingestion/`
-**Purpose**: Configurable video processing pipeline for multi-modal content extraction and indexing
+**Purpose**: Configurable multi-modal content processing pipeline for video, document, audio, and image extraction and indexing
 
 ---
 
@@ -61,19 +61,21 @@ libs/runtime/cogniverse_runtime/ingestion/
 
 ### Purpose and Responsibilities
 
-The Ingestion Module transforms raw video files into searchable, multi-modal representations through a **strategy-based** processing pipeline. It orchestrates:
+The Ingestion Module transforms raw content files into searchable, multi-modal representations through a **strategy-based** processing pipeline. It orchestrates:
 
 1. **Video Segmentation** - Extract frames, chunks, or sliding windows
 2. **Audio Transcription** - Whisper-based speech-to-text
 3. **Visual Description** - VLM-based frame descriptions
-4. **Embedding Generation** - ColPali, VideoPrism, ColQwen embeddings
-5. **Backend Ingestion** - Feed documents to Vespa search
+4. **Embedding Generation** - ColPali, VideoPrism, ColQwen, ColBERT embeddings
+5. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
+6. **Audio Processing** - CLAP acoustic + ColBERT semantic dual embeddings for audio content
+7. **Backend Ingestion** - Feed documents to Vespa search
 
 ### Key Features
 
 - **Strategy Pattern**: Pluggable processors configured via YAML profiles
 - **Async Processing**: Concurrent video processing with configurable parallelism
-- **Multi-Modal Support**: Text, video, image embeddings
+- **Multi-Modal Support**: Video, document, audio, and image embeddings
 - **Caching**: Per-profile artifact caching for keyframes, transcripts, descriptions
 - **Profile-Based**: Different strategies for different embedding models
 - **Format Conversion**: Binary (int8) vs Float (bfloat16) embeddings
@@ -490,10 +492,12 @@ sequenceDiagram
 
 **Embedding Processing Types:**
 
-- **Frame-Based**: ColPali multi-vector per frame (128×128 patches)
-- **Video Chunks**: ColQwen multi-vector per chunk
-- **Direct Video**: VideoPrism single global embedding
-- **Single-Vector Segments**: VideoPrism LVT per segment
+- **Frame-Based** (`frame_based`): ColPali multi-vector per frame (128×128 patches)
+- **Video Chunks** (`video_chunks`): ColQwen multi-vector per chunk
+- **Direct Video** (`direct_video_segment`): VideoPrism single global embedding
+- **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
+- **Document ColBERT** (`document_colbert`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
+- **Audio Dual** (`audio_dual`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
 
@@ -953,6 +957,34 @@ result = generator.generate_embeddings(
 - `_generate_video_chunks_embeddings()` - For ColQwen chunks
 - `_generate_direct_video_embeddings()` - For VideoPrism direct encoding
 - `_generate_single_vector_embeddings()` - For pre-segmented data
+
+### 6. EmbeddingGeneratorImpl
+
+**Purpose**: Extended embedding generator supporting document and audio content types via `model_loader` dispatch.
+
+**Extends**: `BaseEmbeddingGenerator` (not `EmbeddingGenerator`)
+
+**Model Loading**: Uses `ModelLoaderFactory` with the `model_loader` config key to select the loader class directly:
+
+```python
+# model_loader key maps directly to a loader class:
+# "colpali"    → ColPaliModelLoader
+# "colqwen"    → ColQwenModelLoader
+# "videoprism" → VideoPrismModelLoader
+# "colbert"    → ColBERTModelLoader
+```
+
+**Additional Processing Methods**:
+
+- `_process_document_segments()` - ColBERT 128-dim per-token multi-vector embeddings for text documents
+- `_process_audio_segments()` - CLAP 512-dim acoustic + ColBERT 128-dim semantic dual embeddings for audio
+
+**Required Profile Config Keys**:
+
+- `embedding_type` - Determines which attribute stores the result (required, raises `ValueError` if missing)
+- `embedding_model` - Model identifier for the loader (required, raises `ValueError` if missing)
+- `model_loader` - Selects the loader class in `ModelLoaderFactory` (required, raises `ValueError` if missing)
+- `semantic_model` - Secondary model for `audio_dual` embedding type (e.g., `lightonai/GTE-ModernColBERT-v1`)
 
 ---
 

@@ -451,3 +451,22 @@ class TestBackendConfigEdgeCases:
         assert data["type"] == "video"  # Default
         assert data["description"] == ""
         assert "process_type" not in data  # Optional, not included if None
+        assert "model_loader" not in data  # Optional, not included if empty
+
+    def test_model_loader_round_trip(self):
+        """Test model_loader survives serialization round-trip."""
+        profile = BackendProfileConfig(
+            profile_name="colbert_profile",
+            schema_name="document_text",
+            embedding_model="lightonai/GTE-ModernColBERT-v1",
+            embedding_type="document_colbert",
+            model_loader="colbert",
+        )
+
+        data = profile.to_dict()
+        assert data["model_loader"] == "colbert"
+
+        restored = BackendProfileConfig.from_dict("colbert_profile", data)
+        assert restored.model_loader == "colbert"
+        assert restored.embedding_type == "document_colbert"
+        assert restored.embedding_model == "lightonai/GTE-ModernColBERT-v1"

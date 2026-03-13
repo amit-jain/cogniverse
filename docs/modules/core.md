@@ -991,6 +991,50 @@ device = loader.get_device()  # "cuda", "mps", or "cpu"
 dtype = loader.get_dtype()    # bfloat16 for CUDA, float32 otherwise
 ```
 
+### ModelLoaderFactory (model_loaders.py)
+
+Factory for creating model loaders based on the `model_loader` config key:
+
+```python
+from cogniverse_core.common.models import ModelLoaderFactory
+
+# Config must contain "model_loader" key — raises ValueError if missing
+loader = ModelLoaderFactory.create_loader(
+    model_name="vidore/colsmol-500m",
+    config={"model_loader": "colpali", "embedding_type": "frame_based"},
+    logger=logger,
+)
+model, processor = loader.load_model()
+```
+
+**Loader Registry:**
+
+| `model_loader` key | Local Loader | Remote Loader |
+|---------------------|--------------|---------------|
+| `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
+| `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
+| `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
+| `colbert` | `ColBERTModelLoader` | *(not yet supported)* |
+
+Remote loaders are selected when `use_remote_inference: true` is set in config.
+
+### ColBERTModelLoader (model_loaders.py)
+
+Loads ColBERT late-interaction models via PyLate for document and audio semantic embeddings:
+
+```python
+from cogniverse_core.common.models import ColBERTModelLoader
+
+loader = ColBERTModelLoader(
+    model_name="lightonai/GTE-ModernColBERT-v1",
+    config={"model_loader": "colbert"},
+    logger=logger,
+)
+model, _ = loader.load_model()
+# model is a pylate.models.ColBERT instance
+# Returns 128-dim per-token multi-vector embeddings
+```
+
 ### RemoteInferenceClient (model_loaders.py)
 
 Client for remote model inference providers:
