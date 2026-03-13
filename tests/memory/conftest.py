@@ -29,8 +29,8 @@ MEMORY_BACKEND_CONTAINER = "backend-memory-tests"
 
 
 def wait_for_backend_ready(config_port: int, timeout: int = 120) -> bool:
-    """Wait for backend to be ready to accept requests"""
-    print(f"⏳ Waiting for backend to be ready on port {config_port}...")
+    """Wait for backend config server to be ready."""
+    print(f"⏳ Waiting for backend config server on port {config_port}...")
     for i in range(timeout):
         try:
             response = requests.get(
@@ -38,13 +38,39 @@ def wait_for_backend_ready(config_port: int, timeout: int = 120) -> bool:
                 timeout=2,
             )
             if response.status_code == 200:
-                print(f"✅ Backend ready after {i + 1} seconds")
+                print(f"✅ Backend config server ready after {i + 1} seconds")
                 return True
         except Exception:
             pass
         wait_for_service_startup(delay=1.0, description="Backend container startup")
 
-    print(f"❌ Backend not ready after {timeout} seconds")
+    print(f"❌ Backend config server not ready after {timeout} seconds")
+    return False
+
+
+def wait_for_data_port_ready(data_port: int, timeout: int = 120) -> bool:
+    """Wait for Vespa HTTP container node (data port) to respond with 200.
+
+    The config port (19071) becomes ready well before the HTTP container node
+    (8080) starts. After schema deployment the container node needs additional
+    time to initialize. This probe uses GET /ApplicationStatus on the data port
+    so it returns True only once the container node is fully up.
+    """
+    print(f"⏳ Waiting for Vespa HTTP container node on port {data_port}...")
+    for i in range(timeout):
+        try:
+            response = requests.get(
+                f"http://localhost:{data_port}/ApplicationStatus",
+                timeout=5,
+            )
+            if response.status_code == 200:
+                print(f"✅ Vespa HTTP container node ready after {i + 1} seconds")
+                return True
+        except Exception:
+            pass
+        wait_for_service_startup(delay=1.0, description="Data port readiness")
+
+    print(f"❌ Vespa HTTP container node not ready after {timeout} seconds")
     return False
 
 
@@ -109,17 +135,57 @@ def deploy_memory_schema_for_tests(
     return tenant_schema_name
 
 
-def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -> bool:
-    """Wait for schema to be ready to accept documents"""
-    print(f"⏳ Waiting for schema {schema_name} to be ready on port {data_port}...")
+def _get_real_embedding(text: str = "readiness check") -> list:
+    """Get a real embedding from Ollama nomic-embed-text for schema probes."""
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/embed",
+            json={"model": "nomic-embed-text", "input": text},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json()["embeddings"][0]
+    except Exception:
+        pass
+    # Fallback only for readiness probes — tests themselves must never use this
+    return [0.01] * 768
 
+
+def _namespace_for_schema(schema_name: str) -> str:
+    """Return the Vespa namespace that matches the schema's content type.
+
+    Must mirror the logic in VespaIngestionClient (ingestion_client.py).
+    """
+    if "agent_memories" in schema_name:
+        return "memory_content"
+    if any(
+        k in schema_name
+        for k in ("config_metadata", "tenant_metadata", "organization_metadata")
+    ):
+        return "metadata"
+    return "video"
+
+
+def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) -> bool:
+    """Wait for schema to be ready to accept documents.
+
+    Uses the namespace that matches the schema's content type so the probe
+    exercises the same code path as real document operations.
+    """
+    namespace = _namespace_for_schema(schema_name)
+    print(
+        f"⏳ Waiting for schema {schema_name} (namespace={namespace}) "
+        f"to be ready on port {data_port}..."
+    )
+
+    real_embedding = _get_real_embedding()
     test_doc = {
         "fields": {
             "id": "readiness_check",
             "text": "test",
             "user_id": "test",
             "agent_id": "test",
-            "embedding": [0.0] * 768,
+            "embedding": real_embedding,
             "metadata_": "{}",
             "created_at": 1234567890,
         }
@@ -127,17 +193,16 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -
 
     for i in range(timeout):
         try:
-            # Use correct Vespa document ID format: id:<namespace>:<schema>::<id>
             response = requests.post(
-                f"http://localhost:{data_port}/document/v1/video/{schema_name}/docid/readiness_check",
+                f"http://localhost:{data_port}/document/v1/{namespace}/{schema_name}/docid/readiness_check",
                 json=test_doc,
-                timeout=2,
+                timeout=5,
             )
             if response.status_code in [200, 201]:
                 # Cleanup test document
                 requests.delete(
-                    f"http://localhost:{data_port}/document/v1/video/{schema_name}/docid/readiness_check",
-                    timeout=2,
+                    f"http://localhost:{data_port}/document/v1/{namespace}/{schema_name}/docid/readiness_check",
+                    timeout=5,
                 )
                 print(f"✅ Schema {schema_name} ready after {i + 1} seconds")
                 return True
@@ -279,9 +344,13 @@ def shared_memory_vespa():
             schema_loader=schema_loader,
         )
 
-        # Deploy schema via SchemaRegistry (correct pattern)
+        # Deploy schema via SchemaRegistry with force=True so the application
+        # package is always pushed to the fresh test container. Without force=True
+        # the registry's schema_exists() check returns True (the schema is already
+        # registered in the main Vespa's ConfigStore from previous runs), causing
+        # deploy_schema to skip package deployment and leave port 8081 unreachable.
         tenant_schema_name = backend.schema_registry.deploy_schema(
-            tenant_id="test_tenant", base_schema_name="agent_memories"
+            tenant_id="test_tenant", base_schema_name="agent_memories", force=True
         )
         print(
             f"✅ Schema deployment completed via SchemaRegistry: {tenant_schema_name}"
@@ -303,11 +372,29 @@ def shared_memory_vespa():
         subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
         pytest.fail(f"Failed to deploy schema: {e}")
 
-    # Wait for schema to be fully ready
-    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, tenant_schema_name, timeout=60):
-        print("⚠️  Warning: Schema readiness check failed, but continuing anyway...")
-        print(
-            "   This may indicate deployment issues or readiness check needs updating"
+    # After schema deployment the Vespa HTTP container node (data port) needs
+    # additional time to start. Wait until it responds with 200 before testing.
+    if not wait_for_data_port_ready(MEMORY_BACKEND_PORT, timeout=120):
+        subprocess.run(
+            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+        )
+        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        pytest.fail(
+            f"Vespa HTTP container node (port {MEMORY_BACKEND_PORT}) not ready within "
+            "120 seconds after schema deployment."
+        )
+
+    # Wait for schema to be fully ready — fail hard if readiness times out.
+    # Tests depend on Vespa being able to accept document operations; silently
+    # continuing with an unready backend causes cascading test failures.
+    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, tenant_schema_name, timeout=120):
+        subprocess.run(
+            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+        )
+        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        pytest.fail(
+            f"Schema {tenant_schema_name} not ready within 120 seconds — "
+            "data port did not converge after schema deployment."
         )
 
     print("\n" + "=" * 70)

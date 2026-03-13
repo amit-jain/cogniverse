@@ -2,11 +2,14 @@
 End-to-end integration tests for video processing pipeline.
 
 Tests the complete pipeline from video input to final processed output,
-including keyframe extraction, audio transcription, and embedding generation.
+using real processors (KeyframeProcessor, ChunkProcessor, AudioProcessor)
+with a real video file. No mocked processors.
 """
 
-from unittest.mock import Mock, patch
+import logging
+from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -22,264 +25,116 @@ from cogniverse_runtime.ingestion.strategies import (
 
 @pytest.mark.integration
 class TestEndToEndVideoProcessing:
-    """End-to-end integration tests for video processing."""
+    """End-to-end integration tests for video processing with real processors."""
+
+    @pytest.fixture(scope="class")
+    def real_video_path(self, tmp_path_factory):
+        """Create a real 5-second video with varying hue frames."""
+        tmp = tmp_path_factory.mktemp("e2e_video")
+        video_path = tmp / "test_video.mp4"
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fps, width, height = 30, 640, 480
+        out = cv2.VideoWriter(str(video_path), fourcc, fps, (width, height))
+
+        for i in range(fps * 5):
+            hue = int((i / (fps * 5)) * 180)
+            frame = np.ones((height, width, 3), dtype=np.uint8)
+            frame[:, :] = [hue, 255, 255]
+            frame = cv2.cvtColor(frame, cv2.COLOR_HSV2BGR)
+            out.write(frame)
+
+        out.release()
+        return video_path
 
     @pytest.fixture
-    def mock_pipeline_config(self, temp_dir):
-        """Create a mock pipeline configuration."""
-        return {
-            "video_dir": temp_dir,
-            "output_dir": temp_dir / "output",
-            "cache_dir": temp_dir / "cache",
-            "max_concurrent_videos": 1,
-            "search_backend": "vespa",
-            "profiles": ["test_profile"],
-        }
+    def processor_manager(self):
+        """Create a real ProcessorManager with auto-discovered processors."""
+        logger = logging.getLogger("test_e2e_pipeline")
+        return ProcessorManager(logger)
 
     @pytest.fixture
-    def frame_based_strategy_set(self):
-        """Create frame-based processing strategy set."""
-        frame_strategy = FrameSegmentationStrategy(max_frames=5, fps=1.0, threshold=0.8)
-        audio_strategy = AudioTranscriptionStrategy()
-        embedding_strategy = MultiVectorEmbeddingStrategy()
+    def frame_strategy_set(self):
+        """Frame-based processing strategy set."""
         return ProcessingStrategySet(
-            segmentation=frame_strategy,
-            audio=audio_strategy,
-            embedding=embedding_strategy,
+            segmentation=FrameSegmentationStrategy(max_frames=5, fps=1.0, threshold=0.8),
+            audio=AudioTranscriptionStrategy(),
+            embedding=MultiVectorEmbeddingStrategy(),
         )
 
     @pytest.fixture
-    def chunk_based_strategy_set(self):
-        """Create chunk-based processing strategy set."""
-        chunk_strategy = ChunkSegmentationStrategy(
-            chunk_duration=10.0, chunk_overlap=1.0, cache_chunks=False
-        )
-        audio_strategy = AudioTranscriptionStrategy()
-        embedding_strategy = MultiVectorEmbeddingStrategy()
+    def chunk_strategy_set(self):
+        """Chunk-based processing strategy set."""
         return ProcessingStrategySet(
-            segmentation=chunk_strategy,
-            audio=audio_strategy,
-            embedding=embedding_strategy,
+            segmentation=ChunkSegmentationStrategy(
+                chunk_duration=2.0, chunk_overlap=0.0, cache_chunks=False
+            ),
+            audio=AudioTranscriptionStrategy(),
+            embedding=MultiVectorEmbeddingStrategy(),
         )
 
-    @patch(
-        "cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor"
-    )
-    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch(
-        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
-    )
     def test_complete_frame_based_pipeline(
-        self,
-        mock_embedding_class,
-        mock_audio_class,
-        mock_keyframe_class,
-        mock_logger,
-        frame_based_strategy_set,
-        temp_dir,
-        sample_video_path,
+        self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
-        """Test complete frame-based video processing pipeline."""
+        """Test complete frame-based pipeline with real processors."""
+        processor_manager.initialize_from_strategies(frame_strategy_set)
 
-        # Mock keyframe processor
-        mock_keyframe = Mock()
-        mock_keyframe.PROCESSOR_NAME = "keyframe"
-        mock_keyframe_result = {
-            "video_id": "test_video",
-            "total_keyframes": 3,
-            "fps": 1.0,
-            "keyframes": [
-                {"frame_index": 0, "timestamp": 0.0, "filename": "frame_0.jpg"},
-                {"frame_index": 30, "timestamp": 1.0, "filename": "frame_1.jpg"},
-                {"frame_index": 60, "timestamp": 2.0, "filename": "frame_2.jpg"},
-            ],
-        }
-        mock_keyframe.extract_keyframes.return_value = mock_keyframe_result
-        mock_keyframe_class.return_value = mock_keyframe
-        mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
+        keyframe_proc = processor_manager.get_processor("keyframe")
+        assert keyframe_proc is not None, "Real KeyframeProcessor should be auto-discovered"
 
-        # Mock audio processor
-        mock_audio = Mock()
-        mock_audio.PROCESSOR_NAME = "audio"
-        mock_audio_result = {
-            "video_id": "test_video",
-            "text": "This is test audio transcription.",
-            "segments": [
-                {"start": 0.0, "end": 2.5, "text": "This is test audio"},
-                {"start": 2.5, "end": 5.0, "text": "transcription."},
-            ],
-            "language": "en",
-        }
-        mock_audio.transcribe_audio.return_value = mock_audio_result
-        mock_audio_class.return_value = mock_audio
-        mock_audio_class.from_config = Mock(return_value=mock_audio)
+        output_dir = tmp_path / "frame_pipeline"
+        output_dir.mkdir()
+        keyframe_result = keyframe_proc.extract_keyframes(
+            real_video_path, output_dir=output_dir
+        )
 
-        # Mock embedding processor
-        mock_embedding = Mock()
-        mock_embedding.PROCESSOR_NAME = "embedding"
-        mock_embedding_result = {
-            "video_id": "test_video",
-            "embeddings": {
-                "frame_embeddings": [
-                    {"frame_index": 0, "embedding": np.random.rand(128).tolist()},
-                    {"frame_index": 1, "embedding": np.random.rand(128).tolist()},
-                    {"frame_index": 2, "embedding": np.random.rand(128).tolist()},
-                ],
-                "audio_embedding": np.random.rand(128).tolist(),
-            },
-        }
-        mock_embedding.generate_embeddings.return_value = mock_embedding_result
-        mock_embedding_class.return_value = mock_embedding
-        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
+        assert keyframe_result["video_id"] == "test_video"
+        assert len(keyframe_result["keyframes"]) > 0
+        assert keyframe_result["metadata"]["keyframes_extracted"] > 0
 
-        # Create processor manager with mocked processors
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
+        keyframes_dir = Path(keyframe_result["keyframes_dir"])
+        saved_files = list(keyframes_dir.glob("*.jpg"))
+        assert len(saved_files) == len(keyframe_result["keyframes"])
 
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = mock_keyframe_class
-            manager._processor_classes["audio"] = mock_audio_class
-            manager._processor_classes["embedding"] = mock_embedding_class
+        for kf in keyframe_result["keyframes"]:
+            assert kf["timestamp"] >= 0.0
+            assert "filename" in kf
 
-            # Initialize from strategies
-            manager.initialize_from_strategies(frame_based_strategy_set)
-
-            # Execute pipeline steps
-            keyframe_processor = manager.get_processor("keyframe")
-            audio_processor = manager.get_processor("audio")
-            embedding_processor = manager.get_processor("embedding")
-
-            # Process video through complete pipeline
-            keyframe_result = keyframe_processor.extract_keyframes(
-                sample_video_path, temp_dir
-            )
-            audio_result = audio_processor.transcribe_audio(sample_video_path)
-            embedding_result = embedding_processor.generate_embeddings(
-                {"keyframes": keyframe_result, "transcript": audio_result}
-            )
-
-            # Verify pipeline results
-            assert keyframe_result["total_keyframes"] == 3
-            assert audio_result["language"] == "en"
-            assert "frame_embeddings" in embedding_result["embeddings"]
-            assert len(embedding_result["embeddings"]["frame_embeddings"]) == 3
-
-            # Verify processors were called with correct data
-            mock_keyframe.extract_keyframes.assert_called_once_with(
-                sample_video_path, temp_dir
-            )
-            mock_audio.transcribe_audio.assert_called_once_with(sample_video_path)
-            mock_embedding.generate_embeddings.assert_called_once()
-
-    @patch("cogniverse_runtime.ingestion.processors.chunk_processor.ChunkProcessor")
-    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch(
-        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
-    )
+    @pytest.mark.requires_ffmpeg
     def test_complete_chunk_based_pipeline(
-        self,
-        mock_embedding_class,
-        mock_audio_class,
-        mock_chunk_class,
-        mock_logger,
-        chunk_based_strategy_set,
-        temp_dir,
-        sample_video_path,
+        self, processor_manager, chunk_strategy_set, real_video_path, tmp_path
     ):
-        """Test complete chunk-based video processing pipeline."""
+        """Test complete chunk-based pipeline with real processors."""
+        processor_manager.initialize_from_strategies(chunk_strategy_set)
 
-        # Mock chunk processor
-        mock_chunk = Mock()
-        mock_chunk.PROCESSOR_NAME = "chunk"
-        mock_chunk_result = {
-            "video_id": "test_video",
-            "total_chunks": 2,
-            "chunks": [
-                {"start_time": 0.0, "end_time": 10.0, "filename": "chunk_0.mp4"},
-                {"start_time": 9.0, "end_time": 19.0, "filename": "chunk_1.mp4"},
-            ],
-        }
-        mock_chunk.extract_chunks.return_value = mock_chunk_result
-        mock_chunk_class.return_value = mock_chunk
-        mock_chunk_class.from_config = Mock(return_value=mock_chunk)
+        chunk_proc = processor_manager.get_processor("chunk")
+        assert chunk_proc is not None, "Real ChunkProcessor should be auto-discovered"
 
-        # Mock audio processor
-        mock_audio = Mock()
-        mock_audio.PROCESSOR_NAME = "audio"
-        mock_audio_result = {
-            "video_id": "test_video",
-            "text": "Chunk-based audio transcription.",
-            "segments": [
-                {"start": 0.0, "end": 5.0, "text": "Chunk-based audio transcription."}
-            ],
-            "language": "en",
-        }
-        mock_audio.transcribe_audio.return_value = mock_audio_result
-        mock_audio_class.return_value = mock_audio
-        mock_audio_class.from_config = Mock(return_value=mock_audio)
+        output_dir = tmp_path / "chunk_pipeline"
+        output_dir.mkdir()
+        chunk_result = chunk_proc.extract_chunks(real_video_path, output_dir=output_dir)
 
-        # Mock embedding processor
-        mock_embedding = Mock()
-        mock_embedding.PROCESSOR_NAME = "embedding"
-        mock_embedding_result = {
-            "video_id": "test_video",
-            "embeddings": {
-                "chunk_embeddings": [
-                    {"chunk_index": 0, "embedding": np.random.rand(128).tolist()},
-                    {"chunk_index": 1, "embedding": np.random.rand(128).tolist()},
-                ],
-            },
-        }
-        mock_embedding.generate_embeddings.return_value = mock_embedding_result
-        mock_embedding_class.return_value = mock_embedding
-        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
+        assert chunk_result["video_id"] == "test_video"
+        assert len(chunk_result["chunks"]) > 0
+        assert chunk_result["metadata"]["chunks_extracted"] > 0
 
-        # Create processor manager
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
+        chunks_dir = Path(chunk_result["chunks_dir"])
+        saved_files = list(chunks_dir.glob("*.mp4"))
+        assert len(saved_files) == len(chunk_result["chunks"])
 
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["chunk"] = mock_chunk_class
-            manager._processor_classes["audio"] = mock_audio_class
-            manager._processor_classes["embedding"] = mock_embedding_class
-
-            # Initialize from strategies
-            manager.initialize_from_strategies(chunk_based_strategy_set)
-
-            # Execute chunk-based pipeline
-            chunk_processor = manager.get_processor("chunk")
-            audio_processor = manager.get_processor("audio")
-            embedding_processor = manager.get_processor("embedding")
-
-            # Process video
-            chunk_result = chunk_processor.extract_chunks(
-                sample_video_path, video_duration=20.0
-            )
-            audio_result = audio_processor.transcribe_audio(sample_video_path)
-            embedding_result = embedding_processor.generate_embeddings(
-                {"chunks": chunk_result, "transcript": audio_result}
-            )
-
-            # Verify results
-            assert chunk_result["total_chunks"] == 2
-            assert audio_result["text"] == "Chunk-based audio transcription."
-            assert "chunk_embeddings" in embedding_result["embeddings"]
-
-            # Verify processing calls
-            mock_chunk.extract_chunks.assert_called_once()
-            mock_audio.transcribe_audio.assert_called_once_with(sample_video_path)
-            mock_embedding.generate_embeddings.assert_called_once()
+        for chunk in chunk_result["chunks"]:
+            assert chunk["end_time"] > chunk["start_time"]
+            assert chunk["duration"] > 0
 
     def test_pipeline_error_propagation(
-        self, mock_logger, frame_based_strategy_set, temp_dir, sample_video_path
+        self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
-        """Test that errors in pipeline steps are properly propagated."""
+        """Test that errors in pipeline steps are properly propagated.
 
-        # Create processor that fails
+        Uses a real ProcessorManager with auto-discovered processors, then
+        injects one intentionally-failing processor to test error handling.
+        """
+
         class FailingKeyframeProcessor:
             PROCESSOR_NAME = "keyframe"
 
@@ -293,74 +148,24 @@ class TestEndToEndVideoProcessing:
             def extract_keyframes(self, *args, **kwargs):
                 raise ValueError("Keyframe extraction failed")
 
-        # Add working processors for audio and embedding (test focuses on keyframe failure)
-        class WorkingAudioProcessor:
-            PROCESSOR_NAME = "audio"
+        # Override just the keyframe processor; audio and embedding remain real
+        processor_manager._processor_classes["keyframe"] = FailingKeyframeProcessor
+        processor_manager.initialize_from_strategies(frame_strategy_set)
 
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
+        keyframe_proc = processor_manager.get_processor("keyframe")
 
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def transcribe_audio(self, *args, **kwargs):
-                return {"text": "test audio", "language": "en"}
-
-        class WorkingEmbeddingProcessor:
-            PROCESSOR_NAME = "embedding"
-
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def generate_embeddings(self, *args, **kwargs):
-                return {"embeddings": {"frame_embeddings": []}}
-
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
-
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = FailingKeyframeProcessor
-            manager._processor_classes["audio"] = WorkingAudioProcessor
-            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
-            manager.initialize_from_strategies(frame_based_strategy_set)
-
-            keyframe_processor = manager.get_processor("keyframe")
-
-            # Pipeline should propagate the error
-            with pytest.raises(ValueError, match="Keyframe extraction failed"):
-                keyframe_processor.extract_keyframes(sample_video_path, temp_dir)
+        with pytest.raises(ValueError, match="Keyframe extraction failed"):
+            keyframe_proc.extract_keyframes(real_video_path, output_dir=tmp_path)
 
     def test_pipeline_partial_failure_handling(
-        self, mock_logger, frame_based_strategy_set, temp_dir, sample_video_path
+        self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
-        """Test handling of partial failures in pipeline (some processors succeed, others fail)."""
+        """Test partial failure: keyframe succeeds, audio fails.
 
-        # Mock successful keyframe processor
-        class SuccessfulKeyframeProcessor:
-            PROCESSOR_NAME = "keyframe"
+        Uses real ProcessorManager with real keyframe processor,
+        injects a failing audio processor.
+        """
 
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def extract_keyframes(self, *args, **kwargs):
-                return {
-                    "video_id": "test_video",
-                    "total_keyframes": 1,
-                    "keyframes": [{"frame_index": 0, "timestamp": 0.0}],
-                }
-
-        # Mock failing audio processor
         class FailingAudioProcessor:
             PROCESSOR_NAME = "audio"
 
@@ -372,282 +177,96 @@ class TestEndToEndVideoProcessing:
                 return cls(logger, **config)
 
             def transcribe_audio(self, *args, **kwargs):
-                raise Exception("Audio processing failed")
+                raise RuntimeError("Audio processing failed")
 
-        # Mock working embedding processor (test focuses on audio failure)
-        class WorkingEmbeddingProcessor:
-            PROCESSOR_NAME = "embedding"
+        processor_manager._processor_classes["audio"] = FailingAudioProcessor
+        processor_manager.initialize_from_strategies(frame_strategy_set)
 
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def generate_embeddings(self, *args, **kwargs):
-                return {"embeddings": {"frame_embeddings": []}}
-
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
-
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = SuccessfulKeyframeProcessor
-            manager._processor_classes["audio"] = FailingAudioProcessor
-            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
-
-            manager.initialize_from_strategies(frame_based_strategy_set)
-
-            # Keyframe processing should succeed
-            keyframe_processor = manager.get_processor("keyframe")
-            keyframe_result = keyframe_processor.extract_keyframes(
-                sample_video_path, temp_dir
-            )
-            assert keyframe_result["total_keyframes"] == 1
-
-            # Audio processing should fail
-            audio_processor = manager.get_processor("audio")
-            with pytest.raises(Exception, match="Audio processing failed"):
-                audio_processor.transcribe_audio(sample_video_path)
-
-    @patch(
-        "cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor"
-    )
-    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
-    @patch(
-        "cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor"
-    )
-    def test_pipeline_data_flow_validation(
-        self,
-        mock_embedding_class,
-        mock_audio_class,
-        mock_keyframe_class,
-        mock_logger,
-        frame_based_strategy_set,
-        temp_dir,
-        sample_video_path,
-    ):
-        """Test that data flows correctly between pipeline stages."""
-
-        # Mock processors with specific return formats
-        mock_keyframe = Mock()
-        mock_keyframe_result = {
-            "video_id": "test_video",
-            "total_keyframes": 2,
-            "keyframes": [
-                {"frame_index": 0, "timestamp": 0.0, "filename": "frame_0.jpg"},
-                {"frame_index": 1, "timestamp": 1.0, "filename": "frame_1.jpg"},
-            ],
-        }
-        mock_keyframe.extract_keyframes.return_value = mock_keyframe_result
-        mock_keyframe_class.return_value = mock_keyframe
-        mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
-
-        mock_audio = Mock()
-        mock_audio_result = {
-            "video_id": "test_video",
-            "text": "Test audio",
-            "segments": [{"start": 0.0, "end": 2.0, "text": "Test audio"}],
-        }
-        mock_audio.transcribe_audio.return_value = mock_audio_result
-        mock_audio_class.return_value = mock_audio
-        mock_audio_class.from_config = Mock(return_value=mock_audio)
-
-        # Mock embedding processor
-        mock_embedding = Mock()
-        mock_embedding_result = {
-            "video_id": "test_video",
-            "embeddings": {
-                "frame_embeddings": [
-                    {"frame_index": 0, "embedding": [0.1, 0.2, 0.3]},
-                    {"frame_index": 1, "embedding": [0.4, 0.5, 0.6]},
-                ]
-            },
-        }
-        mock_embedding.generate_embeddings.return_value = mock_embedding_result
-        mock_embedding_class.return_value = mock_embedding
-        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
-
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
-
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = mock_keyframe_class
-            manager._processor_classes["audio"] = mock_audio_class
-            manager._processor_classes["embedding"] = mock_embedding_class
-
-            manager.initialize_from_strategies(frame_based_strategy_set)
-
-            # Execute pipeline and verify data flow
-            keyframe_processor = manager.get_processor("keyframe")
-            audio_processor = manager.get_processor("audio")
-            embedding_processor = manager.get_processor("embedding")
-
-            # Step 1: Extract keyframes
-            keyframes = keyframe_processor.extract_keyframes(
-                sample_video_path, temp_dir
-            )
-
-            # Step 2: Process audio
-            transcript = audio_processor.transcribe_audio(sample_video_path)
-
-            # Step 3: Generate embeddings
-            embeddings = embedding_processor.generate_embeddings(
-                {"keyframes": keyframes, "transcript": transcript}
-            )
-
-            # Verify data consistency
-            assert (
-                keyframes["video_id"]
-                == transcript["video_id"]
-                == embeddings["video_id"]
-            )
-            assert keyframes["video_id"] == "test_video"
-
-            # Verify data format compliance
-            assert "total_keyframes" in keyframes
-            assert "keyframes" in keyframes
-            assert isinstance(keyframes["keyframes"], list)
-
-            assert "text" in transcript
-            assert "segments" in transcript
-            assert isinstance(transcript["segments"], list)
-
-    def test_pipeline_configuration_consistency(self, mock_logger, temp_dir):
-        """Test that pipeline configurations are applied consistently across processors."""
-
-        # Create strategy with specific configuration
-        frame_strategy = FrameSegmentationStrategy(
-            max_frames=15, fps=2.0, threshold=0.95
+        # Real keyframe processing succeeds
+        keyframe_proc = processor_manager.get_processor("keyframe")
+        output_dir = tmp_path / "partial_failure"
+        output_dir.mkdir()
+        keyframe_result = keyframe_proc.extract_keyframes(
+            real_video_path, output_dir=output_dir
         )
-        strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
+        assert len(keyframe_result["keyframes"]) > 0
 
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
+        # Injected failing audio processor raises
+        audio_proc = processor_manager.get_processor("audio")
+        with pytest.raises(RuntimeError, match="Audio processing failed"):
+            audio_proc.transcribe_audio(real_video_path)
 
-            # Mock processor that stores configuration
-            class ConfigurableProcessor:
-                PROCESSOR_NAME = "keyframe"
-
-                def __init__(self, logger, **kwargs):
-                    self.logger = logger
-                    self.config = kwargs
-
-                @classmethod
-                def from_config(cls, config, logger):
-                    return cls(logger, **config)
-
-                def get_config(self):
-                    return self.config
-
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = ConfigurableProcessor
-            manager.initialize_from_strategies(strategy_set)
-
-            # Verify processor got correct configuration
-            processor = manager.get_processor("keyframe")
-            config = processor.get_config()
-
-            assert config["max_frames"] == 15
-            assert config["fps"] == 2.0
-            assert config["threshold"] == 0.95
-
-    def test_pipeline_concurrent_processing_safety(
-        self, mock_logger, frame_based_strategy_set, temp_dir, sample_video_path
+    def test_pipeline_data_flow_between_stages(
+        self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
-        """Test pipeline safety under concurrent processing scenarios."""
+        """Test data flows correctly between real pipeline stages."""
+        processor_manager.initialize_from_strategies(frame_strategy_set)
+
+        keyframe_proc = processor_manager.get_processor("keyframe")
+        output_dir = tmp_path / "data_flow"
+        output_dir.mkdir()
+
+        keyframe_result = keyframe_proc.extract_keyframes(
+            real_video_path, output_dir=output_dir
+        )
+
+        # Verify real output structure
+        assert keyframe_result["video_id"] == "test_video"
+        assert "keyframes" in keyframe_result
+        assert isinstance(keyframe_result["keyframes"], list)
+        assert "metadata" in keyframe_result
+        assert isinstance(keyframe_result["metadata"], dict)
+        assert keyframe_result["metadata"]["video_id"] == "test_video"
+
+    def test_pipeline_configuration_flows_to_real_processor(self, tmp_path):
+        """Test that strategy config parameters reach real processor constructors."""
+        logger = logging.getLogger("test_config_flow")
+        manager = ProcessorManager(logger)
+
+        strategy = FrameSegmentationStrategy(max_frames=15, fps=2.0, threshold=0.95)
+        strategy_set = ProcessingStrategySet(segmentation=strategy)
+        manager.initialize_from_strategies(strategy_set)
+
+        processor = manager.get_processor("keyframe")
+        assert processor is not None
+
+        # Verify real KeyframeProcessor received the config values
+        assert processor.max_frames == 15
+        assert processor.fps == 2.0
+        assert processor.threshold == 0.95
+
+    def test_pipeline_concurrent_keyframe_extraction(
+        self, processor_manager, frame_strategy_set, real_video_path, tmp_path
+    ):
+        """Test concurrent real keyframe extraction is thread-safe."""
         import threading
 
-        from tests.utils.async_polling import simulate_processing_delay
+        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor = processor_manager.get_processor("keyframe")
 
-        # Mock thread-safe processor
-        class ThreadSafeProcessor:
-            PROCESSOR_NAME = "keyframe"
+        results = []
+        errors = []
 
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-                self.call_count = 0
-                self._lock = threading.Lock()
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def extract_keyframes(self, *args, **kwargs):
-                with self._lock:
-                    self.call_count += 1
-                    simulate_processing_delay(
-                        delay=0.01, description="concurrent processing"
-                    )
-                    return {
-                        "video_id": f"video_{self.call_count}",
-                        "total_keyframes": 1,
-                    }
-
-        # Mock working audio processor
-        class WorkingAudioProcessor:
-            PROCESSOR_NAME = "audio"
-
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def transcribe_audio(self, *args, **kwargs):
-                return {"text": "test audio", "language": "en"}
-
-        # Mock working embedding processor
-        class WorkingEmbeddingProcessor:
-            PROCESSOR_NAME = "embedding"
-
-            def __init__(self, logger, **kwargs):
-                self.logger = logger
-
-            @classmethod
-            def from_config(cls, config, logger):
-                return cls(logger, **config)
-
-            def generate_embeddings(self, *args, **kwargs):
-                return {"embeddings": {"frame_embeddings": []}}
-
-        with patch(
-            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
-        ) as mock_iter:
-            mock_iter.return_value = []
-
-            manager = ProcessorManager(mock_logger)
-            manager._processor_classes["keyframe"] = ThreadSafeProcessor
-            manager._processor_classes["audio"] = WorkingAudioProcessor
-            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
-            manager.initialize_from_strategies(frame_based_strategy_set)
-
-            processor = manager.get_processor("keyframe")
-            results = []
-
-            def process_video():
-                result = processor.extract_keyframes(sample_video_path, temp_dir)
+        def extract_keyframes(thread_idx):
+            try:
+                output_dir = tmp_path / f"concurrent_{thread_idx}"
+                output_dir.mkdir(exist_ok=True)
+                result = processor.extract_keyframes(
+                    real_video_path, output_dir=output_dir
+                )
                 results.append(result)
+            except Exception as e:
+                errors.append(e)
 
-            # Run multiple threads concurrently
-            threads = [threading.Thread(target=process_video) for _ in range(3)]
+        threads = [threading.Thread(target=extract_keyframes, args=(i,)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-            for thread in threads:
-                thread.start()
+        assert len(errors) == 0, f"Concurrent extraction errors: {errors}"
+        assert len(results) == 3
 
-            for thread in threads:
-                thread.join()
-
-            # All threads should complete successfully
-            assert len(results) == 3
-
-            # Results should have unique video IDs (indicating separate processing)
-            video_ids = [result["video_id"] for result in results]
-            assert len(set(video_ids)) == 3
+        for result in results:
+            assert result["video_id"] == "test_video"
+            assert len(result["keyframes"]) > 0

@@ -3,7 +3,7 @@ Integration test configuration for runtime integration tests.
 
 Provides shared Vespa Docker instance with metadata schemas deployed,
 plus ConfigManager, SchemaLoader, and FastAPI TestClient fixtures
-wired with real dependencies (only QueryEncoder is mocked).
+wired with real dependencies including real ColPali query encoder.
 """
 
 import json
@@ -141,8 +141,8 @@ def vespa_instance():
         try:
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
-        except Exception:
-            pass
+        except Exception as cleanup_err:
+            logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
 
 
 @pytest.fixture(scope="module")
@@ -174,7 +174,7 @@ def config_manager(vespa_instance):
             profile_name="test_colpali",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colpali-v1.2",
+            embedding_model="vidore/colsmol-500m",
         ),
         tenant_id="default",
     )
@@ -201,7 +201,7 @@ def config_manager(vespa_instance):
             profile_name="tenant_b_profile",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colpali-v1.2",
+            embedding_model="vidore/colsmol-500m",
         ),
         tenant_id="tenant_b",
     )

@@ -3,17 +3,32 @@ Pytest configuration and fixtures for evaluation framework tests.
 """
 
 import json
+import logging
 
 # Add project root to path
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import httpx
+import numpy as np
 import pandas as pd
 import pytest
+import requests
+import torch
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+eval_logger = logging.getLogger(__name__)
+
+# Path to schema JSON files
+EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
+EVAL_COLPALI_MODEL = "vidore/colsmol-500m"
+EVAL_TENANT_SCHEMA = "video_colpali_smol500_mv_frame_default"
 
 
 # Standardized Phoenix Docker container fixture for integration tests
@@ -393,8 +408,6 @@ def mock_provider_for_unit_tests(request):
             # Mock Phoenix evaluator base class
 
             class MockPhoenixEvaluator:
-                """Mock Phoenix evaluator base"""
-
                 pass
 
             # Mock framework
@@ -413,23 +426,20 @@ def mock_provider_for_unit_tests(request):
             mock_framework.create_evaluation_result = mock_create_result
             mock_provider.framework = mock_framework
 
-            # Mock telemetry provider with async methods
             mock_telemetry = MagicMock()
 
-            # Mock datasets with async get_dataset
             mock_datasets = MagicMock()
 
             async def mock_get_dataset(name):
-                return None  # Default return, tests can override
+                return None
 
             mock_datasets.get_dataset = AsyncMock(side_effect=mock_get_dataset)
             mock_telemetry.datasets = mock_datasets
 
-            # Mock traces with async get_spans
             mock_traces = MagicMock()
 
             async def mock_get_spans(**kwargs):
-                return pd.DataFrame()  # Default empty dataframe
+                return pd.DataFrame()
 
             mock_traces.get_spans = AsyncMock(side_effect=mock_get_spans)
             mock_telemetry.traces = mock_traces
@@ -447,3 +457,370 @@ def reset_singletons():
     """Reset any singleton instances between tests."""
     # Add any singleton resets here if needed
     yield
+
+
+# Evaluation integration test infrastructure
+#
+# These module-scoped fixtures provide real Vespa + ColPali search for
+# evaluation integration tests that exercise the experiment mode solver.
+# Only activated when tests request them (not autouse).
+
+
+def _make_noop_telemetry_manager():
+    """Create a no-op telemetry manager for evaluation search tests."""
+    manager = MagicMock()
+
+    @contextmanager
+    def _noop_span(*args, **kwargs):
+        span = MagicMock()
+        yield span
+
+    manager.span = _noop_span
+    manager.session_span = _noop_span
+    return manager
+
+
+def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
+    """Convert (num_patches, 128) float32 embeddings to Vespa tensor dict format."""
+    float_dict = {
+        str(idx): vector.tolist() for idx, vector in enumerate(embeddings)
+    }
+    binarized = np.packbits(
+        np.where(embeddings > 0, 1, 0).astype(np.uint8), axis=1
+    ).astype(np.int8)
+    binary_dict = {
+        str(idx): vector.tolist() for idx, vector in enumerate(binarized)
+    }
+    return float_dict, binary_dict
+
+
+@pytest.fixture(scope="module")
+def eval_vespa_instance():
+    """Start Vespa Docker container for evaluation integration tests.
+
+    Deploys metadata + data schemas in a single application package.
+    Module-scoped to share across all tests in the integration module.
+    """
+    # Import lazily to avoid loading for unit tests
+    import cogniverse_vespa  # noqa: F401
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from tests.utils.vespa_docker import VespaDockerManager
+
+    manager = VespaDockerManager()
+
+    BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+
+    try:
+        container_info = manager.start_container(
+            module_name="evaluation_integration_tests",
+            use_module_ports=True,
+        )
+        manager.wait_for_config_ready(container_info, timeout=180)
+
+        eval_logger.info("Waiting 15s for Vespa internal services...")
+        time.sleep(15)
+
+        # Deploy metadata + data schemas
+        from vespa.package import ApplicationPackage
+
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+
+        metadata_schemas = [
+            create_organization_metadata_schema(),
+            create_tenant_metadata_schema(),
+            create_config_metadata_schema(),
+            create_adapter_registry_schema(),
+        ]
+
+        schema_file = EVAL_SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
+        with open(schema_file) as f:
+            schema_json = json.load(f)
+        schema_json["name"] = EVAL_TENANT_SCHEMA
+        schema_json["document"]["name"] = EVAL_TENANT_SCHEMA
+
+        parser = JsonSchemaParser()
+        data_schema = parser.parse_schema(schema_json)
+
+        all_schemas = metadata_schemas + [data_schema]
+        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
+
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        schema_manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=container_info["config_port"],
+        )
+        schema_manager._deploy_package(app_package)
+
+        manager.wait_for_application_ready(container_info, timeout=120)
+
+        eval_logger.info("Evaluation Vespa ready")
+        yield container_info
+
+    except Exception as e:
+        eval_logger.error(f"Failed to start evaluation Vespa: {e}")
+        pytest.skip(f"Failed to start evaluation Vespa: {e}")
+
+    finally:
+        manager.stop_container()
+        try:
+            BackendRegistry._instance = None
+            BackendRegistry._backend_instances.clear()
+        except Exception as cleanup_err:
+            eval_logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
+
+
+@pytest.fixture(scope="module")
+def eval_colpali_model():
+    """Load ColPali model once for evaluation integration tests."""
+    from cogniverse_core.common.models import get_or_load_model
+    from cogniverse_core.query.encoders import QueryEncoderFactory
+
+    config = {
+        "colpali_model": EVAL_COLPALI_MODEL,
+        "embedding_type": "frame_based",
+        "model_loader": "colpali",
+    }
+    model, processor = get_or_load_model(EVAL_COLPALI_MODEL, config, eval_logger)
+    device = next(model.parameters()).device
+
+    yield model, processor, device
+
+    QueryEncoderFactory._encoder_cache.clear()
+
+
+@pytest.fixture(scope="module")
+def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
+    """Feed real ColPali-embedded documents into Vespa for evaluation tests."""
+    model, processor, device = eval_colpali_model
+
+    test_docs = [
+        {"color": (255, 0, 0), "title": "Red sunset landscape", "video_id": "sunset_vid"},
+        {"color": (0, 0, 255), "title": "Ocean waves coastal scene", "video_id": "ocean_vid"},
+        {"color": (0, 128, 0), "title": "Forest trail nature walk", "video_id": "forest_vid"},
+    ]
+
+    http_port = eval_vespa_instance["http_port"]
+
+    for i, doc_info in enumerate(test_docs):
+        img = Image.new("RGB", (224, 224), color=doc_info["color"])
+        batch_inputs = processor.process_images([img]).to(device)
+        with torch.no_grad():
+            doc_embeddings = model(**batch_inputs)
+        embeddings_np = doc_embeddings.squeeze(0).cpu().float().numpy()
+
+        float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
+
+        doc_id = f"eval_test_doc_{i}"
+        vespa_doc = {
+            "fields": {
+                "video_id": doc_info["video_id"],
+                "video_title": doc_info["title"],
+                "segment_id": 0,
+                "start_time": 0.0,
+                "end_time": 5.0,
+                "segment_description": doc_info["title"],
+                "audio_transcript": "",
+                "embedding": float_dict,
+                "embedding_binary": binary_dict,
+            }
+        }
+
+        resp = requests.post(
+            f"http://localhost:{http_port}/document/v1/video/{EVAL_TENANT_SCHEMA}/docid/{doc_id}",
+            json=vespa_doc,
+            timeout=10,
+        )
+        assert resp.status_code in [200, 201], (
+            f"Failed to feed eval doc {doc_id}: {resp.status_code}: {resp.text[:200]}"
+        )
+
+    time.sleep(5)
+
+    yield test_docs
+
+    for i in range(len(test_docs)):
+        doc_id = f"eval_test_doc_{i}"
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/video/{EVAL_TENANT_SCHEMA}/docid/{doc_id}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="module")
+def eval_search_client(eval_vespa_instance, eval_seeded_documents):
+    """FastAPI TestClient with real search router wired to test Vespa.
+
+    Provides a TestClient that can execute real searches using ColPali encoder
+    against the test Vespa instance with seeded documents.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import (
+        BackendProfileConfig,
+        SystemConfig,
+    )
+    from cogniverse_runtime.routers import search
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    # Create ConfigManager backed by test Vespa
+    store = VespaConfigStore(
+        backend_url="http://localhost",
+        backend_port=eval_vespa_instance["http_port"],
+    )
+    cm = ConfigManager(store=store)
+    cm.set_system_config(SystemConfig(
+        tenant_id="default",
+        backend_url="http://localhost",
+        backend_port=eval_vespa_instance["http_port"],
+    ))
+    cm.add_backend_profile(
+        BackendProfileConfig(
+            profile_name="test_colpali",
+            type="video",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model=EVAL_COLPALI_MODEL,
+        ),
+        tenant_id="default",
+    )
+
+    schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)
+
+    # Create FastAPI app with search router
+    app = FastAPI()
+    app.include_router(search.router, prefix="/search")
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: cm
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: schema_loader
+
+    # Monkey-patch telemetry to noop (get_telemetry_manager is called at request
+    # time inside the route handler, not at import time)
+    original_get_tm = search.get_telemetry_manager
+    noop_tm = _make_noop_telemetry_manager()
+    search.get_telemetry_manager = lambda: noop_tm
+
+    with TestClient(app) as client:
+        yield client
+
+    search.get_telemetry_manager = original_get_tm
+
+
+@contextmanager
+def intercept_search_calls(test_client):
+    """Context manager that routes httpx.post calls through a TestClient.
+
+    The evaluation solver makes httpx.post calls to the runtime search API.
+    This interceptor routes those calls through the TestClient so they hit
+    the real search router (with real encoder + real Vespa) without needing
+    a running HTTP server.
+    """
+    original_post = httpx.post
+
+    def patched_post(url, **kwargs):
+        if "/search" in url:
+            resp = test_client.post("/search/", json=kwargs.get("json"))
+            return httpx.Response(
+                status_code=resp.status_code,
+                content=resp.content,
+                headers=dict(resp.headers),
+                request=httpx.Request("POST", url),
+            )
+        return original_post(url, **kwargs)
+
+    with patch("httpx.post", side_effect=patched_post):
+        yield
+
+
+@pytest.fixture
+def search_evaluator_provider():
+    """Mock evaluator provider with queries matching seeded Vespa documents.
+
+    Phoenix dataset loading is orthogonal to search — we mock it to provide
+    test queries that match the documents fed into Vespa.
+    """
+    with patch("phoenix.Client") as mock_client_class:
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        mock_dataset = MagicMock()
+        mock_dataset.id = "test_dataset_id"
+        mock_dataset.name = "test_dataset"
+        mock_dataset.examples = [
+            MagicMock(
+                id="example1",
+                input={"query": "sunset landscape mountains", "category": "visual"},
+                output={"expected_videos": ["sunset_vid"], "expected_items": ["sunset_vid"]},
+            ),
+            MagicMock(
+                id="example2",
+                input={"query": "ocean waves coastal", "category": "visual"},
+                output={"expected_videos": ["ocean_vid"], "expected_items": ["ocean_vid"]},
+            ),
+        ]
+        mock_dataset.as_dataframe.return_value = pd.DataFrame([
+            {"input": {"query": "sunset landscape mountains", "expected_videos": "sunset_vid", "query_type": "visual"}},
+            {"input": {"query": "ocean waves coastal", "expected_videos": "ocean_vid", "query_type": "visual"}},
+        ])
+        mock_client.get_dataset.return_value = mock_dataset
+        mock_client.upload_dataset.return_value = mock_dataset
+
+        # Mock spans for batch mode
+        mock_df = pd.DataFrame([{
+            "trace_id": "trace1",
+            "attributes.input.value": "sunset query",
+            "attributes.output.value": [{"item_id": "sunset_vid", "score": 0.9}],
+            "attributes.metadata.profile": "test_colpali",
+            "attributes.metadata.strategy": "default",
+            "timestamp": datetime.now().isoformat(),
+            "duration_ms": 100,
+        }])
+        mock_client.get_spans_dataframe.return_value = mock_df
+
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider"
+        ) as mock_get_provider:
+            mock_provider = MagicMock()
+
+            mock_telemetry = MagicMock()
+
+            async def mock_get_dataset(name):
+                dataset = mock_client.get_dataset(name)
+                if dataset is None:
+                    return None
+                return {
+                    "id": dataset.id,
+                    "name": dataset.name,
+                    "examples": [
+                        {"id": ex.id, "input": ex.input, "output": ex.output}
+                        for ex in dataset.examples
+                    ],
+                }
+
+            mock_datasets = MagicMock()
+            mock_datasets.get_dataset = mock_get_dataset
+            mock_telemetry.datasets = mock_datasets
+
+            async def mock_get_spans(**kwargs):
+                return mock_client.get_spans_dataframe(**kwargs)
+
+            mock_traces = MagicMock()
+            mock_traces.get_spans = mock_get_spans
+            mock_telemetry.traces = mock_traces
+
+            mock_provider.telemetry = mock_telemetry
+            mock_provider.http_endpoint = "http://localhost:6006"
+            mock_get_provider.return_value = mock_provider
+
+            yield mock_provider

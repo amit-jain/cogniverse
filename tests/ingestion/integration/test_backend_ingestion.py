@@ -4,11 +4,8 @@ Integration tests for video ingestion with different backends and models.
 Tests actual document ingestion with various video processing profiles.
 """
 
-import shutil
-import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -20,110 +17,98 @@ from tests.utils.markers import (
     skip_if_low_memory,
 )
 
-# Import components for integration testing
-try:
-    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-    from cogniverse_runtime.ingestion.pipeline_builder import PipelineBuilder
-    from cogniverse_runtime.processing.unified_video_pipeline import PipelineConfig
-except ImportError:
-    # Handle missing imports gracefully
-    VideoIngestionPipeline = None
-    PipelineBuilder = None
-    PipelineConfig = None
-
 
 @pytest.mark.integration
-@pytest.mark.ci_safe
-@pytest.mark.ci_fast
-class TestMockBackendIngestion:
-    """Test ingestion pipeline with mock backend (CI-safe)."""
+@pytest.mark.requires_cv2
+class TestRealProcessorExtraction:
+    """Test real keyframe and chunk extraction with a real video file."""
 
     @pytest.fixture
-    def temp_video_dir(self):
-        """Create temporary directory with mock video files."""
-        temp_dir = tempfile.mkdtemp()
-        video_dir = Path(temp_dir) / "videos"
-        video_dir.mkdir()
+    def real_video_path(self, tmp_path):
+        """Create a real 5-second video with varying frames using OpenCV."""
+        import cv2
+        import numpy as np
 
-        # Create mock video files
-        for i in range(3):
-            video_file = video_dir / f"test_video_{i}.mp4"
-            video_file.write_bytes(b"mock video content")
+        video_path = tmp_path / "real_test_video.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fps = 30
+        width, height = 640, 480
+        out = cv2.VideoWriter(str(video_path), fourcc, fps, (width, height))
 
-        yield video_dir
-        shutil.rmtree(temp_dir)
+        for i in range(fps * 5):
+            hue = int((i / (fps * 5)) * 180)
+            frame = np.ones((height, width, 3), dtype=np.uint8)
+            frame[:, :] = [hue, 255, 255]
+            frame = cv2.cvtColor(frame, cv2.COLOR_HSV2BGR)
+            out.write(frame)
 
-    @pytest.fixture
-    def mock_pipeline_config(self, temp_video_dir):
-        """Create mock pipeline configuration."""
-        return {
-            "video_dir": temp_video_dir,
-            "backend": "mock",
-            "max_frames_per_video": 2,
-            "transcribe_audio": False,
-            "generate_descriptions": False,
-        }
+        out.release()
+        return video_path
 
-    @pytest.mark.requires_cv2
-    def test_keyframe_extraction_integration(self, temp_video_dir):
-        """Test keyframe extraction in isolation."""
+    def test_keyframe_extraction_with_real_video(self, real_video_path, tmp_path):
+        """Test real keyframe extraction from a real video file."""
         import logging
 
         from cogniverse_runtime.ingestion.processors.keyframe_processor import (
             KeyframeProcessor,
         )
 
-        logger = logging.getLogger("test")
-        processor = KeyframeProcessor(logger, max_frames=5)
+        logger = logging.getLogger("test_keyframe")
+        processor = KeyframeProcessor(logger, max_frames=5, threshold=0.8)
 
-        # Create a mock video file
-        video_file = temp_video_dir / "test_keyframe.mp4"
-        video_file.write_bytes(b"mock video for keyframe test")
+        output_dir = tmp_path / "keyframes"
+        output_dir.mkdir()
 
-        with patch("cv2.VideoCapture") as mock_cap:
-            # Mock successful video opening
-            mock_cap_instance = Mock()
-            mock_cap_instance.isOpened.return_value = True
-            mock_cap_instance.get.return_value = 30.0  # Mock FPS
-            mock_cap_instance.read.return_value = (False, None)  # No frames
-            mock_cap.return_value = mock_cap_instance
+        result = processor.extract_keyframes(real_video_path, output_dir=output_dir)
 
-            with patch(
-                "cogniverse_core.common.utils.output_manager.get_output_manager"
-            ):
-                result = processor.extract_keyframes(video_file)
+        assert result["video_id"] == "real_test_video"
+        assert "keyframes" in result
+        assert len(result["keyframes"]) > 0
+        assert "metadata" in result
 
-                assert "video_id" in result
-                assert "keyframes" in result
-                assert result["video_id"] == "test_keyframe"
+        for kf in result["keyframes"]:
+            assert "timestamp" in kf
+            assert "filename" in kf
+            assert kf["timestamp"] >= 0.0
+
+        keyframes_dir = Path(result["keyframes_dir"])
+        keyframe_files = list(keyframes_dir.glob("*.jpg"))
+        assert len(keyframe_files) == len(result["keyframes"]), (
+            "Each keyframe should have a corresponding image file on disk"
+        )
 
     @pytest.mark.requires_ffmpeg
-    def test_chunk_extraction_integration(self, temp_video_dir):
-        """Test chunk extraction in isolation."""
+    def test_chunk_extraction_with_real_video(self, real_video_path, tmp_path):
+        """Test real chunk extraction from a real video file."""
         import logging
 
         from cogniverse_runtime.ingestion.processors.chunk_processor import (
             ChunkProcessor,
         )
 
-        logger = logging.getLogger("test")
-        processor = ChunkProcessor(logger, chunk_duration=30.0)
+        logger = logging.getLogger("test_chunk")
+        processor = ChunkProcessor(logger, chunk_duration=2.0, chunk_overlap=0.0)
 
-        video_file = temp_video_dir / "test_chunk.mp4"
-        video_file.write_bytes(b"mock video for chunk test")
+        output_dir = tmp_path / "chunks"
+        output_dir.mkdir()
 
-        with patch("subprocess.run") as mock_subprocess:
-            # Mock ffprobe for duration
-            mock_subprocess.return_value.stdout = "60.0\n"
+        result = processor.extract_chunks(real_video_path, output_dir=output_dir)
 
-            with patch(
-                "cogniverse_core.common.utils.output_manager.get_output_manager"
-            ):
-                result = processor.extract_chunks(video_file)
+        assert result["video_id"] == "real_test_video"
+        assert "chunks" in result
+        assert len(result["chunks"]) > 0
+        assert "metadata" in result
 
-                assert "video_id" in result
-                assert "chunks" in result
-                assert result["video_id"] == "test_chunk"
+        for chunk in result["chunks"]:
+            assert "start_time" in chunk
+            assert "end_time" in chunk
+            assert chunk["end_time"] > chunk["start_time"]
+
+        chunks_dir = Path(result["chunks_dir"])
+        chunk_files = list(chunks_dir.glob("*.mp4"))
+        assert len(chunk_files) == len(result["chunks"]), (
+            "Each chunk should have a corresponding video file on disk"
+        )
 
 
 @pytest.mark.integration

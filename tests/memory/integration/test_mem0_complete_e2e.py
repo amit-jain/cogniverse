@@ -82,35 +82,50 @@ class TestMemorySystemCompleteE2E:
         print("✅ Vespa health check passed")
 
     def test_02_schema_deployed(self, memory_manager, shared_memory_vespa):
-        """Test schema is deployed and accessible"""
+        """Test schema is deployed and accessible with real embeddings"""
         import requests
 
-        # Test by feeding a test document to the tenant schema
+        # Generate a real embedding via Ollama nomic-embed-text (same model Mem0 uses)
+        embed_resp = requests.post(
+            "http://localhost:11434/api/embed",
+            json={"model": "nomic-embed-text", "input": "test content for schema verification"},
+            timeout=30,
+        )
+        assert embed_resp.status_code == 200, (
+            f"Ollama embedding failed: {embed_resp.status_code}: {embed_resp.text[:200]}"
+        )
+        real_embedding = embed_resp.json()["embeddings"][0]
+        assert len(real_embedding) == 768, f"Expected 768-dim, got {len(real_embedding)}"
+
+        # Test by feeding a test document with the real embedding
         test_doc = {
             "fields": {
                 "id": "test_schema",
-                "text": "test content",
+                "text": "test content for schema verification",
                 "user_id": "test",
                 "agent_id": "test",
-                "embedding": [0.0] * 768,
+                "embedding": real_embedding,
                 "metadata_": "{}",
                 "created_at": 1234567890,
             }
         }
 
         schema_name = shared_memory_vespa["tenant_schema_name"]
+        # Use memory_content namespace — matches VespaIngestionClient namespace
+        # logic for agent_memories schemas (ingestion_client.py).
+        namespace = "memory_content"
         response = requests.post(
-            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{schema_name}/{schema_name}/docid/test_schema",
+            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{namespace}/{schema_name}/docid/test_schema",
             json=test_doc,
         )
         if response.status_code not in [200, 201]:
             print(f"❌ Vespa returned {response.status_code}: {response.text[:500]}")
         assert response.status_code in [200, 201]
-        print("✅ Schema verification passed")
+        print("✅ Schema verification passed with real nomic-embed-text embedding")
 
         # Cleanup
         requests.delete(
-            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{schema_name}/{schema_name}/docid/test_schema"
+            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{namespace}/{schema_name}/docid/test_schema"
         )
 
     def test_03_memory_manager_initialization(self, memory_manager):
@@ -213,27 +228,40 @@ class TestMemorySystemCompleteE2E:
         memory_manager.clear_agent_memory("tenant_b", "isolation_test")
 
     def test_07_get_all_memories(self, memory_manager, shared_memory_vespa):
-        """Test getting all memories"""
+        """Test getting all memories.
+
+        Uses personal/behavioral content (user preferences and attributes) which
+        Mem0 reliably extracts. Adds 5 items to guarantee >= 3 stored even if
+        the LLM (llama3.2) skips one or two due to similarity detection.
+        """
 
         # Clear first
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
 
-        # Add multiple memories with semantically distinct content across different domains
-        # Domain 1: Astronomy/Space
+        # Use personal/behavioral content — Mem0 is designed to extract
+        # personal facts, not encyclopedic trivia.
         memory_manager.add_memory(
-            content="Jupiter has 95 confirmed moons orbiting around it as of 2023",
+            content="My name is Alex and I work as a senior software engineer",
             tenant_id="e2e_test_tenant",
             agent_name="get_all_test",
         )
-        # Domain 2: Culinary/Food
         memory_manager.add_memory(
-            content="Traditional French croissants require 27 layers of butter lamination",
+            content="I prefer Python and use it daily for data analysis projects",
             tenant_id="e2e_test_tenant",
             agent_name="get_all_test",
         )
-        # Domain 3: Sports/Athletics
         memory_manager.add_memory(
-            content="Olympic marathon distance is exactly 42.195 kilometers or 26.2 miles",
+            content="I live in Berlin and commute by bicycle every morning",
+            tenant_id="e2e_test_tenant",
+            agent_name="get_all_test",
+        )
+        memory_manager.add_memory(
+            content="My team size is 8 people and we use agile with 2-week sprints",
+            tenant_id="e2e_test_tenant",
+            agent_name="get_all_test",
+        )
+        memory_manager.add_memory(
+            content="I am learning Spanish and have been studying for 6 months",
             tenant_id="e2e_test_tenant",
             agent_name="get_all_test",
         )
@@ -278,33 +306,54 @@ class TestMemorySystemCompleteE2E:
         memory_manager.clear_agent_memory("e2e_test_tenant", "delete_test")
 
     def test_09_memory_stats(self, memory_manager, shared_memory_vespa):
-        """Test memory statistics"""
+        """Test memory statistics.
 
-        # Clear and add memories with distinct factual content
+        Uses personal/behavioral content which Mem0 reliably extracts. Adds 8
+        distinct personal facts and asserts >= 5 to verify the stats API returns
+        meaningful counts. The buffer accounts for occasional LLM skips with
+        the small llama3.2 model.
+        """
+
+        # Clear and add memories with personal/behavioral content
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
 
         memory_manager.add_memory(
-            content="Manager Lisa leads the engineering team at Google Paris office",
+            content="My name is Jordan and I manage the backend infrastructure team",
             tenant_id="e2e_test_tenant",
             agent_name="stats_test",
         )
         memory_manager.add_memory(
-            content="Product launch scheduled for January 30th 2026 in Tokyo",
+            content="I prefer using Go for high-performance backend services",
             tenant_id="e2e_test_tenant",
             agent_name="stats_test",
         )
         memory_manager.add_memory(
-            content="Server cluster has 24 nodes running Ubuntu 22.04",
+            content="My work schedule is Monday through Friday, 9am to 6pm Tokyo time",
             tenant_id="e2e_test_tenant",
             agent_name="stats_test",
         )
         memory_manager.add_memory(
-            content="Invoice #9876 for $15000 paid by Wells Fargo",
+            content="I have 10 years of experience in distributed systems engineering",
             tenant_id="e2e_test_tenant",
             agent_name="stats_test",
         )
         memory_manager.add_memory(
-            content="Client ABC Corp signed 3-year contract in November 2023",
+            content="My team is currently migrating from PostgreSQL to CockroachDB",
+            tenant_id="e2e_test_tenant",
+            agent_name="stats_test",
+        )
+        memory_manager.add_memory(
+            content="I attend the weekly SRE sync every Tuesday at 2pm",
+            tenant_id="e2e_test_tenant",
+            agent_name="stats_test",
+        )
+        memory_manager.add_memory(
+            content="My home office setup uses three monitors and a standing desk",
+            tenant_id="e2e_test_tenant",
+            agent_name="stats_test",
+        )
+        memory_manager.add_memory(
+            content="I am certified in AWS Solutions Architect and Kubernetes administration",
             tenant_id="e2e_test_tenant",
             agent_name="stats_test",
         )

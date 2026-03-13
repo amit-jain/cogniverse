@@ -222,8 +222,14 @@ class Mem0MemoryManager:
 
         # Provider-specific endpoint key
         if provider == "ollama":
-            llm_provider_config["ollama_base_url"] = llm_base_url
-            embedder_provider_config["ollama_base_url"] = llm_base_url
+            # The mem0 Ollama provider uses the native Ollama SDK Client(host=...),
+            # which expects the base URL without the OpenAI-compat /v1 path suffix.
+            # Strip /v1 if present so callers can pass OpenAI-style URLs without breaking.
+            ollama_base_url = llm_base_url.rstrip("/")
+            if ollama_base_url.endswith("/v1"):
+                ollama_base_url = ollama_base_url[:-3]
+            llm_provider_config["ollama_base_url"] = ollama_base_url
+            embedder_provider_config["ollama_base_url"] = ollama_base_url
         else:
             # OpenAI-compatible providers (modal, openai, etc.)
             llm_provider_config["api_base"] = llm_base_url
