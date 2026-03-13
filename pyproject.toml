@@ -15,6 +15,7 @@ dependencies = [
     "torch>=2.5.0",
     "transformers>=4.50.0",
     "colpali-engine>=0.3.12",
+    "pylate>=1.1.7",
     # Computer Vision Dependencies
     "numpy>=1.24.0",
     "opencv-python>=4.8.0",

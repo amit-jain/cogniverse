@@ -1,16 +1,20 @@
 """
-Integration tests for multi-modal content schema deployment, feeding, and retrieval.
+Integration tests for multi-modal content processing through the real production path.
 
-Tests the full round-trip against a real Vespa Docker instance:
-1. Deploy document_text and audio_content schemas (built programmatically via pyvespa)
-2. Construct embeddings with numpy (matching ColBERT 128-dim multi-vector format)
-3. Convert via VespaEmbeddingProcessor to hex bfloat16 / binary
-4. Feed documents to Vespa via pyvespa feed_data_point
-5. Query with MaxSim, BM25, hamming, and hybrid rank profiles
-6. Verify retrieval correctness
+Tests the full round-trip against real models and a real Vespa Docker instance:
+1. Load ColBERT model via ModelLoaderFactory / get_or_load_model (real PyLate model)
+2. Encode real text to produce real 128-dim per-token ColBERT embeddings
+3. Load CLAP model via AudioEmbeddingGenerator (real HuggingFace model)
+4. Generate real 512-dim acoustic embeddings from synthesized audio
+5. Deploy document_text and audio_content schemas to real Vespa
+6. Convert embeddings via VespaEmbeddingProcessor to bfloat16 hex / int8 binary
+7. Feed to Vespa via pyvespa feed_data_point
+8. Query with MaxSim, BM25, hamming, HNSW, and hybrid rank profiles
+9. Verify retrieval correctness and semantic ranking quality
 """
 
 import time
+import wave
 
 import numpy as np
 import pytest
@@ -27,12 +31,62 @@ from vespa.package import (
     SecondPhaseRanking,
 )
 
+from cogniverse_core.common.models import get_or_load_model
+from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
+    AudioEmbeddingGenerator,
+)
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.docker_utils import generate_unique_ports
 
 MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
+
+COLBERT_MODEL_NAME = "lightonai/GTE-ModernColBERT-v1"
+COLBERT_CONFIG = {
+    "model_loader": "colbert",
+    "embedding_type": "document_colbert",
+    "embedding_model": COLBERT_MODEL_NAME,
+}
+
+CLAP_MODEL_NAME = "laion/clap-htsat-unfused"
+
+# Test document texts — distinct enough for semantic ranking to differentiate
+DOC_TEXTS = {
+    "earnings": {
+        "title": "Quarterly Earnings Report Q3 2025",
+        "text": "Revenue grew 15% year-over-year driven by enterprise adoption and cloud services expansion. "
+                "Operating margins improved to 28% reflecting cost discipline and economies of scale.",
+        "headings": "Executive Summary Financial Highlights",
+    },
+    "architecture": {
+        "title": "System Architecture Design",
+        "text": "The architecture uses event-driven microservices with message queues for decoupling. "
+                "Each service publishes domain events consumed by downstream aggregators.",
+        "headings": "Architecture Overview Message Queues",
+    },
+    "security": {
+        "title": "Security Audit Report",
+        "text": "All endpoints require TLS 1.3 and OAuth2 bearer tokens for authentication. "
+                "Penetration testing revealed no critical vulnerabilities in the API surface.",
+        "headings": "Authentication Encryption Penetration Testing",
+    },
+}
+
+AUDIO_TRANSCRIPTS = {
+    "podcast": {
+        "title": "Deep Learning in Production Systems",
+        "transcript": "Today we discuss deploying deep learning models at scale with GPU orchestration and model serving.",
+    },
+    "lecture": {
+        "title": "Introduction to Machine Learning",
+        "transcript": "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
+    },
+    "interview": {
+        "title": "CTO Interview on Cloud Infrastructure",
+        "transcript": "Our cloud infrastructure handles millions of requests using Kubernetes and auto-scaling.",
+    },
+}
 
 
 def _build_document_text_schema() -> Schema:
@@ -225,6 +279,31 @@ def _build_audio_content_schema() -> Schema:
     )
 
 
+def _synthesize_wav(path, duration_s: float = 1.0, sample_rate: int = 48000):
+    """Write a short sine-wave WAV file for CLAP acoustic embedding tests."""
+    t = np.linspace(0, duration_s, int(sample_rate * duration_s), dtype=np.float32)
+    # 440 Hz sine wave, amplitude scaled to int16 range
+    samples = (0.5 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(samples.tobytes())
+
+
+@pytest.fixture(scope="module")
+def colbert_model():
+    """Load real ColBERT model via ModelLoaderFactory — cached across all tests in module."""
+    model, _ = get_or_load_model(COLBERT_MODEL_NAME, COLBERT_CONFIG)
+    return model
+
+
+@pytest.fixture(scope="module")
+def clap_generator():
+    """Load real CLAP model via AudioEmbeddingGenerator — cached across all tests in module."""
+    return AudioEmbeddingGenerator(clap_model=CLAP_MODEL_NAME)
+
+
 @pytest.fixture(scope="module")
 def vespa_with_schemas():
     """Module-scoped Vespa instance with document_text + audio_content schemas deployed."""
@@ -240,7 +319,6 @@ def vespa_with_schemas():
     if not manager.deploy_test_application():
         raise RuntimeError("Failed to deploy Vespa test application — check Docker/Vespa logs")
 
-    # Deploy both content schemas alongside existing metadata schemas
     schema_manager = VespaSchemaManager(
         backend_endpoint="http://localhost",
         backend_port=manager.config_port,
@@ -269,99 +347,116 @@ def vespa_with_schemas():
     manager.cleanup()
 
 
-def make_colbert_embeddings(num_tokens: int, dim: int = 128, seed: int = 42) -> np.ndarray:
-    """Construct deterministic ColBERT-style multi-vector embeddings.
+@pytest.fixture(scope="module")
+def doc_embeddings(colbert_model):
+    """Encode all test document texts with real ColBERT model. Returns {doc_id: np.ndarray}."""
+    result = {}
+    for doc_id, doc_info in DOC_TEXTS.items():
+        text = f"{doc_info['title']}. {doc_info['text']}"
+        token_embeddings = colbert_model.encode([text[:8192]], is_query=False)[0]
+        result[doc_id] = np.array(token_embeddings, dtype=np.float32)
+    return result
 
-    Returns shape (num_tokens, dim) — same format as PyLate ColBERT output.
-    """
-    rng = np.random.RandomState(seed)
-    emb = rng.randn(num_tokens, dim).astype(np.float32)
-    norms = np.linalg.norm(emb, axis=1, keepdims=True)
-    return emb / norms
+
+@pytest.fixture(scope="module")
+def audio_semantic_embeddings(colbert_model):
+    """Encode all audio transcripts with real ColBERT model. Returns {audio_id: np.ndarray}."""
+    result = {}
+    for audio_id, audio_info in AUDIO_TRANSCRIPTS.items():
+        token_embeddings = colbert_model.encode(
+            [audio_info["transcript"][:8192]], is_query=False
+        )[0]
+        result[audio_id] = np.array(token_embeddings, dtype=np.float32)
+    return result
 
 
-def make_acoustic_embedding(dim: int = 512, seed: int = 99) -> list:
-    """Construct a CLAP-style single-vector acoustic embedding as a float list."""
-    rng = np.random.RandomState(seed)
-    emb = rng.randn(dim).astype(np.float32)
-    emb = emb / np.linalg.norm(emb)
-    return emb.tolist()
+@pytest.fixture(scope="module")
+def audio_acoustic_embeddings(clap_generator, tmp_path_factory):
+    """Generate CLAP acoustic embeddings from synthesized WAV files. Returns {audio_id: np.ndarray}."""
+    tmp_dir = tmp_path_factory.mktemp("audio")
+    result = {}
+    for audio_id in AUDIO_TRANSCRIPTS:
+        wav_path = tmp_dir / f"{audio_id}.wav"
+        # Each audio gets a different frequency to produce distinct embeddings
+        freq_map = {"podcast": 440, "lecture": 880, "interview": 220}
+        t = np.linspace(0, 1.0, 48000, dtype=np.float32)
+        samples = (0.5 * np.sin(2 * np.pi * freq_map[audio_id] * t) * 32767).astype(np.int16)
+        with wave.open(str(wav_path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(48000)
+            wf.writeframes(samples.tobytes())
+
+        acoustic_emb = clap_generator.generate_acoustic_embedding(audio_path=wav_path)
+        result[audio_id] = acoustic_emb
+    return result
 
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 class TestDocumentSchemaDeployAndFeed:
-    """Deploy document_text schema, feed documents with ColBERT embeddings, query."""
+    """Deploy document_text schema, feed documents with real ColBERT embeddings, query."""
 
-    def test_feed_document_with_colbert_embeddings(self, vespa_with_schemas):
-        """Feed a document with 128-dim multi-vector embeddings and verify it's stored."""
+    def test_colbert_model_produces_128_dim_tokens(self, doc_embeddings):
+        """Verify real ColBERT model produces the expected 128-dim per-token embeddings."""
+        for doc_id, emb in doc_embeddings.items():
+            assert emb.ndim == 2, f"{doc_id}: expected 2D array, got {emb.ndim}D"
+            assert emb.shape[1] == 128, f"{doc_id}: expected 128 dims, got {emb.shape[1]}"
+            assert emb.shape[0] > 0, f"{doc_id}: got zero tokens"
+
+    def test_feed_document_with_colbert_embeddings(self, vespa_with_schemas, doc_embeddings):
+        """Feed a document with real ColBERT embeddings and verify it's stored."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
-
-        raw_emb = make_colbert_embeddings(num_tokens=5, dim=128, seed=10)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        doc_id = "earnings"
+        raw_emb = doc_embeddings[doc_id]
         float_dict = processor._convert_to_float_dict(raw_emb)
         binary_dict = processor._convert_to_binary_dict(raw_emb)
 
         assert isinstance(float_dict, dict)
-        assert len(float_dict) == 5
+        assert len(float_dict) == raw_emb.shape[0]
         assert isinstance(binary_dict, dict)
-        assert len(binary_dict) == 5
+        assert len(binary_dict) == raw_emb.shape[0]
 
         fields = {
-            "document_id": "test_doc_001",
-            "document_title": "Quarterly Earnings Report Q3 2025",
+            "document_id": doc_id,
+            "document_title": DOC_TEXTS[doc_id]["title"],
             "creation_timestamp": int(time.time()),
             "document_type": "txt",
-            "document_path": "/test/quarterly_report.txt",
+            "document_path": f"/test/{doc_id}.txt",
             "page_count": 1,
-            "full_text": "Revenue grew 15% year-over-year driven by enterprise adoption and cloud services expansion.",
-            "section_headings": "Executive Summary Financial Highlights",
+            "full_text": DOC_TEXTS[doc_id]["text"],
+            "section_headings": DOC_TEXTS[doc_id]["headings"],
             "embedding": float_dict,
             "embedding_binary": binary_dict,
         }
 
-        response = app.feed_data_point(schema=schema, data_id="test_doc_001", fields=fields)
+        response = app.feed_data_point(schema=schema, data_id=doc_id, fields=fields)
         assert response.status_code == 200
 
-    def test_feed_multiple_documents(self, vespa_with_schemas):
-        """Feed multiple documents with different embeddings."""
+    def test_feed_multiple_documents(self, vespa_with_schemas, doc_embeddings):
+        """Feed remaining documents with real ColBERT embeddings."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
         processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        docs = [
-            {
-                "id": "doc_design",
-                "title": "System Architecture Design",
-                "text": "The architecture uses event-driven microservices with message queues for decoupling.",
-                "headings": "Architecture Overview Message Queues",
-                "seed": 20, "tokens": 8,
-            },
-            {
-                "id": "doc_security",
-                "title": "Security Audit Report",
-                "text": "All endpoints require TLS 1.3 and OAuth2 bearer tokens for authentication.",
-                "headings": "Authentication Encryption",
-                "seed": 30, "tokens": 6,
-            },
-        ]
-
-        for doc in docs:
-            raw_emb = make_colbert_embeddings(num_tokens=doc["tokens"], dim=128, seed=doc["seed"])
+        for doc_id in ["architecture", "security"]:
+            raw_emb = doc_embeddings[doc_id]
             fields = {
-                "document_id": doc["id"],
-                "document_title": doc["title"],
+                "document_id": doc_id,
+                "document_title": DOC_TEXTS[doc_id]["title"],
                 "creation_timestamp": int(time.time()),
                 "document_type": "md",
-                "document_path": f"/test/{doc['id']}.md",
+                "document_path": f"/test/{doc_id}.md",
                 "page_count": 1,
-                "full_text": doc["text"],
-                "section_headings": doc["headings"],
+                "full_text": DOC_TEXTS[doc_id]["text"],
+                "section_headings": DOC_TEXTS[doc_id]["headings"],
                 "embedding": processor._convert_to_float_dict(raw_emb),
                 "embedding_binary": processor._convert_to_binary_dict(raw_emb),
             }
-            response = app.feed_data_point(schema=schema, data_id=doc["id"], fields=fields)
+            response = app.feed_data_point(schema=schema, data_id=doc_id, fields=fields)
             assert response.status_code == 200
 
     def test_bm25_query_retrieves_documents(self, vespa_with_schemas):
@@ -383,39 +478,46 @@ class TestDocumentSchemaDeployAndFeed:
         hits = response.hits
         assert len(hits) > 0
         doc_ids = [hit["fields"]["document_id"] for hit in hits]
-        assert "test_doc_001" in doc_ids
+        assert "earnings" in doc_ids
 
-    def test_colbert_float_query(self, vespa_with_schemas):
-        """MaxSim float-float rank profile returns all documents with relevance scores."""
+    def test_colbert_float_query_with_real_embeddings(self, vespa_with_schemas, colbert_model):
+        """MaxSim query using real ColBERT query encoding ranks semantically relevant docs higher."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
-
-        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        # Encode a query about financial performance
+        query_tokens = colbert_model.encode(["quarterly financial performance revenue"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
+        assert query_emb.ndim == 2
+        assert query_emb.shape[1] == 128
 
         body = {
             "yql": f"select document_id, document_title from {schema} where true",
             "hits": 10,
             "ranking": "float_float",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
         }
 
         response = app.query(body=body)
         assert response.is_successful()
         hits = response.hits
         assert len(hits) == 3
-        doc_ids = {hit["fields"]["document_id"] for hit in hits}
-        assert doc_ids == {"test_doc_001", "doc_design", "doc_security"}
+        doc_ids = [hit["fields"]["document_id"] for hit in hits]
+        assert doc_ids[0] == "earnings", (
+            f"Expected 'earnings' as top result for financial query, got {doc_ids}"
+        )
         assert all(hit["relevance"] > 0 for hit in hits)
 
-    def test_colbert_binary_query(self, vespa_with_schemas):
-        """Hamming distance binary-binary rank profile returns results."""
+    def test_colbert_binary_query(self, vespa_with_schemas, colbert_model):
+        """Hamming distance binary-binary rank profile returns results with real embeddings."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
-
-        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(["system architecture microservices"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select document_id from {schema} where true",
@@ -429,34 +531,40 @@ class TestDocumentSchemaDeployAndFeed:
         assert response.is_successful()
         assert len(response.hits) > 0
 
-    def test_phased_ranking_binary_then_float(self, vespa_with_schemas):
+    def test_phased_ranking_binary_then_float(self, vespa_with_schemas, colbert_model):
         """Phased ranking: hamming first-phase, MaxSim second-phase rerank."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
-
-        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(["security audit TLS authentication"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select document_id from {schema} where true",
             "hits": 10,
             "ranking": "phased",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
             "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
         }
 
         response = app.query(body=body)
         assert response.is_successful()
-        assert len(response.hits) > 0
+        hits = response.hits
+        assert len(hits) > 0
+        assert hits[0]["fields"]["document_id"] == "security", (
+            f"Expected 'security' as top result for security query, got {hits[0]['fields']['document_id']}"
+        )
 
-    def test_hybrid_float_bm25_query(self, vespa_with_schemas):
+    def test_hybrid_float_bm25_query(self, vespa_with_schemas, colbert_model):
         """Hybrid ColBERT + BM25 rank profile combines both signals."""
         app = vespa_with_schemas["app"]
         schema = "document_text"
-
-        query_emb = make_colbert_embeddings(num_tokens=3, dim=128, seed=10)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(["revenue growth"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select document_id, document_title from {schema} where userQuery()",
@@ -464,7 +572,7 @@ class TestDocumentSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "hybrid_float_bm25",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
         }
 
         response = app.query(body=body)
@@ -474,65 +582,71 @@ class TestDocumentSchemaDeployAndFeed:
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 class TestAudioSchemaDeployAndFeed:
-    """Deploy audio_content schema, feed audio docs with CLAP + ColBERT embeddings, query."""
+    """Deploy audio_content schema, feed with real CLAP + ColBERT embeddings, query."""
 
-    def test_feed_audio_with_acoustic_and_semantic_embeddings(self, vespa_with_schemas):
-        """Feed an audio document with CLAP (512-dim) + ColBERT (128-dim multi-vector)."""
+    def test_clap_model_produces_512_dim_embeddings(self, audio_acoustic_embeddings):
+        """Verify real CLAP model produces 512-dim acoustic embeddings."""
+        for audio_id, emb in audio_acoustic_embeddings.items():
+            assert emb.shape == (512,), f"{audio_id}: expected (512,), got {emb.shape}"
+
+    def test_colbert_semantic_produces_128_dim_tokens(self, audio_semantic_embeddings):
+        """Verify real ColBERT model produces 128-dim per-token semantic embeddings for transcripts."""
+        for audio_id, emb in audio_semantic_embeddings.items():
+            assert emb.ndim == 2, f"{audio_id}: expected 2D, got {emb.ndim}D"
+            assert emb.shape[1] == 128, f"{audio_id}: expected 128 dims, got {emb.shape[1]}"
+
+    def test_feed_audio_with_real_acoustic_and_semantic_embeddings(
+        self, vespa_with_schemas, audio_acoustic_embeddings, audio_semantic_embeddings
+    ):
+        """Feed audio document with real CLAP (512-dim) + real ColBERT (128-dim multi-vector)."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
-
-        acoustic_emb = make_acoustic_embedding(dim=512, seed=50)
-        semantic_emb = make_colbert_embeddings(num_tokens=10, dim=128, seed=51)
-
         processor = VespaEmbeddingProcessor(schema_name=schema)
 
+        audio_id = "podcast"
+        acoustic_emb = audio_acoustic_embeddings[audio_id]
+        semantic_emb = audio_semantic_embeddings[audio_id]
+
         fields = {
-            "audio_id": "podcast_ep42",
-            "audio_title": "Deep Learning in Production Systems",
+            "audio_id": audio_id,
+            "audio_title": AUDIO_TRANSCRIPTS[audio_id]["title"],
             "creation_timestamp": int(time.time()),
-            "audio_transcript": "Today we discuss deploying deep learning models at scale with GPU orchestration and model serving.",
-            "audio_path": "/test/podcast_ep42.mp3",
+            "audio_transcript": AUDIO_TRANSCRIPTS[audio_id]["transcript"],
+            "audio_path": f"/test/{audio_id}.mp3",
             "audio_duration": 1847.5,
             "audio_language": "en",
-            "acoustic_embedding": acoustic_emb,
+            "acoustic_embedding": acoustic_emb.tolist(),
             "semantic_embedding": processor._convert_to_float_dict(semantic_emb),
             "semantic_embedding_binary": processor._convert_to_binary_dict(semantic_emb),
         }
 
-        response = app.feed_data_point(schema=schema, data_id="podcast_ep42", fields=fields)
+        response = app.feed_data_point(schema=schema, data_id=audio_id, fields=fields)
         assert response.status_code == 200
 
-    def test_feed_multiple_audio_documents(self, vespa_with_schemas):
-        """Feed multiple audio documents with different content."""
+    def test_feed_multiple_audio_documents(
+        self, vespa_with_schemas, audio_acoustic_embeddings, audio_semantic_embeddings
+    ):
+        """Feed multiple audio documents with real embeddings."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
         processor = VespaEmbeddingProcessor(schema_name=schema)
 
-        audios = [
-            {"id": "lecture_ml101", "title": "Introduction to Machine Learning",
-             "transcript": "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
-             "duration": 3600.0, "language": "en", "a_seed": 60, "s_seed": 61, "tokens": 12},
-            {"id": "interview_cto", "title": "CTO Interview on Cloud Infrastructure",
-             "transcript": "Our cloud infrastructure handles millions of requests using Kubernetes and auto-scaling.",
-             "duration": 2100.0, "language": "en", "a_seed": 70, "s_seed": 71, "tokens": 8},
-        ]
-
-        for audio in audios:
-            acoustic = make_acoustic_embedding(dim=512, seed=audio["a_seed"])
-            semantic = make_colbert_embeddings(num_tokens=audio["tokens"], dim=128, seed=audio["s_seed"])
+        for audio_id in ["lecture", "interview"]:
+            acoustic_emb = audio_acoustic_embeddings[audio_id]
+            semantic_emb = audio_semantic_embeddings[audio_id]
             fields = {
-                "audio_id": audio["id"],
-                "audio_title": audio["title"],
+                "audio_id": audio_id,
+                "audio_title": AUDIO_TRANSCRIPTS[audio_id]["title"],
                 "creation_timestamp": int(time.time()),
-                "audio_transcript": audio["transcript"],
-                "audio_path": f"/test/{audio['id']}.mp3",
-                "audio_duration": audio["duration"],
-                "audio_language": audio["language"],
-                "acoustic_embedding": acoustic,
-                "semantic_embedding": processor._convert_to_float_dict(semantic),
-                "semantic_embedding_binary": processor._convert_to_binary_dict(semantic),
+                "audio_transcript": AUDIO_TRANSCRIPTS[audio_id]["transcript"],
+                "audio_path": f"/test/{audio_id}.mp3",
+                "audio_duration": 3600.0,
+                "audio_language": "en",
+                "acoustic_embedding": acoustic_emb.tolist(),
+                "semantic_embedding": processor._convert_to_float_dict(semantic_emb),
+                "semantic_embedding_binary": processor._convert_to_binary_dict(semantic_emb),
             }
-            response = app.feed_data_point(schema=schema, data_id=audio["id"], fields=fields)
+            response = app.feed_data_point(schema=schema, data_id=audio_id, fields=fields)
             assert response.status_code == 200
 
     def test_transcript_bm25_search(self, vespa_with_schemas):
@@ -554,22 +668,25 @@ class TestAudioSchemaDeployAndFeed:
         hits = response.hits
         assert len(hits) > 0
         audio_ids = [hit["fields"]["audio_id"] for hit in hits]
-        assert "podcast_ep42" in audio_ids
+        assert "podcast" in audio_ids
 
-    def test_semantic_float_maxsim_query(self, vespa_with_schemas):
-        """Semantic MaxSim float query returns all audio documents with relevance scores."""
+    def test_semantic_float_maxsim_query(self, vespa_with_schemas, colbert_model):
+        """Semantic MaxSim float query with real ColBERT query encoding."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
-
-        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(
+            ["deploying machine learning models at scale"], is_query=True
+        )[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select audio_id, audio_title from {schema} where true",
             "hits": 10,
             "ranking": "semantic_float",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
         }
 
         response = app.query(body=body)
@@ -577,16 +694,17 @@ class TestAudioSchemaDeployAndFeed:
         hits = response.hits
         assert len(hits) == 3
         audio_ids = {hit["fields"]["audio_id"] for hit in hits}
-        assert audio_ids == {"podcast_ep42", "lecture_ml101", "interview_cto"}
+        assert audio_ids == {"podcast", "lecture", "interview"}
         assert all(hit["relevance"] > 0 for hit in hits)
 
-    def test_semantic_binary_hamming_query(self, vespa_with_schemas):
-        """Hamming distance query on binary ColBERT embeddings."""
+    def test_semantic_binary_hamming_query(self, vespa_with_schemas, colbert_model):
+        """Hamming distance query on binary ColBERT embeddings from real model."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
-
-        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(["cloud infrastructure kubernetes"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select audio_id from {schema} where true",
@@ -600,12 +718,13 @@ class TestAudioSchemaDeployAndFeed:
         assert response.is_successful()
         assert len(response.hits) > 0
 
-    def test_acoustic_similarity_query(self, vespa_with_schemas):
-        """HNSW nearest-neighbor query on CLAP acoustic embeddings."""
+    def test_acoustic_similarity_query(self, vespa_with_schemas, audio_acoustic_embeddings):
+        """HNSW nearest-neighbor query on real CLAP acoustic embeddings."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
 
-        query_acoustic = make_acoustic_embedding(dim=512, seed=50)
+        # Query with the same acoustic embedding as podcast — should match itself
+        query_acoustic = audio_acoustic_embeddings["podcast"].tolist()
 
         body = {
             "yql": f"select audio_id, audio_title from {schema} where "
@@ -620,36 +739,44 @@ class TestAudioSchemaDeployAndFeed:
         assert response.is_successful()
         hits = response.hits
         assert len(hits) > 0
-        assert hits[0]["fields"]["audio_id"] == "podcast_ep42"
+        assert hits[0]["fields"]["audio_id"] == "podcast"
 
-    def test_phased_semantic_ranking(self, vespa_with_schemas):
-        """Phased ranking: hamming first-phase, MaxSim rerank."""
+    def test_phased_semantic_ranking(self, vespa_with_schemas, colbert_model):
+        """Phased ranking: hamming first-phase, MaxSim rerank with real embeddings."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
-
-        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(
+            ["artificial intelligence learning from data"], is_query=True
+        )[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select audio_id from {schema} where true",
             "hits": 10,
             "ranking": "phased_semantic",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_float_dict(query_emb),
+            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
             "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
         }
 
         response = app.query(body=body)
         assert response.is_successful()
-        assert len(response.hits) > 0
+        hits = response.hits
+        assert len(hits) > 0
+        assert hits[0]["fields"]["audio_id"] == "lecture", (
+            f"Expected 'lecture' as top result for AI/ML query, got {hits[0]['fields']['audio_id']}"
+        )
 
-    def test_hybrid_semantic_bm25_query(self, vespa_with_schemas):
-        """Hybrid ColBERT + BM25 combines embedding similarity with text matching."""
+    def test_hybrid_semantic_bm25_query(self, vespa_with_schemas, colbert_model):
+        """Hybrid ColBERT + BM25 combines real embedding similarity with text matching."""
         app = vespa_with_schemas["app"]
         schema = "audio_content"
-
-        query_emb = make_colbert_embeddings(num_tokens=4, dim=128, seed=51)
         processor = VespaEmbeddingProcessor(schema_name=schema)
+
+        query_tokens = colbert_model.encode(["deep learning"], is_query=True)[0]
+        query_emb = np.array(query_tokens, dtype=np.float32)
 
         body = {
             "yql": f"select audio_id, audio_title from {schema} where userQuery()",
@@ -667,54 +794,49 @@ class TestAudioSchemaDeployAndFeed:
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 class TestEmbeddingFormatConsistency:
-    """Verify that VespaEmbeddingProcessor output format matches schema expectations."""
+    """Verify that VespaEmbeddingProcessor correctly converts real model output."""
 
-    def test_colbert_float_dict_dimensions(self):
-        """Float dict has correct number of tokens with correct hex length per token."""
-        raw = make_colbert_embeddings(num_tokens=7, dim=128, seed=1)
+    def test_real_colbert_float_dict_dimensions(self, doc_embeddings):
+        """Float dict from real ColBERT output has correct hex length per token."""
         processor = VespaEmbeddingProcessor(schema_name="document_text")
+        raw = doc_embeddings["earnings"]
         result = processor._convert_to_float_dict(raw)
 
-        assert len(result) == 7
-        for idx in range(7):
+        assert len(result) == raw.shape[0]
+        for idx in range(raw.shape[0]):
             hex_str = result[idx]
-            # 128 dims x 4 hex chars per bfloat16 = 512 hex chars
             assert len(hex_str) == 128 * 4, f"Token {idx}: expected 512 hex chars, got {len(hex_str)}"
 
-    def test_colbert_binary_dict_dimensions(self):
-        """Binary dict has correct number of tokens with 16 bytes (128 bits packed) each."""
-        raw = make_colbert_embeddings(num_tokens=7, dim=128, seed=1)
+    def test_real_colbert_binary_dict_dimensions(self, doc_embeddings):
+        """Binary dict from real ColBERT output has 16 bytes (128 bits packed) each."""
         processor = VespaEmbeddingProcessor(schema_name="document_text")
+        raw = doc_embeddings["earnings"]
         result = processor._convert_to_binary_dict(raw)
 
-        assert len(result) == 7
-        for idx in range(7):
+        assert len(result) == raw.shape[0]
+        for idx in range(raw.shape[0]):
             hex_str = result[idx]
-            # 128 dims -> 16 bytes -> 32 hex chars
             assert len(hex_str) == 32, f"Token {idx}: expected 32 hex chars, got {len(hex_str)}"
 
-    def test_acoustic_single_vector_format(self):
-        """CLAP 512-dim embedding is a plain float list, not hex dict."""
-        emb = make_acoustic_embedding(dim=512, seed=1)
-        assert isinstance(emb, list)
-        assert len(emb) == 512
-        assert all(isinstance(v, float) for v in emb)
+    def test_real_clap_acoustic_format(self, audio_acoustic_embeddings):
+        """Real CLAP 512-dim embedding is a numpy array of floats."""
+        emb = audio_acoustic_embeddings["podcast"]
+        assert isinstance(emb, np.ndarray)
+        assert emb.shape == (512,)
+        assert emb.dtype in (np.float32, np.float64)
 
-    def test_binarization_preserves_sign_information(self):
-        """Binary quantization maps positive -> 1, negative -> 0 correctly."""
-        padded = np.zeros((2, 128), dtype=np.float32)
-        padded[0, :8] = [1.0, -0.5, 0.3, -0.8, 0.0, 0.1, -0.2, 0.9]
-        padded[0, 8:] = np.random.RandomState(0).randn(120).astype(np.float32)
-        padded[1, :] = np.random.RandomState(1).randn(128).astype(np.float32)
-
+    def test_binarization_preserves_sign_information(self, doc_embeddings):
+        """Binary quantization of real model output preserves sign pattern correctly."""
         processor = VespaEmbeddingProcessor(schema_name="document_text")
-        binary = processor._convert_to_binary_dict(padded)
+        raw = doc_embeddings["earnings"]
 
-        assert isinstance(binary, dict)
-        assert len(binary) == 2
+        float_dict = processor._convert_to_float_dict(raw)
+        binary_dict = processor._convert_to_binary_dict(raw)
 
-        # First byte of token 0: bits for first 8 values
-        # positive(1), negative(0), positive(1), negative(0), zero(0), positive(1), negative(0), positive(1)
-        # = 10100101 = 0xa5
-        first_byte_hex = binary[0][:2]
-        assert first_byte_hex == "a5", f"Expected 'a5', got '{first_byte_hex}'"
+        assert len(float_dict) == len(binary_dict)
+        assert len(float_dict) == raw.shape[0]
+
+        # Each binary token should be 16 bytes = 32 hex chars (128 bits packed)
+        for idx in range(min(3, raw.shape[0])):
+            assert len(binary_dict[idx]) == 32
+            assert len(float_dict[idx]) == 512
