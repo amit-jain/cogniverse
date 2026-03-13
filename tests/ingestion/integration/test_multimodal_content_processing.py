@@ -497,7 +497,7 @@ class TestDocumentSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "float_float",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
+            "input.query(qt)": {idx: vec.tolist() for idx, vec in enumerate(query_emb)},
         }
 
         response = app.query(body=body)
@@ -545,7 +545,7 @@ class TestDocumentSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "phased",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
+            "input.query(qt)": {idx: vec.tolist() for idx, vec in enumerate(query_emb)},
             "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
         }
 
@@ -572,7 +572,7 @@ class TestDocumentSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "hybrid_float_bm25",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
+            "input.query(qt)": {idx: vec.tolist() for idx, vec in enumerate(query_emb)},
         }
 
         response = app.query(body=body)
@@ -686,7 +686,7 @@ class TestAudioSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "semantic_float",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
+            "input.query(qt)": {idx: vec.tolist() for idx, vec in enumerate(query_emb)},
         }
 
         response = app.query(body=body)
@@ -757,7 +757,7 @@ class TestAudioSchemaDeployAndFeed:
             "hits": 10,
             "ranking": "phased_semantic",
             "model.restrict": schema,
-            "input.query(qt)": processor._convert_to_query_float_dict(query_emb),
+            "input.query(qt)": {idx: vec.tolist() for idx, vec in enumerate(query_emb)},
             "input.query(qtb)": processor._convert_to_binary_dict(query_emb),
         }
 

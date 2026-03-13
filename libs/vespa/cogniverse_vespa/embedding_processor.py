@@ -136,27 +136,6 @@ class VespaEmbeddingProcessor:
 
         return embedding_dict
 
-    def _convert_to_query_float_dict(self, embeddings: np.ndarray) -> Dict[int, list]:
-        """Convert multi-vector embedding to Vespa query tensor format.
-
-        For query inputs to tensor<float>(querytoken{}, v[dim]), Vespa expects raw float
-        lists, NOT hex-encoded bfloat16. This method produces the correct format for
-        input.query(qt) parameters in search requests.
-
-        Args:
-            embeddings: numpy array of shape (num_tokens, embedding_dim)
-
-        Returns:
-            Dict mapping token index to list of raw float values
-
-        Example:
-            query_emb = np.array(model.encode([query], is_query=True)[0])
-            body["input.query(qt)"] = processor._convert_to_query_float_dict(query_emb)
-        """
-        if embeddings.ndim == 1:
-            embeddings = embeddings.reshape(1, -1)
-        return {idx: embeddings[idx].tolist() for idx in range(len(embeddings))}
-
     def _numpy_to_hex_bfloat16(self, array: np.ndarray) -> str:
         """Convert numpy array to hex-encoded bfloat16 format"""
         tensor = torch.tensor(array, dtype=torch.float32)
