@@ -591,6 +591,7 @@ class VespaTestManager:
                 "top_k": hits,
                 "filters": None,
                 "strategy": ranking,
+                "tenant_id": "test_tenant",
             }
 
             results = backend.search(query_dict)

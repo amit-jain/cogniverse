@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 # Test configuration
 TEST_TIMEOUT = 300  # 5 minutes for real LLM calls
+_TEST_TENANT = "real_multi_agent_test"
+
+
+@pytest.fixture
+def real_telemetry_provider(telemetry_manager_with_phoenix):
+    """Get a real PhoenixProvider from the telemetry manager."""
+    return telemetry_manager_with_phoenix.get_provider(tenant_id=_TEST_TENANT)
 
 
 class TestLLMAvailability:
@@ -64,12 +71,13 @@ class TestRealQueryAnalysisIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(TEST_TIMEOUT)
-    async def test_real_query_analysis_with_local_llm(self):
+    async def test_real_query_analysis_with_local_llm(self, real_telemetry_provider):
         """Test real query analysis with local Ollama model."""
         config_manager = create_default_config_manager()
 
         analyzer = QueryAnalysisToolV3(
             config_manager=config_manager,
+            telemetry_provider=real_telemetry_provider,
         )
 
         # Test queries with different complexity levels
@@ -397,13 +405,14 @@ class TestRealDSPyOptimizationIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(TEST_TIMEOUT)
-    async def test_real_agent_with_dspy_integration(self):
+    async def test_real_agent_with_dspy_integration(self, real_telemetry_provider):
         """Test agents with DSPy optimization integration."""
         config_manager = create_default_config_manager()
 
         # Create agent with DSPy disabled first
         analyzer = QueryAnalysisToolV3(
             config_manager=config_manager,
+            telemetry_provider=real_telemetry_provider,
             enable_dspy=False,
         )
 
@@ -430,7 +439,7 @@ class TestRealEndToEndWorkflow:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(TEST_TIMEOUT * 2)
-    async def test_real_multi_agent_workflow(self):
+    async def test_real_multi_agent_workflow(self, real_telemetry_provider):
         """Test complete multi-agent workflow with real LLMs."""
 
         from cogniverse_agents.summarizer_agent import SummaryRequest
@@ -440,6 +449,7 @@ class TestRealEndToEndWorkflow:
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(
             config_manager=config_manager,
+            telemetry_provider=real_telemetry_provider,
         )
 
         # E2E test - requires real Ollama
@@ -539,7 +549,7 @@ class TestRealPerformanceComparison:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(TEST_TIMEOUT)
-    async def test_agent_performance_comparison(self):
+    async def test_agent_performance_comparison(self, real_telemetry_provider):
         """Compare performance of default vs DSPy-optimized agents."""
         config_manager = create_default_config_manager()
 
@@ -552,12 +562,14 @@ class TestRealPerformanceComparison:
         # Initialize agent without DSPy optimization
         default_analyzer = QueryAnalysisToolV3(
             config_manager=config_manager,
+            telemetry_provider=real_telemetry_provider,
             enable_dspy=False,
         )
 
         # Initialize agent with DSPy optimization (simulated)
         optimized_analyzer = QueryAnalysisToolV3(
             config_manager=config_manager,
+            telemetry_provider=real_telemetry_provider,
             enable_dspy=True,
         )
 

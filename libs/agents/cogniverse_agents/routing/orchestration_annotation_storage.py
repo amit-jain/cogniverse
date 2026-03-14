@@ -185,7 +185,7 @@ class OrchestrationAnnotationStorage:
             spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
                 end_time=end_time,
-                project_name=self.project_name,
+                project=self.project_name,
             )
 
             # Filter for orchestration spans with evaluations

@@ -2,9 +2,8 @@
 End-to-End Integration Tests for Synthetic Data + Optimizers
 
 Tests that synthetic data generation integrates correctly with all optimizers.
+Uses real Phoenix telemetry provider for artifact persistence.
 """
-
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,66 +12,50 @@ from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
+_TEST_TENANT = "synthetic_optimizer_test"
 
-def _make_mock_telemetry_provider():
-    provider = MagicMock()
-    datasets = {}
 
-    async def create_dataset(name, data, metadata=None):
-        datasets[name] = data
-        return f"ds-{name}"
-
-    async def get_dataset(name):
-        if name not in datasets:
-            raise KeyError(f"Dataset {name} not found")
-        return datasets[name]
-
-    provider.datasets = MagicMock()
-    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
-    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
-    provider.experiments = MagicMock()
-    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
-    provider.experiments.log_run = AsyncMock(return_value="run-test")
-    return provider
+@pytest.fixture
+def real_telemetry_provider(telemetry_manager_with_phoenix):
+    """Get a real PhoenixProvider from the telemetry manager."""
+    return telemetry_manager_with_phoenix.get_provider(tenant_id=_TEST_TENANT)
 
 
 class TestCrossModalOptimizerIntegration:
     """Integration tests for CrossModalOptimizer with synthetic data"""
 
-    def test_cross_modal_optimizer_initialization(self):
+    def test_cross_modal_optimizer_initialization(self, real_telemetry_provider):
         """Test CrossModalOptimizer can be initialized"""
         optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
         assert optimizer is not None
         assert isinstance(optimizer.fusion_history, list)
 
     @pytest.mark.asyncio
-    async def test_generate_synthetic_cross_modal_data(self):
+    async def test_generate_synthetic_cross_modal_data(self, real_telemetry_provider):
         """Test generating synthetic data for CrossModalOptimizer"""
         optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
 
-        # Generate small batch without Vespa (uses mock data)
         count = await optimizer.generate_synthetic_training_data(count=10)
 
         assert count == 10
         assert len(optimizer.fusion_history) == 10
 
     @pytest.mark.asyncio
-    async def test_cross_modal_data_structure(self):
+    async def test_cross_modal_data_structure(self, real_telemetry_provider):
         """Test generated data has correct structure"""
         optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
 
         await optimizer.generate_synthetic_training_data(count=5)
 
-        # Check first example structure
         example = optimizer.fusion_history[0]
         assert "primary_modality" in example
         assert "secondary_modality" in example
@@ -81,20 +64,19 @@ class TestCrossModalOptimizerIntegration:
         assert "improvement" in example
 
     @pytest.mark.asyncio
-    async def test_cross_modal_training_after_synthetic_generation(self):
+    async def test_cross_modal_training_after_synthetic_generation(
+        self, real_telemetry_provider
+    ):
         """Test that CrossModalOptimizer can train on synthetic data"""
         optimizer = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
 
-        # Generate synthetic data
         await optimizer.generate_synthetic_training_data(count=50)
 
-        # Attempt to train
         result = optimizer.train_fusion_model()
 
-        # Should have sufficient data now
         assert result["status"] == "success"
         assert result.get("mae") is not None
 
@@ -102,29 +84,29 @@ class TestCrossModalOptimizerIntegration:
 class TestAdvancedRoutingOptimizerIntegration:
     """Integration tests for AdvancedRoutingOptimizer with synthetic data"""
 
-    def test_advanced_optimizer_initialization(self):
+    def test_advanced_optimizer_initialization(self, real_telemetry_provider):
         """Test AdvancedRoutingOptimizer can be initialized"""
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
         assert optimizer is not None
         assert isinstance(optimizer.experiences, list)
 
     @pytest.mark.asyncio
-    async def test_generate_synthetic_routing_data(self, test_generator_config):
+    async def test_generate_synthetic_routing_data(
+        self, real_telemetry_provider, test_generator_config
+    ):
         """Test generating synthetic data for AdvancedRoutingOptimizer"""
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
 
-        # Clear any existing experiences
         optimizer.experiences.clear()
 
-        # Generate small batch without Vespa (uses mock data)
         count = await optimizer.generate_synthetic_training_data(
             count=10, generator_config=test_generator_config
         )
@@ -133,19 +115,20 @@ class TestAdvancedRoutingOptimizerIntegration:
         assert len(optimizer.experiences) == 10
 
     @pytest.mark.asyncio
-    async def test_routing_data_structure(self, test_generator_config):
+    async def test_routing_data_structure(
+        self, real_telemetry_provider, test_generator_config
+    ):
         """Test generated data has correct structure"""
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
 
         await optimizer.generate_synthetic_training_data(
             count=5, generator_config=test_generator_config
         )
 
-        # Check first experience
         experience = optimizer.experiences[0]
         assert experience.query is not None
         assert isinstance(experience.entities, list)
@@ -156,25 +139,25 @@ class TestAdvancedRoutingOptimizerIntegration:
         assert 0 <= experience.search_quality <= 1
 
     @pytest.mark.asyncio
-    async def test_routing_data_variety(self, test_generator_config):
+    async def test_routing_data_variety(
+        self, real_telemetry_provider, test_generator_config
+    ):
         """Test that generated data has variety"""
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
 
         await optimizer.generate_synthetic_training_data(
             count=20, generator_config=test_generator_config
         )
 
-        # Check we have variety in queries
         queries = [exp.query for exp in optimizer.experiences]
         unique_queries = set(queries)
 
         assert len(unique_queries) > 1, "Generated queries should be diverse"
 
-        # Check we have variety in agents
         agents = [exp.chosen_agent for exp in optimizer.experiences]
         unique_agents = set(agents)
 
@@ -195,10 +178,8 @@ class TestWorkflowIntelligenceIntegration:
         """Test generating synthetic data for WorkflowIntelligence"""
         workflow_intel = WorkflowIntelligence()
 
-        # Clear any existing history from previous tests
         workflow_intel.workflow_history.clear()
 
-        # Generate small batch without Vespa (uses mock data)
         count = await workflow_intel.generate_synthetic_training_data(count=10)
 
         assert count == 10
@@ -211,7 +192,6 @@ class TestWorkflowIntelligenceIntegration:
 
         await workflow_intel.generate_synthetic_training_data(count=5)
 
-        # Check first execution
         execution = workflow_intel.workflow_history[0]
         assert execution.workflow_id is not None
         assert execution.query is not None
@@ -231,12 +211,10 @@ class TestWorkflowIntelligenceIntegration:
 
         await workflow_intel.generate_synthetic_training_data(count=30)
 
-        # Check we have different workflow lengths
         sequence_lengths = [
             len(ex.agent_sequence) for ex in workflow_intel.workflow_history
         ]
 
-        # Should have at least simple (1 agent) and complex (3+ agents) workflows
         assert min(sequence_lengths) >= 1
         assert max(sequence_lengths) >= 2
 
@@ -245,20 +223,21 @@ class TestMultiOptimizerIntegration:
     """Integration tests across multiple optimizers"""
 
     @pytest.mark.asyncio
-    async def test_all_optimizers_can_generate_data(self, test_generator_config):
+    async def test_all_optimizers_can_generate_data(
+        self, real_telemetry_provider, test_generator_config
+    ):
         """Test that all optimizers can generate synthetic data"""
         cross_modal = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
         routing = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
         workflow = WorkflowIntelligence()
 
-        # Generate for all
         cross_modal_count = await cross_modal.generate_synthetic_training_data(count=5)
         routing_count = await routing.generate_synthetic_training_data(
             count=5, generator_config=test_generator_config
@@ -270,19 +249,20 @@ class TestMultiOptimizerIntegration:
         assert workflow_count == 5
 
     @pytest.mark.asyncio
-    async def test_synthetic_data_is_independent(self, test_generator_config):
+    async def test_synthetic_data_is_independent(
+        self, real_telemetry_provider, test_generator_config
+    ):
         """Test that each optimizer gets independent data"""
         cross_modal = CrossModalOptimizer(
-            tenant_id="test-tenant",
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            telemetry_provider=real_telemetry_provider,
         )
         routing = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            telemetry_provider=real_telemetry_provider,
         )
 
-        # Clear state before testing
         cross_modal.fusion_history.clear()
         routing.experiences.clear()
 
@@ -291,19 +271,12 @@ class TestMultiOptimizerIntegration:
             count=3, generator_config=test_generator_config
         )
 
-        # Data should be different (fusion history vs routing experiences)
         assert len(cross_modal.fusion_history) == 3
         assert len(routing.experiences) == 3
 
-        # Check structure is different
         fusion_example = cross_modal.fusion_history[0]
         routing_example = routing.experiences[0]
 
-        # Fusion has different fields than routing
         assert "fusion_context" in fusion_example
         assert not hasattr(routing_example, "fusion_context")
         assert hasattr(routing_example, "entities")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])

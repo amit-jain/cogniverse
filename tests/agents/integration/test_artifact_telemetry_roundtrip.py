@@ -272,7 +272,7 @@ class TestOptimizerExperienceRoundTrip:
         """Record experiences, persist to Phoenix, reload in new optimizer."""
         config_kwargs = dict(
             tenant_id="optimizer-exp-test",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             telemetry_provider=real_provider,
         )
 

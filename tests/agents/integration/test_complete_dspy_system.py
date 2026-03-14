@@ -10,7 +10,7 @@ This tests the real end-to-end functionality:
 6. ComposableQueryAnalysisModule Path A/B selection with real Ollama + GLiNER
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import dspy
 import pytest
@@ -20,27 +20,13 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 from .conftest import skip_if_no_ollama
 
+_TEST_TENANT = "dspy_system_test"
 
-def _make_mock_telemetry_provider():
-    provider = MagicMock()
-    datasets = {}
 
-    async def create_dataset(name, data, metadata=None):
-        datasets[name] = data
-        return f"ds-{name}"
-
-    async def get_dataset(name):
-        if name not in datasets:
-            raise KeyError(f"Dataset {name} not found")
-        return datasets[name]
-
-    provider.datasets = MagicMock()
-    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
-    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
-    provider.experiments = MagicMock()
-    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
-    provider.experiments.log_run = AsyncMock(return_value="run-test")
-    return provider
+@pytest.fixture
+def real_telemetry_provider(telemetry_manager_with_phoenix):
+    """Get a real PhoenixProvider from the telemetry manager."""
+    return telemetry_manager_with_phoenix.get_provider(tenant_id=_TEST_TENANT)
 
 
 @pytest.mark.integration
@@ -162,7 +148,7 @@ class TestCompleteDSPySystem:
         assert QueryEnhancementPipeline is not None
         assert AdvancedRoutingOptimizer is not None
 
-    def test_phase_6_advanced_components_integration(self):
+    def test_phase_6_advanced_components_integration(self, real_telemetry_provider):
         """Test Phase 6 advanced optimization components integration"""
 
         from cogniverse_agents.routing.adaptive_threshold_learner import (
@@ -177,10 +163,12 @@ class TestCompleteDSPySystem:
         simba_config = SIMBAConfig()
         assert simba_config.similarity_threshold > 0
 
-        # Test adaptive learning (with mocked storage)
-        with patch("pathlib.Path"):
-            learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
-            assert learner is not None
+        # Test adaptive learning with real telemetry provider
+        learner = AdaptiveThresholdLearner(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
+        )
+        assert learner is not None
 
         # Test MLflow integration basic structure
         exp_config = ExperimentConfig(experiment_name="test")
@@ -557,8 +545,8 @@ class TestSIMBAWithRealLLMAndEmbeddings:
         dspy.configure(lm=None)
 
     @pytest.fixture
-    def simba_enhancer(self, tmp_path):
-        """Create SIMBAQueryEnhancer with isolated temp storage."""
+    def simba_enhancer(self, tmp_path, real_telemetry_provider):
+        """Create SIMBAQueryEnhancer with real telemetry."""
         from cogniverse_agents.routing.simba_query_enhancer import (
             SIMBAConfig,
             SIMBAQueryEnhancer,
@@ -569,7 +557,11 @@ class TestSIMBAWithRealLLMAndEmbeddings:
             similarity_threshold=0.5,
             min_improvement_threshold=0.05,
         )
-        return SIMBAQueryEnhancer(config=config, storage_dir=str(tmp_path / "simba"))
+        return SIMBAQueryEnhancer(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
+            config=config,
+        )
 
     @pytest.mark.asyncio
     async def test_simba_embedding_model_initializes(self, simba_enhancer):
@@ -727,7 +719,7 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
         dspy.configure(lm=None)
 
     @pytest.fixture
-    def optimizer(self, tmp_path):
+    def optimizer(self, tmp_path, real_telemetry_provider):
         """Create AdvancedRoutingOptimizer with isolated temp storage."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -742,10 +734,10 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
             enable_persistence=False,
         )
         return AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             config=config,
-            telemetry_provider=_make_mock_telemetry_provider(),
+            telemetry_provider=real_telemetry_provider,
         )
 
     @pytest.mark.asyncio
@@ -904,8 +896,8 @@ class TestAdaptiveThresholdLearnerIntegration:
     """
 
     @pytest.fixture
-    def learner(self, tmp_path):
-        """Create AdaptiveThresholdLearner with isolated temp storage."""
+    def learner(self, real_telemetry_provider):
+        """Create AdaptiveThresholdLearner with real telemetry provider."""
         from cogniverse_agents.routing.adaptive_threshold_learner import (
             AdaptiveThresholdConfig,
             AdaptiveThresholdLearner,
@@ -940,9 +932,9 @@ class TestAdaptiveThresholdLearnerIntegration:
             ),
         }
         return AdaptiveThresholdLearner(
-            tenant_id="test_tenant",
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             config=config,
-            base_storage_dir=str(tmp_path / "adaptive"),
         )
 
     @pytest.mark.asyncio
@@ -1084,7 +1076,7 @@ class TestFullLearningPipelineIntegration:
         dspy.configure(lm=None)
 
     @pytest.mark.asyncio
-    async def test_query_analysis_feeds_learning_pipeline(self, tmp_path):
+    async def test_query_analysis_feeds_learning_pipeline(self, tmp_path, real_telemetry_provider):
         """
         Full loop: analyze query, record to SIMBA + optimizer, check learning.
 
@@ -1118,20 +1110,21 @@ class TestFullLearningPipelineIntegration:
         )
 
         simba = SIMBAQueryEnhancer(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             config=SIMBAConfig(min_improvement_threshold=0.05),
-            storage_dir=str(tmp_path / "simba"),
         )
 
         optimizer = AdvancedRoutingOptimizer(
-            tenant_id="test_tenant",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            tenant_id=_TEST_TENANT,
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             config=AdvancedOptimizerConfig(
                 min_experiences_for_training=3,
                 update_frequency=3,
                 batch_size=3,
                 enable_persistence=False,
             ),
-            telemetry_provider=_make_mock_telemetry_provider(),
+            telemetry_provider=real_telemetry_provider,
         )
 
         # Step 1: Analyze query with real Ollama + GLiNER
@@ -1238,7 +1231,7 @@ class TestSIMBACompileWithRealLLM:
         dspy.configure(lm=None)
 
     @pytest.fixture
-    def simba_for_compile(self, tmp_path):
+    def simba_for_compile(self, tmp_path, real_telemetry_provider):
         """SIMBA enhancer configured to trigger optimization quickly."""
         from cogniverse_agents.routing.simba_query_enhancer import (
             SIMBAConfig,
@@ -1252,8 +1245,9 @@ class TestSIMBACompileWithRealLLM:
             min_improvement_threshold=0.05,
         )
         return SIMBAQueryEnhancer(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             config=config,
-            storage_dir=str(tmp_path / "simba_compile"),
         )
 
     @skip_if_no_ollama
@@ -1391,7 +1385,7 @@ class TestSIMBACompileWithRealLLM:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_simba_compile_skipped_below_threshold(self, dspy_lm, tmp_path):
+    async def test_simba_compile_skipped_below_threshold(self, dspy_lm, tmp_path, real_telemetry_provider):
         """Patterns below quality threshold (avg_improvement < 0.6) are excluded from training."""
         from cogniverse_agents.routing.simba_query_enhancer import (
             SIMBAConfig,
@@ -1405,8 +1399,9 @@ class TestSIMBACompileWithRealLLM:
             min_improvement_threshold=0.05,
         )
         simba = SIMBAQueryEnhancer(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             config=config,
-            storage_dir=str(tmp_path / "simba_low_quality"),
         )
 
         # Record 3 low-quality patterns (avg_improvement = 0.15, below 0.6 training threshold)
@@ -1449,7 +1444,7 @@ class TestForceOptimizerSelection:
         yield lm
         dspy.configure(lm=None)
 
-    async def _create_optimizer_with_force(self, tmp_path, force_optimizer_name):
+    async def _create_optimizer_with_force(self, tmp_path, force_optimizer_name, telemetry_provider):
         """Helper to create AdvancedRoutingOptimizer with force_optimizer and trigger lazy init."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1458,19 +1453,19 @@ class TestForceOptimizerSelection:
 
         config = AdvancedOptimizerConfig(
             min_experiences_for_training=3,
-            update_frequency=3,
+            update_frequency=100,  # High to prevent optimization during setup
             batch_size=3,
             force_optimizer=force_optimizer_name,
             enable_persistence=False,
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=f"test_force_{force_optimizer_name}",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             config=config,
-            telemetry_provider=_make_mock_telemetry_provider(),
+            telemetry_provider=telemetry_provider,
         )
 
-        # Record enough experiences to trigger lazy init of advanced_optimizer
+        # Record enough experiences to pass min_experiences_for_training
         for i, query in enumerate(
             ["query alpha", "query beta", "query gamma", "query delta"]
         ):
@@ -1486,13 +1481,18 @@ class TestForceOptimizerSelection:
                 processing_time=1.0,
             )
 
+        # Manually trigger lazy init of advanced_optimizer without running
+        # the full optimization step (which requires 32+ training examples)
+        if optimizer.advanced_optimizer is None:
+            optimizer.advanced_optimizer = optimizer._create_advanced_optimizer()
+
         return optimizer
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_simba_selects_simba(self, dspy_lm, tmp_path):
+    async def test_force_simba_selects_simba(self, dspy_lm, tmp_path, real_telemetry_provider):
         """force_optimizer='simba' → _select_optimizer returns SIMBA."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "simba")
+        optimizer = await self._create_optimizer_with_force(tmp_path, "simba", real_telemetry_provider)
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1500,9 +1500,9 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_gepa_selects_gepa(self, dspy_lm, tmp_path):
+    async def test_force_gepa_selects_gepa(self, dspy_lm, tmp_path, real_telemetry_provider):
         """force_optimizer='gepa' → _select_optimizer returns GEPA."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "gepa")
+        optimizer = await self._create_optimizer_with_force(tmp_path, "gepa", real_telemetry_provider)
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1510,9 +1510,9 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_mipro_selects_mipro(self, dspy_lm, tmp_path):
+    async def test_force_mipro_selects_mipro(self, dspy_lm, tmp_path, real_telemetry_provider):
         """force_optimizer='mipro' → _select_optimizer returns MIPROv2."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "mipro")
+        optimizer = await self._create_optimizer_with_force(tmp_path, "mipro", real_telemetry_provider)
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1520,9 +1520,9 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_bootstrap_selects_bootstrap(self, dspy_lm, tmp_path):
+    async def test_force_bootstrap_selects_bootstrap(self, dspy_lm, tmp_path, real_telemetry_provider):
         """force_optimizer='bootstrap' → _select_optimizer returns BootstrapFewShot."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "bootstrap")
+        optimizer = await self._create_optimizer_with_force(tmp_path, "bootstrap", real_telemetry_provider)
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1530,7 +1530,7 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_adaptive_selects_best_for_dataset_size(self, dspy_lm, tmp_path):
+    async def test_adaptive_selects_best_for_dataset_size(self, dspy_lm, tmp_path, real_telemetry_provider):
         """Without force_optimizer, adaptive strategy selects based on dataset size."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1544,13 +1544,12 @@ class TestForceOptimizerSelection:
             force_optimizer=None,
             optimizer_strategy="adaptive",
             enable_persistence=False,
-            # Thresholds: bootstrap=20, simba=50, mipro=100, gepa=200
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_adaptive",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             config=config,
-            telemetry_provider=_make_mock_telemetry_provider(),
+            telemetry_provider=real_telemetry_provider,
         )
 
         # Record enough to trigger lazy init
@@ -1587,7 +1586,7 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_optimizer_compile_end_to_end(self, dspy_lm, tmp_path):
+    async def test_force_optimizer_compile_end_to_end(self, dspy_lm, tmp_path, real_telemetry_provider):
         """Force bootstrap optimizer and verify compile produces optimized policy."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1603,9 +1602,9 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_compile_e2e",
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             config=config,
-            telemetry_provider=_make_mock_telemetry_provider(),
+            telemetry_provider=real_telemetry_provider,
         )
 
         assert optimizer.routing_policy is not None
@@ -1657,7 +1656,7 @@ class TestVespaLearningPipelineIntegration:
     @skip_if_no_ollama
     @pytest.mark.asyncio
     async def test_query_enhancement_to_vespa_search_feedback(
-        self, dspy_lm, vespa_with_schema, tmp_path
+        self, dspy_lm, vespa_with_schema, real_telemetry_provider
     ):
         """Full loop: enhance query → search Vespa → record feedback to SIMBA."""
         from pathlib import Path
@@ -1723,11 +1722,12 @@ class TestVespaLearningPipelineIntegration:
 
         # Step 4: Record feedback to SIMBA
         simba = SIMBAQueryEnhancer(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             config=SIMBAConfig(
                 min_patterns_for_optimization=5,
                 min_improvement_threshold=0.05,
             ),
-            storage_dir=str(tmp_path / "simba_vespa"),
         )
 
         # Use search result count as a proxy for quality

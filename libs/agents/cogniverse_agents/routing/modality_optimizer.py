@@ -283,7 +283,6 @@ class ModalityOptimizer:
             f"(strategy: {strategy.value})"
         )
 
-        # Step 6: Train modality-specific model (placeholder for now)
         training_result = self._train_modality_model(modality, training_data, strategy)
 
         # Step 7: Record training history
@@ -565,33 +564,39 @@ class ModalityOptimizer:
             # Store in memory
             self.modality_models[modality] = optimized_module
 
-            # Save to telemetry via ArtifactManager
-            with tempfile.TemporaryDirectory() as tmpdir:
-                model_path = Path(tmpdir) / f"{modality.value}_routing_module.json"
-                optimized_module.save(str(model_path))
-                model_json = model_path.read_text()
+            # Save to telemetry via ArtifactManager (best-effort persistence)
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    model_path = Path(tmpdir) / f"{modality.value}_routing_module.json"
+                    optimized_module.save(str(model_path))
+                    model_json = model_path.read_text()
 
-            import asyncio
-            import concurrent.futures
+                import asyncio
+                import concurrent.futures
 
-            model_json_captured = model_json
-            modality_value = modality.value
+                model_json_captured = model_json
+                modality_value = modality.value
 
-            def _save_blob_in_thread():
-                loop = asyncio.new_event_loop()
-                try:
-                    loop.run_until_complete(
-                        self._artifact_manager.save_blob(
-                            "modality_model", modality_value, model_json_captured
+                def _save_blob_in_thread():
+                    loop = asyncio.new_event_loop()
+                    try:
+                        loop.run_until_complete(
+                            self._artifact_manager.save_blob(
+                                "modality_model", modality_value, model_json_captured
+                            )
                         )
-                    )
-                finally:
-                    loop.close()
+                    finally:
+                        loop.close()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                executor.submit(_save_blob_in_thread).result(timeout=30)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    executor.submit(_save_blob_in_thread).result(timeout=30)
 
-            logger.info(f"Saved {modality.value} model to telemetry")
+                logger.info(f"Saved {modality.value} model to telemetry")
+            except Exception as save_err:
+                logger.warning(
+                    f"Failed to persist {modality.value} model to telemetry "
+                    f"(model is still available in memory): {save_err}"
+                )
 
             # Calculate accuracy on training set (as upper bound estimate)
             correct = 0

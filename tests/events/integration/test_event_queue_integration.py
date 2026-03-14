@@ -37,22 +37,6 @@ def event_queue(queue_manager):
     )
 
 
-class MockTelemetryConfig:
-    """Mock telemetry config for testing."""
-
-    enabled = False
-
-
-@pytest.fixture
-def mock_telemetry_manager():
-    """Create mock telemetry manager for orchestrator tests."""
-    from contextlib import nullcontext
-
-    manager = MagicMock()
-    manager.span.return_value = nullcontext(MagicMock())
-    return manager
-
-
 class TestEventQueueWithOrchestrator:
     """Test EventQueue integration with MultiAgentOrchestrator."""
 
@@ -69,7 +53,7 @@ class TestEventQueueWithOrchestrator:
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_orchestrator_accepts_event_queue_parameter(
-        self, mock_routing_agent, mock_telemetry_manager
+        self, mock_routing_agent, telemetry_manager_without_phoenix
     ):
         """Test that orchestrator accepts event_queue parameter."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
@@ -84,7 +68,7 @@ class TestEventQueueWithOrchestrator:
         # Should not raise - provide routing_agent to avoid RoutingDeps creation
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=mock_routing_agent,
             event_queue=queue,
         )
@@ -95,7 +79,7 @@ class TestEventQueueWithOrchestrator:
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_orchestrator_emit_event_helper(
-        self, mock_routing_agent, mock_telemetry_manager
+        self, mock_routing_agent, telemetry_manager_without_phoenix
     ):
         """Test that _emit_event helper works correctly."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
@@ -109,7 +93,7 @@ class TestEventQueueWithOrchestrator:
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=mock_routing_agent,
             event_queue=queue,
         )
@@ -131,7 +115,7 @@ class TestEventQueueWithOrchestrator:
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_orchestrator_without_event_queue_does_not_fail(
-        self, mock_routing_agent, mock_telemetry_manager
+        self, mock_routing_agent, telemetry_manager_without_phoenix
     ):
         """Test that orchestrator works without event_queue (optional)."""
         from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
@@ -141,7 +125,7 @@ class TestEventQueueWithOrchestrator:
         # Should not raise when event_queue is None
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             routing_agent=mock_routing_agent,
             event_queue=None,
         )
@@ -413,10 +397,10 @@ class TestCheckpointEventIntegration:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_checkpoint_storage_accepts_event_queue(self):
+    async def test_checkpoint_storage_accepts_event_queue(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test CheckpointStorage can be initialized with EventQueue."""
-        from unittest.mock import MagicMock
-
         from cogniverse_agents.orchestrator.checkpoint_storage import (
             WorkflowCheckpointStorage,
         )
@@ -427,17 +411,13 @@ class TestCheckpointEventIntegration:
             tenant_id="test_tenant",
         )
 
-        mock_telemetry_manager = MagicMock()
-        mock_telemetry_manager.config = MagicMock()
-        mock_telemetry_manager.config.provider_config = {}
-
         # Should accept event_queue parameter
         storage = WorkflowCheckpointStorage(
             grpc_endpoint="localhost:4317",
             http_endpoint="http://localhost:6006",
             tenant_id="test_tenant",
             config=CheckpointConfig(enabled=True),
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             event_queue=queue,
         )
 
@@ -445,10 +425,9 @@ class TestCheckpointEventIntegration:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_checkpoint_save_emits_events(self):
+    async def test_checkpoint_save_emits_events(self, telemetry_manager_without_phoenix):
         """Test that saving a checkpoint emits A2A events."""
         from datetime import datetime
-        from unittest.mock import MagicMock
 
         from cogniverse_agents.orchestrator.checkpoint_storage import (
             WorkflowCheckpointStorage,
@@ -465,20 +444,12 @@ class TestCheckpointEventIntegration:
             tenant_id="test_tenant",
         )
 
-        # Create mock telemetry manager
-        mock_telemetry_manager = MagicMock()
-        mock_telemetry_manager.config = MagicMock()
-        mock_telemetry_manager.config.provider_config = {}
-        mock_telemetry_manager.span = MagicMock()
-        mock_telemetry_manager.span.return_value.__enter__ = MagicMock()
-        mock_telemetry_manager.span.return_value.__exit__ = MagicMock()
-
         storage = WorkflowCheckpointStorage(
             grpc_endpoint="localhost:4317",
             http_endpoint="http://localhost:6006",
             tenant_id="test_tenant",
             config=CheckpointConfig(enabled=True),
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             event_queue=queue,
         )
 
@@ -531,10 +502,11 @@ class TestCheckpointEventIntegration:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_checkpoint_without_event_queue_does_not_fail(self):
+    async def test_checkpoint_without_event_queue_does_not_fail(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test that checkpoint works without EventQueue."""
         from datetime import datetime
-        from unittest.mock import MagicMock
 
         from cogniverse_agents.orchestrator.checkpoint_storage import (
             WorkflowCheckpointStorage,
@@ -545,20 +517,13 @@ class TestCheckpointEventIntegration:
             WorkflowCheckpoint,
         )
 
-        mock_telemetry_manager = MagicMock()
-        mock_telemetry_manager.config = MagicMock()
-        mock_telemetry_manager.config.provider_config = {}
-        mock_telemetry_manager.span = MagicMock()
-        mock_telemetry_manager.span.return_value.__enter__ = MagicMock()
-        mock_telemetry_manager.span.return_value.__exit__ = MagicMock()
-
         # Create without event_queue
         storage = WorkflowCheckpointStorage(
             grpc_endpoint="localhost:4317",
             http_endpoint="http://localhost:6006",
             tenant_id="test_tenant",
             config=CheckpointConfig(enabled=True),
-            telemetry_manager=mock_telemetry_manager,
+            telemetry_manager=telemetry_manager_without_phoenix,
             # No event_queue - should still work
         )
 

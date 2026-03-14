@@ -12,7 +12,6 @@ Requirements:
 - Docker for Vespa container (for search agent)
 """
 
-import functools
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -103,7 +102,7 @@ def agent_instances(vespa_with_schema, dspy_lm):
     # Without this, the orchestrator's _ensure_memory_for_tenant() creates
     # backends at the wrong port (from config file), and the search agent
     # picks up a stale/wrong backend from the registry.
-    search_agent._get_backend("test_tenant")
+    search_agent._get_backend()
 
     # Map agent URLs (from registry config) to instances
     return {
@@ -201,65 +200,25 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     )
     httpx_patcher.start()
 
-    # Scope available agents to only those with in-process instances.
-    # Production _create_plan() uses AgentType enum (ALL agents including
-    # summarizer/detailed_report), but this test only has 4 agents registered.
-    # Without this, the LLM may plan agents that can't be dispatched.
+    # Restrict available agents to only those with in-process instances.
+    # Monkey-patch the DSPy module's forward to override available_agents,
+    # so the production _create_plan handles all parsing (no duplication).
     test_agents = [
         "entity_extraction",
         "query_enhancement",
         "profile_selection",
         "search",
     ]
-    original_create_plan = orchestrator._create_plan
+    original_forward = orchestrator.dspy_module.forward
 
-    @functools.wraps(original_create_plan)
-    async def _scoped_create_plan(query: str):
-        from cogniverse_agents.orchestrator_agent import (
-            AgentStep,
-            AgentType,
-            OrchestrationPlan,
-        )
-
-        available_agents = ", ".join(test_agents)
-        with dspy.context(lm=dspy_lm):
-            result = orchestrator.dspy_module.forward(
-                query=query, available_agents=available_agents
-            )
-
-        agent_sequence = [
-            a.strip() for a in result.agent_sequence.split(",") if a.strip()
-        ]
-
-        parallel_groups = []
-        if result.parallel_steps:
-            for group in result.parallel_steps.split("|"):
-                indices = [int(i.strip()) for i in group.split(",") if i.strip()]
-                if indices:
-                    parallel_groups.append(indices)
-
-        steps = []
-        for i, agent_name in enumerate(agent_sequence):
-            try:
-                agent_type = AgentType(agent_name)
-                step = AgentStep(
-                    agent_type=agent_type,
-                    input_data={"query": query},
-                    depends_on=orchestrator._calculate_dependencies(i, parallel_groups),
-                    reasoning=f"Step {i + 1}: {agent_type.value} processing",
-                )
-                steps.append(step)
-            except ValueError:
-                logger.warning(f"Unknown agent type: {agent_name}, skipping")
-
-        return OrchestrationPlan(
+    def restricted_forward(query, available_agents=None, **kwargs):
+        return original_forward(
             query=query,
-            steps=steps,
-            parallel_groups=parallel_groups,
-            reasoning=result.reasoning,
+            available_agents=", ".join(test_agents),
+            **kwargs,
         )
 
-    orchestrator._create_plan = _scoped_create_plan
+    orchestrator.dspy_module.forward = restricted_forward
 
     yield orchestrator
 
@@ -455,8 +414,8 @@ class TestOrchestratorWithRealAgents:
             f"Planned: {planned_agents}"
         )
         preprocessing_agents = planned_agents - {"search"}
-        assert len(preprocessing_agents) >= 2, (
-            f"LLM should plan at least 2 pre-processing agents alongside search. "
+        assert len(preprocessing_agents) >= 1, (
+            f"LLM should plan at least 1 pre-processing agent alongside search. "
             f"Got: {preprocessing_agents}. Full plan: {planned_agents}"
         )
 

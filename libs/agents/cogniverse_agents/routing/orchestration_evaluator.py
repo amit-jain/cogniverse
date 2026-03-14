@@ -54,10 +54,7 @@ class OrchestrationEvaluator:
             tenant_id=tenant_id
         )
 
-        # Get project name for orchestration spans
-        self.project_name = self.telemetry_config.get_project_name(
-            tenant_id, service="cogniverse.orchestration"
-        )
+        self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
         # Track processed spans to avoid duplicates
         self._processed_span_ids = set()
@@ -171,47 +168,50 @@ class OrchestrationEvaluator:
         - parallel_efficiency, confidence_score
         """
         try:
-            attributes = span_row.get("attributes", {})
+            orch_attrs = span_row.get("attributes.orchestration", {}) or {}
+            routing_attrs = span_row.get("attributes.routing", {}) or {}
 
-            # Extract core workflow data
-            workflow_id = attributes.get("orchestration.workflow_id")
-            query = attributes.get("orchestration.query")
+            workflow_id = orch_attrs.get("workflow_id")
+            query = orch_attrs.get("query")
 
             if not workflow_id or not query:
                 logger.warning("Span missing workflow_id or query, skipping")
                 return None
 
-            # Extract orchestration details
-            orchestration_pattern = attributes.get("orchestration.pattern")
-            agents_str = attributes.get("orchestration.agents_used", "")
+            orchestration_pattern = orch_attrs.get("pattern")
+            agents_str = orch_attrs.get("agents_used", "")
             agent_sequence = agents_str.split(",") if agents_str else []
 
-            execution_order_str = attributes.get("orchestration.execution_order", "")
+            execution_order_str = orch_attrs.get("execution_order", "")
             execution_order = (
                 execution_order_str.split(",") if execution_order_str else []
             )
 
-            # Extract timing
-            execution_time = float(attributes.get("orchestration.execution_time", 0.0))
+            execution_time = float(orch_attrs.get("execution_time", 0.0))
 
-            # Extract success/failure
-            status_code = span_row.get("status_code", "OK")
-            success = status_code == "OK"
+            status_code = span_row.get("status_code", "UNSET")
+            success = status_code != "ERROR"
             error_details = span_row.get("status_message") if not success else None
 
-            # Extract task metrics
-            task_count = int(attributes.get("orchestration.tasks_completed", 0))
+            task_count = int(orch_attrs.get("tasks_completed", 0))
 
-            # Compute parallel efficiency (if parallel pattern)
             parallel_efficiency = self._compute_parallel_efficiency(
-                orchestration_pattern, attributes, execution_time
+                orchestration_pattern, orch_attrs, execution_time
             )
 
-            # Extract confidence (from routing decision that triggered orchestration)
-            confidence_score = float(attributes.get("routing.confidence", 0.0))
+            confidence_score = float(routing_attrs.get("confidence", 0.0))
 
             # Classify query type for pattern learning
             query_type = self._classify_query_type(query, orchestration_pattern)
+
+            # Derive user_satisfaction proxy from span metrics
+            # Successful workflows with high confidence get high satisfaction
+            if success and confidence_score > 0:
+                user_satisfaction = confidence_score
+            elif success:
+                user_satisfaction = 0.5
+            else:
+                user_satisfaction = 0.0
 
             # Create WorkflowExecution
             workflow_execution = WorkflowExecution(
@@ -224,6 +224,7 @@ class OrchestrationEvaluator:
                 task_count=task_count,
                 parallel_efficiency=parallel_efficiency,
                 confidence_score=confidence_score,
+                user_satisfaction=user_satisfaction,
                 error_details=error_details,
                 metadata={
                     "orchestration_pattern": orchestration_pattern,
@@ -253,7 +254,7 @@ class OrchestrationEvaluator:
 
         # Extract individual agent times if available
         # Format: "agent1:1.2,agent2:1.5,agent3:0.8"
-        agent_times_str = attributes.get("orchestration.agent_times", "")
+        agent_times_str = attributes.get("agent_times", "")
         if not agent_times_str:
             return 0.0
 

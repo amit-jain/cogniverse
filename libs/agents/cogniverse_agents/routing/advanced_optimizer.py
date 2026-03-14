@@ -1094,15 +1094,27 @@ class AdvancedRoutingOptimizer:
             )
             task.add_done_callback(self._on_demos_loaded)
         else:
-            demos = asyncio.run(
-                self._artifact_manager.load_demonstrations("routing_optimizer")
-            )
-            self._apply_loaded_demos(demos)
+            try:
+                demos = asyncio.run(
+                    self._artifact_manager.load_demonstrations("routing_optimizer")
+                )
+                self._apply_loaded_demos(demos)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load stored demos from telemetry "
+                    f"(optimizer will start fresh): {e}"
+                )
 
     def _on_demos_loaded(self, future: asyncio.Future):
         """Callback for async demo loading."""
-        demos = future.result()
-        self._apply_loaded_demos(demos)
+        try:
+            demos = future.result()
+            self._apply_loaded_demos(demos)
+        except Exception as e:
+            logger.warning(
+                f"Failed to load stored demos from telemetry "
+                f"(optimizer will start fresh): {e}"
+            )
 
     @staticmethod
     def _parse_demo_field(value: Any) -> dict:

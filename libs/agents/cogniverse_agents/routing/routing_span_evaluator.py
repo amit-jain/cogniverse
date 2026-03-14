@@ -143,6 +143,9 @@ class RoutingSpanEvaluator:
                 # Extract routing experience from span
                 experience = self._extract_routing_experience_from_df_row(span_row)
                 if experience:
+                    # Mark as processed before recording to prevent retries on failure
+                    self._processed_span_ids.add(span_id)
+
                     # Record experience with optimizer
                     reward = await self.optimizer.record_routing_experience(
                         query=experience.query,
@@ -158,7 +161,6 @@ class RoutingSpanEvaluator:
                     )
 
                     experiences_created += 1
-                    self._processed_span_ids.add(span_id)
 
                     logger.info(
                         f"✅ Created experience: {experience.chosen_agent} "
@@ -211,7 +213,7 @@ class RoutingSpanEvaluator:
                 query = routing_attrs.get("query")
                 context = routing_attrs.get("context")
             else:
-                # Fallback to nested format (for unit tests or older spans)
+                # Phoenix flat format: routing attributes stored with dotted keys
                 attributes = span_row.get("attributes", {})
                 chosen_agent = attributes.get("routing.chosen_agent")
                 routing_confidence = attributes.get("routing.confidence")
@@ -395,15 +397,11 @@ class RoutingSpanEvaluator:
             return False
 
     def _get_processing_time(self, span: ReadableSpan) -> float:
-        """Extract processing time from span duration"""
-        try:
-            if hasattr(span, "start_time") and hasattr(span, "end_time"):
-                # Convert nanoseconds to seconds
-                duration_ns = span.end_time - span.start_time
-                return duration_ns / 1e9
-            return 0.0
-        except Exception:
-            return 0.0
+        """Extract processing time from span duration (nanoseconds to seconds)."""
+        if hasattr(span, "start_time") and hasattr(span, "end_time"):
+            duration_ns = span.end_time - span.start_time
+            return duration_ns / 1e9
+        return 0.0
 
     def _parse_json_attribute(self, value: str) -> List[Dict[str, Any]]:
         """Parse JSON string attribute into Python object"""

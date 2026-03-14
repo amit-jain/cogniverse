@@ -43,6 +43,7 @@
           }
         },
         "embedding_type": "frame_based",
+        "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali_smol500_mv_frame",
           "model_name": "ColPali",

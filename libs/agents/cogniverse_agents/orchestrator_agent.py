@@ -202,10 +202,8 @@ class OrchestratorAgent(
         self.registry = registry
         self._config_manager = config_manager
 
-        # Initialize DSPy module
         orchestration_module = OrchestrationModule()
 
-        # Create A2A config
         config = A2AAgentConfig(
             agent_name="orchestrator_agent",
             agent_description="Type-safe orchestration with planning and action phases",
@@ -220,7 +218,6 @@ class OrchestratorAgent(
             version="1.0.0",
         )
 
-        # Initialize base class
         super().__init__(deps=deps, config=config, dspy_module=orchestration_module)
 
         # Track which tenants have memory initialized
@@ -335,13 +332,8 @@ class OrchestratorAgent(
             plan, tenant_id=tenant_id, session_id=session_id
         )
 
-        # Aggregate results
         final_output = self._aggregate_results(query, agent_results)
-
-        # Generate summary
         execution_summary = self._generate_summary(plan, agent_results)
-
-        # Remember this interaction for future context
         self.remember_success(query, execution_summary)
 
         return OrchestratorOutput(
@@ -374,30 +366,30 @@ class OrchestratorAgent(
         Returns:
             OrchestrationPlan with agent sequence and parallelization
         """
-        # Get available agents
         available_agents = ", ".join([a.value for a in AgentType])
 
-        # Use DSPy to create plan
         result = self.dspy_module.forward(
             query=query,
             available_agents=available_agents,
             conversation_context=conversation_context,
         )
 
-        # Parse agent sequence
         agent_sequence = [
             a.strip() for a in result.agent_sequence.split(",") if a.strip()
         ]
 
-        # Parse parallel groups
+        # Parse parallel groups (LLM may return "None" or non-numeric strings)
         parallel_groups = []
-        if result.parallel_steps:
+        if result.parallel_steps and result.parallel_steps.strip().lower() != "none":
             for group in result.parallel_steps.split("|"):
-                indices = [int(i.strip()) for i in group.split(",") if i.strip()]
+                indices = []
+                for i in group.split(","):
+                    token = i.strip()
+                    if token.isdigit():
+                        indices.append(int(token))
                 if indices:
                     parallel_groups.append(indices)
 
-        # Create agent steps
         steps = []
         for i, agent_name in enumerate(agent_sequence):
             try:

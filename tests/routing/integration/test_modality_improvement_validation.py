@@ -35,7 +35,7 @@ class TestModalityImprovementValidation:
             tenant_id="test_tenant"
         )
         optimizer = ModalityOptimizer(
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
@@ -198,7 +198,7 @@ class TestModalityImprovementValidation:
             tenant_id="test_tenant"
         )
         optimizer = ModalityOptimizer(
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
@@ -318,7 +318,7 @@ class TestModalityImprovementValidation:
             tenant_id="test_tenant"
         )
         optimizer = ModalityOptimizer(
-            llm_config=LLMEndpointConfig(model="ollama/test-model"),
+            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
             telemetry_provider=telemetry_provider,
             tenant_id="test_tenant",
         )
