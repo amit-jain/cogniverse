@@ -15,8 +15,6 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-
-# Provider import moved to initialization method
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -124,7 +122,6 @@ class MonitoredSpanExporter(SpanExporter):
                     self.metrics.record_success(num_spans, latency_ms)
                     return result
 
-                # Export failed, retry with backoff
                 if attempt < self.config.max_retries - 1:
                     delay = self.config.retry_delay_seconds * (
                         self.config.retry_backoff_factor**attempt
@@ -155,7 +152,6 @@ class MonitoredSpanExporter(SpanExporter):
                         description="span export error retry",
                     )
 
-        # All retries failed
         self.metrics.record_failure(num_spans)
         logger.error(
             f"Failed to export {num_spans} spans after {self.config.max_retries} attempts"
@@ -179,16 +175,14 @@ class TelemetryStorage:
         self.config = config or ConnectionConfig(enable_health_checks=False)
         self.metrics = ExportMetrics()
         self.connection_state = ConnectionState.DISCONNECTED
-        self.provider = None  # Will be initialized in _initialize_connection
+        self.provider = None
         self.tracer: Optional[trace.Tracer] = None
         self._health_check_thread: Optional[threading.Thread] = None
         self._stop_health_check = threading.Event()
         self._lock = threading.Lock()
 
-        # Initialize connection
         self._initialize_connection()
 
-        # Start health checks if enabled
         if self.config.enable_health_checks:
             self._start_health_checks()
 
@@ -199,21 +193,15 @@ class TelemetryStorage:
 
             for attempt in range(self.config.max_retries):
                 try:
-                    # Register project config with telemetry manager
                     import asyncio
 
                     from cogniverse_evaluation.providers import (
                         get_evaluation_provider,
-                        reset_evaluation_provider,
                     )
                     from cogniverse_foundation.telemetry.manager import (
                         get_telemetry_manager,
                     )
 
-                    # Reset any cached provider first
-                    reset_evaluation_provider()
-
-                    # Register project with telemetry endpoints
                     telemetry_manager = get_telemetry_manager()
                     telemetry_manager.register_project(
                         tenant_id="default",
@@ -222,7 +210,6 @@ class TelemetryStorage:
                         grpc_endpoint=self.config.otlp_endpoint,
                     )
 
-                    # Initialize evaluator provider (will use registered config)
                     self.provider = get_evaluation_provider(
                         tenant_id="default",
                         config={
@@ -232,14 +219,12 @@ class TelemetryStorage:
                         },
                     )
 
-                    # Test connection
                     asyncio.run(
                         self.provider.telemetry.traces.get_spans(
                             project="cogniverse-default", limit=1
                         )
                     )
 
-                    # Configure OpenTelemetry
                     self._configure_opentelemetry()
 
                     self.connection_state = ConnectionState.CONNECTED
@@ -271,7 +256,6 @@ class TelemetryStorage:
 
     def _configure_opentelemetry(self):
         """Configure OpenTelemetry with monitoring wrapper."""
-        # Check if already configured
         current_provider = trace.get_tracer_provider()
         if not hasattr(current_provider, "_resource"):
             resource = Resource.create(
@@ -284,7 +268,6 @@ class TelemetryStorage:
 
             provider = TracerProvider(resource=resource)
 
-            # Create monitored exporter
             base_exporter = OTLPSpanExporter(
                 endpoint=self.config.otlp_endpoint,
                 timeout=self.config.export_timeout_millis,
@@ -341,7 +324,6 @@ class TelemetryStorage:
                     logger.error(f"Reconnection failed: {e}")
                 return
 
-            # Test connection
             try:
                 if self.provider:
                     import asyncio
@@ -364,7 +346,6 @@ class TelemetryStorage:
                                 project="cogniverse-default", limit=1
                             )
                         )
-                    # Connection is healthy
                     return
             except Exception as e:
                 logger.warning(f"Health check failed: {e}")
@@ -400,10 +381,13 @@ class TelemetryStorage:
         metrics: Dict[str, float],
     ) -> Optional[str]:
         """
-        Log experiment results with comprehensive error handling.
+        Log experiment results.
 
         Returns:
-            Experiment ID if successful, None otherwise
+            Experiment ID, or None if telemetry is not connected.
+
+        Raises:
+            RuntimeError: If the telemetry write fails.
         """
         if self.connection_state != ConnectionState.CONNECTED:
             logger.error("Cannot log experiment results: Telemetry not connected")
@@ -451,8 +435,7 @@ class TelemetryStorage:
                 return experiment_id
 
         except Exception as e:
-            logger.error(f"Failed to log experiment results: {e}")
-            return None
+            raise RuntimeError(f"Failed to log experiment results: {e}") from e
 
     def get_traces_for_evaluation(
         self,
@@ -462,7 +445,12 @@ class TelemetryStorage:
         limit: int = 1000,
     ) -> pd.DataFrame:
         """
-        Get traces with proper error handling and fallback.
+        Get traces from the telemetry backend.
+
+        Returns an empty DataFrame when telemetry is not connected.
+
+        Raises:
+            RuntimeError: If the fetch fails while connected.
         """
         if self.connection_state != ConnectionState.CONNECTED:
             logger.warning("Telemetry not connected, returning empty DataFrame")
@@ -487,38 +475,31 @@ class TelemetryStorage:
 
         try:
             if trace_ids:
-                # Provider doesn't support bulk trace ID queries well
-                # Fetch individually and combine
-                dfs = []
-                for trace_id in trace_ids[:limit]:  # Limit to prevent overload
-                    try:
-                        df = _fetch_spans(
-                            project="cogniverse-default",
-                            filter_condition=f"trace_id == '{trace_id}'",
-                            root_spans_only=True,
-                            limit=1,
-                        )
-                        if not df.empty:
-                            dfs.append(df)
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch trace {trace_id}: {e}")
+                # Fetch all spans and post-filter by trace_id since the provider
+                # does not accept filter_condition or root_spans_only parameters.
+                df = _fetch_spans(
+                    project="cogniverse-default",
+                    start_time=start_time,
+                    limit=limit,
+                )
+                if df.empty:
+                    return pd.DataFrame()
+                trace_id_col = next(
+                    (c for c in ("context.trace_id", "trace_id") if c in df.columns),
+                    None,
+                )
+                if trace_id_col:
+                    df = df[df[trace_id_col].isin(trace_ids)].reset_index(drop=True)
+                return df
 
-                if dfs:
-                    return pd.concat(dfs, ignore_index=True)
-                return pd.DataFrame()
-
-            # Regular query
             return _fetch_spans(
                 project="cogniverse-default",
-                filter_condition=filter_condition,
                 start_time=start_time,
-                root_spans_only=True,
                 limit=limit,
             )
 
         except Exception as e:
-            logger.error(f"Failed to fetch traces: {e}")
-            return pd.DataFrame()
+            raise RuntimeError(f"Failed to fetch traces: {e}") from e
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get storage metrics for monitoring."""
@@ -544,12 +525,10 @@ class TelemetryStorage:
         """Gracefully shutdown storage."""
         logger.info("Shutting down Telemetry storage...")
 
-        # Stop health checks
         if self._health_check_thread:
             self._stop_health_check.set()
             self._health_check_thread.join(timeout=5)
 
-        # Clear provider reference
         if self.provider:
             self.provider = None
 

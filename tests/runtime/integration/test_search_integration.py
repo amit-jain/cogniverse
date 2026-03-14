@@ -9,8 +9,6 @@ documents fed into Vespa.
 import json
 import logging
 import time
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -25,24 +23,6 @@ logger = logging.getLogger(__name__)
 
 COLPALI_MODEL_NAME = "vidore/colsmol-500m"
 TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_default"
-
-
-def _make_noop_telemetry_manager():
-    """Create a no-op telemetry manager for integration tests.
-
-    Telemetry is cross-cutting infrastructure retrieved at the router boundary
-    via get_telemetry_manager() singleton — not injected into SearchService.
-    """
-    manager = MagicMock()
-
-    @contextmanager
-    def _noop_span(*args, **kwargs):
-        span = MagicMock()
-        yield span
-
-    manager.span = _noop_span
-    manager.session_span = _noop_span
-    return manager
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
@@ -167,11 +147,9 @@ class TestListProfilesIntegration:
 
         profile_names = {p["name"] for p in data["profiles"]}
 
-        # Seeded test profiles must be present
         assert "test_colpali" in profile_names
         assert "test_videoprism" in profile_names
 
-        # Verify seeded profile details match
         profiles_by_name = {p["name"]: p for p in data["profiles"]}
         assert profiles_by_name["test_colpali"]["model"] == COLPALI_MODEL_NAME
         assert profiles_by_name["test_colpali"]["type"] == "video"
@@ -206,14 +184,8 @@ class TestListProfilesIntegration:
 @pytest.mark.ci_fast
 @pytest.mark.requires_vespa
 class TestSearchIntegration:
-    @patch("cogniverse_runtime.routers.search.get_telemetry_manager")
-    @patch(
-        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-    )
     def test_search_returns_real_results(
         self,
-        mock_foundation_telemetry,
-        mock_router_telemetry,
         search_client,
         seeded_documents,
     ):
@@ -222,11 +194,8 @@ class TestSearchIntegration:
         Verifies SearchService works through the full chain:
         ConfigManager -> profile lookup -> real encoder creation -> encode query ->
         VespaSearchBackend -> Vespa query -> ranked results from seeded documents.
+        Real Phoenix telemetry captures spans via TelemetryManager singleton.
         """
-        noop_tm = _make_noop_telemetry_manager()
-        mock_router_telemetry.return_value = noop_tm
-        mock_foundation_telemetry.return_value = noop_tm
-
         resp = search_client.post(
             "/search",
             json={
@@ -245,22 +214,15 @@ class TestSearchIntegration:
         assert data["results_count"] == len(data["results"])
         assert data["results_count"] > 0, "Real encoder + seeded docs should return results"
 
-    @patch("cogniverse_runtime.routers.search.get_telemetry_manager")
-    @patch(
-        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-    )
     def test_search_stream_returns_real_results(
         self,
-        mock_foundation_telemetry,
-        mock_router_telemetry,
         search_client,
         seeded_documents,
     ):
-        """POST /search (stream=True) with real ColPali encoder — verifies SSE path."""
-        noop_tm = _make_noop_telemetry_manager()
-        mock_router_telemetry.return_value = noop_tm
-        mock_foundation_telemetry.return_value = noop_tm
+        """POST /search (stream=True) with real ColPali encoder — verifies SSE path.
 
+        Real Phoenix telemetry captures spans via TelemetryManager singleton.
+        """
         resp = search_client.post(
             "/search",
             json={
@@ -275,7 +237,6 @@ class TestSearchIntegration:
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
 
-        # Parse SSE events
         events = []
         for line in resp.text.strip().split("\n"):
             if line.startswith("data: "):

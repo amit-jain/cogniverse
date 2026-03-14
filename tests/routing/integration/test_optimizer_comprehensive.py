@@ -10,7 +10,6 @@ import json
 import time
 from collections import deque
 from datetime import datetime, timedelta
-from unittest.mock import Mock
 
 import pytest
 
@@ -249,11 +248,10 @@ class TestAutoTuningOptimizer:
     @pytest.mark.asyncio
     async def test_auto_tuning_cycle(self, real_telemetry_provider):
         """Test complete auto-tuning optimization cycle."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.config = {"gliner_threshold": 0.3}
+        strategy = GLiNERRoutingStrategy({"gliner_threshold": 0.3})
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(
@@ -292,11 +290,10 @@ class TestAutoTuningOptimizer:
     @pytest.mark.asyncio
     async def test_performance_tracking(self, real_telemetry_provider):
         """Test performance tracking over time."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.config = {}
+        strategy = GLiNERRoutingStrategy()
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(max_history_size=100),
@@ -332,12 +329,10 @@ class TestGLiNEROptimization:
     @pytest.mark.asyncio
     async def test_threshold_optimization(self, real_telemetry_provider):
         """Test GLiNER threshold optimization."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.threshold = 0.3
-        mock_strategy.config = {"gliner_threshold": 0.3}
+        strategy = GLiNERRoutingStrategy({"gliner_threshold": 0.3})
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(
@@ -362,7 +357,8 @@ class TestGLiNEROptimization:
                 "sample_count": 10,
             }
 
-        assert hasattr(optimizer, "threshold_performance") or True
+        assert len(optimizer.threshold_performance) == 5
+        assert optimizer.threshold_performance[0.35]["accuracy"] == 0.80
 
     @pytest.mark.local_only
     @pytest.mark.integration
@@ -370,14 +366,12 @@ class TestGLiNEROptimization:
     @pytest.mark.asyncio
     async def test_label_optimization(self, real_telemetry_provider):
         """Test GLiNER label optimization."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.labels = ["video_content", "text_content", "summary_request"]
-        mock_strategy.config = {
-            "gliner_labels": ["video_content", "text_content", "summary_request"]
-        }
+        strategy = GLiNERRoutingStrategy(
+            {"gliner_labels": ["video_content", "text_content", "summary_request"]}
+        )
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(
@@ -392,7 +386,9 @@ class TestGLiNEROptimization:
             "unused_label": {"precision": 0.2, "recall": 0.1, "count": 5},
         }
 
-        assert hasattr(optimizer, "label_performance") or True
+        assert len(optimizer.label_performance) == 4
+        assert optimizer.label_performance["summary_request"]["precision"] == 0.90
+        assert optimizer.label_performance["unused_label"]["count"] == 5
 
 
 class TestLLMOptimization:
@@ -404,14 +400,13 @@ class TestLLMOptimization:
     @pytest.mark.asyncio
     async def test_prompt_optimization(self, real_telemetry_provider):
         """Test LLM prompt optimization."""
-        mock_strategy = Mock(spec=LLMRoutingStrategy)
-        mock_strategy.config = {
+        strategy = LLMRoutingStrategy({
             "system_prompt": "You are a routing agent.",
             "temperature": 0.1,
-        }
+        })
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(
@@ -448,11 +443,10 @@ class TestLLMOptimization:
     @pytest.mark.asyncio
     async def test_temperature_optimization(self, real_telemetry_provider):
         """Test LLM temperature parameter optimization."""
-        mock_strategy = Mock(spec=LLMRoutingStrategy)
-        mock_strategy.config = {"temperature": 0.1}
+        strategy = LLMRoutingStrategy({"temperature": 0.1})
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(min_samples_for_optimization=5),
@@ -466,7 +460,8 @@ class TestLLMOptimization:
             0.5: {"accuracy": 0.70, "consistency": 0.70},
         }
 
-        assert hasattr(optimizer, "temperature_performance")
+        assert len(optimizer.temperature_performance) == 5
+        assert optimizer.temperature_performance[0.2]["accuracy"] == 0.82
 
 
 class TestCheckpointingAndRecovery:
@@ -477,12 +472,10 @@ class TestCheckpointingAndRecovery:
     @pytest.mark.asyncio
     async def test_save_checkpoint(self, real_telemetry_provider):
         """Test saving optimization checkpoint via real Phoenix dataset store."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.config = {}
-        mock_strategy.__class__.__name__ = "GLiNERRoutingStrategy"
+        strategy = GLiNERRoutingStrategy()
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(),
@@ -498,10 +491,7 @@ class TestCheckpointingAndRecovery:
             }
         ]
 
-        # Save through real Phoenix — this is the integration test
         await optimizer.save_checkpoint()
-
-        # Verify by loading back from Phoenix
         await optimizer.load_checkpoint()
         assert optimizer.optimization_attempts >= 0
 
@@ -510,18 +500,15 @@ class TestCheckpointingAndRecovery:
     @pytest.mark.asyncio
     async def test_checkpoint_round_trip(self, real_telemetry_provider):
         """Test full checkpoint save→load round-trip through real Phoenix."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.config = {"gliner_threshold": 0.35}
-        mock_strategy.__class__.__name__ = "GLiNERRoutingStrategy"
+        strategy = GLiNERRoutingStrategy({"gliner_threshold": 0.35})
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             f"{_TEST_TENANT}_roundtrip",
             OptimizationConfig(),
         )
 
-        # Set known state
         optimizer.optimization_attempts = 7
         optimizer.best_performance = 0.92
         optimizer.best_params = {"threshold": 0.35}
@@ -538,19 +525,16 @@ class TestCheckpointingAndRecovery:
             }
         ]
 
-        # Save to real Phoenix
         await optimizer.save_checkpoint()
 
-        # Create a fresh optimizer and load
         fresh_optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             f"{_TEST_TENANT}_roundtrip",
             OptimizationConfig(),
         )
         await fresh_optimizer.load_checkpoint()
 
-        # Verify round-trip
         assert fresh_optimizer.optimization_attempts == 7
         assert fresh_optimizer.best_performance == 0.92
         assert fresh_optimizer.best_params == {"threshold": 0.35}
@@ -596,11 +580,10 @@ class TestPerformanceBenchmarking:
     @pytest.mark.asyncio
     async def test_concurrent_optimization(self, real_telemetry_provider):
         """Test concurrent optimization requests."""
-        mock_strategy = Mock(spec=GLiNERRoutingStrategy)
-        mock_strategy.config = {}
+        strategy = GLiNERRoutingStrategy()
 
         optimizer = AutoTuningOptimizer(
-            mock_strategy,
+            strategy,
             real_telemetry_provider,
             _TEST_TENANT,
             OptimizationConfig(min_samples_for_optimization=10),
@@ -675,6 +658,5 @@ class TestRealModelIntegration:
             )
 
         if optimizer.should_optimize():
-            initial_report = optimizer.get_performance_report()
             await optimizer.optimize()
             assert len(optimizer.optimization_history) > 0

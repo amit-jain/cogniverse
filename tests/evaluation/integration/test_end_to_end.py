@@ -1,31 +1,63 @@
 """
 End-to-end integration tests for evaluation framework.
 
-Tests experiment mode with real Vespa search backend and real ColPali encoder.
-Batch/live modes and error handling use mock evaluator provider since they
-don't interact with search.
+Tests experiment mode with real Vespa search backend, real ColPali encoder,
+real Phoenix telemetry/datasets, and real Ollama LLM. All components are
+production code — no mocks.
 """
 
 import json
 import os
 import tempfile
 
+import httpx
 import pytest
 from inspect_ai import eval as inspect_eval
 
 from cogniverse_evaluation.cli import cli
 from cogniverse_evaluation.core.task import evaluation_task
 
+OLLAMA_MODEL = "ollama/qwen3:4b"
+
+
+def _is_ollama_available() -> bool:
+    """Check if Ollama is reachable for Inspect AI model parameter."""
+    try:
+        resp = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+skip_if_no_ollama = pytest.mark.skipif(
+    not _is_ollama_available(),
+    reason="Ollama not reachable at localhost:11434",
+)
+
 
 @pytest.mark.integration
 class TestEndToEnd:
     """End-to-end integration tests."""
 
+    @pytest.fixture(autouse=True)
+    def _ensure_provider(self, search_evaluator_provider):
+        """Re-register the evaluation provider before each test.
+
+        Some CLI commands (e.g. list-traces) call reset_evaluation_provider()
+        internally, which clears the provider we configured. This fixture
+        ensures it's always set correctly.
+        """
+        from cogniverse_evaluation.providers.registry import set_evaluation_provider
+
+        set_evaluation_provider(search_evaluator_provider)
+
     @pytest.mark.integration
+    @skip_if_no_ollama
     def test_experiment_mode_e2e(self, search_evaluator_provider, eval_search_client):
         """Test complete experiment mode with real search.
 
         Uses real ColPali encoder + real Vespa with seeded documents.
+        Real Phoenix for dataset loading. Real Ollama for Inspect AI model.
         The solver's httpx.post calls are routed through the TestClient
         to the real search router.
         """
@@ -45,7 +77,7 @@ class TestEndToEnd:
                 },
             )
 
-            results = inspect_eval(task, model="mockllm/model")
+            results = inspect_eval(task, model=OLLAMA_MODEL)
 
             assert results is not None
             assert isinstance(results, list)
@@ -82,16 +114,17 @@ class TestEndToEnd:
             assert eval_log.samples is not None, "No samples in eval log"
             assert len(eval_log.samples) > 0, "No samples processed"
 
-            # Verify search actually returned results (not empty failures)
             for sample in eval_log.samples:
                 assert sample.scores is not None, f"Sample {sample.id} has no scores"
                 assert len(sample.scores) > 0, f"Sample {sample.id} has empty scores"
 
     @pytest.mark.integration
-    def test_batch_mode_e2e(self, mock_evaluator_provider):
+    @skip_if_no_ollama
+    def test_batch_mode_e2e(self, search_evaluator_provider):
         """Test complete batch mode workflow.
 
-        Batch mode loads existing traces from Phoenix -- no search needed.
+        Batch mode loads existing traces from real Phoenix.
+        With no matching trace_ids, the solver handles empty results gracefully.
         """
         task = evaluation_task(
             mode="batch",
@@ -100,13 +133,14 @@ class TestEndToEnd:
             config={"use_ragas": True, "ragas_metrics": ["context_relevancy"]},
         )
 
-        results = inspect_eval(task, model="mockllm/model")
+        results = inspect_eval(task, model=OLLAMA_MODEL)
 
         assert results is not None
         assert isinstance(results, list)
         assert len(results) > 0
 
     @pytest.mark.integration
+    @skip_if_no_ollama
     def test_cli_evaluate_command(self, search_evaluator_provider, eval_search_client):
         """Test CLI evaluate command with real search."""
         import tempfile
@@ -115,7 +149,6 @@ class TestEndToEnd:
 
         from tests.evaluation.conftest import intercept_search_calls
 
-        # CLI needs tenant_id in config file to match test Vespa
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False
         ) as cfg:
@@ -153,10 +186,10 @@ class TestEndToEnd:
             os.unlink(cfg_path)
 
     @pytest.mark.integration
-    def test_cli_list_traces_command(self, mock_evaluator_provider):
-        """Test CLI list-traces command.
+    def test_cli_list_traces_command(self, search_evaluator_provider):
+        """Test CLI list-traces command with real Phoenix.
 
-        List-traces only reads from Phoenix -- no search needed.
+        List-traces reads from real Phoenix — returns whatever spans exist.
         """
         from click.testing import CliRunner
 
@@ -168,6 +201,7 @@ class TestEndToEnd:
         assert "Fetching traces" in result.output
 
     @pytest.mark.integration
+    @skip_if_no_ollama
     def test_evaluation_with_output_file(
         self, search_evaluator_provider, eval_search_client
     ):
@@ -179,7 +213,6 @@ class TestEndToEnd:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_file = os.path.join(tmpdir, "results.json")
 
-            # Write tenant config for CLI
             config_file_path = os.path.join(tmpdir, "tenant_config.json")
             with open(config_file_path, "w") as f:
                 json.dump({"tenant_id": "default"}, f)
@@ -216,6 +249,7 @@ class TestEndToEnd:
                     assert "timestamp" in data
 
     @pytest.mark.integration
+    @skip_if_no_ollama
     def test_evaluation_with_config_file(
         self, search_evaluator_provider, eval_search_client
     ):
@@ -262,6 +296,7 @@ class TestEndToEnd:
                 assert result.exit_code == 0
 
     @pytest.mark.integration
+    @skip_if_no_ollama
     def test_multiple_profiles_e2e(
         self, search_evaluator_provider, eval_search_client
     ):
@@ -281,20 +316,19 @@ class TestEndToEnd:
                 config={"use_custom": True, "tenant_id": "default"},
             )
 
-            results = inspect_eval(task, model="mockllm/model")
+            results = inspect_eval(task, model=OLLAMA_MODEL)
 
             assert results is not None
             assert isinstance(results, list)
             assert len(results) > 0
 
     @pytest.mark.integration
-    def test_error_handling_invalid_dataset(
-        self, mock_evaluator_provider, mock_phoenix_client
-    ):
-        """Test error handling with invalid dataset."""
-        mock_phoenix_client.get_dataset.return_value = None
+    def test_error_handling_invalid_dataset(self, search_evaluator_provider):
+        """Test error handling with invalid dataset.
 
-        with pytest.raises(ValueError, match="Dataset 'nonexistent' not found"):
+        Uses real Phoenix — a nonexistent dataset naturally returns None.
+        """
+        with pytest.raises(ValueError, match="nonexistent"):
             evaluation_task(
                 mode="experiment",
                 dataset_name="nonexistent",

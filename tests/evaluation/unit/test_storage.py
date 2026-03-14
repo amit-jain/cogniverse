@@ -399,15 +399,20 @@ class TestTelemetryStorage:
         """Test getting specific traces by ID."""
         from unittest.mock import AsyncMock
 
-        trace1_df = pd.DataFrame([{"trace_id": "trace1", "name": "test1"}])
-        trace2_df = pd.DataFrame([{"trace_id": "trace2", "name": "test2"}])
+        # Both traces returned in a single bulk fetch; post-filtered by trace_id
+        bulk_df = pd.DataFrame(
+            [
+                {"context.trace_id": "trace1", "name": "test1"},
+                {"context.trace_id": "trace2", "name": "test2"},
+                {"context.trace_id": "trace3", "name": "other"},
+            ]
+        )
 
-        # First call is for init connection test, then two for actual traces
+        # First call is for init connection test, second is the bulk fetch
         mock_provider.telemetry.traces.get_spans = AsyncMock(
             side_effect=[
                 pd.DataFrame(),  # For init connection test
-                trace1_df,
-                trace2_df,
+                bulk_df,  # Bulk fetch for trace_ids path
             ]
         )
 
@@ -420,10 +425,11 @@ class TestTelemetryStorage:
 
                 df = storage.get_traces_for_evaluation(trace_ids=["trace1", "trace2"])
 
+                # Only trace1 and trace2 are returned, trace3 is filtered out
                 assert len(df) == 2
                 assert (
-                    mock_provider.telemetry.traces.get_spans.call_count == 3
-                )  # 1 for init + 2 for traces
+                    mock_provider.telemetry.traces.get_spans.call_count == 2
+                )  # 1 for init + 1 bulk fetch
 
     @pytest.mark.unit
     def test_get_traces_when_disconnected(self, config):

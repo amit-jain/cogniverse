@@ -45,7 +45,6 @@ from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
-# Path to schema JSON files
 SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 
@@ -75,10 +74,8 @@ def vespa_instance():
             use_module_ports=True,
         )
 
-        # Wait for config server
         manager.wait_for_config_ready(container_info, timeout=180)
 
-        # Wait for internal services to initialize
         logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
         time.sleep(15)
 
@@ -123,7 +120,6 @@ def vespa_instance():
         schema_manager._deploy_package(app_package)
         logger.info("Deployed metadata + data schemas in single package")
 
-        # Wait for application readiness after schema deployment
         manager.wait_for_application_ready(container_info, timeout=120)
 
         logger.info("Vespa initialization complete - ready for runtime integration tests")
@@ -160,7 +156,6 @@ def config_manager(vespa_instance):
 
     cm = ConfigManager(store=store)
 
-    # Seed system config pointing at the test Vespa
     system_config = SystemConfig(
         tenant_id="default",
         backend_url="http://localhost",
@@ -168,7 +163,6 @@ def config_manager(vespa_instance):
     )
     cm.set_system_config(system_config)
 
-    # Add test profiles for the default tenant
     cm.add_backend_profile(
         BackendProfileConfig(
             profile_name="test_colpali",
@@ -188,7 +182,6 @@ def config_manager(vespa_instance):
         tenant_id="default",
     )
 
-    # Seed a second tenant with different profiles
     tenant_b_config = SystemConfig(
         tenant_id="tenant_b",
         backend_url="http://localhost",
@@ -216,12 +209,50 @@ def schema_loader():
 
 
 @pytest.fixture(scope="module")
-def search_client(vespa_instance, config_manager, schema_loader):
+def real_telemetry(phoenix_container):
+    """Module-scoped real TelemetryManager backed by Phoenix Docker.
+
+    Sets up the global TelemetryManager singleton so that
+    get_telemetry_manager() returns a real manager throughout search tests.
+    """
+    import os
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    config = TelemetryConfig(
+        otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317"),
+        provider_config={
+            "http_endpoint": "http://localhost:16006",
+            "grpc_endpoint": "http://localhost:14317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    manager = TelemetryManager(config=config)
+    telemetry_manager_module._telemetry_manager = manager
+
+    yield manager
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+
+@pytest.fixture(scope="module")
+def search_client(vespa_instance, config_manager, schema_loader, real_telemetry):
     """
     FastAPI TestClient with search router wired to real ConfigManager and SchemaLoader.
 
     Only the search router is mounted (no lifespan needed).
     Dependency overrides point at the real Vespa-backed ConfigManager.
+    Real TelemetryManager singleton is set up via real_telemetry fixture.
     """
     test_app = FastAPI()
     test_app.include_router(search.router, prefix="/search")

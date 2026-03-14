@@ -6,7 +6,7 @@ and real ConfigManager backed by VespaConfigStore.
 """
 
 import logging
-from unittest.mock import patch
+import os
 
 import pytest
 
@@ -46,26 +46,36 @@ class TestHealthIntegration:
         assert data["status"] == "ready"
         assert data["backends"] >= 1
 
-    @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_full_with_real_config(
-        self, mock_create_cm, health_client, config_manager
+        self, health_client, vespa_instance
     ):
         """GET /health with real ConfigManager — backends and agents sections populated.
 
-        Patches create_default_config_manager to return the test ConfigManager
-        (which is backed by real VespaConfigStore) instead of trying to
-        discover environment variables.
+        Sets BACKEND_URL and BACKEND_PORT env vars to point at the test Vespa
+        so create_default_config_manager() discovers the real VespaConfigStore.
         """
-        mock_create_cm.return_value = config_manager
+        original_url = os.environ.get("BACKEND_URL")
+        original_port = os.environ.get("BACKEND_PORT")
+        os.environ["BACKEND_URL"] = "http://localhost"
+        os.environ["BACKEND_PORT"] = str(vespa_instance["http_port"])
 
-        resp = health_client.get("/health")
+        try:
+            resp = health_client.get("/health")
+        finally:
+            if original_url is not None:
+                os.environ["BACKEND_URL"] = original_url
+            elif "BACKEND_URL" in os.environ:
+                del os.environ["BACKEND_URL"]
+            if original_port is not None:
+                os.environ["BACKEND_PORT"] = original_port
+            elif "BACKEND_PORT" in os.environ:
+                del os.environ["BACKEND_PORT"]
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "healthy"
         assert data["service"] == "cogniverse-runtime"
 
-        # Backends section should have at least vespa registered
         assert "backends" in data
         assert data["backends"]["registered"] >= 1
         assert "vespa" in data["backends"]["backends"]

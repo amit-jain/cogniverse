@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import numpy as np
@@ -31,7 +31,6 @@ EVAL_COLPALI_MODEL = "vidore/colsmol-500m"
 EVAL_TENANT_SCHEMA = "video_colpali_smol500_mv_frame_default"
 
 
-# Standardized Phoenix Docker container fixture for integration tests
 @pytest.fixture(scope="function")
 def phoenix_test_server():
     """Start Phoenix Docker container for integration tests."""
@@ -40,9 +39,13 @@ def phoenix_test_server():
     import tempfile
     import time
 
+    from cogniverse_evaluation.providers.registry import get_evaluation_registry
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     container_name = f"phoenix_eval_test_{int(time.time() * 1000)}"
+
+    # Clear evaluation provider cache before starting so stale instances don't leak
+    get_evaluation_registry().clear_cache()
 
     # Clean up old containers
     try:
@@ -118,6 +121,9 @@ def phoenix_test_server():
         # Cleanup
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
         TelemetryManager.reset()
+        from cogniverse_evaluation.providers.registry import get_evaluation_registry
+
+        get_evaluation_registry().clear_cache()
 
 
 @pytest.fixture
@@ -187,35 +193,6 @@ def mock_phoenix_client():
 
         yield mock_client
 
-
-@pytest.fixture
-def mock_search_service():
-    """Mock search service for testing."""
-    with patch("cogniverse_agents.search.service.SearchService") as mock_service_class:
-        mock_service = MagicMock()
-        mock_service_class.return_value = mock_service
-
-        # Mock search results - use Mock with proper to_dict method
-        mock_result1 = Mock()
-        mock_result1.to_dict.return_value = {
-            "document_id": "item1_part_0",
-            "source_id": "item1",
-            "score": 0.9,
-            "content": "test content 1",
-        }
-
-        mock_result2 = Mock()
-        mock_result2.to_dict.return_value = {
-            "document_id": "item2_part_1",
-            "source_id": "item2",
-            "score": 0.8,
-            "content": "test content 2",
-        }
-
-        mock_results = [mock_result1, mock_result2]
-        mock_service.search.return_value = mock_results
-
-        yield mock_service
 
 
 @pytest.fixture
@@ -455,29 +432,8 @@ def mock_provider_for_unit_tests(request):
 @pytest.fixture(autouse=True)
 def reset_singletons():
     """Reset any singleton instances between tests."""
-    # Add any singleton resets here if needed
     yield
 
-
-# Evaluation integration test infrastructure
-#
-# These module-scoped fixtures provide real Vespa + ColPali search for
-# evaluation integration tests that exercise the experiment mode solver.
-# Only activated when tests request them (not autouse).
-
-
-def _make_noop_telemetry_manager():
-    """Create a no-op telemetry manager for evaluation search tests."""
-    manager = MagicMock()
-
-    @contextmanager
-    def _noop_span(*args, **kwargs):
-        span = MagicMock()
-        yield span
-
-    manager.span = _noop_span
-    manager.session_span = _noop_span
-    return manager
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
@@ -658,7 +614,7 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
 
 
 @pytest.fixture(scope="module")
-def eval_search_client(eval_vespa_instance, eval_seeded_documents):
+def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_container):
     """FastAPI TestClient with real search router wired to test Vespa.
 
     Provides a TestClient that can execute real searches using ColPali encoder
@@ -676,7 +632,6 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents):
     from cogniverse_runtime.routers import search
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    # Create ConfigManager backed by test Vespa
     store = VespaConfigStore(
         backend_url="http://localhost",
         backend_port=eval_vespa_instance["http_port"],
@@ -699,22 +654,40 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents):
 
     schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)
 
-    # Create FastAPI app with search router
     app = FastAPI()
     app.include_router(search.router, prefix="/search")
     app.dependency_overrides[search.get_config_manager_dependency] = lambda: cm
     app.dependency_overrides[search.get_schema_loader_dependency] = lambda: schema_loader
 
-    # Monkey-patch telemetry to noop (get_telemetry_manager is called at request
-    # time inside the route handler, not at import time)
-    original_get_tm = search.get_telemetry_manager
-    noop_tm = _make_noop_telemetry_manager()
-    search.get_telemetry_manager = lambda: noop_tm
+    import os
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    telemetry_config = TelemetryConfig(
+        otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317"),
+        provider_config={
+            "http_endpoint": "http://localhost:16006",
+            "grpc_endpoint": "http://localhost:14317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    tm = TelemetryManager(config=telemetry_config)
+    telemetry_manager_module._telemetry_manager = tm
 
     with TestClient(app) as client:
         yield client
 
-    search.get_telemetry_manager = original_get_tm
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
 
 
 @contextmanager
@@ -743,84 +716,56 @@ def intercept_search_calls(test_client):
         yield
 
 
-@pytest.fixture
-def search_evaluator_provider():
-    """Mock evaluator provider with queries matching seeded Vespa documents.
+@pytest.fixture(scope="module")
+def search_evaluator_provider(phoenix_container):
+    """Real evaluator provider backed by Phoenix Docker.
 
-    Phoenix dataset loading is orthogonal to search — we mock it to provide
-    test queries that match the documents fed into Vespa.
+    Uploads a test dataset to real Phoenix, then configures
+    get_evaluation_provider() to return a real PhoenixEvaluationProvider
+    wired to the test Phoenix instance.
     """
-    with patch("phoenix.Client") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
+    import phoenix as px
 
-        mock_dataset = MagicMock()
-        mock_dataset.id = "test_dataset_id"
-        mock_dataset.name = "test_dataset"
-        mock_dataset.examples = [
-            MagicMock(
-                id="example1",
-                input={"query": "sunset landscape mountains", "category": "visual"},
-                output={"expected_videos": ["sunset_vid"], "expected_items": ["sunset_vid"]},
-            ),
-            MagicMock(
-                id="example2",
-                input={"query": "ocean waves coastal", "category": "visual"},
-                output={"expected_videos": ["ocean_vid"], "expected_items": ["ocean_vid"]},
-            ),
-        ]
-        mock_dataset.as_dataframe.return_value = pd.DataFrame([
-            {"input": {"query": "sunset landscape mountains", "expected_videos": "sunset_vid", "query_type": "visual"}},
-            {"input": {"query": "ocean waves coastal", "expected_videos": "ocean_vid", "query_type": "visual"}},
-        ])
-        mock_client.get_dataset.return_value = mock_dataset
-        mock_client.upload_dataset.return_value = mock_dataset
+    from cogniverse_evaluation.providers.registry import (
+        set_evaluation_provider,
+    )
+    from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
+        PhoenixEvaluationProvider,
+    )
 
-        # Mock spans for batch mode
-        mock_df = pd.DataFrame([{
-            "trace_id": "trace1",
-            "attributes.input.value": "sunset query",
-            "attributes.output.value": [{"item_id": "sunset_vid", "score": 0.9}],
-            "attributes.metadata.profile": "test_colpali",
-            "attributes.metadata.strategy": "default",
-            "timestamp": datetime.now().isoformat(),
-            "duration_ms": 100,
-        }])
-        mock_client.get_spans_dataframe.return_value = mock_df
+    phoenix_endpoint = "http://localhost:16006"
+    sync_client = px.Client(endpoint=phoenix_endpoint)
 
-        with patch(
-            "cogniverse_evaluation.providers.get_evaluation_provider"
-        ) as mock_get_provider:
-            mock_provider = MagicMock()
+    # Upload real test dataset to Phoenix (idempotent — skip if already exists)
+    test_df = pd.DataFrame([
+        {
+            "query": "sunset landscape mountains",
+            "expected_videos": "sunset_vid",
+            "query_type": "visual",
+        },
+        {
+            "query": "ocean waves coastal",
+            "expected_videos": "ocean_vid",
+            "query_type": "visual",
+        },
+    ])
+    try:
+        sync_client.upload_dataset(
+            dataset_name="test_dataset",
+            dataframe=test_df,
+            input_keys=["query", "expected_videos", "query_type"],
+            output_keys=[],
+        )
+    except Exception as upload_err:
+        if "already exists" not in str(upload_err):
+            raise
 
-            mock_telemetry = MagicMock()
+    provider = PhoenixEvaluationProvider()
+    provider.initialize({
+        "tenant_id": "default",
+        "http_endpoint": phoenix_endpoint,
+        "grpc_endpoint": "http://localhost:14317",
+    })
+    set_evaluation_provider(provider)
 
-            async def mock_get_dataset(name):
-                dataset = mock_client.get_dataset(name)
-                if dataset is None:
-                    return None
-                return {
-                    "id": dataset.id,
-                    "name": dataset.name,
-                    "examples": [
-                        {"id": ex.id, "input": ex.input, "output": ex.output}
-                        for ex in dataset.examples
-                    ],
-                }
-
-            mock_datasets = MagicMock()
-            mock_datasets.get_dataset = mock_get_dataset
-            mock_telemetry.datasets = mock_datasets
-
-            async def mock_get_spans(**kwargs):
-                return mock_client.get_spans_dataframe(**kwargs)
-
-            mock_traces = MagicMock()
-            mock_traces.get_spans = mock_get_spans
-            mock_telemetry.traces = mock_traces
-
-            mock_provider.telemetry = mock_telemetry
-            mock_provider.http_endpoint = "http://localhost:6006"
-            mock_get_provider.return_value = mock_provider
-
-            yield mock_provider
+    yield provider
