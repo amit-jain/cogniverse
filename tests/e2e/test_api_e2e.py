@@ -17,7 +17,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import (
+    RUNTIME,
+    TENANT_ID,
+    restart_runtime,
+    skip_if_no_runtime,
+    unique_id,
+)
 
 PROFILE = "video_colpali_smol500_mv_frame"
 
@@ -1230,10 +1236,46 @@ class TestDocumentIngestionAndSearch:
                     assert search_data["results_count"] >= 1
 
 
+# Scenario 20 (API portion): Event queue listing
+# Placed before batch ingestion because batch starts CPU-bound ColPali
+# inference that blocks the async event loop for minutes.
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestEventEndpoints:
+    """Scenario 20 API: Event queue listing."""
+
+    def test_list_queues(self):
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.get(
+                "/events/queues",
+                params={"tenant_id": TENANT_ID},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_queue_not_found(self):
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.get("/events/queues/nonexistent_fake_id")
+
+        assert resp.status_code == 404, (
+            f"Non-existent queue should return 404, got {resp.status_code}"
+        )
+
+
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestBatchVideoIngestion:
-    """Start batch ingestion of video directory and verify job tracking."""
+    """Start batch ingestion of video directory and verify job tracking.
+
+    This test MUST be the last API test class: it starts CPU-bound ColPali
+    inference that blocks the async event loop for minutes. A health-poll
+    recovery loop at the end waits for the runtime to become responsive
+    before dashboard tests run.
+    """
 
     def test_batch_ingestion_start(self):
         """Start batch ingestion → verify job accepted."""
@@ -1290,30 +1332,9 @@ class TestBatchVideoIngestion:
                 "started", "processing", "completed", "failed"
             )
 
-
-# Scenario 20 (API portion): Event queue listing
-
-
-@pytest.mark.e2e
-@skip_if_no_runtime
-class TestEventEndpoints:
-    """Scenario 20 API: Event queue listing."""
-
-    def test_list_queues(self):
-        with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            resp = client.get(
-                "/events/queues",
-                params={"tenant_id": TENANT_ID},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data, list)
-
-    def test_queue_not_found(self):
-        with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            resp = client.get("/events/queues/nonexistent_fake_id")
-
-        assert resp.status_code == 404, (
-            f"Non-existent queue should return 404, got {resp.status_code}"
+        # Batch ingestion runs CPU-bound ColPali inference in the async event
+        # loop, permanently deadlocking uvicorn. Restart the runtime so
+        # subsequent tests (EventEndpoints, dashboard tests) aren't impacted.
+        assert restart_runtime(timeout_s=45), (
+            "Runtime failed to restart after batch ingestion"
         )

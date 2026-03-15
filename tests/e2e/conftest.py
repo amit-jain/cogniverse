@@ -63,6 +63,55 @@ def unique_id(prefix: str = "e2e") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def restart_runtime(timeout_s: int = 30) -> bool:
+    """Kill and restart the runtime server.
+
+    Batch ingestion runs CPU-bound ML inference in the async event loop,
+    permanently deadlocking uvicorn. This function kills the old process
+    and starts a fresh one. Returns True if the new runtime is healthy.
+    """
+    import os
+    import signal
+
+    # Find and kill processes on port 8000
+    try:
+        result = subprocess.run(
+            ["lsof", "-i", ":8000", "-t"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for pid_str in result.stdout.strip().split():
+            try:
+                os.kill(int(pid_str), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+    except subprocess.TimeoutExpired:
+        pass
+
+    _time.sleep(3)
+
+    # Start fresh runtime
+    env = {**os.environ, "BACKEND_URL": "http://localhost", "BACKEND_PORT": "8080"}
+    subprocess.Popen(
+        ["uv", "run", "uvicorn", "cogniverse_runtime.main:app",
+         "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"],
+        env=env,
+        stdout=open("/tmp/runtime_e2e_restart.log", "w"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    # Wait for healthy
+    for _ in range(timeout_s):
+        _time.sleep(1)
+        try:
+            r = httpx.get(f"{RUNTIME}/health/live", timeout=3.0)
+            if r.status_code == 200:
+                return True
+        except (httpx.ConnectError, httpx.ReadTimeout):
+            pass
+    return False
+
+
 @pytest.fixture(scope="session")
 def browser_type_launch_args():
     return {"headless": True}
@@ -81,12 +130,14 @@ def wait_for_streamlit(page, timeout: int = 30_000):
     page.wait_for_load_state("networkidle")
 
 
-def _click_tab_by_label(page, label: str, retries: int = 3):
+def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_000):
     """Click a Streamlit tab by matching its visible text (ignoring emojis).
 
     Streamlit renders tabs as hidden DOM elements, so we use JS click
     which bypasses visibility checks. Retries handle the case where
-    sub-tabs haven't rendered yet after a top-tab switch.
+    sub-tabs haven't rendered yet after a parent tab switch — complex
+    tabs (Optimization, Configuration, Monitoring) can take 5-10s to
+    render their inner st.tabs() content.
     """
     for attempt in range(retries):
         tabs = page.locator('button[role="tab"]')
@@ -100,7 +151,7 @@ def _click_tab_by_label(page, label: str, retries: int = 3):
                 # (mousedown→mouseup→click) which properly activates
                 # React/Streamlit event handlers, unlike raw el.click()
                 tab.click(force=True)
-                page.wait_for_timeout(2_000)
+                page.wait_for_timeout(settle_ms)
                 page.wait_for_load_state("networkidle")
                 return
         if attempt < retries - 1:
@@ -124,9 +175,13 @@ def click_top_tab(page, label: str, timeout: int = 10_000):
 
 
 def click_sub_tab(page, label: str, timeout: int = 10_000):
-    """Click a sub-level Streamlit tab."""
+    """Click a sub-level Streamlit tab.
+
+    Uses a longer settle time than top-level tabs because sub-tabs
+    often trigger heavy Streamlit reruns (API calls, data loading).
+    """
     start = _time.monotonic()
-    _click_tab_by_label(page, label)
+    _click_tab_by_label(page, label, settle_ms=4_000)
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
         _report_collector.record_browser_op("click_sub_tab", label, elapsed_ms=elapsed)
@@ -269,9 +324,7 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
     )
 
 
-# ---------------------------------------------------------------------------
 # Real test artifact fixtures for ingestion tests
-# ---------------------------------------------------------------------------
 
 # Video-ChatGPT paper (arxiv) — directly related to the test dataset
 ARXIV_PDF_URL = "https://arxiv.org/pdf/2306.05424"
@@ -351,9 +404,7 @@ def extracted_audio_path(real_video_path):
     return dest
 
 
-# ---------------------------------------------------------------------------
 # E2E Report System — auto-captures all httpx calls + test outcomes
-# ---------------------------------------------------------------------------
 
 E2E_REPORT_DIR = Path("/tmp")
 E2E_REPORT_JSON = E2E_REPORT_DIR / "e2e_report.json"
@@ -404,7 +455,8 @@ class E2EReportCollector:
         if "localhost:8000" not in url and "127.0.0.1:8000" not in url:
             return
 
-        # Parse request body
+        # Parse request body — guard against streaming requests that
+        # haven't been read yet (multipart file uploads use streaming)
         req_body = self._parse_request_body(request)
         # Parse response body
         resp_body = self._safe_json(response)
@@ -455,7 +507,15 @@ class E2EReportCollector:
 
     @staticmethod
     def _parse_request_body(request: httpx.Request) -> dict | None:
-        content = request.content
+        try:
+            content = request.content
+        except httpx.RequestNotRead:
+            # Streaming request (multipart file uploads) — content not yet buffered.
+            # Extract what we can from headers.
+            ct = request.headers.get("content-type", "")
+            if "multipart" in ct:
+                return {"_multipart": True}
+            return None
         if not content:
             return None
         try:
@@ -527,6 +587,10 @@ class E2EReportCollector:
         """Extract semantically meaningful response fields based on endpoint."""
         if body is None:
             return {"status_code": status_code}
+
+        # Some endpoints return a list instead of a dict (e.g., /events/queues)
+        if isinstance(body, list):
+            return {"status_code": status_code, "items_count": len(body)}
 
         fields = {"status_code": status_code}
 

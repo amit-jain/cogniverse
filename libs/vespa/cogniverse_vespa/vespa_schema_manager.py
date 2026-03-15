@@ -82,7 +82,6 @@ class VespaSchemaManager:
         Returns:
             pyvespa Schema object
         """
-        # Extract schema name
         schema_match = re.search(r"schema\s+(\w+)\s*{", sd_content)
         if not schema_match:
             raise ValueError("Could not find schema name in .sd file")
@@ -93,13 +92,8 @@ class VespaSchemaManager:
         # Parse document fields
         document_fields = self._parse_document_fields(sd_content)
 
-        # Create document with fields
         document = Document(fields=document_fields)
-
-        # Create schema
         schema = Schema(name=schema_name, document=document)
-
-        # Parse and add rank profiles
         rank_profiles = self._parse_rank_profiles(sd_content)
         for rank_profile in rank_profiles:
             schema.add_rank_profile(rank_profile)
@@ -146,14 +140,11 @@ class VespaSchemaManager:
             self._logger.warning("Could not find document definition in .sd file")
             return fields
 
-        # Parse individual fields
         field_pattern = r"field\s+(\w+)\s+type\s+([^{]+?)\s*\{([^}]*)\}"
         field_matches = re.findall(field_pattern, document_content, re.DOTALL)
 
         for field_name, field_type, field_config in field_matches:
             field_type = field_type.strip()
-
-            # Parse field configuration
             indexing = self._parse_field_indexing(field_config)
             attributes = self._parse_field_attributes(field_config)
 
@@ -182,8 +173,6 @@ class VespaSchemaManager:
     def _parse_field_attributes(self, field_config: str) -> List[str]:
         """Parse attribute configuration from field config."""
         attributes = []
-
-        # Look for attribute specifications
         attribute_matches = re.findall(r"attribute:\s*([^}]+)", field_config)
         for attr_match in attribute_matches:
             attr_parts = [part.strip() for part in attr_match.split()]
@@ -195,7 +184,6 @@ class VespaSchemaManager:
         """Parse struct definitions from .sd content."""
         structs = {}
 
-        # Find struct blocks
         struct_pattern = r"struct\s+(\w+)\s*{(.*?)^\s*}"
         struct_matches = re.findall(
             struct_pattern, sd_content, re.DOTALL | re.MULTILINE
@@ -203,8 +191,6 @@ class VespaSchemaManager:
 
         for struct_name, struct_content in struct_matches:
             struct_fields = []
-
-            # Parse struct fields
             field_pattern = r"field\s+(\w+)\s+type\s+([^{]+)\s*{([^}]*)}"
             field_matches = re.findall(field_pattern, struct_content)
 
@@ -234,26 +220,17 @@ class VespaSchemaManager:
         """Parse rank profiles from .sd content."""
         rank_profiles = []
 
-        # Find rank-profile blocks by name first
         rank_profile_name_pattern = r"rank-profile\s+(\w+)\s*{"
         rank_profile_names = re.findall(rank_profile_name_pattern, sd_content)
 
         for profile_name in rank_profile_names:
-            # Use balanced brackets to find the full content
             pattern = rf"rank-profile\s+{profile_name}\s*{{"
             profile_content = self._find_balanced_brackets(sd_content, pattern)
 
             if profile_content:
-                # Parse inputs
                 inputs = self._parse_rank_inputs(profile_content)
-
-                # Parse first-phase
                 first_phase = self._parse_first_phase(profile_content)
-
-                # Parse second-phase
                 second_phase = self._parse_second_phase(profile_content)
-
-                # Parse functions
                 functions = self._parse_functions(profile_content)
 
                 rank_profile = RankProfile(
@@ -273,10 +250,8 @@ class VespaSchemaManager:
         """Parse inputs from rank profile content."""
         inputs = []
 
-        # Find inputs block using balanced brackets
         inputs_content = self._find_balanced_brackets(profile_content, r"inputs\s*{")
         if inputs_content:
-            # Parse individual inputs
             input_pattern = r"query\(([^)]+)\)\s+([^\n]+)"
             input_matches = re.findall(input_pattern, inputs_content)
 
@@ -307,11 +282,8 @@ class VespaSchemaManager:
             profile_content, r"second-phase\s*{"
         )
         if second_phase_content:
-            # Parse expression
             expr_match = re.search(r"expression:\s*([^\n]+)", second_phase_content)
             expression = expr_match.group(1).strip() if expr_match else "firstPhase"
-
-            # Parse rerank-count
             rerank_match = re.search(r"rerank-count:\s*(\d+)", second_phase_content)
             rerank_count = int(rerank_match.group(1)) if rerank_match else 100
 
@@ -321,8 +293,6 @@ class VespaSchemaManager:
     def _parse_functions(self, profile_content: str) -> List[Function]:
         """Parse functions from rank profile content."""
         functions = []
-
-        # Find function blocks
         function_pattern = r"function\s+(\w+)\s*{[^}]*expression:\s*([^}]+)}"
         function_matches = re.findall(function_pattern, profile_content, re.DOTALL)
 
@@ -1079,12 +1049,8 @@ class VespaSchemaManager:
                 ],
             )
 
-            # Create application package
             app_package = ApplicationPackage(name=app_name, schema=[video_frame_schema])
-
-            # Deploy to Vespa
             self._deploy_package(app_package)
-
             self._logger.info("Successfully uploaded document-per-frame schema")
 
         except Exception as e:
@@ -1106,21 +1072,13 @@ class VespaSchemaManager:
 
             from .json_schema_parser import JsonSchemaParser
 
-            # Parse JSON schema to PyVespa objects
             parser = JsonSchemaParser()
             schema = parser.parse_schema(schema_json)
-
-            # Validate the schema
             errors = parser.validate_schema_config(schema_json)
             if errors:
                 raise ValueError(f"Schema validation errors: {'; '.join(errors)}")
-
-            # Create application package
             app_package = ApplicationPackage(name=app_name, schema=[schema])
-
-            # Deploy to Vespa
             self._deploy_package(app_package)
-
             self._logger.info(
                 f"Successfully deployed schema: {schema_json.get('name', 'unknown')}"
             )
@@ -1144,11 +1102,8 @@ class VespaSchemaManager:
 
             from .json_schema_parser import JsonSchemaParser
 
-            # Parse JSON schema to PyVespa objects
             parser = JsonSchemaParser()
             schema = parser.load_schema_from_json_file(json_file_path)
-
-            # Validate the schema
             with open(json_file_path, "r") as f:
                 import json
 
@@ -1157,11 +1112,7 @@ class VespaSchemaManager:
             errors = parser.validate_schema_config(schema_config)
             if errors:
                 raise ValueError(f"Schema validation errors: {'; '.join(errors)}")
-
-            # Create application package
             app_package = ApplicationPackage(name=app_name, schema=[schema])
-
-            # Deploy to Vespa
             self._deploy_package(app_package)
 
             self._logger.info(
@@ -1183,16 +1134,9 @@ class VespaSchemaManager:
             app_name: Name of the application
         """
         try:
-            # Read the .sd file
             sd_content = self.read_sd_file(sd_file_path)
-
-            # Parse the schema
             schema = self.parse_sd_schema(sd_content)
-
-            # Create application package
             app_package = self.create_application_package(schema, app_name)
-
-            # Upload to Vespa
             self._deploy_package(app_package)
 
             self._logger.info(f"Successfully uploaded schema from {sd_file_path}")
@@ -1230,10 +1174,7 @@ class VespaSchemaManager:
                 self._logger.error(f"Failed to parse {sd_file.name}: {str(e)}")
                 raise
 
-        # Create application package with all schemas
         app_package = ApplicationPackage(name=app_name, schema=schemas)
-
-        # Upload to Vespa
         self._deploy_package(app_package)
 
         self._logger.info(
@@ -1262,7 +1203,7 @@ class VespaSchemaManager:
 
         # Add validation overrides if requested
         if allow_field_type_change or allow_schema_removal:
-            until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
+            until_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
             if app_package.validations is None:
                 app_package.validations = []
 
@@ -1292,10 +1233,7 @@ class VespaSchemaManager:
         deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
-            # Generate the ZIP package
             app_zip = app_package.to_zip()
-
-            # Deploy via HTTP
             response = requests.post(
                 deploy_url,
                 headers={"Content-Type": "application/zip"},
@@ -1340,7 +1278,6 @@ class VespaSchemaManager:
             return []
 
         try:
-            # Get all deployed schemas from registry
             deployed_schemas = self._schema_registry._get_all_schemas()
             self._logger.warning(
                 f"🔍 SchemaRegistry._get_all_schemas() returned {len(deployed_schemas) if deployed_schemas else 0} schemas"
@@ -1432,24 +1369,22 @@ class VespaSchemaManager:
                 create_tenant_metadata_schema,
             )
 
-            # Get metadata schemas from centralized definitions
             metadata_schemas = [
                 create_organization_metadata_schema(),
                 create_tenant_metadata_schema(),
                 create_config_metadata_schema(),
                 create_adapter_registry_schema(),
             ]
-
-            # Get existing tenant schemas from SchemaRegistry
             existing_schemas = self._get_existing_tenant_schemas()
-
-            # Build complete schema list: metadata + existing tenant schemas
-            # This prevents Vespa schema-removal errors when tenant schemas already exist
+            # Merge metadata + tenant schemas to prevent Vespa schema-removal errors
+            # when tenant schemas already exist in the deployment.
             all_schemas = metadata_schemas + existing_schemas
 
-            # Deploy all schemas together
+            # Deploy all schemas together. allow_schema_removal=True handles
+            # the case where a test tenant was deleted via API but its schema
+            # still exists in Vespa — without this, Vespa blocks the deploy.
             app_package = ApplicationPackage(name=app_name, schema=all_schemas)
-            self._deploy_package(app_package)
+            self._deploy_package(app_package, allow_schema_removal=True)
 
             if existing_schemas:
                 self._logger.info(
@@ -1523,7 +1458,6 @@ class VespaSchemaManager:
                     f"Failed to delete schema '{tenant_schema_name}': {e}"
                 )
 
-        # Redeploy to Vespa without the deleted schemas
         if deleted_schemas:
             self._logger.info(
                 f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa"
