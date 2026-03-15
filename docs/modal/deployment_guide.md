@@ -86,6 +86,13 @@ result = await runner.run_embedding(
     embedding_config={"learning_rate": 2e-5, "epochs": 3, "triplet_margin": 0.5},
 )
 # result.adapter_path contains the trained adapter
+
+# Or create ModalJobConfig from RemoteSpawnOptions (query-level control):
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions, GPUType
+
+spawn_opts = RemoteSpawnOptions(enabled=True, gpu=GPUType.H100, memory=65536)
+config = ModalJobConfig.from_remote_spawn_options(spawn_opts)
+runner = ModalTrainingRunner(config)
 ```
 
 Deploy:

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,25 @@ class ModalJobConfig:
 
     # Timeouts
     timeout: int = 3600  # 1 hour default
+
+    @classmethod
+    def from_remote_spawn_options(cls, opts: RemoteSpawnOptions) -> "ModalJobConfig":
+        """
+        Create ModalJobConfig from RemoteSpawnOptions.
+
+        Args:
+            opts: RemoteSpawnOptions with GPU/resource configuration.
+
+        Returns:
+            ModalJobConfig populated from the spawn options.
+        """
+        return cls(
+            gpu=opts.gpu.value,
+            gpu_count=opts.gpu_count,
+            cpu=opts.cpu,
+            memory=opts.memory,
+            timeout=opts.timeout,
+        )
 
 
 @dataclass

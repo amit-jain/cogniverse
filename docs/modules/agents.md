@@ -3241,7 +3241,8 @@ libs/agents/cogniverse_agents/
 │   └── rlm_aware_mixin.py        # RLMAwareMixin for agents
 
 libs/core/cogniverse_core/agents/
-└── rlm_options.py                # RLMOptions schema for query-level config
+├── rlm_options.py                # RLMOptions schema for query-level config
+└── remote_spawn_options.py       # RemoteSpawnOptions for cloud GPU execution
 ```
 
 ### Key Components
@@ -3459,6 +3460,101 @@ result = rlm.process(query="Summarize", context=large_context)
 | **Multi-Document Search** | Aggregate results from many sources |
 | **Transcript Analysis** | Process long video/audio transcripts |
 | **Cross-Modal Fusion** | Combine results from multiple modalities |
+
+---
+
+## Remote Spawn Options
+
+Remote spawn options provide **query-level control** over cloud GPU execution, enabling A/B testing between local and remote execution, dynamic resource allocation, and cost-aware routing.
+
+### File Structure
+
+```
+libs/core/cogniverse_core/agents/
+└── remote_spawn_options.py       # RemoteSpawnOptions, GPUType, SpawnRegion, SpawnPriority
+```
+
+### Key Components
+
+#### RemoteSpawnOptions (Query-Level Configuration)
+
+```python
+from cogniverse_core.agents.remote_spawn_options import (
+    RemoteSpawnOptions,
+    GPUType,
+    SpawnPriority,
+    SpawnRegion,
+)
+
+# Route request to remote GPU execution
+spawn_opts = RemoteSpawnOptions(
+    enabled=True,              # Enable remote execution
+    gpu=GPUType.A100_80GB,     # GPU type (T4, L4, A10G, A100-40GB, A100-80GB, H100)
+    gpu_count=1,               # Number of GPUs (1-8)
+    cpu=4,                     # CPU cores (1-32)
+    memory=16384,              # Memory in MB (1024-262144)
+    timeout=3600,              # Max execution time in seconds (30-7200)
+    keep_warm=1,               # Warm containers (0=cold start)
+    max_concurrency=10,        # Max concurrent inputs per container (1-100)
+    region=SpawnRegion.AUTO,   # Preferred region (auto, us-east, us-west, eu-west)
+    priority=SpawnPriority.HIGH, # Execution priority (low, normal, high)
+    cloud_provider="modal",    # Target provider (modal, kubernetes)
+)
+```
+
+#### Modal Integration
+
+```python
+# Convert to Modal @app.function kwargs
+kwargs = spawn_opts.to_modal_kwargs()
+# {"gpu": "A100-80GB", "cpu": 4, "memory": 16384, "timeout": 3600, "keep_warm": 1, ...}
+
+# Create ModalJobConfig from RemoteSpawnOptions
+from cogniverse_finetuning.training.modal_runner import ModalJobConfig
+
+config = ModalJobConfig.from_remote_spawn_options(spawn_opts)
+runner = ModalTrainingRunner(config)
+```
+
+### A/B Testing with Remote Spawn
+
+Remote spawn is **query-level configurable** to enable A/B testing:
+
+```python
+from cogniverse_agents.search_agent import SearchInput
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions, GPUType
+
+# Group A: Local execution (no remote_spawn)
+input_a = SearchInput(query="machine learning tutorials", tenant_id="prod", remote_spawn=None)
+
+# Group B: Remote GPU execution
+input_b = SearchInput(
+    query="machine learning tutorials",
+    tenant_id="prod",
+    remote_spawn=RemoteSpawnOptions(enabled=True, gpu=GPUType.A10G),
+)
+
+# Cost-optimized: Use T4 with short timeout for simple queries
+input_c = SearchInput(
+    query="simple lookup",
+    tenant_id="prod",
+    remote_spawn=RemoteSpawnOptions(enabled=True, gpu=GPUType.T4, timeout=60),
+)
+```
+
+### Orchestrator Integration
+
+```python
+from cogniverse_agents.orchestrator_agent import OrchestratorInput
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions, GPUType
+
+# Route entire orchestration pipeline to remote GPUs
+input_data = OrchestratorInput(
+    query="analyze video content",
+    tenant_id="prod",
+    remote_spawn=RemoteSpawnOptions(enabled=True, gpu=GPUType.H100, timeout=7200),
+)
+```
 
 ---
 

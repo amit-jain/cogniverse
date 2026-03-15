@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions
 
 if TYPE_CHECKING:
     from cogniverse_agents.agent_registry import AgentRegistry
@@ -39,6 +40,10 @@ class OrchestratorInput(AgentInput):
     )
     conversation_history: Optional[List[Dict[str, Any]]] = Field(
         default=None, description="Previous conversation turns for multi-turn context"
+    )
+    remote_spawn: Optional[RemoteSpawnOptions] = Field(
+        default=None,
+        description="Remote spawn options. None=local execution, set RemoteSpawnOptions to route agents to cloud GPU",
     )
 
 

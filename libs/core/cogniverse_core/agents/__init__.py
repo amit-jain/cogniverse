@@ -19,6 +19,12 @@ from cogniverse_core.agents.base import (
     InputT,
     OutputT,
 )
+from cogniverse_core.agents.remote_spawn_options import (
+    GPUType,
+    RemoteSpawnOptions,
+    SpawnPriority,
+    SpawnRegion,
+)
 from cogniverse_core.agents.rlm_options import RLMOptions
 
 __all__ = [
@@ -37,4 +43,9 @@ __all__ = [
     "A2AAgentConfig",
     # RLM Configuration
     "RLMOptions",
+    # Remote Spawn Configuration
+    "RemoteSpawnOptions",
+    "GPUType",
+    "SpawnRegion",
+    "SpawnPriority",
 ]

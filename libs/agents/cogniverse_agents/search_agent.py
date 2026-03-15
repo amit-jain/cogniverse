@@ -34,6 +34,7 @@ from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.remote_spawn_options import RemoteSpawnOptions
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
@@ -113,6 +114,11 @@ class SearchInput(AgentInput):
     rlm: Optional[RLMOptions] = Field(
         None,
         description="RLM configuration. None=disabled, set RLMOptions to enable RLM inference for A/B testing",
+    )
+
+    remote_spawn: Optional[RemoteSpawnOptions] = Field(
+        None,
+        description="Remote spawn options. None=local execution, set RemoteSpawnOptions to route to cloud GPU",
     )
 
 
