@@ -103,6 +103,8 @@ dev = [
     # Security Scanning
     "bandit>=1.7.5",
     "safety>=3.0.0",
+    # Browser E2E Testing
+    "pytest-playwright>=0.5.2",
 ]
 
 [tool.black]
