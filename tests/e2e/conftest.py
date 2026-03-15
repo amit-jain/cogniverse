@@ -116,12 +116,20 @@ def _click_tab_by_label(page, label: str, retries: int = 3):
 
 def click_top_tab(page, label: str, timeout: int = 10_000):
     """Click a top-level Streamlit tab."""
+    start = _time.monotonic()
     _click_tab_by_label(page, label)
+    elapsed = (_time.monotonic() - start) * 1000
+    if _report_collector:
+        _report_collector.record_browser_op("click_top_tab", label, elapsed_ms=elapsed)
 
 
 def click_sub_tab(page, label: str, timeout: int = 10_000):
     """Click a sub-level Streamlit tab."""
+    start = _time.monotonic()
     _click_tab_by_label(page, label)
+    elapsed = (_time.monotonic() - start) * 1000
+    if _report_collector:
+        _report_collector.record_browser_op("click_sub_tab", label, elapsed_ms=elapsed)
 
 
 def fill_input(locator, value: str):
@@ -130,6 +138,7 @@ def fill_input(locator, value: str):
     Uses keyboard approach (click + type) for visible elements to ensure
     Streamlit picks up the value. Falls back to JS for hidden elements.
     """
+    start = _time.monotonic()
     if locator.is_visible():
         locator.click(click_count=3)
         locator.press("Delete")
@@ -149,6 +158,9 @@ def fill_input(locator, value: str):
             }""",
             value,
         )
+    elapsed = (_time.monotonic() - start) * 1000
+    if _report_collector:
+        _report_collector.record_browser_op("fill_input", "text_input", value, elapsed)
 
 
 def fill_textarea(locator, value: str):
@@ -158,6 +170,7 @@ def fill_textarea(locator, value: str):
     commit their value on Ctrl+Enter (Enter just adds a newline).
     Falls back to JS for hidden elements.
     """
+    start = _time.monotonic()
     if locator.is_visible():
         locator.click(click_count=3)
         locator.press("Delete")
@@ -177,6 +190,9 @@ def fill_textarea(locator, value: str):
             }""",
             value,
         )
+    elapsed = (_time.monotonic() - start) * 1000
+    if _report_collector:
+        _report_collector.record_browser_op("fill_textarea", "textarea", value, elapsed)
 
 
 def click_button(page, text: str):
@@ -185,12 +201,19 @@ def click_button(page, text: str):
     Uses JS click to bypass visibility checks. Excludes buttons with
     role="tab" to avoid accidentally clicking tabs instead of form buttons.
     """
+    start = _time.monotonic()
     btn = page.locator(f'button:not([role="tab"]):has-text("{text}")')
     if btn.count() > 0:
         btn.first.evaluate("el => el.click()")
         page.wait_for_timeout(2_000)
         page.wait_for_load_state("networkidle")
+        elapsed = (_time.monotonic() - start) * 1000
+        if _report_collector:
+            _report_collector.record_browser_op("click_button", text, elapsed_ms=elapsed)
         return True
+    elapsed = (_time.monotonic() - start) * 1000
+    if _report_collector:
+        _report_collector.record_browser_op("click_button (not found)", text, elapsed_ms=elapsed)
     return False
 
 
@@ -213,6 +236,7 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
     Targets the 'Active Tenant' input specifically (not 'Tenant ID').
     Retries if the value doesn't stick (Streamlit session state timing).
     """
+    start = _time.monotonic()
     expand_sidebar(page)
 
     sidebar = page.locator('[data-testid="stSidebar"]')
@@ -232,6 +256,11 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
             '[data-testid="stAlert"]:has-text("Current tenant")'
         )
         if tenant_alert.count() > 0:
+            elapsed = (_time.monotonic() - start) * 1000
+            if _report_collector:
+                _report_collector.record_browser_op(
+                    "set_tenant", "sidebar", tenant_id, elapsed
+                )
             return
     raise RuntimeError(
         f"set_tenant failed: tenant '{tenant_id}' was not committed to "
@@ -355,6 +384,19 @@ class E2EReportCollector:
             "duration_s": round(duration, 3),
         }
         self._current_test = None
+
+    def record_browser_op(self, action: str, target: str, value: str = "", elapsed_ms: float = 0):
+        """Record a Playwright browser interaction (tab click, input fill, button click)."""
+        self.operations.append({
+            "test": self._current_test or "unknown",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": "BROWSER",
+            "url": action,
+            "status_code": 200,
+            "elapsed_ms": round(elapsed_ms, 1),
+            "request": {"target": target, "value": value} if value else {"target": target},
+            "response": {"status_code": 200, "status": "ok"},
+        })
 
     def record(self, request: httpx.Request, response: httpx.Response, elapsed_ms: float):
         url = str(request.url)
@@ -659,11 +701,22 @@ class E2EReportCollector:
                 for op in ops:
                     resp = op["response"]
                     req = op["request"]
-                    key_results = self._format_key_results(req, resp, op["url"])
-                    lines.append(
-                        f"| {op['method']} | `{op['url'][:60]}` | {op['status_code']} "
-                        f"| {op['elapsed_ms']:.0f}ms | {key_results} |"
-                    )
+                    if op["method"] == "BROWSER":
+                        target = req.get("target", "")
+                        value = req.get("value", "")
+                        detail = f"{target}"
+                        if value:
+                            detail += f"=\"{value[:30]}{'...' if len(value) > 30 else ''}\""
+                        lines.append(
+                            f"| UI | `{op['url']}` | - "
+                            f"| {op['elapsed_ms']:.0f}ms | {detail} |"
+                        )
+                    else:
+                        key_results = self._format_key_results(req, resp, op["url"])
+                        lines.append(
+                            f"| {op['method']} | `{op['url'][:60]}` | {op['status_code']} "
+                            f"| {op['elapsed_ms']:.0f}ms | {key_results} |"
+                        )
                 lines.append("")
 
         return "\n".join(lines)
