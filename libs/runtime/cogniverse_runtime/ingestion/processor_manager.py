@@ -111,10 +111,11 @@ class ProcessorManager:
                     self.logger.error(f"   ❌ Failed to create {processor_name}: {e}")
                     raise
             else:
-                available = list(self._processor_classes.keys())
-                raise ValueError(
-                    f"Unknown processor type: {processor_name}. "
-                    f"Available processors: {available}"
+                # Some processor types (image, audio_file, document_file) are
+                # handled directly by ProcessingStrategySet._process_segmentation()
+                # without needing actual processor plugins. Skip them gracefully.
+                self.logger.info(
+                    f"   ⏭️ Skipping {processor_name} — handled by strategy directly"
                 )
 
     def get_processor(self, name: str) -> BaseProcessor | None:

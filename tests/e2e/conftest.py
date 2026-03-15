@@ -2,9 +2,19 @@
 
 Provides availability checks, skip markers, and Streamlit interaction helpers
 for both API (httpx) and dashboard (Playwright) E2E tests.
+
+Test artifact paths (real data used for ingestion tests):
+- Video: data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4
+- Image: data/testset/evaluation/processed/keyframes/big_buck_bunny_clip/frame_0000.jpg
+- Audio: extracted via ffmpeg from sample video (real speech/sound)
+- PDF: Video-ChatGPT paper from arxiv (related to the test dataset)
+- Document: data/testset/dataset_summary.md (real markdown about the evaluation set)
 """
 
+import subprocess
+import tempfile
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -12,6 +22,10 @@ import pytest
 RUNTIME = "http://localhost:8000"
 DASHBOARD = "http://localhost:8501"
 TENANT_ID = "flywheel_org:production"
+
+# Paths to real test artifacts in the repo
+DATA_ROOT = Path(__file__).parent.parent.parent / "data"
+E2E_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "cogniverse_e2e_artifacts"
 
 
 def runtime_available() -> bool:
@@ -220,3 +234,85 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
         f"Streamlit session state after {retries} attempts. "
         "Expected 'Current tenant' confirmation alert to appear."
     )
+
+
+# ---------------------------------------------------------------------------
+# Real test artifact fixtures for ingestion tests
+# ---------------------------------------------------------------------------
+
+# Video-ChatGPT paper (arxiv) — directly related to the test dataset
+ARXIV_PDF_URL = "https://arxiv.org/pdf/2306.05424"
+
+
+def _download_if_missing(url: str, dest: Path, timeout: float = 60.0) -> Path:
+    """Download a file if it doesn't already exist (cached across test runs)."""
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+    return dest
+
+
+@pytest.fixture(scope="session")
+def real_pdf_path():
+    """Download Video-ChatGPT arxiv paper (related to test videos)."""
+    dest = E2E_ARTIFACT_DIR / "video_chatgpt_2306.05424.pdf"
+    try:
+        return _download_if_missing(ARXIV_PDF_URL, dest)
+    except (httpx.HTTPError, OSError) as exc:
+        pytest.skip(f"Cannot download test PDF: {exc}")
+
+
+@pytest.fixture(scope="session")
+def real_image_path():
+    """Real 1280x720 Big Buck Bunny keyframe from processed data."""
+    path = (
+        DATA_ROOT / "testset" / "evaluation" / "processed"
+        / "keyframes" / "big_buck_bunny_clip" / "frame_0000.jpg"
+    )
+    if not path.exists():
+        pytest.skip(f"Keyframe image not found: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def real_video_path():
+    """Real 874KB ActivityNet sample video."""
+    path = DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+    if not path.exists():
+        pytest.skip(f"Sample video not found: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def real_document_path():
+    """Real dataset summary markdown from the repo."""
+    path = DATA_ROOT / "testset" / "dataset_summary.md"
+    if not path.exists():
+        pytest.skip(f"Document not found: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def extracted_audio_path(real_video_path):
+    """Extract real audio from sample video using ffmpeg."""
+    dest = E2E_ARTIFACT_DIR / "extracted_video_audio.wav"
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-i", str(real_video_path),
+                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                "-t", "10", str(dest), "-y",
+            ],
+            capture_output=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        pytest.skip(f"Cannot extract audio via ffmpeg: {exc}")
+    return dest

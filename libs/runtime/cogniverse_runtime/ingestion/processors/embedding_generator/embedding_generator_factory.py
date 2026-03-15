@@ -96,8 +96,10 @@ def create_embedding_generator(
         raise ValueError(f"Profile '{schema_name}' not found in backend.profiles")
 
     profile_config = profiles[schema_name]
-    # Add schema_name to profile_config so it's available
-    profile_config["schema_name"] = schema_name
+    # Use the profile's own schema_name if present (may differ from profile key),
+    # otherwise fall back to the profile key as schema_name
+    if "schema_name" not in profile_config:
+        profile_config["schema_name"] = schema_name
 
     # Create and return generator
     return EmbeddingGeneratorFactory.create(

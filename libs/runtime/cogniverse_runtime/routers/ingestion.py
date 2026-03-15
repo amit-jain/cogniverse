@@ -4,7 +4,15 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 from pydantic import BaseModel
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -153,10 +161,10 @@ async def get_ingestion_status(job_id: str) -> IngestionStatus:
 @router.post("/upload")
 async def upload_video(
     file: UploadFile = File(...),
-    profile: str = "default",
-    backend: str = "vespa",
-    tenant_id: Optional[str] = None,
-    org_id: Optional[str] = None,
+    profile: str = Form("default"),
+    backend: str = Form("vespa"),
+    tenant_id: Optional[str] = Form(None),
+    org_id: Optional[str] = Form(None),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
@@ -172,40 +180,64 @@ async def upload_video(
             tmp.write(content)
             tmp_path = tmp.name
 
-        # Get backend with dependency injection
-        backend_registry = BackendRegistry.get_instance()
+        # Process file through ingestion pipeline
+        from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+
         upload_tenant_id = tenant_id or "default"
-        backend_instance = backend_registry.get_ingestion_backend(
-            name=backend,
+
+        pipeline = VideoIngestionPipeline(
             tenant_id=upload_tenant_id,
             config_manager=config_manager,
             schema_loader=schema_loader,
+            schema_name=profile,
         )
 
-        # Process video
-        from cogniverse_foundation.config.utils import get_config
-        from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-
-        config = get_config(
-            tenant_id=tenant_id or "default", config_manager=config_manager
-        )
-
-        pipeline = VideoIngestionPipeline(
-            config=config, profile=profile, backend=backend_instance
-        )
-
-        result = pipeline.process_video(
-            video_path=tmp_path, tenant_id=tenant_id, org_id=org_id
-        )
+        result = await pipeline.process_video_async(Path(tmp_path))
 
         # Clean up temp file
-        Path(tmp_path).unlink()
+        Path(tmp_path).unlink(missing_ok=True)
+
+        # Extract meaningful counts from pipeline result
+        processing_results = result.get("results", {})
+        chunks_created = 0
+
+        # Count keyframes (frame-based profiles)
+        keyframes_data = processing_results.get("keyframes", {})
+        if isinstance(keyframes_data, dict):
+            keyframes_list = keyframes_data.get("keyframes", [])
+            if isinstance(keyframes_list, list):
+                chunks_created += len(keyframes_list)
+
+        # Count video chunks (chunk-based profiles)
+        chunks_data = processing_results.get("video_chunks", {})
+        if isinstance(chunks_data, dict):
+            chunks_list = chunks_data.get("chunks", [])
+            if isinstance(chunks_list, list):
+                chunks_created += len(chunks_list)
+
+        # Count document files
+        doc_files = processing_results.get("document_files", [])
+        if isinstance(doc_files, list):
+            chunks_created += len(doc_files)
+
+        # Count audio files
+        audio_files = processing_results.get("audio_files", [])
+        if isinstance(audio_files, list):
+            chunks_created += len(audio_files)
+
+        # Documents fed to backend (from embedding results)
+        embeddings_data = processing_results.get("embeddings", {})
+        documents_fed = 0
+        if isinstance(embeddings_data, dict):
+            documents_fed = embeddings_data.get("documents_fed", 0)
 
         return {
-            "status": "success",
+            "status": "success" if result.get("status") == "completed" else result.get("status", "success"),
             "filename": file.filename,
             "video_id": result.get("video_id"),
-            "chunks_created": result.get("chunks_created", 0),
+            "chunks_created": chunks_created,
+            "documents_fed": documents_fed,
+            "processing_time": result.get("total_processing_time"),
         }
 
     except Exception as e:

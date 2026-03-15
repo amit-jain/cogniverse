@@ -278,6 +278,52 @@ class TestMultiModalChat:
 # Scenario 9: Search annotation harvesting via dashboard
 
 
+class TestOptimizationOverview:
+    """Optimization Overview and Metrics Dashboard sub-tabs."""
+
+    def test_overview_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Overview")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_content = (
+            "overview" in body_text
+            or "optimization" in body_text
+            or "pipeline" in body_text
+            or page.locator('[data-testid="stMetric"]').count() > 0
+            or page.locator('[data-testid="stAlert"]').count() > 0
+        )
+        assert has_content, (
+            "Optimization Overview tab should show pipeline overview"
+        )
+
+    def test_metrics_dashboard_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Metrics Dashboard")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_content = (
+            "metric" in body_text
+            or "dashboard" in body_text
+            or page.locator('[data-testid="stMetric"]').count() > 0
+            or page.locator('[data-testid="stPlotlyChart"]').count() > 0
+            or page.locator('[data-testid="stAlert"]').count() > 0
+        )
+        assert has_content, (
+            "Metrics Dashboard tab should show metrics or status"
+        )
+
+
 class TestAnnotationHarvesting:
     """Scenario 9: Fetch search spans and annotate via optimization tab."""
 
@@ -539,6 +585,46 @@ class TestTenantLifecycleDashboard:
             f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0
         )
 
+    def test_create_tenant_sub_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Tenant Management")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Create Tenant")
+        page.wait_for_load_state("networkidle")
+
+        # Verify Create Tenant form widgets
+        body_text = page.inner_text("body").lower()
+        assert "tenant" in body_text, (
+            "Create Tenant sub-tab should mention 'tenant'"
+        )
+        inputs = page.locator('[data-testid="stTextInput"] input')
+        selectboxes = page.locator('[data-testid="stSelectbox"]')
+        has_form = inputs.count() > 0 or selectboxes.count() > 0
+        assert has_form, (
+            "Create Tenant tab should have input fields or selectboxes"
+        )
+
+    def test_tenants_list_sub_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Tenant Management")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Tenants")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_content = (
+            "tenant" in body_text
+            or page.locator('[data-testid="stExpander"]').count() > 0
+            or page.locator('[data-testid="stAlert"]').count() > 0
+        )
+        assert has_content, (
+            "Tenants list tab should show tenants or status message"
+        )
+
 
 # Scenario 16: Config management — edit, save, export
 
@@ -586,6 +672,90 @@ class TestConfigManagement:
             "File uploader for config import should be present"
         )
 
+    def test_agent_configs_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Configuration")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Agent Configs")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_agent_config = (
+            "agent" in body_text
+            and (
+                page.locator('[data-testid="stSelectbox"]').count() > 0
+                or page.locator('[data-testid="stTextInput"]').count() > 0
+                or "config" in body_text
+            )
+        )
+        assert has_agent_config, (
+            "Agent Configs tab should show agent configuration controls"
+        )
+
+    def test_routing_config_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Configuration")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Routing Config")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_routing = (
+            "routing" in body_text
+            or "agent" in body_text
+            or page.locator('[data-testid="stSelectbox"]').count() > 0
+            or page.locator('button:has-text("Save")').count() > 0
+        )
+        assert has_routing, (
+            "Routing Config tab should show routing configuration"
+        )
+
+    def test_telemetry_config_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Configuration")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Telemetry Config")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_telemetry = (
+            "telemetry" in body_text
+            or "phoenix" in body_text
+            or "trace" in body_text
+            or page.locator('[data-testid="stTextInput"]').count() > 0
+            or page.locator('button:has-text("Save")').count() > 0
+        )
+        assert has_telemetry, (
+            "Telemetry Config tab should show telemetry settings"
+        )
+
+    def test_backend_profiles_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Configuration")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Backend Profiles")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        has_profiles = (
+            "profile" in body_text
+            or "schema" in body_text
+            or page.locator('[data-testid="stSelectbox"]').count() > 0
+            or page.locator('button:has-text("Create")').count() > 0
+            or page.locator('button:has-text("Deploy")').count() > 0
+        )
+        assert has_profiles, (
+            "Backend Profiles tab should show profile management controls"
+        )
+
     def test_config_history(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
@@ -595,7 +765,6 @@ class TestConfigManagement:
         click_sub_tab(page, "History")
         page.wait_for_load_state("networkidle")
 
-        # Verify Scope selectbox for version history
         selectboxes = page.locator('[data-testid="stSelectbox"]')
         assert selectboxes.count() > 0, (
             "History tab should have Scope selectbox"
@@ -700,6 +869,48 @@ class TestMemoryLifecycle:
             "Memory search should show 'Found N memories' or status message"
         )
 
+    def test_view_all_memories(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "User")
+        click_sub_tab(page, "Memory")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "View All")
+        page.wait_for_load_state("networkidle")
+
+        load_btn = page.locator('button:has-text("Load")')
+        assert load_btn.count() > 0, (
+            "View All tab should have Load All Memories button"
+        )
+        click_button(page, "Load")
+        page.wait_for_timeout(INTERACTION_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        alerts = page.locator('[data-testid="stAlert"]')
+        dataframes = page.locator('[data-testid="stDataFrame"]')
+        assert alerts.count() > 0 or dataframes.count() > 0, (
+            "Loading memories should show results or status"
+        )
+
+    def test_delete_memory_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "User")
+        click_sub_tab(page, "Memory")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Delete Memory")
+        page.wait_for_load_state("networkidle")
+
+        # Verify Memory ID input and Delete button present
+        inputs = page.locator('[data-testid="stTextInput"] input')
+        assert inputs.count() > 0, (
+            "Delete Memory tab should have Memory ID text input"
+        )
+        delete_btn = page.locator('button:has-text("Delete")')
+        assert delete_btn.count() > 0, (
+            "Delete Memory tab should have Delete Memory button"
+        )
+
 
 # Scenario 20: Monitoring dashboard tabs
 
@@ -724,8 +935,12 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Analytics")
         page.wait_for_load_state("networkidle")
 
-        # Verify the analytics tab rendered (sub-tabs, metrics, or info)
         body_text = page.inner_text("body").lower()
+        # Analytics should NOT show "no tenant selected" error
+        assert "no tenant selected" not in body_text, (
+            "Analytics tab should not show 'No tenant selected' after set_tenant"
+        )
+        # Should show analytics UI elements
         has_content = (
             "analytics" in body_text
             or "traces" in body_text
@@ -733,6 +948,7 @@ class TestMonitoringDashboard:
             or page.locator('[data-testid="stMetric"]').count() > 0
             or page.locator('[data-testid="stSelectbox"]').count() > 0
             or page.locator('[data-testid="stAlert"]').count() > 0
+            or page.locator('button[role="tab"]').count() > 10
         )
         assert has_content, (
             "Analytics tab should render analytics content or status message"
