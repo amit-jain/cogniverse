@@ -27,7 +27,6 @@ RUNTIME = "http://localhost:8000"
 DASHBOARD = "http://localhost:8501"
 TENANT_ID = "flywheel_org:production"
 
-# Paths to real test artifacts in the repo
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"
 E2E_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "cogniverse_e2e_artifacts"
 
@@ -73,7 +72,6 @@ def restart_runtime(timeout_s: int = 30) -> bool:
     import os
     import signal
 
-    # Find and kill processes on port 8000
     try:
         result = subprocess.run(
             ["lsof", "-i", ":8000", "-t"],
@@ -89,7 +87,6 @@ def restart_runtime(timeout_s: int = 30) -> bool:
 
     _time.sleep(3)
 
-    # Start fresh runtime
     env = {**os.environ, "BACKEND_URL": "http://localhost", "BACKEND_PORT": "8080"}
     subprocess.Popen(
         ["uv", "run", "uvicorn", "cogniverse_runtime.main:app",
@@ -100,7 +97,6 @@ def restart_runtime(timeout_s: int = 30) -> bool:
         start_new_session=True,
     )
 
-    # Wait for healthy
     for _ in range(timeout_s):
         _time.sleep(1)
         try:
@@ -165,7 +161,7 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
     )
 
 
-def click_top_tab(page, label: str, timeout: int = 10_000):
+def click_top_tab(page, label: str):
     """Click a top-level Streamlit tab."""
     start = _time.monotonic()
     _click_tab_by_label(page, label)
@@ -174,7 +170,7 @@ def click_top_tab(page, label: str, timeout: int = 10_000):
         _report_collector.record_browser_op("click_top_tab", label, elapsed_ms=elapsed)
 
 
-def click_sub_tab(page, label: str, timeout: int = 10_000):
+def click_sub_tab(page, label: str):
     """Click a sub-level Streamlit tab.
 
     Uses a longer settle time than top-level tabs because sub-tabs
@@ -213,6 +209,8 @@ def fill_input(locator, value: str):
             }""",
             value,
         )
+        # Streamlit text_input requires Enter to commit the value
+        locator.press("Enter")
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
         _report_collector.record_browser_op("fill_input", "text_input", value, elapsed)
@@ -324,8 +322,6 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
     )
 
 
-# Real test artifact fixtures for ingestion tests
-
 # Video-ChatGPT paper (arxiv) — directly related to the test dataset
 ARXIV_PDF_URL = "https://arxiv.org/pdf/2306.05424"
 
@@ -403,8 +399,6 @@ def extracted_audio_path(real_video_path):
         pytest.skip(f"Cannot extract audio via ffmpeg: {exc}")
     return dest
 
-
-# E2E Report System — auto-captures all httpx calls + test outcomes
 
 E2E_REPORT_DIR = Path("/tmp")
 E2E_REPORT_JSON = E2E_REPORT_DIR / "e2e_report.json"
