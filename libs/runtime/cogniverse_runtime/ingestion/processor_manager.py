@@ -91,6 +91,12 @@ class ProcessorManager:
 
         self._init_from_requirements(all_requirements)
 
+    # Processor types handled directly by ProcessingStrategySet._process_segmentation()
+    # — they do not require a processor plugin, so skip them gracefully.
+    _STRATEGY_HANDLED_TYPES = frozenset(
+        {"image", "audio_file", "document_file", "single_vector"}
+    )
+
     def _init_from_requirements(self, required_processors: dict[str, dict[str, Any]]):
         """Dynamically create processors from requirements."""
         for processor_name, processor_config in required_processors.items():
@@ -110,13 +116,14 @@ class ProcessorManager:
                 except Exception as e:
                     self.logger.error(f"   ❌ Failed to create {processor_name}: {e}")
                     raise
-            else:
-                # Some processor types (image, audio_file, document_file) are
-                # handled directly by ProcessingStrategySet._process_segmentation()
-                # without needing actual processor plugins. Skip them gracefully.
+            elif processor_name in self._STRATEGY_HANDLED_TYPES:
+                # These types are handled directly by ProcessingStrategySet without
+                # needing a processor plugin — skip gracefully.
                 self.logger.info(
                     f"   ⏭️ Skipping {processor_name} — handled by strategy directly"
                 )
+            else:
+                raise ValueError(f"Unknown processor type: {processor_name}")
 
     def get_processor(self, name: str) -> BaseProcessor | None:
         """Get a processor by name."""

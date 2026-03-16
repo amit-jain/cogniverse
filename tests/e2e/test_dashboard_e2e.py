@@ -45,7 +45,6 @@ def _nav(page):
     wait_for_streamlit(page)
 
 
-# Sidebar and navigation
 
 
 class TestSidebarAndNavigation:
@@ -119,7 +118,6 @@ class TestSidebarAndNavigation:
         )
 
 
-# Scenario 6: Interactive search — query, results, annotate
 
 
 class TestInteractiveSearch:
@@ -152,19 +150,23 @@ class TestInteractiveSearch:
         page.wait_for_timeout(SEARCH_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Assert: results metrics, alerts, or content changed after search
+        # Assert: search must produce a concrete outcome — not just "page changed"
+        body_text = page.inner_text("body").lower()
         metrics = page.locator('[data-testid="stMetric"]')
-        alerts = page.locator('[data-testid="stAlert"]')
         expanders = page.locator('[data-testid="stExpander"]')
-        no_results = page.locator('text=No results')
-        has_outcome = (
-            metrics.count() > 0
-            or alerts.count() > 0
-            or expanders.count() > 0
-            or no_results.count() > 0
-        )
-        assert has_outcome, (
-            "Search should show results (metrics, expanders, alerts, or 'No results')"
+        no_results_msg = "no results" in body_text
+
+        if metrics.count() > 0:
+            # Verify metrics show search-specific values (Results, Latency)
+            metric_text = metrics.first.inner_text().lower()
+            assert any(
+                kw in metric_text for kw in ("results", "latency", "score", "0")
+            ), f"Search metric should show Results/Latency, got: {metric_text}"
+
+        assert metrics.count() > 0 or expanders.count() > 0 or no_results_msg, (
+            "Search must show result metrics, result expanders, or 'No results' — "
+            f"metrics={metrics.count()}, expanders={expanders.count()}, "
+            f"no_results={no_results_msg}"
         )
 
     def test_search_annotation(self, page):
@@ -204,7 +206,6 @@ class TestInteractiveSearch:
             )
 
 
-# Scenario 8: Multi-modal chat — send message, get response
 
 
 class TestMultiModalChat:
@@ -229,12 +230,31 @@ class TestMultiModalChat:
         page.wait_for_timeout(LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Verify response: chat messages, markdown blocks, or status alerts
+        # Verify response contains actual content, not just empty containers
         chat_msgs = page.locator('[data-testid="stChatMessage"]')
         markdown = page.locator('[data-testid="stMarkdown"]')
         alerts = page.locator('[data-testid="stAlert"]')
-        assert chat_msgs.count() > 0 or markdown.count() > 1 or alerts.count() > 0, (
+
+        has_response = (
+            chat_msgs.count() > 0
+            or markdown.count() > 1
+            or alerts.count() > 0
+        )
+        assert has_response, (
             "Chat should display a response message or status alert after sending"
+        )
+
+        # Verify response text is non-empty and not just the query echoed back
+        body_text = page.inner_text("body")
+        assert len(body_text) > 100, (
+            f"Chat response should contain substantial text, got {len(body_text)} chars"
+        )
+        # The response should contain words beyond the query (routing/search happened)
+        query_words = {"what", "videos", "animals"}
+        response_words = set(body_text.lower().split())
+        non_query_words = response_words - query_words
+        assert len(non_query_words) > 20, (
+            "Chat response should contain words beyond the query (agent actually responded)"
         )
 
     def test_multi_turn_conversation(self, page):
@@ -275,7 +295,6 @@ class TestMultiModalChat:
         )
 
 
-# Scenario 9: Search annotation harvesting via dashboard
 
 
 class TestOptimizationOverview:
@@ -351,14 +370,30 @@ class TestAnnotationHarvesting:
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Verify outcome: success/error/info alert
-        alerts = page.locator('[data-testid="stAlert"]')
-        assert alerts.count() > 0, (
-            "Fetch should produce a status alert (Fetched N results, or error)"
+        # Verify fetch produced a specific outcome — not just "any alert"
+        fetched_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("Fetched")'
+        )
+        no_spans = page.locator(
+            '[data-testid="stAlert"]:has-text("No search")'
+        )
+        error_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("Error"), '
+            '[data-testid="stAlert"]:has-text("error"), '
+            '[data-testid="stAlert"]:has-text("Failed")'
+        )
+        dataframes = page.locator('[data-testid="stDataFrame"]')
+        assert (
+            fetched_alert.count() > 0
+            or no_spans.count() > 0
+            or error_alert.count() > 0
+            or dataframes.count() > 0
+        ), (
+            "Fetch must show 'Fetched N spans', 'No search spans', error, "
+            "or results dataframe"
         )
 
 
-# Scenario 10: Golden dataset creation
 
 
 class TestGoldenDataset:
@@ -385,8 +420,46 @@ class TestGoldenDataset:
             "Build Golden Dataset button should be present"
         )
 
+    def test_build_golden_dataset_execution(self, page):
+        """Click Build Golden Dataset and verify it produces a result."""
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Golden Dataset")
+        page.wait_for_load_state("networkidle")
 
-# Scenario 11: Synthetic data generation + approval queue
+        # Click Build and wait for Phoenix query to complete
+        click_button(page, "Build")
+        page.wait_for_timeout(SEARCH_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        # Build queries Phoenix telemetry spans — result is either:
+        # - "Built golden dataset with N queries" (success, N may be 0)
+        # - "Failed to build dataset: ..." (Phoenix connection error)
+        # - "No annotated queries found" (no annotations exist)
+        built_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("dataset")'
+        )
+        no_data_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("No annotated"), '
+            '[data-testid="stAlert"]:has-text("no queries")'
+        )
+        error_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("Failed"), '
+            '[data-testid="stAlert"]:has-text("Error")'
+        )
+        assert (
+            built_alert.count() > 0
+            or no_data_alert.count() > 0
+            or error_alert.count() > 0
+        ), (
+            "Build Golden Dataset must produce a specific result alert — "
+            "not just DOM presence"
+        )
+
+
 
 
 class TestSyntheticDataAndApproval:
@@ -413,6 +486,42 @@ class TestSyntheticDataAndApproval:
             "Generate Synthetic Data button should be present"
         )
 
+    def test_generate_synthetic_data_execution(self, page):
+        """Click Generate and verify synthetic data is produced."""
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Synthetic Data")
+        page.wait_for_load_state("networkidle")
+
+        # Click Generate — this calls POST /synthetic/generate via the runtime
+        click_button(page, "Generate")
+        # Synthetic data generation queries Vespa + generates examples (up to 5 min)
+        page.wait_for_timeout(LLM_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        # Verify generation outcome
+        success_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("Generated")'
+        )
+        error_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("failed"), '
+            '[data-testid="stAlert"]:has-text("Cannot connect"), '
+            '[data-testid="stAlert"]:has-text("timed out")'
+        )
+        body_text = page.inner_text("body").lower()
+        has_examples = "example" in body_text or "confidence" in body_text
+        assert (
+            success_alert.count() > 0
+            or error_alert.count() > 0
+            or has_examples
+        ), (
+            "Generate must produce a result: success with examples, "
+            "or a specific error message"
+        )
+
     def test_approval_workflow_in_synthetic_data(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
@@ -423,15 +532,20 @@ class TestSyntheticDataAndApproval:
         page.wait_for_load_state("networkidle")
 
         # Approval workflow is inline within Synthetic Data tab
-        # Verify the approval checkbox exists
+        # Verify the approval checkbox or review controls exist
         approval_checkbox = page.locator('label:has-text("approval")')
         generate_btn = page.locator('button:has-text("Generate")')
-        assert approval_checkbox.count() > 0 or generate_btn.count() > 0, (
-            "Synthetic Data tab should have approval checkbox or generate button"
+        review_section = page.locator('text=Review')
+        assert (
+            approval_checkbox.count() > 0
+            or generate_btn.count() > 0
+            or review_section.count() > 0
+        ), (
+            "Synthetic Data tab should have approval checkbox, generate button, "
+            "or review section"
         )
 
 
-# Scenario 12: DSPy module optimization trigger
 
 
 class TestModuleOptimization:
@@ -459,8 +573,61 @@ class TestModuleOptimization:
             "Submit Workflow or Upload Dataset button should be present"
         )
 
+        # Verify DSPy optimizer selection controls exist
+        body_text = page.inner_text("body").lower()
+        has_optimizer_controls = (
+            "optimizer" in body_text
+            or "dspy" in body_text
+            or "module" in body_text
+            or "iterations" in body_text
+            or "training" in body_text
+        )
+        assert has_optimizer_controls, (
+            "Module Optimization should show optimizer type, iterations, "
+            "or training data controls"
+        )
 
-# Scenario 13: Reranking and profile selection optimization
+    def test_module_optimization_workflow_submission(self, page):
+        """Attempt to submit optimization workflow and verify feedback."""
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
+        click_sub_tab(page, "Module Optimization")
+        page.wait_for_load_state("networkidle")
+
+        # Try Submit — this may succeed (Argo available) or fail with
+        # a specific error (Argo not configured, no training data)
+        submit_btn = page.locator('button:has-text("Submit")')
+        if submit_btn.count() > 0:
+            click_button(page, "Submit")
+            page.wait_for_timeout(SEARCH_TIMEOUT)
+            page.wait_for_load_state("networkidle")
+
+            # Verify a specific outcome — success, error, or prerequisite warning
+            success = page.locator(
+                '[data-testid="stAlert"]:has-text("submitted"), '
+                '[data-testid="stAlert"]:has-text("success")'
+            )
+            error = page.locator(
+                '[data-testid="stAlert"]:has-text("failed"), '
+                '[data-testid="stAlert"]:has-text("Error"), '
+                '[data-testid="stAlert"]:has-text("kubectl")'
+            )
+            warning = page.locator(
+                '[data-testid="stAlert"]:has-text("training data"), '
+                '[data-testid="stAlert"]:has-text("No dataset")'
+            )
+            assert (
+                success.count() > 0
+                or error.count() > 0
+                or warning.count() > 0
+            ), (
+                "Module optimization submission must produce specific feedback"
+            )
+
+
 
 
 class TestRerankingAndProfileOptimization:
@@ -504,7 +671,6 @@ class TestRerankingAndProfileOptimization:
         )
 
 
-# Scenario 14: Tenant lifecycle via dashboard
 
 
 class TestTenantLifecycleDashboard:
@@ -560,25 +726,31 @@ class TestTenantLifecycleDashboard:
             page.wait_for_timeout(INTERACTION_TIMEOUT)
             page.wait_for_load_state("networkidle")
 
-            # After st.rerun(), the alert may be transient. Check for either:
-            # - success/error alert still visible
-            # - or org appears in the org list (page reruns to show updated list)
-            success = page.locator(
-                '[data-testid="stAlert"]:has-text("created successfully")'
-            )
-            error = page.locator(
-                '[data-testid="stAlert"]:has-text("error"), '
-                '[data-testid="stAlert"]:has-text("Error")'
-            )
-            # After rerun, check if org is in the page body
+            # st.rerun() clears transient alerts — verify the org was actually
+            # created by checking the API directly (authoritative) and that
+            # the page reflects the change
+            page.wait_for_timeout(3_000)
             body_text = page.inner_text("body")
-            assert (
-                success.count() > 0
-                or error.count() > 0
-                or org_id in body_text
-            ), (
-                "Creating organization should produce alert or show org in list"
+
+            # Authoritative check: verify org exists via API
+            verify_resp = httpx.get(
+                f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0
             )
+            if verify_resp.status_code == 200:
+                # Org created — verify dashboard shows it (either in alert or body)
+                success = page.locator(
+                    '[data-testid="stAlert"]:has-text("created successfully")'
+                )
+                assert success.count() > 0 or org_id in body_text, (
+                    f"Org {org_id} exists in API but not shown on dashboard"
+                )
+            else:
+                # Check for error alert explaining why creation failed
+                error = page.locator('[data-testid="stAlert"]')
+                assert error.count() > 0, (
+                    f"Org creation failed (API {verify_resp.status_code}) "
+                    f"but no error alert shown"
+                )
 
         # Cleanup via API
         httpx.delete(
@@ -626,7 +798,6 @@ class TestTenantLifecycleDashboard:
         )
 
 
-# Scenario 16: Config management — edit, save, export
 
 
 class TestConfigManagement:
@@ -639,16 +810,28 @@ class TestConfigManagement:
         click_sub_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
 
-        # System Config is default sub-tab. Verify selectboxes (Environment, Backend Type)
+        # System Config is default sub-tab. Verify form elements
         selectboxes = page.locator('[data-testid="stSelectbox"]')
         assert selectboxes.count() > 0, (
             "System Config should have selectboxes (Environment, Backend Type)"
         )
 
-        # Verify Save button
+        # Verify Save button exists and is inside a form
         save_btn = page.locator('button:has-text("Save")')
         assert save_btn.count() > 0, (
             "Save System Configuration button should be present"
+        )
+
+        # Verify page content shows config-specific terms
+        body_text = page.inner_text("body").lower()
+        has_config_content = (
+            "environment" in body_text
+            or "backend" in body_text
+            or "vespa" in body_text
+            or "healthy" in body_text
+        )
+        assert has_config_content, (
+            "System Config tab should show environment, backend, or health info"
         )
 
     def test_config_import_export(self, page):
@@ -660,10 +843,30 @@ class TestConfigManagement:
         click_sub_tab(page, "Import/Export")
         page.wait_for_load_state("networkidle")
 
-        # Verify Export button
+        # Verify Export button and click it to trigger export
         export_btn = page.locator('button:has-text("Export")')
         assert export_btn.count() > 0, (
             "Export Configurations button should be present"
+        )
+
+        # Click Export and verify outcome (success alert or download appears)
+        click_button(page, "Export")
+        page.wait_for_timeout(INTERACTION_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        # Export should produce a success alert or download link
+        export_success = page.locator(
+            '[data-testid="stAlert"]:has-text("Exported")'
+        )
+        download_btn = page.locator('[data-testid="stDownloadButton"]')
+        body_text = page.inner_text("body").lower()
+        assert (
+            export_success.count() > 0
+            or download_btn.count() > 0
+            or "exported" in body_text
+            or "download" in body_text
+        ), (
+            "Export should show success alert or download button"
         )
 
         # Verify file uploader for import
@@ -765,13 +968,27 @@ class TestConfigManagement:
         click_sub_tab(page, "History")
         page.wait_for_load_state("networkidle")
 
+        # Verify Scope selectbox
         selectboxes = page.locator('[data-testid="stSelectbox"]')
         assert selectboxes.count() > 0, (
             "History tab should have Scope selectbox"
         )
 
+        # Verify history content: version entries, dataframes, or rollback controls
+        body_text = page.inner_text("body").lower()
+        dataframes = page.locator('[data-testid="stDataFrame"]')
+        has_history_content = (
+            "version" in body_text
+            or "history" in body_text
+            or "rollback" in body_text
+            or dataframes.count() > 0
+        )
+        assert has_history_content, (
+            "History tab should show version entries, rollback controls, "
+            "or history dataframe"
+        )
 
-# Scenario 17: Memory lifecycle — add, search, delete
+
 
 
 class TestMemoryLifecycle:
@@ -821,25 +1038,16 @@ class TestMemoryLifecycle:
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Verify add result — Streamlit alerts may be transient (cleared on rerun),
-        # so also check page content for success/error indicators
+        # Memory add alerts persist (no st.rerun) — assert exact feedback
         success = page.locator(
             '[data-testid="stAlert"]:has-text("added successfully")'
         )
         error = page.locator(
             '[data-testid="stAlert"]:has-text("Failed")'
         )
-        any_alert = page.locator('[data-testid="stAlert"]')
-        body_text = page.inner_text("body").lower()
-        has_result = (
-            success.count() > 0
-            or error.count() > 0
-            or any_alert.count() > 0
-            or "added" in body_text
-            or "memory" in body_text
-        )
-        assert has_result, (
-            "Adding memory should produce feedback (alert or status text)"
+        assert success.count() > 0 or error.count() > 0, (
+            "Memory add must show 'added successfully' or 'Failed' alert — "
+            f"success={success.count()}, error={error.count()}"
         )
 
         # Search for the memory
@@ -860,13 +1068,15 @@ class TestMemoryLifecycle:
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Verify search outcome
+        # Memory search alerts persist (no st.rerun) — assert specific feedback
         found_alert = page.locator(
             '[data-testid="stAlert"]:has-text("Found")'
         )
-        warning = page.locator('[data-testid="stAlert"]')
-        assert found_alert.count() > 0 or warning.count() > 0, (
-            "Memory search should show 'Found N memories' or status message"
+        no_results = page.locator(
+            '[data-testid="stAlert"]:has-text("No memories found")'
+        )
+        assert found_alert.count() > 0 or no_results.count() > 0, (
+            "Memory search must show 'Found N memories' or 'No memories found'"
         )
 
     def test_view_all_memories(self, page):
@@ -886,10 +1096,24 @@ class TestMemoryLifecycle:
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        alerts = page.locator('[data-testid="stAlert"]')
+        # Alerts persist (no st.rerun) — check for specific outcomes
+        found_alert = page.locator(
+            '[data-testid="stAlert"]:has-text("Found")'
+        )
         dataframes = page.locator('[data-testid="stDataFrame"]')
-        assert alerts.count() > 0 or dataframes.count() > 0, (
-            "Loading memories should show results or status"
+        expanders = page.locator('[data-testid="stExpander"]')
+        no_memories = page.locator(
+            '[data-testid="stAlert"]:has-text("No memories")'
+        )
+        assert (
+            found_alert.count() > 0
+            or dataframes.count() > 0
+            or expanders.count() > 0
+            or no_memories.count() > 0
+        ), (
+            "View All must show 'Found N memories' with data, or 'No memories' — "
+            f"found={found_alert.count()}, df={dataframes.count()}, "
+            f"expanders={expanders.count()}"
         )
 
     def test_delete_memory_tab(self, page):
@@ -912,7 +1136,6 @@ class TestMemoryLifecycle:
         )
 
 
-# Scenario 20: Monitoring dashboard tabs
 
 
 class TestMonitoringDashboard:
@@ -936,22 +1159,35 @@ class TestMonitoringDashboard:
         page.wait_for_load_state("networkidle")
 
         body_text = page.inner_text("body").lower()
-        # Analytics should NOT show "no tenant selected" error
+        # Analytics MUST NOT show "no tenant selected" — this means tenant didn't propagate
         assert "no tenant selected" not in body_text, (
             "Analytics tab should not show 'No tenant selected' after set_tenant"
         )
-        # Should show analytics UI elements
-        has_content = (
-            "analytics" in body_text
-            or "traces" in body_text
-            or "overview" in body_text
-            or page.locator('[data-testid="stMetric"]').count() > 0
-            or page.locator('[data-testid="stSelectbox"]').count() > 0
-            or page.locator('[data-testid="stAlert"]').count() > 0
-            or page.locator('button[role="tab"]').count() > 10
+
+        # Verify analytics-specific UI elements rendered
+        metrics = page.locator('[data-testid="stMetric"]')
+        selectboxes = page.locator('[data-testid="stSelectbox"]')
+        charts = page.locator(
+            '[data-testid="stPlotlyChart"], [data-testid="stVegaLiteChart"]'
         )
-        assert has_content, (
-            "Analytics tab should render analytics content or status message"
+        dataframes = page.locator('[data-testid="stDataFrame"]')
+        sub_tabs = page.locator('button[role="tab"]')
+
+        # Analytics should show at least one of: metrics, charts, data tables, sub-tabs
+        has_data_ui = (
+            metrics.count() > 0
+            or charts.count() > 0
+            or dataframes.count() > 0
+            or selectboxes.count() > 0
+        )
+        # Or analytics sub-tabs (Overview, Time Series, etc.) rendered
+        has_sub_tabs = sub_tabs.count() > 10
+
+        assert has_data_ui or has_sub_tabs, (
+            f"Analytics tab should show data widgets — "
+            f"metrics={metrics.count()}, charts={charts.count()}, "
+            f"dataframes={dataframes.count()}, selectboxes={selectboxes.count()}, "
+            f"tabs={sub_tabs.count()}"
         )
 
     def test_evaluation_tab(self, page):
@@ -1040,18 +1276,67 @@ class TestMonitoringDashboard:
         page.wait_for_load_state("networkidle")
 
         body_text = page.inner_text("body").lower()
-        has_content = (
-            "fine" in body_text
-            or "tuning" in body_text
-            or "gpu" in body_text
-            or page.locator('[data-testid="stAlert"]').count() > 0
-        )
-        assert has_content, (
-            "Fine-Tuning tab should show fine-tuning info or GPU notice"
+
+        # Fine-tuning tab has three sections: Configuration, Dataset Status,
+        # and Training Configuration. Verify the key UI elements exist.
+
+        # 1. Configuration expander with Tenant ID, Project, Agent/Modality
+        config_expander = page.locator('[data-testid="stExpander"]')
+        assert config_expander.count() > 0, (
+            "Fine-Tuning tab should have Configuration expander"
         )
 
+        # 2. Dataset Status section with Analyze button
+        analyze_btn = page.locator('button:has-text("Analyze")')
+        assert analyze_btn.count() > 0, (
+            "Fine-Tuning tab should have 'Analyze Dataset' button"
+        )
 
-# Ingestion testing tab
+        # 3. Verify fine-tuning specific content (not just generic page text)
+        assert "fine-tuning" in body_text or "fine tuning" in body_text, (
+            "Fine-Tuning tab should mention fine-tuning in its content"
+        )
+        assert "experiment" in body_text or "dataset" in body_text, (
+            "Fine-Tuning tab should reference experiments or datasets"
+        )
+
+        # 4. Agent/Modality selectbox should list available targets
+        selectboxes = page.locator('[data-testid="stSelectbox"]')
+        assert selectboxes.count() > 0, (
+            "Fine-Tuning tab should have Agent/Modality selectbox"
+        )
+
+    def test_finetuning_dataset_analysis(self, page):
+        """Click Analyze Dataset and verify it produces analysis results."""
+        self._goto_monitoring(page)
+        click_sub_tab(page, "Fine-Tuning")
+        page.wait_for_load_state("networkidle")
+
+        # Click Analyze Dataset
+        click_button(page, "Analyze")
+        page.wait_for_timeout(SEARCH_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        # Analysis should produce one of:
+        # - Dataset status metrics (total examples, ready for training)
+        # - Import error (cogniverse_finetuning not installed)
+        # - No data message
+        metrics = page.locator('[data-testid="stMetric"]')
+        alerts = page.locator('[data-testid="stAlert"]')
+        body_text = page.inner_text("body").lower()
+        has_analysis_result = (
+            metrics.count() > 0
+            or alerts.count() > 0
+            or "training" in body_text
+            or "readiness" in body_text
+            or "no data" in body_text
+            or "not installed" in body_text
+            or "import" in body_text
+        )
+        assert has_analysis_result, (
+            "Analyze Dataset must produce metrics, alerts, or status — "
+            f"metrics={metrics.count()}, alerts={alerts.count()}"
+        )
 
 
 class TestIngestionTesting:

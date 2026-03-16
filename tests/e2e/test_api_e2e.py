@@ -20,14 +20,12 @@ import pytest
 from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
-    restart_runtime,
     skip_if_no_runtime,
     unique_id,
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
 
-# Scenario 1: Tiered routing with entity extraction
 
 
 @pytest.mark.e2e
@@ -126,7 +124,6 @@ class TestRoutingPipeline:
         assert isinstance(metadata["processing_time_ms"], (int, float))
 
 
-# Scenario 2-3: Query enhancement + entity extraction (via routing_agent)
 
 
 @pytest.mark.e2e
@@ -190,7 +187,6 @@ class TestQueryEnhancementViaRouting:
         assert 0.0 <= data["confidence"] <= 1.0
 
 
-# Scenario 4-5: Orchestration (via routing with orchestration trigger)
 
 
 @pytest.mark.e2e
@@ -257,7 +253,6 @@ class TestOrchestration:
         assert data2["status"] == "success"
 
 
-# Scenario 7: Search API with profiles and strategies
 
 
 @pytest.mark.e2e
@@ -396,7 +391,6 @@ class TestSearchAPI:
         assert resp.status_code == 400
 
 
-# Profile CRUD lifecycle
 
 
 @pytest.mark.e2e
@@ -522,7 +516,6 @@ class TestProfileCRUD:
                 )
 
 
-# System stats
 
 
 @pytest.mark.e2e
@@ -541,7 +534,6 @@ class TestSystemStats:
         assert "timestamp" in data
 
 
-# Agent registration, capability discovery, and process
 
 
 @pytest.mark.e2e
@@ -617,7 +609,6 @@ class TestAgentOperations:
         assert resp.status_code == 404
 
 
-# Synthetic data API
 
 
 @pytest.mark.e2e
@@ -666,8 +657,73 @@ class TestSyntheticDataAPI:
             resp = client.get("/synthetic/optimizers/nonexistent_xyz")
         assert resp.status_code == 404
 
+    def test_generate_synthetic_data(self):
+        """POST /synthetic/generate creates real synthetic training examples."""
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "routing",
+                    "count": 5,
+                    "vespa_sample_size": 10,
+                    "strategies": ["diverse"],
+                    "max_profiles": 2,
+                    "tenant_id": TENANT_ID,
+                },
+            )
 
-# Event endpoints — cancel and offset
+        assert resp.status_code == 200, (
+            f"Synthetic generation failed: {resp.text}"
+        )
+        data = resp.json()
+        assert data["optimizer"] == "routing"
+        assert data["count"] >= 1, (
+            f"Should generate at least 1 example, got {data['count']}"
+        )
+        assert isinstance(data["data"], list)
+        assert len(data["data"]) >= 1
+
+        # Verify each example has the expected routing structure
+        example = data["data"][0]
+        assert "query" in example, (
+            f"Synthetic example missing query: {list(example.keys())}"
+        )
+        assert "chosen_agent" in example, (
+            f"Synthetic example missing chosen_agent: {list(example.keys())}"
+        )
+        assert "routing_confidence" in example, (
+            f"Synthetic example missing routing_confidence: {list(example.keys())}"
+        )
+
+        # Verify profile selection reasoning
+        assert "selected_profiles" in data
+        assert isinstance(data["selected_profiles"], list)
+
+    def test_generate_synthetic_data_cross_modal(self):
+        """POST /synthetic/generate with cross_modal optimizer."""
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "cross_modal",
+                    "count": 3,
+                    "vespa_sample_size": 10,
+                    "strategies": ["diverse"],
+                    "max_profiles": 2,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+
+        assert resp.status_code == 200, (
+            f"Cross-modal generation failed: {resp.text}"
+        )
+        data = resp.json()
+        assert data["optimizer"] == "cross_modal"
+        assert data["count"] >= 1
+        assert isinstance(data["data"], list)
+        assert len(data["data"]) >= 1
+
+
 
 
 @pytest.mark.e2e
@@ -700,7 +756,6 @@ class TestEventOperations:
         assert resp.status_code == 404
 
 
-# Scenario 15: Tenant CRUD via API
 
 
 @pytest.mark.e2e
@@ -766,7 +821,6 @@ class TestTenantCRUD:
         )
 
 
-# Scenario 18: Agent registry and health cascade
 
 
 @pytest.mark.e2e
@@ -876,7 +930,6 @@ class TestAgentRegistryAndHealth:
         assert data["agent"] == "search_agent"
 
 
-# Scenario 19: A2A protocol
 
 
 @pytest.mark.e2e
@@ -924,7 +977,6 @@ class TestA2AProtocol:
         assert result["contextId"]
 
 
-# Ingestion API endpoints
 
 
 @pytest.mark.e2e
@@ -1269,16 +1321,15 @@ class TestEventEndpoints:
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestBatchVideoIngestion:
-    """Start batch ingestion of video directory and verify job tracking.
+    """Start batch ingestion and verify the event loop stays responsive.
 
-    This test MUST be the last API test class: it starts CPU-bound ColPali
-    inference that blocks the async event loop for minutes. A health-poll
-    recovery loop at the end waits for the runtime to become responsive
-    before dashboard tests run.
+    The asyncio.to_thread fix for embedding generation means the event loop
+    should remain responsive during CPU-bound ColPali inference. This test
+    verifies both job tracking AND event loop health.
     """
 
     def test_batch_ingestion_start(self):
-        """Start batch ingestion → verify job accepted."""
+        """Start batch ingestion → poll status → verify event loop responsive."""
         video_dir = str(
             Path(__file__).parent.parent.parent
             / "data" / "testset" / "evaluation" / "sample_videos"
@@ -1307,34 +1358,51 @@ class TestBatchVideoIngestion:
             assert "job_id" in data
             job_id = data["job_id"]
 
-        # Status poll: background task runs CPU-bound ColPali inference which
-        # blocks the async event loop, making the server unresponsive during
-        # processing. Poll with retries to catch a response window.
+        # Poll status — with asyncio.to_thread fix the event loop stays
+        # responsive during inference, so status endpoint should reply.
         import time
 
         status_data = None
-        for attempt in range(10):
+        health_ok_during_ingestion = False
+        for attempt in range(30):
             time.sleep(5)
             try:
                 with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
+                    # Verify event loop is responsive by hitting health endpoint
+                    health_resp = client.get("/health/live")
+                    if health_resp.status_code == 200:
+                        health_ok_during_ingestion = True
+
                     status_resp = client.get(f"/ingestion/status/{job_id}")
                     if status_resp.status_code == 200:
                         status_data = status_resp.json()
-                        break
-            except httpx.ReadTimeout:
+                        if status_data["status"] in ("completed", "failed"):
+                            break
+            except (httpx.ReadTimeout, httpx.ConnectError):
                 continue
 
-        # Status poll is best-effort — the critical assertion is that the
-        # job was accepted above (200 + job_id + "started")
-        if status_data is not None:
-            assert status_data["job_id"] == job_id
-            assert status_data["status"] in (
-                "started", "processing", "completed", "failed"
-            )
-
-        # Batch ingestion runs CPU-bound ColPali inference in the async event
-        # loop, permanently deadlocking uvicorn. Restart the runtime so
-        # subsequent tests (EventEndpoints, dashboard tests) aren't impacted.
-        assert restart_runtime(timeout_s=45), (
-            "Runtime failed to restart after batch ingestion"
+        # Event loop responsiveness is the key assertion for the deadlock fix
+        assert health_ok_during_ingestion, (
+            "Event loop should remain responsive during batch ingestion "
+            "(asyncio.to_thread fix for embedding generation)"
         )
+
+        assert status_data is not None, (
+            "Should be able to poll ingestion status while job is running"
+        )
+        assert status_data["job_id"] == job_id
+        assert status_data["status"] in (
+            "started", "processing", "completed", "failed"
+        )
+
+    def test_runtime_responsive_after_batch(self):
+        """Verify runtime is fully responsive after batch ingestion completes."""
+        with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
+            resp = client.get("/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "healthy"
+
+            # Also verify agent processing still works
+            resp = client.get("/agents/")
+            assert resp.status_code == 200

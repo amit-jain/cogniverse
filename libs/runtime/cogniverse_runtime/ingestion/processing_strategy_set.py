@@ -5,6 +5,7 @@ Dynamic ProcessingStrategySet - No hardcoded strategies.
 Container for processing strategies that works with any number and type of strategies.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -364,9 +365,13 @@ class ProcessingStrategySet:
         if "audio" in requirements:
             processor = processor_manager.get_processor("audio")
             if processor:
-                cache = getattr(pipeline_context, "cache", None)
-                result = processor.transcribe_audio(
-                    video_path, pipeline_context.profile_output_dir, cache
+                # Don't pass async cache to sync transcribe_audio — the cache
+                # methods are async coroutines and can't be called from sync code.
+                result = await asyncio.to_thread(
+                    processor.transcribe_audio,
+                    video_path,
+                    pipeline_context.profile_output_dir,
+                    None,
                 )
                 return {"transcript": result}
 

@@ -470,3 +470,31 @@ class TestBackendConfigEdgeCases:
         assert restored.model_loader == "colbert"
         assert restored.embedding_type == "document_colbert"
         assert restored.embedding_model == "lightonai/GTE-ModernColBERT-v1"
+
+    def test_extra_config_round_trip(self):
+        """Extra fields (semantic_model, etc.) survive from_dict → to_dict."""
+        audio_data = {
+            "type": "audio",
+            "embedding_model": "laion/clap-htsat-unfused",
+            "embedding_type": "audio_dual",
+            "schema_name": "audio_content",
+            "semantic_model": "lightonai/GTE-ModernColBERT-v1",
+            "custom_field": 42,
+        }
+
+        profile = BackendProfileConfig.from_dict("audio_clap_semantic", audio_data)
+
+        # Extra fields captured
+        assert profile.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert profile.extra_config["custom_field"] == 42
+
+        # Round-trip preserves extra fields
+        data = profile.to_dict()
+        assert data["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert data["custom_field"] == 42
+        assert data["embedding_type"] == "audio_dual"
+        assert data["embedding_model"] == "laion/clap-htsat-unfused"
+
+        # Second round-trip also works
+        restored = BackendProfileConfig.from_dict("audio_clap_semantic", data)
+        assert restored.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"

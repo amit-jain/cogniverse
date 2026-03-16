@@ -22,8 +22,6 @@ import asyncio
 import json
 import logging
 import os
-
-# Add project root to path
 import sys
 import time
 import uuid
@@ -34,7 +32,6 @@ from typing import Any, Optional
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# Cache imports removed - using pipeline_cache directly
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 from cogniverse_core.events import (
     EventQueue,
@@ -225,13 +222,11 @@ class VideoIngestionPipeline:
             else self.__class__.__name__
         )
         self.logger = logging.getLogger(logger_name)
-        # Clear any existing handlers to avoid duplicate logging
         self.logger.handlers.clear()
         log_level = logging.DEBUG if self.debug_mode else logging.INFO
         self.logger.setLevel(log_level)
         self._setup_logging()
 
-        # Log configuration
         self.logger.info(
             f"VideoIngestionPipeline initialized - logging to: {self.log_file}"
         )
@@ -241,25 +236,12 @@ class VideoIngestionPipeline:
         self.logger.info(f"Output directory: {self.profile_output_dir}")
         self.logger.info(f"Pipeline config: {self.config}")
 
-        # Initialize cache
         self._init_cache()
-
-        # Resolve strategy
         self._resolve_strategy()
-
-        # Initialize processors using ProcessorManager - NEW CLEAN APPROACH
         self.processor_manager = ProcessorManager(self.logger)
-
-        # Create processing strategy set from config - CLEAN APPROACH
         self.strategy_set = self._create_strategy_set_from_config()
-
-        # Initialize processors from strategy set
         self.processor_manager.initialize_from_strategies(self.strategy_set)
-
-        # Initialize backend
         self._init_backend()
-
-        # Simplified async handling - use system event loop
         self.logger.info("Using system event loop for async operations")
 
     def _setup_logging(self):
@@ -322,44 +304,32 @@ class VideoIngestionPipeline:
             self.logger.info("Pipeline cache is disabled")
             return
 
-        try:
-            # Create cache configuration
-            from cogniverse_core.common.cache import CacheConfig, CacheManager
+        from cogniverse_core.common.cache import CacheConfig, CacheManager
 
-            cache_config = CacheConfig(
-                backends=cache_config_dict.get("backends", []),
-                default_ttl=cache_config_dict.get("default_ttl", 0),
-                enable_compression=cache_config_dict.get("enable_compression", True),
-                serialization_format=cache_config_dict.get(
-                    "serialization_format", "pickle"
-                ),
-            )
+        serialization_format = cache_config_dict.get("serialization_format", "pickle")
+        cache_config = CacheConfig(
+            backends=cache_config_dict.get("backends", []),
+            default_ttl=cache_config_dict.get("default_ttl", 0),
+            enable_compression=cache_config_dict.get("enable_compression", True),
+            serialization_format=serialization_format,
+        )
 
-            # Initialize cache manager
-            self.cache_manager = CacheManager(cache_config)
-
-            # Initialize pipeline artifact cache with profile
-            self.cache = PipelineArtifactCache(
-                self.cache_manager,
-                ttl=cache_config_dict.get("default_ttl", 0),
-                profile=self.schema_name,  # Use schema_name as profile for namespacing
-            )
-            self.logger.info(
-                f"Initialized pipeline cache for profile: {self.schema_name}"
-            )
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize cache: {e}")
-            self.cache = None
+        self.cache_manager = CacheManager(cache_config)
+        self.cache = PipelineArtifactCache(
+            self.cache_manager,
+            ttl=cache_config_dict.get("default_ttl", 0),
+            profile=self.schema_name,
+        )
+        self.logger.info(
+            f"Initialized pipeline cache for profile: {self.schema_name}"
+        )
 
     def _resolve_strategy(self):
-        """Legacy method - strategy resolution no longer needed."""
-        # Strategy is no longer used - processing strategies come from config-based strategy set
-        # This method kept for backward compatibility but does nothing
         self.strategy = None
         self.single_vector_processor = None
 
     def _create_strategy_set_from_config(self):
-        """Create strategy set from profile configuration - CLEAN CONFIG-DRIVEN APPROACH."""
+        """Create strategy set from profile configuration."""
         if not self.schema_name:
             # No profile specified, use basic defaults
             profile_config = {
@@ -381,7 +351,6 @@ class VideoIngestionPipeline:
             }
             return StrategyFactory.create_from_profile_config(profile_config)
 
-        # Get profile config from app config
         backend_config = self.app_config.get("backend", {})
         profiles = backend_config.get("profiles", {})
         profile_config = profiles.get(self.schema_name, {})
@@ -410,7 +379,6 @@ class VideoIngestionPipeline:
             if duration_str.endswith("s"):
                 return float(duration_str[:-1])
 
-        # Fallback to pipeline config
         pipeline_config = profile_config.get("pipeline_config", {})
         return pipeline_config.get("chunk_duration", 30.0)
 
@@ -420,38 +388,21 @@ class VideoIngestionPipeline:
             self.embedding_generator = None
             return
 
-        # Initialize embedding generator v2 directly
-        try:
-            self.logger.info(
-                f"Initializing embedding generator with schema_name={self.schema_name}, tenant_id={self.tenant_id}"
-            )
-            self.embedding_generator = create_embedding_generator(
-                config=self.app_config,
-                schema_name=self.schema_name,
-                tenant_id=self.tenant_id,
-                logger=self.logger,
-                config_manager=self.config_manager,
-                schema_loader=self.schema_loader,
-            )
-            self.logger.info(
-                f"Initialized embedding generator for tenant {self.tenant_id} "
-                f"with backend: {self.config.search_backend}"
-            )
-        except Exception as e:
-            self.logger.error(
-                f"Failed to initialize embedding generator: {e}", exc_info=True
-            )
-            self.logger.error(
-                f"  schema_name={self.schema_name}, tenant_id={self.tenant_id}"
-            )
-            self.logger.error(
-                f"  app_config keys: {list(self.app_config.keys()) if self.app_config else 'None'}"
-            )
-            if self.app_config and "backend" in self.app_config:
-                backend_config = self.app_config.get("backend", {})
-                profiles = backend_config.get("profiles", {})
-                self.logger.error(f"  backend.profiles keys: {list(profiles.keys())}")
-            self.embedding_generator = None
+        self.logger.info(
+            f"Initializing embedding generator with schema_name={self.schema_name}, tenant_id={self.tenant_id}"
+        )
+        self.embedding_generator = create_embedding_generator(
+            config=self.app_config,
+            schema_name=self.schema_name,
+            tenant_id=self.tenant_id,
+            logger=self.logger,
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
+        )
+        self.logger.info(
+            f"Initialized embedding generator for tenant {self.tenant_id} "
+            f"with backend: {self.config.search_backend}"
+        )
 
         # Set embedding generator for single vector processor if needed
         if self.single_vector_processor:
@@ -459,18 +410,17 @@ class VideoIngestionPipeline:
 
     def _get_video_duration(self, video_path: Path) -> float:
         """Get video duration in seconds"""
-        try:
-            import cv2
+        import cv2
 
+        try:
             cap = cv2.VideoCapture(str(video_path))
             fps = cap.get(cv2.CAP_PROP_FPS)
             frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
             duration = frame_count / fps if fps > 0 else 0
             cap.release()
             return duration
-        except Exception as e:
-            self.logger.warning(f"Failed to get video duration: {e}")
-            return 0
+        except Exception:
+            return 0.0
 
     async def _check_cache_async(self, video_path: Path) -> dict[str, Any]:
         """
@@ -480,7 +430,6 @@ class VideoIngestionPipeline:
         if not self.cache:
             return {}
 
-        # Prepare cache check tasks
         cache_tasks = []
         cache_keys = []
 
@@ -512,7 +461,7 @@ class VideoIngestionPipeline:
             cache_tasks.append(
                 self.cache.get_transcript(
                     str(video_path),
-                    model_size=getattr(self.audio_transcriber, "model_size", "base"),
+                    model_size=self.audio_transcriber.model_size,
                     language=None,
                 )
             )
@@ -567,34 +516,29 @@ class VideoIngestionPipeline:
         if not self.cache or not data:
             return
 
-        try:
-            if step == "keyframes":
-                # Load images for caching
-                video_id = video_path.stem
-                keyframes_dir = self.profile_output_dir / "keyframes" / video_id
-                images = {}
+        if step == "keyframes":
+            import cv2
 
-                import cv2
-
-                for kf in data.get("keyframes", []):
-                    if "filename" in kf:
-                        frame_path = keyframes_dir / kf["filename"]
-                        if frame_path.exists():
-                            image = cv2.imread(str(frame_path))
-                            if image is not None:
-                                images[str(kf["frame_id"])] = image
-
-                await self.cache.set_keyframes(str(video_path), data, images, **kwargs)
-            elif step == "transcript":
-                await self.cache.set_transcript(str(video_path), data, **kwargs)
-            elif step == "descriptions":
-                await self.cache.set_descriptions(
-                    str(video_path), data.get("descriptions", {}), **kwargs
-                )
-
-            self.logger.info(f"Cached {step} for {video_path.name}")
-        except Exception as e:
-            self.logger.warning(f"Failed to cache {step}: {e}")
+            video_id = video_path.stem
+            keyframes_dir = self.profile_output_dir / "keyframes" / video_id
+            images = {}
+            for kf in data.get("keyframes", []):
+                if "filename" in kf:
+                    frame_path = keyframes_dir / kf["filename"]
+                    if frame_path.exists():
+                        image = cv2.imread(str(frame_path))
+                        if image is not None:
+                            images[str(kf["frame_id"])] = image
+            await self.cache.set_keyframes(str(video_path), data, images, **kwargs)
+        elif step == "transcript":
+            await self.cache.set_transcript(str(video_path), data, **kwargs)
+        elif step == "descriptions":
+            await self.cache.set_descriptions(
+                str(video_path), data.get("descriptions", {}), **kwargs
+            )
+        else:
+            raise ValueError(f"Unknown cache step: {step!r}")
+        self.logger.info(f"Cached {step} for {video_path.name}")
 
     def _extract_base_video_data(self, results: dict[str, Any]) -> dict[str, Any]:
         """Extract base video metadata from results"""
@@ -721,9 +665,12 @@ class VideoIngestionPipeline:
         self.logger.info(f"Data extracted - Video ID: {video_data['video_id']}")
         self.logger.info(f"Output directory: {video_data.get('output_dir')}")
 
-        # Generate embeddings using v2 generator (keep on main thread for PyTorch models)
-        result = self.embedding_generator.generate_embeddings(
-            video_data, self.profile_output_dir
+        # Run synchronous PyTorch inference in a thread pool so the event loop
+        # stays responsive during concurrent batch ingestion.
+        result = await asyncio.to_thread(
+            self.embedding_generator.generate_embeddings,
+            video_data,
+            self.profile_output_dir,
         )
 
         # Convert result to expected format
@@ -1293,12 +1240,6 @@ class VideoIngestionPipeline:
 
         return results
 
-    def __del__(self):
-        """Cleanup resources"""
-        # No custom event loop to clean up
-        pass
-
-
 if __name__ == "__main__":
     import argparse
 
@@ -1311,7 +1252,6 @@ if __name__ == "__main__":
     parser.add_argument("--profile", type=str, help="Video processing profile")
     parser.add_argument("--max-frames", type=int, help="Maximum frames per video")
 
-    # Concurrent processing
     parser.add_argument(
         "--max-concurrent",
         type=int,
@@ -1335,16 +1275,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Set profile if provided
     if args.profile:
         import os
 
         os.environ["VIDEO_PROFILE"] = args.profile
 
-    # Create pipeline config
     config = PipelineConfig.from_config()
 
-    # Override with command line arguments
     if args.video_dir:
         config.video_dir = args.video_dir
     if args.output_dir:
@@ -1354,7 +1291,6 @@ if __name__ == "__main__":
     if args.max_frames:
         config.max_frames_per_video = args.max_frames
 
-    # Apply skip flags
     if args.skip_keyframes:
         config.extract_keyframes = False
     if args.skip_audio:
@@ -1364,10 +1300,6 @@ if __name__ == "__main__":
     if args.skip_embeddings:
         config.generate_embeddings = False
 
-    # Run pipeline with concurrent processing
     print("🚀 Starting Video Processing Pipeline")
     pipeline = VideoIngestionPipeline(config)
-
-    # Use max_concurrent from args
-    max_concurrent = args.max_concurrent
-    results = pipeline.process_directory(max_concurrent=max_concurrent)
+    results = pipeline.process_directory(max_concurrent=args.max_concurrent)

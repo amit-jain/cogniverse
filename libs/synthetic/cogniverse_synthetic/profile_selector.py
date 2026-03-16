@@ -186,14 +186,11 @@ class ProfileSelector:
             )
             profile_scores.append((profile_name, score, reasons))
 
-        # Sort by score descending
         profile_scores.sort(key=lambda x: x[1], reverse=True)
 
-        # Select top N with diversity
         selected = self._select_diverse_profiles(profile_scores, max_profiles)
         selected_names = [p[0] for p in selected]
 
-        # Build reasoning
         reasoning_parts = []
         for name, score, reasons in selected:
             reasoning_parts.append(f"{name} (score: {score:.2f}): {', '.join(reasons)}")
@@ -224,7 +221,6 @@ class ProfileSelector:
             Tuple of (score, reasons)
         """
 
-        # Try using configured scoring rules first
         if self.generator_config:
             optimizer_config = self.generator_config.get_optimizer_config(
                 optimizer_name
@@ -237,7 +233,6 @@ class ProfileSelector:
                     profile_config,
                 )
 
-        # Fallback to default hardcoded rules
         logger.debug(f"Using default scoring rules for {optimizer_name}")
         return self._score_with_default_rules(
             optimizer_name, profile_name, profile_config
@@ -294,7 +289,10 @@ class ProfileSelector:
         """
         # Check profile name conditions
         if "profile_name_contains" in condition:
-            return condition["profile_name_contains"].lower() in profile_name.lower()
+            pattern = condition["profile_name_contains"]
+            if pattern is None:
+                return False
+            return pattern.lower() in profile_name.lower()
 
         # Check field-based conditions
         if "field" in condition:
@@ -418,7 +416,6 @@ class ProfileSelector:
             elif "videoprism" in profile_name.lower():
                 model_type = "videoprism"
 
-            # Prefer diversity in models
             if model_type and model_type not in seen_models:
                 selected.append((profile_name, score, reasons))
                 seen_models.add(model_type)
@@ -451,7 +448,7 @@ class ProfileSelector:
         """
         profile_descriptions = []
         for name, config in available_profiles.items():
-            desc = self.PROFILE_DESCRIPTIONS.get(
+            desc = self.DEFAULT_PROFILE_DESCRIPTIONS.get(
                 name,
                 f"Profile {name}: {config.get('embedding_model', 'unknown model')}",
             )

@@ -396,9 +396,17 @@ class BackendProfileConfig:
     model_specific: Dict[str, Any] = field(default_factory=dict)
     process_type: Optional[str] = None
     model_loader: str = ""
+    extra_config: Dict[str, Any] = field(default_factory=dict)
+
+    # Keys handled by named fields (everything else goes into extra_config)
+    _KNOWN_KEYS = frozenset({
+        "type", "description", "schema_name", "embedding_model",
+        "pipeline_config", "strategies", "embedding_type", "schema_config",
+        "model_specific", "process_type", "model_loader",
+    })
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary, preserving extra fields like semantic_model."""
         result = {
             "type": self.type,
             "description": self.description,
@@ -415,13 +423,19 @@ class BackendProfileConfig:
             result["process_type"] = self.process_type
         if self.model_loader:
             result["model_loader"] = self.model_loader
+        # Preserve extra fields (semantic_model, etc.) that downstream
+        # consumers (EmbeddingGeneratorImpl) need from the profile config
+        result.update(self.extra_config)
         return result
 
     @classmethod
     def from_dict(
         cls, profile_name: str, data: Dict[str, Any]
     ) -> "BackendProfileConfig":
-        """Create from dictionary"""
+        """Create from dictionary, capturing unknown keys in extra_config."""
+        extra = {
+            k: v for k, v in data.items() if k not in cls._KNOWN_KEYS
+        }
         return cls(
             profile_name=profile_name,
             type=data.get("type", "video"),
@@ -435,6 +449,7 @@ class BackendProfileConfig:
             model_specific=data.get("model_specific", {}),
             process_type=data.get("process_type"),
             model_loader=data.get("model_loader", ""),
+            extra_config=extra,
         )
 
 
