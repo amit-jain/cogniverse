@@ -11,6 +11,7 @@ happen INSIDE the routing_agent pipeline. They are not separate registered
 agents. The routing_agent response includes entities, enhanced_query, etc.
 """
 
+import time
 import uuid
 from pathlib import Path
 
@@ -1059,7 +1060,6 @@ class TestVideoIngestionAndSearch:
                 f"Expected >=1 chunks from video frames, got {upload_data['chunks_created']}"
             )
 
-            import time
             time.sleep(5)
 
             search_resp = client.post(
@@ -1116,7 +1116,6 @@ class TestImageIngestionAndSearch:
                 f"Image should create >=1 chunk, got {upload_data['chunks_created']}"
             )
 
-            import time
             time.sleep(5)
 
             search_resp = client.post(
@@ -1170,7 +1169,6 @@ class TestAudioIngestionAndSearch:
             )
 
             # Search may fail if CLAP encoder not configured for search
-            import time
             time.sleep(3)
 
             search_resp = client.post(
@@ -1217,7 +1215,6 @@ class TestPDFIngestionAndSearch:
             )
 
             # Search uses same encoder limitation as document test
-            import time
             time.sleep(3)
 
             search_resp = client.post(
@@ -1268,7 +1265,6 @@ class TestDocumentIngestionAndSearch:
             # Search verification: document_text_semantic uses GTE-ModernColBERT
             # which requires a separate encoder config. Verify search is attempted
             # but accept that the encoder may not be configured for this profile.
-            import time
             time.sleep(3)
 
             search_resp = client.post(
@@ -1360,8 +1356,6 @@ class TestBatchVideoIngestion:
 
         # Poll status — with asyncio.to_thread fix the event loop stays
         # responsive during inference, so status endpoint should reply.
-        import time
-
         status_data = None
         health_ok_during_ingestion = False
         for attempt in range(30):

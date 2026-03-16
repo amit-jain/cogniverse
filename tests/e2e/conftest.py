@@ -498,8 +498,6 @@ class E2EReportCollector:
         # Markdown report
         E2E_REPORT_MD.write_text(self._render_markdown(report))
 
-    # --- Internal helpers ---
-
     @staticmethod
     def _short_url(url: str) -> str:
         """Strip base URL, keep path + query."""
