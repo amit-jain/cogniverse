@@ -360,9 +360,9 @@ class ExperimentTracker:
         )
         experiment_count = 0
 
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print("PHOENIX EXPERIMENTS WITH VISUALIZATION")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
         print(f"\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Experiment Project: {self.experiment_project_name}")
         print(f"Dataset: {dataset_name}")
@@ -383,9 +383,9 @@ class ExperimentTracker:
         # Run experiments
         for config in self.configurations:
             profile = config["profile"]
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Profile: {profile}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             for strategy, description in config["strategies"]:
                 experiment_count += 1
@@ -455,7 +455,7 @@ class ExperimentTracker:
                     "Success": stats["success"],
                     "Failed": stats["failed"],
                     "Success Rate": (
-                        f"{(stats['success']/stats['total']*100):.1f}%"
+                        f"{(stats['success'] / stats['total'] * 100):.1f}%"
                         if stats["total"] > 0
                         else "0%"
                     ),
@@ -589,8 +589,8 @@ class ExperimentTracker:
         print("=" * 80)
         print(f"\nTotal Experiments Attempted: {total}")
         if total > 0:
-            print(f"Successful: {successful} ({successful/total*100:.1f}%)")
-            print(f"Failed: {failed} ({failed/total*100:.1f}%)")
+            print(f"Successful: {successful} ({successful / total * 100:.1f}%)")
+            print(f"Failed: {failed} ({failed / total * 100:.1f}%)")
 
         # 5. Evaluation Provider UI Links
         print("\n" + "=" * 80)

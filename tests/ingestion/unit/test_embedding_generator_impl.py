@@ -129,7 +129,11 @@ class TestEmbeddingGeneratorImpl:
     def test_should_load_model_logic(self, mock_logger, mock_backend_client):
         """Test _should_load_model logic for different embedding types."""
         # Frame-based should NOT load model
-        config = {"embedding_type": "frame_based", "embedding_model": "vidore/colsmol-500m", "model_loader": "colpali"}
+        config = {
+            "embedding_type": "frame_based",
+            "embedding_model": "vidore/colsmol-500m",
+            "model_loader": "colpali",
+        }
         with patch(
             "cogniverse_core.common.models.get_or_load_model",
             return_value=(Mock(), Mock()),
@@ -145,7 +149,11 @@ class TestEmbeddingGeneratorImpl:
             ("document_colbert", "colbert"),
         ]
         for embedding_type, model_loader in test_cases:
-            config = {"embedding_type": embedding_type, "embedding_model": "test_model", "model_loader": model_loader}
+            config = {
+                "embedding_type": embedding_type,
+                "embedding_model": "test_model",
+                "model_loader": model_loader,
+            }
             with patch(
                 "cogniverse_core.common.models.get_or_load_model",
                 return_value=(Mock(), Mock()),
@@ -153,9 +161,9 @@ class TestEmbeddingGeneratorImpl:
                 generator = EmbeddingGeneratorImpl(
                     config, mock_logger, mock_backend_client
                 )
-                assert (
-                    generator._should_load_model() is True
-                ), f"Should load model for {embedding_type}"
+                assert generator._should_load_model() is True, (
+                    f"Should load model for {embedding_type}"
+                )
 
     def test_extract_segments_basic(
         self, frame_based_config, mock_logger, mock_backend_client
@@ -384,7 +392,6 @@ class TestEmbeddingGeneratorImpl:
             patch.object(generator, "_create_segment_document", return_value=mock_doc),
             patch.object(generator, "_feed_document", return_value=True),
         ):
-
             result = generator._process_multi_documents(video_data, segments)
 
             assert result.video_id == "test_video"
@@ -416,7 +423,6 @@ class TestEmbeddingGeneratorImpl:
                 side_effect=Exception("Embedding error"),
             ),
         ):
-
             result = generator._process_multi_documents(video_data, segments)
 
             assert result.video_id == "test_video"
@@ -440,7 +446,6 @@ class TestEmbeddingGeneratorImpl:
             patch.object(generator, "_extract_transcript_text", return_value=""),
             patch.object(generator, "_generate_segment_embeddings", return_value=None),
         ):
-
             result = generator._process_multi_documents(video_data, segments)
 
             assert result.documents_processed == 0
@@ -475,7 +480,6 @@ class TestEmbeddingGeneratorImpl:
             patch.object(generator, "_create_combined_document", return_value=mock_doc),
             patch.object(generator, "_feed_document", return_value=True),
         ):
-
             result = generator._process_single_document(video_data, segments)
 
             assert result.video_id == "test_video"
@@ -497,7 +501,6 @@ class TestEmbeddingGeneratorImpl:
         segments = [{"start_time": 0.0, "end_time": 10.0}]
 
         with patch.object(generator, "_generate_segment_embeddings", return_value=None):
-
             result = generator._process_single_document(video_data, segments)
 
             assert result.video_id == "test_video"
@@ -530,7 +533,6 @@ class TestEmbeddingGeneratorImpl:
             ) as mock_create,
             patch.object(generator, "_feed_document", return_value=True),
         ):
-
             result = generator._process_single_document(video_data, segments)
 
             assert result.documents_processed == 1
@@ -567,7 +569,6 @@ class TestEmbeddingGeneratorImpl:
             patch.object(generator, "_create_combined_document", return_value=mock_doc),
             patch.object(generator, "_feed_document", return_value=True),
         ):
-
             result = generator._process_single_document(video_data, segments)
 
             assert (
@@ -801,7 +802,12 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings with ColQwen model."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "fps": 1.0, "embedding_type": "video_chunks", "model_loader": "colqwen"}
+        config = {
+            **frame_based_config,
+            "fps": 1.0,
+            "embedding_type": "video_chunks",
+            "model_loader": "colqwen",
+        }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
         generator.model = Mock()
@@ -883,7 +889,11 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings when no frames extracted."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "embedding_type": "video_chunks", "model_loader": "colqwen"}
+        config = {
+            **frame_based_config,
+            "embedding_type": "video_chunks",
+            "model_loader": "colqwen",
+        }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
         generator.model = Mock()
@@ -906,7 +916,11 @@ class TestEmbeddingGeneratorImpl:
     ):
         """Test _generate_chunk_embeddings error handling."""
         mock_get_model.return_value = (Mock(), Mock())
-        config = {**frame_based_config, "embedding_type": "video_chunks", "model_loader": "colqwen"}
+        config = {
+            **frame_based_config,
+            "embedding_type": "video_chunks",
+            "model_loader": "colqwen",
+        }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.model_name = "colqwen_test"
 
@@ -1079,8 +1093,13 @@ class TestEmbeddingGeneratorImpl:
         video_data = {"video_id": "test", "document_files": doc_files}
 
         expected = EmbeddingResult(
-            video_id="test", total_documents=1, documents_processed=1,
-            documents_fed=1, processing_time=0, errors=[], metadata={},
+            video_id="test",
+            total_documents=1,
+            documents_processed=1,
+            documents_fed=1,
+            processing_time=0,
+            errors=[],
+            metadata={},
         )
         with patch.object(
             generator, "_process_document_segments", return_value=expected
@@ -1100,8 +1119,13 @@ class TestEmbeddingGeneratorImpl:
         video_data = {"video_id": "test", "audio_files": audio_files}
 
         expected = EmbeddingResult(
-            video_id="test", total_documents=1, documents_processed=1,
-            documents_fed=1, processing_time=0, errors=[], metadata={},
+            video_id="test",
+            total_documents=1,
+            documents_processed=1,
+            documents_fed=1,
+            processing_time=0,
+            errors=[],
+            metadata={},
         )
         with patch.object(
             generator, "_process_audio_segments", return_value=expected
@@ -1132,7 +1156,9 @@ class TestEmbeddingGeneratorImpl:
         )
 
     @patch("cogniverse_core.common.models.get_or_load_model")
-    def test_load_model_audio_dual(self, mock_get_model, mock_logger, mock_backend_client):
+    def test_load_model_audio_dual(
+        self, mock_get_model, mock_logger, mock_backend_client
+    ):
         """Test _load_model loads ColBERT for semantic when embedding_type is audio_dual."""
         config = {
             "schema_name": "audio_content",
@@ -1193,13 +1219,21 @@ class TestEmbeddingGeneratorImpl:
         self, mock_logger, mock_backend_client
     ):
         """Test _process_document_segments raises on empty text."""
-        config = {"embedding_type": "frame_based", "embedding_model": "test_model", "model_loader": "colpali"}
+        config = {
+            "embedding_type": "frame_based",
+            "embedding_model": "test_model",
+            "model_loader": "colpali",
+        }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.colbert_model = Mock()
 
         doc_files = [
-            {"document_id": "d1", "filename": "empty.txt", "path": "/tmp/e.txt",
-             "extracted_text": "   "}
+            {
+                "document_id": "d1",
+                "filename": "empty.txt",
+                "path": "/tmp/e.txt",
+                "extracted_text": "   ",
+            }
         ]
         result = generator._process_document_segments(
             {"video_id": "test", "document_files": doc_files}, doc_files

@@ -168,8 +168,20 @@ def mock_phoenix_client():
         # as_dataframe() returns Phoenix nested input format
         mock_dataset.as_dataframe.return_value = pd.DataFrame(
             [
-                {"input": {"query": "test query 1", "expected_videos": "item1,item2", "query_type": "test"}},
-                {"input": {"query": "test query 2", "expected_videos": "item3", "query_type": "test"}},
+                {
+                    "input": {
+                        "query": "test query 1",
+                        "expected_videos": "item1,item2",
+                        "query_type": "test",
+                    }
+                },
+                {
+                    "input": {
+                        "query": "test query 2",
+                        "expected_videos": "item3",
+                        "query_type": "test",
+                    }
+                },
             ]
         )
         mock_client.get_dataset.return_value = mock_dataset
@@ -192,7 +204,6 @@ def mock_phoenix_client():
         mock_client.get_spans_dataframe.return_value = mock_df
 
         yield mock_client
-
 
 
 @pytest.fixture
@@ -435,18 +446,13 @@ def reset_singletons():
     yield
 
 
-
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
     """Convert (num_patches, 128) float32 embeddings to Vespa tensor dict format."""
-    float_dict = {
-        str(idx): vector.tolist() for idx, vector in enumerate(embeddings)
-    }
+    float_dict = {str(idx): vector.tolist() for idx, vector in enumerate(embeddings)}
     binarized = np.packbits(
         np.where(embeddings > 0, 1, 0).astype(np.uint8), axis=1
     ).astype(np.int8)
-    binary_dict = {
-        str(idx): vector.tolist() for idx, vector in enumerate(binarized)
-    }
+    binary_dict = {str(idx): vector.tolist() for idx, vector in enumerate(binarized)}
     return float_dict, binary_dict
 
 
@@ -558,9 +564,21 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
     model, processor, device = eval_colpali_model
 
     test_docs = [
-        {"color": (255, 0, 0), "title": "Red sunset landscape", "video_id": "sunset_vid"},
-        {"color": (0, 0, 255), "title": "Ocean waves coastal scene", "video_id": "ocean_vid"},
-        {"color": (0, 128, 0), "title": "Forest trail nature walk", "video_id": "forest_vid"},
+        {
+            "color": (255, 0, 0),
+            "title": "Red sunset landscape",
+            "video_id": "sunset_vid",
+        },
+        {
+            "color": (0, 0, 255),
+            "title": "Ocean waves coastal scene",
+            "video_id": "ocean_vid",
+        },
+        {
+            "color": (0, 128, 0),
+            "title": "Forest trail nature walk",
+            "video_id": "forest_vid",
+        },
     ]
 
     http_port = eval_vespa_instance["http_port"]
@@ -637,11 +655,13 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
         backend_port=eval_vespa_instance["http_port"],
     )
     cm = ConfigManager(store=store)
-    cm.set_system_config(SystemConfig(
-        tenant_id="default",
-        backend_url="http://localhost",
-        backend_port=eval_vespa_instance["http_port"],
-    ))
+    cm.set_system_config(
+        SystemConfig(
+            tenant_id="default",
+            backend_url="http://localhost",
+            backend_port=eval_vespa_instance["http_port"],
+        )
+    )
     cm.add_backend_profile(
         BackendProfileConfig(
             profile_name="test_colpali",
@@ -657,7 +677,9 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     app = FastAPI()
     app.include_router(search.router, prefix="/search")
     app.dependency_overrides[search.get_config_manager_dependency] = lambda: cm
-    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: schema_loader
+    app.dependency_overrides[search.get_schema_loader_dependency] = (
+        lambda: schema_loader
+    )
 
     import os
 
@@ -737,18 +759,20 @@ def search_evaluator_provider(phoenix_container):
     sync_client = px.Client(endpoint=phoenix_endpoint)
 
     # Upload real test dataset to Phoenix (idempotent — skip if already exists)
-    test_df = pd.DataFrame([
-        {
-            "query": "sunset landscape mountains",
-            "expected_videos": "sunset_vid",
-            "query_type": "visual",
-        },
-        {
-            "query": "ocean waves coastal",
-            "expected_videos": "ocean_vid",
-            "query_type": "visual",
-        },
-    ])
+    test_df = pd.DataFrame(
+        [
+            {
+                "query": "sunset landscape mountains",
+                "expected_videos": "sunset_vid",
+                "query_type": "visual",
+            },
+            {
+                "query": "ocean waves coastal",
+                "expected_videos": "ocean_vid",
+                "query_type": "visual",
+            },
+        ]
+    )
     try:
         sync_client.upload_dataset(
             dataset_name="test_dataset",
@@ -761,11 +785,13 @@ def search_evaluator_provider(phoenix_container):
             raise
 
     provider = PhoenixEvaluationProvider()
-    provider.initialize({
-        "tenant_id": "default",
-        "http_endpoint": phoenix_endpoint,
-        "grpc_endpoint": "http://localhost:14317",
-    })
+    provider.initialize(
+        {
+            "tenant_id": "default",
+            "http_endpoint": phoenix_endpoint,
+            "grpc_endpoint": "http://localhost:14317",
+        }
+    )
     set_evaluation_provider(provider)
 
     yield provider

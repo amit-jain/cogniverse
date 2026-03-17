@@ -169,9 +169,9 @@ class RootCauseAnalyzer:
             )
             # Add threshold info
             analysis["performance_analysis"]["threshold"] = threshold
-            analysis["performance_analysis"][
-                "threshold_percentile"
-            ] = performance_threshold_percentile
+            analysis["performance_analysis"]["threshold_percentile"] = (
+                performance_threshold_percentile
+            )
             perf_hypotheses = self._generate_performance_hypotheses(
                 performance_degraded, analysis["performance_analysis"]
             )
@@ -237,7 +237,7 @@ class RootCauseAnalyzer:
     ) -> dict[str, Any]:
         """Analyze patterns in performance-degraded traces"""
         patterns = {
-            "slow_operations": {},  # Changed from Counter to dict for detailed stats
+            "slow_operations": {},
             "slow_profiles": Counter(),
             "slow_strategies": Counter(),
             "latency_distribution": {},
@@ -871,14 +871,14 @@ class RootCauseAnalyzer:
         </head>
         <body>
             <h1>Root Cause Analysis Report</h1>
-            <p><em>Generated: {analysis['summary']['analysis_time']}</em></p>
+            <p><em>Generated: {analysis["summary"]["analysis_time"]}</em></p>
 
             <h2>Summary</h2>
             <ul>
-                <li>Total Traces: {analysis['summary']['total_traces']}</li>
-                <li>Failed Traces: {analysis['summary']['failed_traces']}</li>
-                <li>Performance Degraded: {analysis['summary']['performance_degraded']}</li>
-                <li>Overall Failure Rate: {analysis['summary']['failure_rate']:.1%}</li>
+                <li>Total Traces: {analysis["summary"]["total_traces"]}</li>
+                <li>Failed Traces: {analysis["summary"]["failed_traces"]}</li>
+                <li>Performance Degraded: {analysis["summary"]["performance_degraded"]}</li>
+                <li>Overall Failure Rate: {analysis["summary"]["failure_rate"]:.1%}</li>
             </ul>
         """
 
@@ -909,7 +909,7 @@ class RootCauseAnalyzer:
                 priority_class = f"priority-{rec['priority']}"
                 html += f"""
                 <div class="recommendation">
-                    <h3 class="{priority_class}">{rec['recommendation']}</h3>
+                    <h3 class="{priority_class}">{rec["recommendation"]}</h3>
                     <ul>
                 """
                 for detail in rec["details"]:

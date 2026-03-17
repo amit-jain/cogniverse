@@ -173,7 +173,6 @@ class TestChunkProcessor:
             patch.object(processor, "_get_video_duration", return_value=90.0),
             patch.object(processor, "_extract_chunk", return_value=True),
         ):
-
             result = processor.extract_chunks(sample_video_path)
 
         # Verify results structure
@@ -227,7 +226,6 @@ class TestChunkProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-
             result = no_overlap_processor.extract_chunks(sample_video_path)
 
         # Should get exactly 3 chunks: [0-15], [15-30], [30-45]
@@ -286,7 +284,6 @@ class TestChunkProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-
             result = processor.extract_chunks(sample_video_path)
 
         # Should only include successful chunks (1st and 3rd succeed)
@@ -312,7 +309,6 @@ class TestChunkProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-
             result = processor.extract_chunks(sample_video_path, output_dir=temp_dir)
 
         # Should work with legacy path structure
@@ -366,7 +362,6 @@ class TestChunkProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-
             mock_manager = Mock()
             mock_manager.get_processing_dir.return_value = Path("/tmp")
             mock_output_manager.return_value = mock_manager

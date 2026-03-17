@@ -24,6 +24,7 @@ from cogniverse_runtime.ingestion.strategies import (
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestEndToEndVideoProcessing:
     """End-to-end integration tests for video processing with real processors."""
 
@@ -57,7 +58,9 @@ class TestEndToEndVideoProcessing:
     def frame_strategy_set(self):
         """Frame-based processing strategy set."""
         return ProcessingStrategySet(
-            segmentation=FrameSegmentationStrategy(max_frames=5, fps=1.0, threshold=0.8),
+            segmentation=FrameSegmentationStrategy(
+                max_frames=5, fps=1.0, threshold=0.8
+            ),
             audio=AudioTranscriptionStrategy(),
             embedding=MultiVectorEmbeddingStrategy(),
         )
@@ -80,7 +83,9 @@ class TestEndToEndVideoProcessing:
         processor_manager.initialize_from_strategies(frame_strategy_set)
 
         keyframe_proc = processor_manager.get_processor("keyframe")
-        assert keyframe_proc is not None, "Real KeyframeProcessor should be auto-discovered"
+        assert keyframe_proc is not None, (
+            "Real KeyframeProcessor should be auto-discovered"
+        )
 
         output_dir = tmp_path / "frame_pipeline"
         output_dir.mkdir()
@@ -258,7 +263,9 @@ class TestEndToEndVideoProcessing:
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=extract_keyframes, args=(i,)) for i in range(3)]
+        threads = [
+            threading.Thread(target=extract_keyframes, args=(i,)) for i in range(3)
+        ]
         for t in threads:
             t.start()
         for t in threads:

@@ -418,7 +418,7 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
         if len(query_words) > 1:
             # Check for bigrams
             for i in range(len(query_words) - 1):
-                bigram = f"{query_words[i]} {query_words[i+1]}"
+                bigram = f"{query_words[i]} {query_words[i + 1]}"
                 if bigram in content_lower:
                     return 0.8
 

@@ -118,7 +118,7 @@ def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, ver
 
         if results and hasattr(results, "samples"):
             for i, sample in enumerate(results.samples):
-                click.echo(f"\nSample {i+1}:")
+                click.echo(f"\nSample {i + 1}:")
                 click.echo(f"  Query: {sample.input.get('query', 'N/A')[:50]}...")
 
                 if hasattr(sample, "scores"):

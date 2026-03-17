@@ -686,7 +686,6 @@ class TestDatasetGroundTruthStrategyExtended:
         mock_px.Client.side_effect = Exception("Phoenix not available")
 
         with patch.dict("sys.modules", {"phoenix": mock_px}):
-
             # Mock file operations
             dataset_content = {
                 "queries": [
@@ -700,7 +699,6 @@ class TestDatasetGroundTruthStrategyExtended:
                     "builtins.open", mock_open(read_data=json.dumps(dataset_content))
                 ),
             ):
-
                 trace_data = {
                     "query": "test query",
                     "metadata": {"dataset": "test_dataset"},
@@ -759,7 +757,6 @@ class TestDatasetGroundTruthStrategyExtended:
         mock_px.Client.side_effect = Exception("Connection failed")
 
         with patch.dict("sys.modules", {"phoenix": mock_px}):
-
             with patch("os.path.exists", return_value=False):
                 trace_data = {
                     "query": "test query",

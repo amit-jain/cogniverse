@@ -190,9 +190,9 @@ class TemporalSchemaAnalyzer(SchemaAnalyzer):
             for pattern, constraint_type in patterns:
                 match = re.search(pattern, query_lower)
                 if match:
-                    constraints["temporal_constraints"][
-                        constraint_type
-                    ] = match.groups()
+                    constraints["temporal_constraints"][constraint_type] = (
+                        match.groups()
+                    )
 
         if "end_time" in temporal_fields or "end" in temporal_fields:
             patterns = [
@@ -203,9 +203,9 @@ class TemporalSchemaAnalyzer(SchemaAnalyzer):
             for pattern, constraint_type in patterns:
                 match = re.search(pattern, query_lower)
                 if match:
-                    constraints["temporal_constraints"][
-                        constraint_type
-                    ] = match.groups()
+                    constraints["temporal_constraints"][constraint_type] = (
+                        match.groups()
+                    )
 
         if "duration" in temporal_fields:
             patterns = [
@@ -215,9 +215,9 @@ class TemporalSchemaAnalyzer(SchemaAnalyzer):
             for pattern, constraint_type in patterns:
                 match = re.search(pattern, query_lower)
                 if match:
-                    constraints["temporal_constraints"][
-                        constraint_type
-                    ] = match.groups()
+                    constraints["temporal_constraints"][constraint_type] = (
+                        match.groups()
+                    )
 
         return constraints
 

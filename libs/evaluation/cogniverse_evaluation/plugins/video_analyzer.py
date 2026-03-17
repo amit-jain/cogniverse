@@ -66,9 +66,9 @@ class VideoSchemaAnalyzer(SchemaAnalyzer):
             for pattern, constraint_type in temporal_patterns:
                 match = re.search(pattern, query_lower)
                 if match:
-                    constraints["temporal_constraints"][
-                        constraint_type
-                    ] = match.groups()
+                    constraints["temporal_constraints"][constraint_type] = (
+                        match.groups()
+                    )
                     if constraints["query_type"] == "video":
                         constraints["query_type"] = "video_temporal"
 

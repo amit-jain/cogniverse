@@ -94,7 +94,6 @@ class TestVisualEvaluatorPlugin:
                 "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
             ) as mock_judge_class,
         ):
-
             mock_config.return_value = {
                 "evaluators": {
                     "test_judge": {"provider": "ollama", "model": "test_model"}

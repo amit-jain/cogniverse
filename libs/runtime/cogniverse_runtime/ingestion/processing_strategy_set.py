@@ -194,9 +194,7 @@ class ProcessingStrategySet:
                 return {"video_chunks": result}
 
         elif "single_vector" in requirements:
-            result = await strategy.segment(
-                video_path, pipeline_context, None
-            )
+            result = await strategy.segment(video_path, pipeline_context, None)
             num_segments = (
                 len(result.get("single_vector_processing", {}).get("segments", []))
                 if result
@@ -212,7 +210,8 @@ class ProcessingStrategySet:
 
             if content_path.is_dir():
                 doc_files = sorted(
-                    f for f in content_path.iterdir()
+                    f
+                    for f in content_path.iterdir()
                     if f.suffix.lower() in DOCUMENT_EXTENSIONS
                 )
             elif content_path.suffix.lower() in DOCUMENT_EXTENSIONS:
@@ -231,15 +230,17 @@ class ProcessingStrategySet:
             document_file_list = []
             for idx, doc_path in enumerate(doc_files):
                 extracted_text = self._extract_document_text(doc_path)
-                document_file_list.append({
-                    "document_id": doc_path.stem,
-                    "file_index": idx,
-                    "path": str(doc_path),
-                    "filename": doc_path.name,
-                    "document_type": doc_path.suffix.lstrip("."),
-                    "extracted_text": extracted_text,
-                    "text_length": len(extracted_text),
-                })
+                document_file_list.append(
+                    {
+                        "document_id": doc_path.stem,
+                        "file_index": idx,
+                        "path": str(doc_path),
+                        "filename": doc_path.name,
+                        "document_type": doc_path.suffix.lstrip("."),
+                        "extracted_text": extracted_text,
+                        "text_length": len(extracted_text),
+                    }
+                )
 
             pipeline_context.logger.info(
                 f"  Discovered {len(document_file_list)} document files"
@@ -252,7 +253,8 @@ class ProcessingStrategySet:
 
             if content_path.is_dir():
                 audio_files = sorted(
-                    f for f in content_path.iterdir()
+                    f
+                    for f in content_path.iterdir()
                     if f.suffix.lower() in audio_extensions
                 )
             elif content_path.suffix.lower() in audio_extensions:
@@ -270,12 +272,14 @@ class ProcessingStrategySet:
 
             audio_file_list = []
             for idx, audio_path in enumerate(audio_files):
-                audio_file_list.append({
-                    "audio_id": audio_path.stem,
-                    "file_index": idx,
-                    "path": str(audio_path),
-                    "filename": audio_path.name,
-                })
+                audio_file_list.append(
+                    {
+                        "audio_id": audio_path.stem,
+                        "file_index": idx,
+                        "path": str(audio_path),
+                        "filename": audio_path.name,
+                    }
+                )
 
             pipeline_context.logger.info(
                 f"  Discovered {len(audio_file_list)} audio files"
@@ -291,7 +295,8 @@ class ProcessingStrategySet:
 
             if content_path.is_dir():
                 image_files = sorted(
-                    f for f in content_path.iterdir()
+                    f
+                    for f in content_path.iterdir()
                     if f.suffix.lower() in image_extensions
                 )
             elif content_path.suffix.lower() in image_extensions:
@@ -316,14 +321,16 @@ class ProcessingStrategySet:
             for idx, img_path in enumerate(image_files):
                 dest = keyframes_dir / f"frame_{idx:04d}{img_path.suffix}"
                 shutil.copy2(img_path, dest)
-                keyframes.append({
-                    "frame_id": idx,
-                    "original_frame_number": idx,
-                    "timestamp": 0.0,
-                    "path": str(dest),
-                    "filename": dest.name,
-                    "source_image": str(img_path),
-                })
+                keyframes.append(
+                    {
+                        "frame_id": idx,
+                        "original_frame_number": idx,
+                        "timestamp": 0.0,
+                        "path": str(dest),
+                        "filename": dest.name,
+                        "source_image": str(img_path),
+                    }
+                )
 
             result = {
                 "video_id": content_id,

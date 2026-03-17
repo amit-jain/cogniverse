@@ -230,15 +230,6 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         self, schema_name: str, backend: Any
     ) -> dict[str, list[str]]:
         """Discover available fields in schema using multiple methods."""
-        fields = {  # noqa: F841
-            "id_fields": [],
-            "content_fields": [],
-            "metadata_fields": [],
-            "temporal_fields": [],
-            "numeric_fields": [],
-            "text_fields": [],
-        }
-
         # Method 1: Try to get schema info directly from backend
         if hasattr(backend, "get_schema_info"):
             try:
@@ -265,7 +256,9 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
                 # Do a minimal search to see what fields come back
                 sample_results = await self._safe_async_call(
                     backend.search(
-                        query_text="*", query_embeddings=None, top_k=1  # Wildcard query
+                        query_text="*",
+                        query_embeddings=None,
+                        top_k=1,  # Wildcard query
                     )
                 )
 
@@ -417,7 +410,6 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
                 continue
 
             field_lower = field_name.lower()
-            _ = type(value).__name__  # noqa: F841
 
             # Categorize based on name and type
             if "id" in field_lower or field_name == "_id":

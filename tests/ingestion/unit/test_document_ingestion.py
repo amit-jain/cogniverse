@@ -31,8 +31,12 @@ def document_dir(tmp_path):
     doc_dir = tmp_path / "test_docs"
     doc_dir.mkdir()
 
-    (doc_dir / "readme.txt").write_text("This is a plain text document.", encoding="utf-8")
-    (doc_dir / "notes.md").write_text("# Notes\n\nSome markdown content.", encoding="utf-8")
+    (doc_dir / "readme.txt").write_text(
+        "This is a plain text document.", encoding="utf-8"
+    )
+    (doc_dir / "notes.md").write_text(
+        "# Notes\n\nSome markdown content.", encoding="utf-8"
+    )
     (doc_dir / "report.rtf").write_text("RTF content here.", encoding="utf-8")
 
     return doc_dir
@@ -85,7 +89,9 @@ class TestDocumentTextEmbeddingStrategy:
         processors = strategy.get_required_processors()
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "document_text"
-        assert processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert (
+            processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
+        )
 
     def test_custom_model(self):
         strategy = DocumentTextEmbeddingStrategy(colbert_model="custom/colbert")
@@ -220,11 +226,15 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = document_dir.parent / "output"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 
@@ -258,9 +268,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = document_dir.parent / "output2"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -270,7 +284,10 @@ class TestDocumentSegmentationDispatch:
         )
 
         doc_by_name = {df["filename"]: df for df in result["document_files"]}
-        assert "This is a plain text document." in doc_by_name["readme.txt"]["extracted_text"]
+        assert (
+            "This is a plain text document."
+            in doc_by_name["readme.txt"]["extracted_text"]
+        )
         assert "# Notes" in doc_by_name["notes.md"]["extracted_text"]
         assert doc_by_name["readme.txt"]["document_type"] == "txt"
         assert doc_by_name["notes.md"]["document_type"] == "md"
@@ -281,9 +298,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = document_dir.parent / "output3"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -301,9 +322,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = document_dir.parent / "output4"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -324,9 +349,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = tmp_path / "output5"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -344,9 +373,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = tmp_path / "output6"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -362,9 +395,13 @@ class TestDocumentSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = pdf_document.parent / "output_pdf"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -383,15 +420,11 @@ class TestDocumentTextExtraction:
     """Test the _extract_document_text static method directly."""
 
     def test_extract_txt(self, document_dir):
-        text = ProcessingStrategySet._extract_document_text(
-            document_dir / "readme.txt"
-        )
+        text = ProcessingStrategySet._extract_document_text(document_dir / "readme.txt")
         assert text == "This is a plain text document."
 
     def test_extract_md(self, document_dir):
-        text = ProcessingStrategySet._extract_document_text(
-            document_dir / "notes.md"
-        )
+        text = ProcessingStrategySet._extract_document_text(document_dir / "notes.md")
         assert "# Notes" in text
         assert "markdown content" in text
 

@@ -320,9 +320,7 @@ class VideoIngestionPipeline:
             ttl=cache_config_dict.get("default_ttl", 0),
             profile=self.schema_name,
         )
-        self.logger.info(
-            f"Initialized pipeline cache for profile: {self.schema_name}"
-        )
+        self.logger.info(f"Initialized pipeline cache for profile: {self.schema_name}")
 
     def _resolve_strategy(self):
         self.strategy = None
@@ -1239,6 +1237,7 @@ class VideoIngestionPipeline:
             self.logger.info("VLM service stopped")
 
         return results
+
 
 if __name__ == "__main__":
     import argparse

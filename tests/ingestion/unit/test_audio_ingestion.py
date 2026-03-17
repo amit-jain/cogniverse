@@ -55,7 +55,9 @@ class TestAudioEmbeddingStrategy:
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "audio"
         assert processors["embedding"]["clap_model"] == "laion/clap-htsat-unfused"
-        assert processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert (
+            processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
+        )
 
     def test_custom_models(self):
         strategy = AudioEmbeddingStrategy(
@@ -135,8 +137,13 @@ class TestAudioSchemaFile:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
         assert fields["acoustic_embedding"]["type"] == "tensor<float>(v[512])"
-        assert fields["semantic_embedding"]["type"] == "tensor<bfloat16>(token{}, v[128])"
-        assert fields["semantic_embedding_binary"]["type"] == "tensor<int8>(token{}, v[16])"
+        assert (
+            fields["semantic_embedding"]["type"] == "tensor<bfloat16>(token{}, v[128])"
+        )
+        assert (
+            fields["semantic_embedding_binary"]["type"]
+            == "tensor<int8>(token{}, v[16])"
+        )
 
     def test_audio_schema_acoustic_hnsw_index(self):
         with open("configs/schemas/audio_content_schema.json") as f:
@@ -195,11 +202,15 @@ class TestAudioSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = audio_dir.parent / "output"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 
@@ -230,11 +241,15 @@ class TestAudioSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = audio_dir.parent / "output2"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 
@@ -254,11 +269,15 @@ class TestAudioSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = audio_dir.parent / "output3"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -278,11 +297,15 @@ class TestAudioSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = tmp_path / "output4"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
@@ -300,11 +323,15 @@ class TestAudioSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = tmp_path / "output5"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
         strategy_set = ProcessingStrategySet(segmentation=strategy)

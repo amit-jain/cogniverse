@@ -245,7 +245,6 @@ class TestAudioProcessor:
                 "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_get_output_manager,
         ):
-
             mock_model = Mock()
             mock_model.transcribe.return_value = {
                 "text": "Test",
@@ -285,7 +284,6 @@ class TestAudioProcessor:
             patch("builtins.open", create=True) as mock_open,
             patch("json.dump") as mock_json_dump,
         ):
-
             mock_output_manager = Mock()
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager

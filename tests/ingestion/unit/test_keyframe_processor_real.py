@@ -256,9 +256,7 @@ class TestKeyframeProcessor:
         mock_cap.get.side_effect = lambda prop: {
             5: 30.0,  # CAP_PROP_FPS
             7: 300,  # CAP_PROP_FRAME_COUNT (10 seconds)
-        }.get(
-            prop, 0.0
-        )  # Return float for consistency
+        }.get(prop, 0.0)  # Return float for consistency
         mock_cap.isOpened.return_value = True
 
         frame_count = 0
@@ -285,7 +283,6 @@ class TestKeyframeProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-
             # Setup remaining mocks
             mock_manager = Mock()
             mock_manager.get_processing_dir.return_value = temp_dir

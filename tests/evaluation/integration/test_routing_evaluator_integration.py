@@ -212,9 +212,9 @@ class TestRoutingEvaluatorIntegration:
                 spans = routing_df.to_dict(orient="records")
 
         # Should have spans now
-        assert (
-            len(spans) > 0
-        ), f"No routing spans found in project 'cogniverse-test-tenant'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
+        assert len(spans) > 0, (
+            f"No routing spans found in project 'cogniverse-test-tenant'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
+        )
 
         # Verify proper span structure
         for span in spans:
@@ -227,9 +227,9 @@ class TestRoutingEvaluatorIntegration:
 
             # Look for routing attributes (they might be under different key names)
             has_routing_attrs = any("routing" in str(k).lower() for k in span_keys)
-            assert (
-                has_routing_attrs
-            ), f"Span missing routing attributes. Available keys: {span_keys[:20]}"
+            assert has_routing_attrs, (
+                f"Span missing routing attributes. Available keys: {span_keys[:20]}"
+            )
 
     @pytest.mark.asyncio
     async def test_evaluate_real_routing_decisions(
@@ -304,9 +304,9 @@ class TestRoutingEvaluatorIntegration:
             except Exception:
                 continue
 
-        assert (
-            len(valid_spans) >= 2
-        ), f"Not enough valid routing spans (found {len(valid_spans)})"
+        assert len(valid_spans) >= 2, (
+            f"Not enough valid routing spans (found {len(valid_spans)})"
+        )
 
         # Calculate metrics
         metrics = routing_evaluator.calculate_metrics(valid_spans)
@@ -326,9 +326,9 @@ class TestRoutingEvaluatorIntegration:
         assert isinstance(metrics.per_agent_f1, dict)
 
         for agent, precision in metrics.per_agent_precision.items():
-            assert (
-                0.0 <= precision <= 1.0
-            ), f"Invalid precision for {agent}: {precision}"
+            assert 0.0 <= precision <= 1.0, (
+                f"Invalid precision for {agent}: {precision}"
+            )
 
         # Print metrics for manual inspection
         print("\n=== Routing Evaluation Metrics ===")

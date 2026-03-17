@@ -224,7 +224,6 @@ def mock_torch():
         patch("torch.load") as mock_load,
         patch("torch.no_grad"),
     ):
-
         mock_tensor.return_value = Mock()
         mock_load.return_value = Mock()
         yield

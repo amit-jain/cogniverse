@@ -144,7 +144,6 @@ class TestKeyframeProcessor:
             patch("cv2.calcHist") as mock_calc_hist,
             patch("cv2.compareHist") as mock_compare_hist,
         ):
-
             # Mock histogram calculation
             mock_calc_hist.return_value = np.array([100] * 256, dtype=np.float32)
 
@@ -208,7 +207,6 @@ class TestKeyframeProcessor:
             patch("cv2.calcHist") as mock_calc_hist,
             patch("cv2.compareHist") as mock_compare_hist,
         ):
-
             mock_calc_hist.return_value = np.array([100] * 256, dtype=np.float32)
             mock_compare_hist.return_value = 0.5  # Always different
 

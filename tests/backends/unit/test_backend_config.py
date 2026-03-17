@@ -485,7 +485,9 @@ class TestBackendConfigEdgeCases:
         profile = BackendProfileConfig.from_dict("audio_clap_semantic", audio_data)
 
         # Extra fields captured
-        assert profile.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert (
+            profile.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        )
         assert profile.extra_config["custom_field"] == 42
 
         # Round-trip preserves extra fields
@@ -497,4 +499,6 @@ class TestBackendConfigEdgeCases:
 
         # Second round-trip also works
         restored = BackendProfileConfig.from_dict("audio_clap_semantic", data)
-        assert restored.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert (
+            restored.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        )

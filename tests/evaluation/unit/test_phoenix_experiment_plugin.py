@@ -57,7 +57,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 inspect_solver, profiles, strategies, config
             )
@@ -93,7 +92,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 Mock(), ["profile1"], ["strategy1"], {}
             )
@@ -120,7 +118,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 Mock(), profiles, strategies, {}
             )
@@ -147,7 +144,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 Mock(), ["profile1"], ["strategy1"], {}
             )
@@ -187,7 +183,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 Mock(), ["profile1"], ["strategy1"], {}
             )
@@ -220,7 +215,6 @@ class TestPhoenixExperimentPlugin:
                 return_value={"backend_url": "http://localhost"},
             ),
         ):
-
             task_func = PhoenixExperimentPlugin.wrap_inspect_task_for_phoenix(
                 Mock(), ["profile1"], ["strategy1"], {}
             )
@@ -254,7 +248,6 @@ class TestPhoenixExperimentPlugin:
                 "cogniverse_evaluation.core.solvers.create_retrieval_solver"
             ) as mock_solver,
         ):
-
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
                 dataset_name="test_dataset",
                 profiles=["profile1"],
@@ -318,7 +311,6 @@ class TestPhoenixExperimentPlugin:
             ),
             patch("cogniverse_evaluation.core.solvers.create_retrieval_solver"),
         ):
-
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
                 dataset_name="test_dataset",
                 profiles=["profile1"],
@@ -392,7 +384,6 @@ class TestPhoenixExperimentPluginUtilities:
             "cogniverse_evaluation.evaluators.sync_reference_free.create_sync_evaluators",
             return_value=mock_quality_evaluators,
         ):
-
             evaluators = get_phoenix_evaluators(config)
 
             assert len(evaluators) == 2
@@ -420,7 +411,6 @@ class TestPhoenixExperimentPluginUtilities:
                 return_value=mock_quality_evaluators,
             ),
         ):
-
             evaluators = get_phoenix_evaluators(config)
 
             assert len(evaluators) == 3

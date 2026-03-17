@@ -18,6 +18,7 @@ from cogniverse_runtime.ingestion.strategies import (
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestPipelineOrchestration:
     """Integration tests for pipeline orchestration."""
 
@@ -324,6 +325,7 @@ class TestPipelineOrchestration:
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestStrategySetIntegration:
     """Integration tests for ProcessingStrategySet."""
 

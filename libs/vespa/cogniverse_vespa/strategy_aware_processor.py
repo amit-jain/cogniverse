@@ -231,4 +231,3 @@ class StrategyAwareProcessor:
                 )
 
         return {"cells": cells}
-

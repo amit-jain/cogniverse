@@ -237,7 +237,6 @@ class TestExperimentTracker:
             patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", return_value=mock_result),
         ):
-
             result = tracker.run_experiment(
                 profile="test_profile",
                 strategy="test_strategy",
@@ -258,7 +257,6 @@ class TestExperimentTracker:
             patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
-
             result = tracker.run_experiment(
                 profile="test_profile",
                 strategy="test_strategy",
@@ -275,7 +273,9 @@ class TestExperimentTracker:
     def test_create_or_get_dataset_existing(self, tracker, mock_dependencies):
         """Test getting existing dataset."""
         # Mock provider method
-        mock_dependencies["provider"].get_dataset_url.return_value = (
+        mock_dependencies[
+            "provider"
+        ].get_dataset_url.return_value = (
             "http://localhost:6006/datasets/existing_dataset"
         )
 
@@ -294,9 +294,9 @@ class TestExperimentTracker:
         csv_path.write_text("query,expected\ntest query,test result\n")
 
         mock_dependencies["provider"].create_dataset.return_value = "new_dataset_id"
-        mock_dependencies["provider"].get_dataset_url.return_value = (
-            "http://localhost:6006/datasets/new_dataset"
-        )
+        mock_dependencies[
+            "provider"
+        ].get_dataset_url.return_value = "http://localhost:6006/datasets/new_dataset"
 
         result = tracker.create_or_get_dataset(
             dataset_name="new_dataset", csv_path=str(csv_path), force_new=True
@@ -309,9 +309,9 @@ class TestExperimentTracker:
     def test_create_or_get_dataset_test_dataset(self, tracker, mock_dependencies):
         """Test creating test dataset."""
         mock_dependencies["provider"].create_dataset.return_value = "test_dataset_id"
-        mock_dependencies["provider"].get_dataset_url.return_value = (
-            "http://localhost:6006/datasets/test"
-        )
+        mock_dependencies[
+            "provider"
+        ].get_dataset_url.return_value = "http://localhost:6006/datasets/test"
 
         result = tracker.create_or_get_dataset()
 
@@ -473,7 +473,6 @@ class TestExperimentTracker:
             patch("pandas.DataFrame.to_csv") as mock_to_csv,
             patch("json.dump") as mock_json_dump,
         ):
-
             csv_path, json_path = tracker.save_results(mock_tables, experiments)
 
             assert csv_path.name.startswith("experiment_summary_")

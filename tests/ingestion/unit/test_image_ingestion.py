@@ -31,9 +31,7 @@ def image_dir(tmp_path):
     img_dir = tmp_path / "test_images"
     img_dir.mkdir()
     for i in range(5):
-        img = Image.fromarray(
-            np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
-        )
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         img.save(img_dir / f"test_image_{i:03d}.jpg")
     return img_dir
 
@@ -139,11 +137,15 @@ class TestImageSegmentationDispatch:
         # Create a mock pipeline context
         class MockContext:
             profile_output_dir = image_dir.parent / "output"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 
@@ -181,11 +183,15 @@ class TestImageSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = image_dir.parent / "output2"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 
@@ -209,11 +215,15 @@ class TestImageSegmentationDispatch:
 
         class MockContext:
             profile_output_dir = tmp_path / "output3"
-            logger = type("L", (), {
-                "info": staticmethod(lambda msg: None),
-                "warning": staticmethod(lambda msg: None),
-                "error": staticmethod(lambda msg: None),
-            })()
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
 
         MockContext.profile_output_dir.mkdir(exist_ok=True)
 

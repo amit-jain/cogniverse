@@ -84,9 +84,9 @@ class TestEndToEnd:
             assert len(results) > 0
 
             eval_log = results[0]
-            assert (
-                eval_log.status == "success"
-            ), f"Evaluation failed with status: {eval_log.status}"
+            assert eval_log.status == "success", (
+                f"Evaluation failed with status: {eval_log.status}"
+            )
 
             assert eval_log.results is not None, "No results in eval log"
             assert eval_log.results.scores is not None, "No scores in results"
@@ -149,9 +149,7 @@ class TestEndToEnd:
 
         from tests.evaluation.conftest import intercept_search_calls
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as cfg:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as cfg:
             json.dump({"tenant_id": "default"}, cfg)
             cfg_path = cfg.name
 
@@ -297,9 +295,7 @@ class TestEndToEnd:
 
     @pytest.mark.integration
     @skip_if_no_ollama
-    def test_multiple_profiles_e2e(
-        self, search_evaluator_provider, eval_search_client
-    ):
+    def test_multiple_profiles_e2e(self, search_evaluator_provider, eval_search_client):
         """Test evaluation with real search profile.
 
         Uses a single real profile (test_colpali) with the default strategy
