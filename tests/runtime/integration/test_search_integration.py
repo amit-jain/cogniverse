@@ -33,16 +33,12 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
         Float dict: {patch_idx: [128 floats]} for tensor<bfloat16>(patch{}, v[128])
         Binary dict: {patch_idx: [16 int8s]} for tensor<int8>(patch{}, v[16])
     """
-    float_dict = {
-        str(idx): vector.tolist() for idx, vector in enumerate(embeddings)
-    }
+    float_dict = {str(idx): vector.tolist() for idx, vector in enumerate(embeddings)}
 
     binarized = np.packbits(
         np.where(embeddings > 0, 1, 0).astype(np.uint8), axis=1
     ).astype(np.int8)
-    binary_dict = {
-        str(idx): vector.tolist() for idx, vector in enumerate(binarized)
-    }
+    binary_dict = {str(idx): vector.tolist() for idx, vector in enumerate(binarized)}
 
     return float_dict, binary_dict
 
@@ -69,9 +65,21 @@ def seeded_documents(vespa_instance, colpali_model):
     model, processor, device = colpali_model
 
     test_docs = [
-        {"color": (255, 0, 0), "title": "Red sunset landscape", "video_id": "sunset_vid"},
-        {"color": (0, 0, 255), "title": "Ocean waves coastal scene", "video_id": "ocean_vid"},
-        {"color": (0, 128, 0), "title": "Forest trail nature walk", "video_id": "forest_vid"},
+        {
+            "color": (255, 0, 0),
+            "title": "Red sunset landscape",
+            "video_id": "sunset_vid",
+        },
+        {
+            "color": (0, 0, 255),
+            "title": "Ocean waves coastal scene",
+            "video_id": "ocean_vid",
+        },
+        {
+            "color": (0, 128, 0),
+            "title": "Forest trail nature walk",
+            "video_id": "forest_vid",
+        },
     ]
 
     http_port = vespa_instance["http_port"]
@@ -125,8 +133,6 @@ def seeded_documents(vespa_instance, colpali_model):
             pass
 
 
-
-
 @pytest.mark.integration
 @pytest.mark.ci_fast
 @pytest.mark.requires_vespa
@@ -178,8 +184,6 @@ class TestListProfilesIntegration:
         assert "test_videoprism" not in profile_names
 
 
-
-
 @pytest.mark.integration
 @pytest.mark.ci_fast
 @pytest.mark.requires_vespa
@@ -212,7 +216,9 @@ class TestSearchIntegration:
         assert data["profile"] == "test_colpali"
         assert isinstance(data["results"], list)
         assert data["results_count"] == len(data["results"])
-        assert data["results_count"] > 0, "Real encoder + seeded docs should return results"
+        assert data["results_count"] > 0, (
+            "Real encoder + seeded docs should return results"
+        )
 
     def test_search_stream_returns_real_results(
         self,

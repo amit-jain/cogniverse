@@ -232,7 +232,9 @@ async def upload_video(
             documents_fed = embeddings_data.get("documents_fed", 0)
 
         return {
-            "status": "success" if result.get("status") == "completed" else result.get("status", "success"),
+            "status": "success"
+            if result.get("status") == "completed"
+            else result.get("status", "success"),
             "filename": file.filename,
             "video_id": result.get("video_id"),
             "chunks_created": chunks_created,

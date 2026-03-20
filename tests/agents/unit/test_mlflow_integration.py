@@ -138,7 +138,10 @@ class TestMLflowIntegration:
 
             # Should initialize without error
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             assert integration.config == config
@@ -167,7 +170,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start a run using context manager
@@ -185,7 +191,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start run and log performance
@@ -217,7 +226,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start run and log optimization metrics
@@ -249,7 +261,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             with integration.start_run("model_test_run"):
@@ -281,7 +296,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             ab_config = ABTestConfig(
@@ -305,7 +323,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start A/B test
@@ -338,7 +359,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start A/B test
@@ -367,7 +391,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start run and log some metrics
@@ -404,7 +431,10 @@ class TestMLflowIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start run using context manager
@@ -463,7 +493,10 @@ class TestMLflowIntegrationIntegration:
             )
 
             integration = MLflowIntegration(
-                config, telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", test_mode=True
+                config,
+                telemetry_provider=_make_mock_telemetry_provider(),
+                tenant_id="test_tenant",
+                test_mode=True,
             )
 
             # Start experiment run

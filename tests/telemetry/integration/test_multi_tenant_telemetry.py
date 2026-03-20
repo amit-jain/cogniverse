@@ -201,9 +201,9 @@ class TestMultiTenantTelemetryIntegration:
             project_name = telemetry_config_sync.get_project_name(
                 tenant_id, service_suffix
             )
-            assert (
-                project_name == expected_project
-            ), f"Expected {expected_project}, got {project_name}"
+            assert project_name == expected_project, (
+                f"Expected {expected_project}, got {project_name}"
+            )
 
         # Cleanup
         manager.shutdown()
@@ -245,9 +245,9 @@ class TestMultiTenantTelemetryIntegration:
 
         # Verify cache was evicted
         stats = manager.get_stats()
-        assert (
-            stats["cached_tracers"] <= 3
-        ), f"Cache should be evicted, got {stats['cached_tracers']} tracers"
+        assert stats["cached_tracers"] <= 3, (
+            f"Cache should be evicted, got {stats['cached_tracers']} tracers"
+        )
 
         # Cleanup
         manager.shutdown()

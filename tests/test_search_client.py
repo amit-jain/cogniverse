@@ -285,7 +285,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
                 print(f"✅ {strategy}: Got {len(results)} results")
                 logger.info(f"✅ {strategy}: Got {len(results)} results")
                 for i, result in enumerate(results[:2]):
-                    score_line = f"  {i+1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
+                    score_line = f"  {i + 1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
                     print(score_line)
                     logger.info(score_line)
         except Exception as e:
@@ -360,7 +360,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
                 print(f"✅ {strategy}: Got {len(results)} results")
                 logger.info(f"✅ {strategy}: Got {len(results)} results")
                 for i, result in enumerate(results[:2]):
-                    score_line = f"  {i+1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
+                    score_line = f"  {i + 1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
                     print(score_line)
                     logger.info(score_line)
         except Exception as e:
@@ -431,7 +431,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
                 print(f"✅ {strategy}: Got {len(results)} results")
                 logger.info(f"✅ {strategy}: Got {len(results)} results")
                 for i, result in enumerate(results[:2]):
-                    score_line = f"  {i+1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
+                    score_line = f"  {i + 1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
                     print(score_line)
                     logger.info(score_line)
         except Exception as e:
@@ -619,7 +619,7 @@ def test_default_ranking(query=None):
         logger.info(f"✅ Default ranking: Got {len(results)} results")
         for i, result in enumerate(results[:2]):
             logger.info(
-                f"  {i+1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
+                f"  {i + 1}. Score: {result['relevance']:.4f}, Video: {result['video_id']}"
             )
     except Exception as e:
         logger.error(f"❌ Default ranking failed: {e}")

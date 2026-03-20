@@ -60,7 +60,6 @@ class TestModalityOptimizer:
                 "cogniverse_agents.routing.modality_optimizer.TrainingStrategyModel"
             ) as mock_strategy_model,
         ):
-
             collector = MagicMock()
             evaluator = MagicMock()
             decision_model = MagicMock()

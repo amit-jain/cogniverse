@@ -399,7 +399,7 @@ class DSPyGLiNEROptimizer:
 
                         if (i * len(threshold_candidates) + j) % 5 == 0:
                             print(
-                                f"   📊 Config {i+1}/{len(label_candidates)}: {accuracy:.1%} "
+                                f"   📊 Config {i + 1}/{len(label_candidates)}: {accuracy:.1%} "
                                 f"({len(labels)} labels, {threshold} threshold)"
                             )
 
@@ -534,7 +534,7 @@ class DSPyGLiNEROptimizer:
                 # Print sample predictions
                 print("\n   📝 Sample predictions:")
                 for i, pred in enumerate(predictions[:3]):
-                    print(f"      {i+1}. Query: '{pred['query']}'")
+                    print(f"      {i + 1}. Query: '{pred['query']}'")
                     print(
                         f"         Predicted: video={pred['predicted']['video']}, "
                         f"text={pred['predicted']['text']}, temporal={pred['predicted']['temporal']}"

@@ -145,26 +145,26 @@ class TestOptimizerRegistry:
         from pydantic import BaseModel
 
         for name, config in OPTIMIZER_REGISTRY.items():
-            assert issubclass(
-                config.schema_class, BaseModel
-            ), f"Optimizer {name} schema is not a Pydantic BaseModel"
+            assert issubclass(config.schema_class, BaseModel), (
+                f"Optimizer {name} schema is not a Pydantic BaseModel"
+            )
 
     def test_all_configs_have_generator_names(self):
         """Test all optimizer configs have generator class names"""
         for name, config in OPTIMIZER_REGISTRY.items():
-            assert (
-                len(config.generator_class_name) > 0
-            ), f"Optimizer {name} has no generator class name"
-            assert config.generator_class_name.endswith(
-                "Generator"
-            ), f"Optimizer {name} generator name doesn't end with 'Generator'"
+            assert len(config.generator_class_name) > 0, (
+                f"Optimizer {name} has no generator class name"
+            )
+            assert config.generator_class_name.endswith("Generator"), (
+                f"Optimizer {name} generator name doesn't end with 'Generator'"
+            )
 
     def test_all_configs_have_query_strategies(self):
         """Test all optimizer configs have backend query strategies"""
         for name, config in OPTIMIZER_REGISTRY.items():
-            assert (
-                len(config.backend_query_strategy) > 0
-            ), f"Optimizer {name} has no backend query strategy"
+            assert len(config.backend_query_strategy) > 0, (
+                f"Optimizer {name} has no backend query strategy"
+            )
 
 
 class TestGetOptimizerConfig:

@@ -554,7 +554,7 @@ class TestConfigManagementUI:
         for i in range(3):
             config = SystemConfig(
                 tenant_id=tenant_id,
-                llm_model=f"model-v{i+1}",
+                llm_model=f"model-v{i + 1}",
             )
             config_manager.set_system_config(config)
 

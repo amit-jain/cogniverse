@@ -317,7 +317,8 @@ class TestProductionRoutingIntegration:
                     or [decision.primary_agent]
                 ]
                 results = await parallel_executor.execute_agents_parallel(
-                    tasks[:3], agent_caller=mock_agent_call  # Limit to 3 agents
+                    tasks[:3],
+                    agent_caller=mock_agent_call,  # Limit to 3 agents
                 )
 
                 # Cache successful results

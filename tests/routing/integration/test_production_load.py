@@ -306,15 +306,15 @@ class TestProductionLoadHandling:
         stats = metrics_tracker.get_modality_stats(QueryModality.TEXT)
 
         # Verify latency distribution
-        assert (
-            stats["p50_latency"] < 100
-        ), f"P50 latency {stats['p50_latency']:.0f}ms too high"
-        assert (
-            stats["p95_latency"] < 200
-        ), f"P95 latency {stats['p95_latency']:.0f}ms too high"
-        assert (
-            stats["p99_latency"] < 300
-        ), f"P99 latency {stats['p99_latency']:.0f}ms too high"
+        assert stats["p50_latency"] < 100, (
+            f"P50 latency {stats['p50_latency']:.0f}ms too high"
+        )
+        assert stats["p95_latency"] < 200, (
+            f"P95 latency {stats['p95_latency']:.0f}ms too high"
+        )
+        assert stats["p99_latency"] < 300, (
+            f"P99 latency {stats['p99_latency']:.0f}ms too high"
+        )
 
         print("\n📈 Latency Distribution Results:")
         print(f"   P50: {stats['p50_latency']:.0f}ms")

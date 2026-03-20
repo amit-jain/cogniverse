@@ -46,9 +46,7 @@ class TestHealthIntegration:
         assert data["status"] == "ready"
         assert data["backends"] >= 1
 
-    def test_health_full_with_real_config(
-        self, health_client, vespa_instance
-    ):
+    def test_health_full_with_real_config(self, health_client, vespa_instance):
         """GET /health with real ConfigManager — backends and agents sections populated.
 
         Sets BACKEND_URL and BACKEND_PORT env vars to point at the test Vespa

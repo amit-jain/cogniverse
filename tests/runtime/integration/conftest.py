@@ -122,7 +122,9 @@ def vespa_instance():
 
         manager.wait_for_application_ready(container_info, timeout=120)
 
-        logger.info("Vespa initialization complete - ready for runtime integration tests")
+        logger.info(
+            "Vespa initialization complete - ready for runtime integration tests"
+        )
 
         yield container_info
 

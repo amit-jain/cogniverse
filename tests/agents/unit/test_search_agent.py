@@ -376,7 +376,9 @@ class TestSearchAgent:
             "messages": [
                 {
                     "role": "user",
-                    "parts": [{"kind": "data", "data": {"query": "find dogs", "top_k": 5}}],
+                    "parts": [
+                        {"kind": "data", "data": {"query": "find dogs", "top_k": 5}}
+                    ],
                 }
             ],
         }
@@ -429,7 +431,13 @@ class TestSearchAgent:
             "messages": [
                 {
                     "role": "user",
-                    "parts": [{"kind": "video", "video_data": b"fake_video", "filename": "test.mp4"}],
+                    "parts": [
+                        {
+                            "kind": "video",
+                            "video_data": b"fake_video",
+                            "filename": "test.mp4",
+                        }
+                    ],
                 }
             ],
         }
@@ -482,7 +490,13 @@ class TestSearchAgent:
             "messages": [
                 {
                     "role": "user",
-                    "parts": [{"kind": "image", "image_data": b"fake_image", "filename": "test.jpg"}],
+                    "parts": [
+                        {
+                            "kind": "image",
+                            "image_data": b"fake_image",
+                            "filename": "test.jpg",
+                        }
+                    ],
                 }
             ],
         }
@@ -540,8 +554,16 @@ class TestSearchAgent:
                     "role": "user",
                     "parts": [
                         {"kind": "data", "data": {"query": "find cats", "top_k": 3}},
-                        {"kind": "video", "video_data": b"fake_video", "filename": "test.mp4"},
-                        {"kind": "image", "image_data": b"fake_image", "filename": "test.jpg"},
+                        {
+                            "kind": "video",
+                            "video_data": b"fake_video",
+                            "filename": "test.mp4",
+                        },
+                        {
+                            "kind": "image",
+                            "image_data": b"fake_image",
+                            "filename": "test.jpg",
+                        },
                     ],
                 }
             ],
@@ -1681,9 +1703,9 @@ class TestMultiQueryFusion:
             routing_decision, tenant_id="test_tenant", top_k=10
         )
 
-        assert (
-            len(captured_k) == 1
-        ), f"Expected _fuse_results_rrf called once, got {len(captured_k)}"
+        assert len(captured_k) == 1, (
+            f"Expected _fuse_results_rrf called once, got {len(captured_k)}"
+        )
         assert captured_k[0] == custom_rrf_k, (
             f"Expected rrf_k={custom_rrf_k} passed to _fuse_results_rrf, "
             f"got rrf_k={captured_k[0]}"
@@ -1786,9 +1808,9 @@ class TestEnsembleVsFusionPaths:
 
         agent.search_with_relationship_context(ctx, tenant_id="test_tenant", top_k=5)
 
-        assert (
-            len(fusion_called) == 0
-        ), "Expected _search_multi_query_fusion NOT called when query_variants is empty"
+        assert len(fusion_called) == 0, (
+            "Expected _search_multi_query_fusion NOT called when query_variants is empty"
+        )
 
     @pytest.mark.ci_fast
     def test_fusion_path_uses_single_profile(self, agent_with_mock_backend):
@@ -1924,9 +1946,7 @@ class TestConversationalQueryRewrite:
 
             # Mock the rewriter to return a resolved query
             module.rewriter = Mock(
-                return_value=dspy.Prediction(
-                    rewritten_query="longer cat videos"
-                )
+                return_value=dspy.Prediction(rewritten_query="longer cat videos")
             )
 
             result = module.forward(

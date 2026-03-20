@@ -4,7 +4,6 @@ Test document similarity search (find similar frames to a given frame)
 This is useful for UI features like "find more frames like this one"
 """
 
-
 import numpy as np
 import requests
 
@@ -91,7 +90,7 @@ def test_document_similarity():
 
         for i, hit in enumerate(hits[:5]):
             fields = hit["fields"]
-            print(f"\nResult {i+1}:")
+            print(f"\nResult {i + 1}:")
             print(f"  - Frame ID: {fields.get('frame_id')}")
             print(f"  - Video ID: {fields.get('video_id')}")
             print(f"  - Relevance score: {hit.get('relevance')}")

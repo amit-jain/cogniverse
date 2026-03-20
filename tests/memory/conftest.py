@@ -208,13 +208,13 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) 
                 return True
             elif i % 10 == 0:  # Log non-success status codes every 10 attempts
                 print(
-                    f"   Attempt {i+1}: Status {response.status_code}: {response.text[:100]}"
+                    f"   Attempt {i + 1}: Status {response.status_code}: {response.text[:100]}"
                 )
         except Exception as e:
             # Log every 10th attempt to avoid spam
             if i % 10 == 0:
                 print(
-                    f"   Attempt {i+1}: Readiness check error: {type(e).__name__}: {e}"
+                    f"   Attempt {i + 1}: Readiness check error: {type(e).__name__}: {e}"
                 )
         wait_for_vespa_indexing(delay=1.0, description="schema readiness check")
 

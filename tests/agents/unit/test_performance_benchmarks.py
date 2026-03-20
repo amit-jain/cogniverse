@@ -79,9 +79,9 @@ class TestPerformanceBenchmarks:
             # Components should initialize within reasonable time
             # QueryEnhancementPipeline loads heavy models and can take 40-50s on CPU
             max_time = 60.0 if component_name == "QueryEnhancementPipeline" else 30.0
-            assert (
-                init_time < max_time
-            ), f"{component_name} took too long to initialize: {init_time:.3f}s (max: {max_time}s)"
+            assert init_time < max_time, (
+                f"{component_name} took too long to initialize: {init_time:.3f}s (max: {max_time}s)"
+            )
 
         avg_init_time = sum(initialization_times.values()) / len(initialization_times)
         print(f"Average initialization time: {avg_init_time:.3f}s")
@@ -136,12 +136,12 @@ class TestPerformanceBenchmarks:
             )
 
             # Performance assertions
-            assert (
-                avg_response_time < 30.0
-            ), f"Average response time too high: {avg_response_time:.3f}s"
-            assert (
-                max_response_time < 60.0
-            ), f"Max response time too high: {max_response_time:.3f}s"
+            assert avg_response_time < 30.0, (
+                f"Average response time too high: {avg_response_time:.3f}s"
+            )
+            assert max_response_time < 60.0, (
+                f"Max response time too high: {max_response_time:.3f}s"
+            )
 
     def test_relationship_extraction_performance(self):
         """Benchmark relationship extraction performance"""
@@ -184,9 +184,9 @@ class TestPerformanceBenchmarks:
             print(f"Average extraction time: {avg_extraction_time:.3f}s")
 
             # Performance assertion
-            assert (
-                avg_extraction_time < 15.0
-            ), f"Average extraction time too high: {avg_extraction_time:.3f}s"
+            assert avg_extraction_time < 15.0, (
+                f"Average extraction time too high: {avg_extraction_time:.3f}s"
+            )
 
     def test_query_enhancement_performance(self):
         """Benchmark query enhancement pipeline performance"""
@@ -248,9 +248,9 @@ class TestPerformanceBenchmarks:
             print(f"Average enhancement time: {avg_enhancement_time:.3f}s")
 
             # Performance assertion
-            assert (
-                avg_enhancement_time < 10.0
-            ), f"Average enhancement time too high: {avg_enhancement_time:.3f}s"
+            assert avg_enhancement_time < 10.0, (
+                f"Average enhancement time too high: {avg_enhancement_time:.3f}s"
+            )
 
     def test_memory_usage_during_operations(self):
         """Monitor memory usage for memory leaks during sustained operations"""
@@ -322,14 +322,14 @@ class TestPerformanceBenchmarks:
         )
 
         # Memory leak detection - operational growth should be minimal
-        assert (
-            operational_growth < 1000
-        ), f"Potential memory leak detected: {operational_growth:.1f} MB growth during operations"
+        assert operational_growth < 1000, (
+            f"Potential memory leak detected: {operational_growth:.1f} MB growth during operations"
+        )
 
         # Total memory usage should be reasonable but we allow for ML models
-        assert (
-            total_growth < 6000
-        ), f"Total memory growth extremely high: {total_growth:.1f} MB - investigate"
+        assert total_growth < 6000, (
+            f"Total memory growth extremely high: {total_growth:.1f} MB - investigate"
+        )
 
         # Warn about memory usage patterns
         if operational_growth > 200:
@@ -386,12 +386,12 @@ class TestPerformanceBenchmarks:
             print(f"Throughput: {throughput:.1f} queries/second")
 
             # Performance assertions
-            assert (
-                total_time < 30.0
-            ), f"Concurrent processing took too long: {total_time:.3f}s"
-            assert (
-                success_count >= len(queries) * 0.5
-            ), f"Too many failures: {success_count}/{len(queries)}"
+            assert total_time < 30.0, (
+                f"Concurrent processing took too long: {total_time:.3f}s"
+            )
+            assert success_count >= len(queries) * 0.5, (
+                f"Too many failures: {success_count}/{len(queries)}"
+            )
 
         except Exception as e:
             print(f"Concurrent load handled gracefully: {e}")
@@ -462,12 +462,12 @@ class TestAdaptiveThresholdPerformance:
             print(f"Processed {num_samples} samples")
 
             # Performance assertions
-            assert (
-                avg_sample_time < 0.1
-            ), f"Average sample processing too slow: {avg_sample_time:.4f}s"
-            assert (
-                max_sample_time < 1.0
-            ), f"Max sample processing too slow: {max_sample_time:.4f}s"
+            assert avg_sample_time < 0.1, (
+                f"Average sample processing too slow: {avg_sample_time:.4f}s"
+            )
+            assert max_sample_time < 1.0, (
+                f"Max sample processing too slow: {max_sample_time:.4f}s"
+            )
 
             # Test threshold retrieval performance
             start_time = time.time()
@@ -476,9 +476,9 @@ class TestAdaptiveThresholdPerformance:
             retrieval_time = end_time - start_time
 
             print(f"Threshold retrieval time: {retrieval_time:.4f}s")
-            assert (
-                retrieval_time < 0.01
-            ), f"Threshold retrieval too slow: {retrieval_time:.4f}s"
+            assert retrieval_time < 0.01, (
+                f"Threshold retrieval too slow: {retrieval_time:.4f}s"
+            )
 
 
 if __name__ == "__main__":

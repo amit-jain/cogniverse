@@ -86,7 +86,7 @@ class RoutingDistillation:
         for i, query in enumerate(queries):
             try:
                 # Get teacher's routing decision
-                print(f"\n📝 Processing query {i+1}/{len(queries)}: '{query}'")
+                print(f"\n📝 Processing query {i + 1}/{len(queries)}: '{query}'")
 
                 teacher_output = self.teacher(query)
 

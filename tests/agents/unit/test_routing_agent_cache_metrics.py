@@ -133,11 +133,14 @@ class TestRoutingAgentCacheMetrics:
         """Test that cache miss processes query normally"""
         query = "deep learning tutorials"
 
-        # Mock the routing module to return a prediction
+        # Mock the routing module to return a prediction matching
+        # DSPyAdvancedRoutingModule output format
         mock_prediction = MagicMock()
-        mock_prediction.recommended_agent = "video_search_agent"
-        mock_prediction.confidence = 0.9
-        mock_prediction.reasoning = "Test routing decision"
+        mock_prediction.routing_decision = {
+            "primary_agent": "video_search_agent",
+        }
+        mock_prediction.overall_confidence = 0.9
+        mock_prediction.reasoning_chain = ["Route to video search for tutorials"]
         mock_prediction.primary_intent = "search"
         mock_prediction.complexity_score = 0.5
 

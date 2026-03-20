@@ -115,9 +115,9 @@ class TestProfileNameValidation:
         for name in valid_names:
             valid_profile.profile_name = name
             errors = validator._validate_profile_name(name)
-            assert (
-                not errors
-            ), f"Profile name '{name}' should be valid, got errors: {errors}"
+            assert not errors, (
+                f"Profile name '{name}' should be valid, got errors: {errors}"
+            )
 
     def test_invalid_profile_names(self, validator: ProfileValidator):
         """Invalid profile names should fail validation."""
@@ -132,9 +132,9 @@ class TestProfileNameValidation:
         for name, expected_error_substring in invalid_cases:
             errors = validator._validate_profile_name(name)
             assert errors, f"Profile name '{name}' should be invalid"
-            assert any(
-                expected_error_substring in err for err in errors
-            ), f"Expected error containing '{expected_error_substring}', got: {errors}"
+            assert any(expected_error_substring in err for err in errors), (
+                f"Expected error containing '{expected_error_substring}', got: {errors}"
+            )
 
     def test_non_string_profile_name(self, validator: ProfileValidator):
         """Non-string profile names should fail validation."""
@@ -350,7 +350,13 @@ class TestUpdateFieldValidation:
 
     def test_immutable_field_updates(self, validator: ProfileValidator):
         """Immutable fields should not be allowed in updates."""
-        immutable_fields = ["schema_name", "embedding_model", "schema_config", "type", "model_loader"]
+        immutable_fields = [
+            "schema_name",
+            "embedding_model",
+            "schema_config",
+            "type",
+            "model_loader",
+        ]
 
         for field in immutable_fields:
             updates = {field: "new_value"}

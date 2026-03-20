@@ -584,16 +584,16 @@ class TestProductionRoutingRealInfrastructure:
 
         spans_df = await trace_store.get_spans(project=project_name)
 
-        assert (
-            not spans_df.empty
-        ), f"No spans found in telemetry backend for project {project_name}"
+        assert not spans_df.empty, (
+            f"No spans found in telemetry backend for project {project_name}"
+        )
 
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
         logger.info(f"📊 Routing spans with metrics: {len(routing_spans)}")
 
-        assert (
-            len(routing_spans) > 0
-        ), f"No routing spans found in project {project_name}"
+        assert len(routing_spans) > 0, (
+            f"No routing spans found in project {project_name}"
+        )
 
         # Check span contains routing information
         # Note: Phoenix DataFrames may have different column structures
@@ -601,9 +601,9 @@ class TestProductionRoutingRealInfrastructure:
         logger.info(f"📊 Available span columns: {list(latest_span.index)}")
 
         # Verify span was created successfully
-        assert (
-            latest_span["name"] == "cogniverse.routing"
-        ), f"Expected span name 'cogniverse.routing', got {latest_span['name']}"
+        assert latest_span["name"] == "cogniverse.routing", (
+            f"Expected span name 'cogniverse.routing', got {latest_span['name']}"
+        )
 
     async def test_cache_ttl_with_real_queries(self, routing_agent, cache_manager):
         """Test cache TTL expiration with real routing queries"""

@@ -64,7 +64,9 @@ class TestOrchestrationOptimizationIntegration:
         """Create real AdvancedRoutingOptimizer instance"""
         return AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
 

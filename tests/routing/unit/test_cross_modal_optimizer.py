@@ -60,7 +60,9 @@ class TestCrossModalOptimizer:
             yield collector
 
     @pytest.fixture
-    def optimizer(self, mock_telemetry_provider, mock_fusion_model, mock_span_collector):
+    def optimizer(
+        self, mock_telemetry_provider, mock_fusion_model, mock_span_collector
+    ):
         """Create optimizer instance"""
         return CrossModalOptimizer(
             telemetry_provider=mock_telemetry_provider,
@@ -451,6 +453,7 @@ class TestCrossModalOptimizer:
 
         assert optimizer.fusion_history == []
         assert optimizer.fusion_success_rates == {}
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

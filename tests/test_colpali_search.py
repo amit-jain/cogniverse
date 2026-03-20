@@ -103,7 +103,7 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
     all_results = []
 
     for test_query, expected_videos in test_queries:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Query: '{test_query}'")
         if expected_videos:
             print(f"Expected videos: {expected_videos[:3]}...")  # Show first 3
@@ -173,7 +173,7 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
                     video_id = result_dict.get(
                         "source_id", result_dict["document_id"].split("_")[0]
                     )
-                    print(f"\nResult {i+1}:")
+                    print(f"\nResult {i + 1}:")
                     print(f"  - Video ID: {video_id}")
                     print(
                         f"  - Frame ID: {result_dict.get('metadata', {}).get('frame_id', 'N/A')}"
@@ -320,7 +320,7 @@ def test_float_float_search(
             print("\n" + formatter.format_table(formatted_results))
         else:
             for i, result in enumerate(results[:5]):
-                print(f"\nResult {i+1}:")
+                print(f"\nResult {i + 1}:")
                 print(f"  - Video ID: {result.get('video_id')}")
                 print(f"  - Frame ID: {result.get('frame_id')}")
                 print(f"  - Relevance score: {result.get('relevance')}")
@@ -439,7 +439,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
             print("\n" + formatter.format_table(formatted_results))
         else:
             for i, result in enumerate(results[:5]):
-                print(f"\nResult {i+1}:")
+                print(f"\nResult {i + 1}:")
                 print(f"  - Video ID: {result.get('video_id')}")
                 print(f"  - Frame ID: {result.get('frame_id')}")
                 print(f"  - Relevance score: {result.get('relevance')}")

@@ -339,9 +339,12 @@ class TestRoutingAgentStreaming:
         recommended = final_data["recommended_agent"]
         # "show me videos" should route to a search/video agent, not summarizer/report
         search_agents = {
-            "search_agent", "search",
-            "video_search_agent", "video_search",
-            "image_search_agent", "image_search",
+            "search_agent",
+            "search",
+            "video_search_agent",
+            "video_search",
+            "image_search_agent",
+            "image_search",
         }
         assert recommended in search_agents, (
             f"Video query should route to a search agent, got: '{recommended}'"
@@ -352,7 +355,8 @@ class TestRoutingAgentStreaming:
         )
         reasoning_lower = final_data["reasoning"].lower()
         assert any(
-            term in reasoning_lower for term in ["video", "search", "visual", "content", "robot"]
+            term in reasoning_lower
+            for term in ["video", "search", "visual", "content", "robot"]
         ), f"Reasoning should explain video routing, got: '{final_data['reasoning']}'"
         assert final_data["query"] == "show me videos of robots playing soccer"
         assert isinstance(final_data["entities"], list)

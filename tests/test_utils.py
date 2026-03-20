@@ -193,7 +193,7 @@ class TestResultsFormatter:
             results: List of result dictionaries
             summary_stats: Optional dictionary of summary statistics
         """
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Test: {self.test_name}")
         print(f"Timestamp: {self.timestamp}")
         print(f"Total Results: {len(results)}")
@@ -203,7 +203,7 @@ class TestResultsFormatter:
             for key, value in summary_stats.items():
                 print(f"  {key}: {value}")
 
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
     def format_ranking_strategy_table(
         self,

@@ -85,11 +85,14 @@ class TestArtifactManagerRoundTrip:
         """Optimization metrics are written to Phoenix experiment store."""
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test")
 
-        run_id = await mgr.log_optimization_run("router", {
-            "accuracy": 0.85,
-            "latency_ms": 120,
-            "num_examples": 50,
-        })
+        run_id = await mgr.log_optimization_run(
+            "router",
+            {
+                "accuracy": 0.85,
+                "latency_ms": 120,
+                "num_examples": 50,
+            },
+        )
 
         assert run_id  # Real Phoenix returns an actual run ID
 
@@ -98,9 +101,7 @@ class TestTenantIsolation:
     """Verify tenant isolation against real Phoenix."""
 
     @pytest.mark.asyncio
-    async def test_tenant_a_invisible_to_tenant_b(
-        self, telemetry_manager_with_phoenix
-    ):
+    async def test_tenant_a_invisible_to_tenant_b(self, telemetry_manager_with_phoenix):
         """Prompts saved for tenant A should not be loadable by tenant B."""
         provider_a = telemetry_manager_with_phoenix.get_provider(
             tenant_id="isolation-tenant-a"
@@ -159,18 +160,23 @@ class TestOptimizerToStrategyWiring:
 
         # Simulate optimizer saving prompts to real Phoenix
         mgr = ArtifactManager(real_provider, tenant_id=tenant_id)
-        await mgr.save_prompts("router", {
-            "system_prompt": "Optimized routing instructions here.",
-            "prompt_template": "Route: {system_prompt}\n{conversation_history}\n{query}",
-        })
+        await mgr.save_prompts(
+            "router",
+            {
+                "system_prompt": "Optimized routing instructions here.",
+                "prompt_template": "Route: {system_prompt}\n{conversation_history}\n{query}",
+            },
+        )
 
         # Strategy loads them via the same provider + tenant
-        strategy = LLMRoutingStrategy(config={
-            "enable_dspy_optimization": True,
-            "tenant_id": tenant_id,
-            "telemetry_provider": real_provider,
-            "model": "test-model",
-        })
+        strategy = LLMRoutingStrategy(
+            config={
+                "enable_dspy_optimization": True,
+                "tenant_id": tenant_id,
+                "telemetry_provider": real_provider,
+                "model": "test-model",
+            }
+        )
 
         # In an async context, prompts load via ensure_future + callback.
         await asyncio.sleep(0.5)
@@ -192,12 +198,14 @@ class TestOptimizerToStrategyWiring:
     @pytest.mark.asyncio
     async def test_strategy_without_prompts_uses_default(self, real_provider):
         """Strategy with no saved prompts in Phoenix falls back to default."""
-        strategy = LLMRoutingStrategy(config={
-            "enable_dspy_optimization": True,
-            "tenant_id": "empty-strategy-tenant-xyz",
-            "telemetry_provider": real_provider,
-            "model": "test-model",
-        })
+        strategy = LLMRoutingStrategy(
+            config={
+                "enable_dspy_optimization": True,
+                "tenant_id": "empty-strategy-tenant-xyz",
+                "telemetry_provider": real_provider,
+                "model": "test-model",
+            }
+        )
 
         await asyncio.sleep(0.5)
 
@@ -221,10 +229,13 @@ class TestMixinAutoLoad:
 
         # Pre-save prompts to real Phoenix
         mgr = ArtifactManager(real_provider, tenant_id=tenant_id)
-        await mgr.save_prompts(agent_type, {
-            "system": "Optimized analysis prompt",
-            "template": "Analyze: {query}",
-        })
+        await mgr.save_prompts(
+            agent_type,
+            {
+                "system": "Optimized analysis prompt",
+                "template": "Analyze: {query}",
+            },
+        )
 
         # Mixin should auto-load on init
         mixin = DSPyIntegrationMixin(
@@ -272,7 +283,9 @@ class TestOptimizerExperienceRoundTrip:
         """Record experiences, persist to Phoenix, reload in new optimizer."""
         config_kwargs = dict(
             tenant_id="optimizer-exp-test",
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_provider,
         )
 

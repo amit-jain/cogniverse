@@ -128,9 +128,9 @@ class TestRealQueryAnalysisIntegration:
                     for exp_word in expected_words
                     for actual_word in actual_words
                 )
-                assert (
-                    matches or expected in actual or actual in expected
-                ), f"Expected '{expected}' to match '{actual}'"
+                assert matches or expected in actual or actual in expected, (
+                    f"Expected '{expected}' to match '{actual}'"
+                )
 
             if "expected_video_search" in test_case:
                 assert (
@@ -208,14 +208,14 @@ class TestRealAgentRoutingIntegration:
             # Verify confidence is reasonable
             confidence = float(routing_decision.confidence)
             assert 0.0 <= confidence <= 1.0
-            assert (
-                confidence > 0.3
-            ), "Confidence should be reasonably high for clear test cases"
+            assert confidence > 0.3, (
+                "Confidence should be reasonably high for clear test cases"
+            )
 
             # Verify reasoning is provided
-            assert (
-                len(routing_decision.reasoning) > 10
-            ), "Reasoning should be substantive"
+            assert len(routing_decision.reasoning) > 10, (
+                "Reasoning should be substantive"
+            )
 
             logger.info(
                 f"Routing decision: {routing_decision.recommended_agent} (confidence: {confidence})"
@@ -325,15 +325,15 @@ class TestRealAgentSpecializationIntegration:
         assert hasattr(report_result, "recommendations")
         assert hasattr(report_result, "confidence_assessment")
 
-        assert (
-            len(report_result.executive_summary) > 50
-        ), "Executive summary should be comprehensive"
-        assert (
-            len(report_result.detailed_findings) >= 1
-        ), "Detailed findings should be present"
-        assert (
-            len(report_result.recommendations) >= 1
-        ), "Recommendations should be present"
+        assert len(report_result.executive_summary) > 50, (
+            "Executive summary should be comprehensive"
+        )
+        assert len(report_result.detailed_findings) >= 1, (
+            "Detailed findings should be present"
+        )
+        assert len(report_result.recommendations) >= 1, (
+            "Recommendations should be present"
+        )
 
         confidence = float(report_result.confidence_assessment.get("overall", 0.0))
         assert 0.0 <= confidence <= 1.0

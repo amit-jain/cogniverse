@@ -348,7 +348,8 @@ class TestModalityEvaluator:
         )
 
         examples = await evaluator.create_training_examples(
-            augment_with_synthetic=True, synthetic_ratio=0.5  # Add 50% synthetic
+            augment_with_synthetic=True,
+            synthetic_ratio=0.5,  # Add 50% synthetic
         )
 
         assert QueryModality.VIDEO in examples

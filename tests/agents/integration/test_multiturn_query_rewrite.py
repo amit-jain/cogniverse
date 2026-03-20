@@ -29,9 +29,9 @@ class TestQueryRewriteWithRealLLM:
 
         assert result.rewritten_query, "rewritten_query should not be None or empty"
         rewritten = result.rewritten_query.lower()
-        assert any(
-            word in rewritten for word in ["cat", "video"]
-        ), f"Rewritten query '{result.rewritten_query}' should reference cats/videos from history"
+        assert any(word in rewritten for word in ["cat", "video"]), (
+            f"Rewritten query '{result.rewritten_query}' should reference cats/videos from history"
+        )
 
     def test_rewrite_resolves_comparative_reference(self, dspy_lm):
         """Query with 'longer ones' + history about cooking -> resolved query."""
@@ -44,9 +44,9 @@ class TestQueryRewriteWithRealLLM:
 
         assert result.rewritten_query, "rewritten_query should not be None or empty"
         rewritten = result.rewritten_query.lower()
-        assert any(
-            word in rewritten for word in ["cooking", "tutorial", "long"]
-        ), f"Rewritten query '{result.rewritten_query}' should reference cooking/long from history"
+        assert any(word in rewritten for word in ["cooking", "tutorial", "long"]), (
+            f"Rewritten query '{result.rewritten_query}' should reference cooking/long from history"
+        )
 
     def test_standalone_query_preserved(self, dspy_lm):
         """A self-contained query should not be distorted by unrelated history."""
@@ -83,9 +83,9 @@ class TestQueryRewriteWithRealLLM:
 
         assert result.rewritten_query, "rewritten_query should not be None or empty"
         rewritten = result.rewritten_query.lower()
-        assert any(
-            word in rewritten for word in ["italian", "cooking", "recipe"]
-        ), f"Rewritten query '{result.rewritten_query}' should reference Italian cooking from history"
+        assert any(word in rewritten for word in ["italian", "cooking", "recipe"]), (
+            f"Rewritten query '{result.rewritten_query}' should reference Italian cooking from history"
+        )
 
     @pytest.mark.asyncio
     async def test_dispatcher_rewrite_with_real_llm(self, dspy_lm):
@@ -111,6 +111,6 @@ class TestQueryRewriteWithRealLLM:
         assert len(rewritten) > 0
         # Should resolve the pronoun — result should mention cats/videos
         rewritten_lower = rewritten.lower()
-        assert any(
-            word in rewritten_lower for word in ["cat", "video"]
-        ), f"Dispatcher rewrite '{rewritten}' should resolve 'those' to cats/videos"
+        assert any(word in rewritten_lower for word in ["cat", "video"]), (
+            f"Dispatcher rewrite '{rewritten}' should resolve 'those' to cats/videos"
+        )

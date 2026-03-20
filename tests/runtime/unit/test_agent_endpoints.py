@@ -100,15 +100,23 @@ class TestRoutingOrchestrationHandoff:
             "profile": "test_profile",
         }
 
-        with patch.dict("sys.modules", {
-            "cogniverse_agents": MagicMock(),
-            "cogniverse_agents.routing_agent": mock_routing_module,
-            "cogniverse_foundation.config.unified_config": mock_unified_config,
-            "cogniverse_foundation.config.utils": mock_config_utils,
-            "cogniverse_foundation.telemetry.config": mock_telemetry_config_module,
-        }), patch.object(
-            dispatcher, "_execute_search_task",
-            new_callable=AsyncMock, return_value=mock_downstream,
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "cogniverse_agents": MagicMock(),
+                    "cogniverse_agents.routing_agent": mock_routing_module,
+                    "cogniverse_foundation.config.unified_config": mock_unified_config,
+                    "cogniverse_foundation.config.utils": mock_config_utils,
+                    "cogniverse_foundation.telemetry.config": mock_telemetry_config_module,
+                },
+            ),
+            patch.object(
+                dispatcher,
+                "_execute_search_task",
+                new_callable=AsyncMock,
+                return_value=mock_downstream,
+            ),
         ):
             result = await dispatcher.dispatch(
                 agent_name="routing_agent",
@@ -188,15 +196,18 @@ class TestRoutingOrchestrationHandoff:
             mock_telemetry_manager
         )
 
-        with patch.dict("sys.modules", {
-            "cogniverse_agents": MagicMock(),
-            "cogniverse_agents.routing_agent": mock_routing_module,
-            "cogniverse_agents.multi_agent_orchestrator": mock_orch_module,
-            "cogniverse_foundation.config.unified_config": MagicMock(),
-            "cogniverse_foundation.config.utils": mock_config_utils,
-            "cogniverse_foundation.telemetry.config": MagicMock(),
-            "cogniverse_foundation.telemetry.manager": mock_telemetry_manager_module,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "cogniverse_agents": MagicMock(),
+                "cogniverse_agents.routing_agent": mock_routing_module,
+                "cogniverse_agents.multi_agent_orchestrator": mock_orch_module,
+                "cogniverse_foundation.config.unified_config": MagicMock(),
+                "cogniverse_foundation.config.utils": mock_config_utils,
+                "cogniverse_foundation.telemetry.config": MagicMock(),
+                "cogniverse_foundation.telemetry.manager": mock_telemetry_manager_module,
+            },
+        ):
             result = await dispatcher.dispatch(
                 agent_name="routing_agent",
                 query="find robots then summarize and create report",
@@ -253,5 +264,7 @@ class TestAgentDispatcherCapabilityRouting:
                 context={"tenant_id": "t1"},
             )
 
-        mock_search.assert_called_once_with("find cats", "t1", 10, conversation_history=[])
+        mock_search.assert_called_once_with(
+            "find cats", "t1", 10, conversation_history=[]
+        )
         assert result["status"] == "success"

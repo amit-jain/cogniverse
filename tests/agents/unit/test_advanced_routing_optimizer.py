@@ -415,9 +415,9 @@ class TestAdvancedRoutingOptimizerIntegration:
                     )
 
             # Verify we have enough experiences
-            assert (
-                len(optimizer.experiences) == 210
-            ), f"Should have 210 experiences, got {len(optimizer.experiences)}"
+            assert len(optimizer.experiences) == 210, (
+                f"Should have 210 experiences, got {len(optimizer.experiences)}"
+            )
 
             # Explicitly initialize advanced_optimizer since _run_optimization_step was patched
             # (in production it is created lazily inside _run_optimization_step when
@@ -431,19 +431,19 @@ class TestAdvancedRoutingOptimizerIntegration:
                 optimizer.advanced_optimizer._select_optimizer(dataset_size)
             )
 
-            assert (
-                optimizer_name == "gepa"
-            ), f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
+            assert optimizer_name == "gepa", (
+                f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
+            )
 
             # Get optimization info to verify logic
             opt_info = optimizer.advanced_optimizer.get_optimization_info(dataset_size)
-            assert (
-                opt_info["primary_optimizer"] == "gepa"
-            ), f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
+            assert opt_info["primary_optimizer"] == "gepa", (
+                f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
+            )
             assert opt_info["dataset_size"] == 210
-            assert (
-                len(opt_info["applicable_optimizers"]) == 4
-            ), "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
+            assert len(opt_info["applicable_optimizers"]) == 4, (
+                "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
+            )
 
             # Test that compile() is called with correct optimizer
             # Mock the actual GEPA.compile to avoid LLM calls
@@ -481,15 +481,15 @@ class TestAdvancedRoutingOptimizerIntegration:
 
                 # Verify GEPA was called
                 mock_gepa_compile.assert_called_once()
-                assert (
-                    result == mock_optimized_module
-                ), "Should return optimized module from GEPA"
+                assert result == mock_optimized_module, (
+                    "Should return optimized module from GEPA"
+                )
 
             # Verify status shows optimizer ready
             status = optimizer.get_optimization_status()
-            assert (
-                status["optimizer_ready"] is True
-            ), "Optimizer should be ready with 210 experiences"
+            assert status["optimizer_ready"] is True, (
+                "Optimizer should be ready with 210 experiences"
+            )
             assert status["total_experiences"] == 210
 
     @pytest.mark.asyncio
@@ -548,9 +548,9 @@ class TestAdvancedRoutingOptimizerIntegration:
                 selected_optimizer, optimizer_name = (
                     optimizer.advanced_optimizer._select_optimizer(dataset_size)
                 )
-                assert (
-                    optimizer_name == expected_optimizer
-                ), f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
+                assert optimizer_name == expected_optimizer, (
+                    f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
+                )
 
     @pytest.mark.asyncio
     async def test_end_to_end_workflow_simulation(self):

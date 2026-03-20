@@ -95,9 +95,14 @@ class TestA2AAgentCard:
         card = response.json()
 
         required_fields = [
-            "name", "description", "url", "version",
-            "defaultInputModes", "defaultOutputModes",
-            "capabilities", "skills",
+            "name",
+            "description",
+            "url",
+            "version",
+            "defaultInputModes",
+            "defaultOutputModes",
+            "capabilities",
+            "skills",
         ]
         for field in required_fields:
             assert field in card, f"Missing required field: {field}"
@@ -134,9 +139,7 @@ class TestA2AMessageSend:
                 "message": {
                     "role": "user",
                     "messageId": "test-msg-1",
-                    "parts": [
-                        {"kind": "text", "text": "search for videos about cats"}
-                    ],
+                    "parts": [{"kind": "text", "text": "search for videos about cats"}],
                 },
                 "metadata": {
                     "agent_name": "search_agent",
@@ -189,9 +192,7 @@ class TestA2AMessageSend:
                 "message": {
                     "role": "user",
                     "messageId": "test-msg-2",
-                    "parts": [
-                        {"kind": "text", "text": "find videos about dogs"}
-                    ],
+                    "parts": [{"kind": "text", "text": "find videos about dogs"}],
                 },
             },
         }
@@ -217,9 +218,7 @@ class TestA2AMessageSend:
                 "message": {
                     "role": "user",
                     "messageId": "test-msg-3",
-                    "parts": [
-                        {"kind": "text", "text": "test"}
-                    ],
+                    "parts": [{"kind": "text", "text": "test"}],
                 },
                 "metadata": {
                     "agent_name": "bad_agent",

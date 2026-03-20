@@ -400,10 +400,12 @@ class TestLLMOptimization:
     @pytest.mark.asyncio
     async def test_prompt_optimization(self, real_telemetry_provider):
         """Test LLM prompt optimization."""
-        strategy = LLMRoutingStrategy({
-            "system_prompt": "You are a routing agent.",
-            "temperature": 0.1,
-        })
+        strategy = LLMRoutingStrategy(
+            {
+                "system_prompt": "You are a routing agent.",
+                "temperature": 0.1,
+            }
+        )
 
         optimizer = AutoTuningOptimizer(
             strategy,

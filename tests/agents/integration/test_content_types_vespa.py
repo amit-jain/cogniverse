@@ -178,9 +178,9 @@ class TestContentTypeVespaSchemas:
                 params={"query": "test", "restrict": "image_content"},
                 timeout=10,
             )
-            assert (
-                response.status_code == 200
-            ), f"Image search failed: {response.status_code}"
+            assert response.status_code == 200, (
+                f"Image search failed: {response.status_code}"
+            )
             print("✅ image_content schema is accessible")
 
             # Test audio_content schema
@@ -189,9 +189,9 @@ class TestContentTypeVespaSchemas:
                 params={"query": "test", "restrict": "audio_content"},
                 timeout=10,
             )
-            assert (
-                response.status_code == 200
-            ), f"Audio search failed: {response.status_code}"
+            assert response.status_code == 200, (
+                f"Audio search failed: {response.status_code}"
+            )
             print("✅ audio_content schema is accessible")
 
             # Test document_visual schema
@@ -200,9 +200,9 @@ class TestContentTypeVespaSchemas:
                 params={"query": "test", "restrict": "document_visual"},
                 timeout=10,
             )
-            assert (
-                response.status_code == 200
-            ), f"Document visual search failed: {response.status_code}"
+            assert response.status_code == 200, (
+                f"Document visual search failed: {response.status_code}"
+            )
             print("✅ document_visual schema is accessible")
 
             # Test document_text schema
@@ -211,9 +211,9 @@ class TestContentTypeVespaSchemas:
                 params={"query": "test", "restrict": "document_text"},
                 timeout=10,
             )
-            assert (
-                response.status_code == 200
-            ), f"Document text search failed: {response.status_code}"
+            assert response.status_code == 200, (
+                f"Document text search failed: {response.status_code}"
+            )
             print("✅ document_text schema is accessible")
 
         except Exception as e:
@@ -237,7 +237,11 @@ class TestContentTypeVespaSchemas:
 
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
-        config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based", "model_loader": "colpali"}
+        config = {
+            "colpali_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
+        }
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
         print("✅ ColPali model loaded")
 
@@ -287,9 +291,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Document ingestion failed: {response.status_code} - {response.text}"
+        )
         print("✅ Sample image document ingested successfully")
 
         # Wait for document to be indexed
@@ -401,9 +405,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Document ingestion failed: {response.status_code} - {response.text}"
+        )
         print("✅ Sample audio document ingested successfully")
 
         # Wait for document to be indexed
@@ -534,7 +538,11 @@ class TestContentTypeVespaSchemas:
 
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
-        config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based", "model_loader": "colpali"}
+        config = {
+            "colpali_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
+        }
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
         print("✅ ColPali model loaded")
 
@@ -585,9 +593,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Document page ingestion failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Document page ingestion failed: {response.status_code} - {response.text}"
+        )
         print("✅ Document page ingested successfully (visual strategy)")
 
         # Wait for document to be indexed
@@ -672,9 +680,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Document ingestion failed: {response.status_code} - {response.text}"
+        )
         print("✅ Document ingested successfully (text strategy)")
 
         # Wait for document to be indexed
@@ -732,9 +740,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Visual search failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Visual search failed: {response.status_code} - {response.text}"
+        )
         results = response.json()
 
         hits = results.get("root", {}).get("children", [])
@@ -793,9 +801,9 @@ class TestContentTypeVespaSchemas:
             timeout=10,
         )
 
-        assert (
-            response.status_code == 200
-        ), f"Text search failed: {response.status_code} - {response.text}"
+        assert response.status_code == 200, (
+            f"Text search failed: {response.status_code} - {response.text}"
+        )
         results = response.json()
 
         hits = results.get("root", {}).get("children", [])

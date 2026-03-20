@@ -16,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 # Agent capabilities mapping — what each agent can do
 AGENT_CAPABILITIES: Dict[str, List[str]] = {
-    "routing_agent": ["routing", "query_analysis", "entity_extraction", "conversation_memory"],
+    "routing_agent": [
+        "routing",
+        "query_analysis",
+        "entity_extraction",
+        "conversation_memory",
+    ],
     "search_agent": ["search", "video_search", "retrieval"],
     "text_analysis_agent": ["text_analysis", "sentiment", "classification"],
     "summarizer_agent": ["summarization", "text_generation"],

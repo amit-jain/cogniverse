@@ -489,7 +489,7 @@ class AdvancedGLiNEROptimizer:
                 )
 
                 print(
-                    f"  Config {i+1}: {score:.1%} ({config['model'].split('/')[-1]}, {len(config['labels'])} labels, {config['threshold']} threshold)"
+                    f"  Config {i + 1}: {score:.1%} ({config['model'].split('/')[-1]}, {len(config['labels'])} labels, {config['threshold']} threshold)"
                 )
 
                 if score > best_score:
@@ -498,7 +498,7 @@ class AdvancedGLiNEROptimizer:
                     print(f"  🌟 New best: {score:.1%}")
 
             except Exception as e:
-                print(f"  ❌ Error with config {i+1}: {e}")
+                print(f"  ❌ Error with config {i + 1}: {e}")
 
         runtime = time.time() - start_time
 
@@ -683,7 +683,7 @@ class AdvancedGLiNEROptimizer:
         accuracies = [r.accuracy for r in self.results]
         if accuracies:
             print(f"   • Best:    {max(accuracies):.1%}")
-            print(f"   • Average: {sum(accuracies)/len(accuracies):.1%}")
+            print(f"   • Average: {sum(accuracies) / len(accuracies):.1%}")
             print(f"   • Range:   {max(accuracies) - min(accuracies):.1%}")
 
         # Speed analysis
@@ -692,7 +692,7 @@ class AdvancedGLiNEROptimizer:
             print("\n⏱️  Runtime Analysis:")
             print(f"   • Fastest: {min(runtimes):.1f}s")
             print(f"   • Slowest: {max(runtimes):.1f}s")
-            print(f"   • Average: {sum(runtimes)/len(runtimes):.1f}s")
+            print(f"   • Average: {sum(runtimes) / len(runtimes):.1f}s")
 
 
 async def main():

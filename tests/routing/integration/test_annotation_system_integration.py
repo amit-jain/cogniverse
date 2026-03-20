@@ -130,22 +130,24 @@ class TestAnnotationSystemIntegration:
             lookback_hours=1
         )
 
-        assert (
-            len(annotation_requests) >= 2
-        ), f"Expected at least 2 annotation requests, got {len(annotation_requests)}"
+        assert len(annotation_requests) >= 2, (
+            f"Expected at least 2 annotation requests, got {len(annotation_requests)}"
+        )
 
         low_conf_requests = [
             r for r in annotation_requests if r.routing_confidence < 0.6
         ]
-        assert (
-            len(low_conf_requests) >= 2
-        ), f"Expected at least 2 low confidence requests, got {len(low_conf_requests)}"
+        assert len(low_conf_requests) >= 2, (
+            f"Expected at least 2 low confidence requests, got {len(low_conf_requests)}"
+        )
 
         has_llm_access = os.getenv("ANNOTATION_API_KEY")
 
         if has_llm_access:
             llm_annotator = LLMAutoAnnotator(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434")
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                )
             )
             auto_annotation = llm_annotator.annotate(annotation_requests[0])
 
@@ -181,7 +183,9 @@ class TestAnnotationSystemIntegration:
 
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=test_tenant_id,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
         feedback_loop = AnnotationFeedbackLoop(
@@ -302,9 +306,9 @@ class TestAnnotationSystemIntegration:
 
         low_conf_requests = [r for r in requests if r.routing_confidence < 0.3]
         if low_conf_requests:
-            assert (
-                low_conf_requests[0].priority == AnnotationPriority.HIGH
-            ), "Low confidence should be HIGH priority"
+            assert low_conf_requests[0].priority == AnnotationPriority.HIGH, (
+                "Low confidence should be HIGH priority"
+            )
 
     @pytest.mark.asyncio
     async def test_feedback_loop_end_to_end(
@@ -355,7 +359,9 @@ class TestAnnotationSystemIntegration:
 
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=test_tenant_id,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
         initial_experience_count = len(optimizer.experiences)
@@ -372,9 +378,9 @@ class TestAnnotationSystemIntegration:
         assert "experiences_created" in result
 
         if result["experiences_created"] > 0:
-            assert (
-                len(optimizer.experiences) > initial_experience_count
-            ), "Optimizer did not receive new experiences"
+            assert len(optimizer.experiences) > initial_experience_count, (
+                "Optimizer did not receive new experiences"
+            )
 
     @pytest.mark.asyncio
     async def test_bulk_evaluation_logging(

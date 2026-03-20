@@ -111,9 +111,7 @@ class TestPhoenixProviderSessionContext:
 
     def test_session_context_uses_openinference(self, phoenix_provider):
         """Verify session_context uses openinference.using_session."""
-        with patch(
-            "openinference.instrumentation.using_session"
-        ) as mock_using_session:
+        with patch("openinference.instrumentation.using_session") as mock_using_session:
             # Setup mock context manager
             mock_cm = MagicMock()
             mock_cm.__enter__ = MagicMock(return_value=None)

@@ -22,9 +22,9 @@ def real_dspy_lm():
     import requests
 
     response = requests.get("http://localhost:11434/v1/models", timeout=2)
-    assert (
-        response.status_code == 200
-    ), "Ollama server must be running at localhost:11434"
+    assert response.status_code == 200, (
+        "Ollama server must be running at localhost:11434"
+    )
 
     # Configure real DSPy.LM with Ollama via factory
     lm = create_dspy_lm(

@@ -66,7 +66,9 @@ def optimizer(real_telemetry_provider):
     """Create AdvancedRoutingOptimizer for testing - fresh for each test"""
     return AdvancedRoutingOptimizer(
         tenant_id=_TEST_TENANT,
-        llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(
+            model="ollama/gemma3:4b", api_base="http://localhost:11434"
+        ),
         telemetry_provider=real_telemetry_provider,
     )
 
@@ -93,9 +95,9 @@ class TestRoutingSpanEvaluatorIntegration:
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
 
         # 4 queries are routed; allow for 1 gRPC export failure due to timing
-        assert (
-            len(routing_spans) >= 3
-        ), f"Expected at least 3 routing spans, found {len(routing_spans)}"
+        assert len(routing_spans) >= 3, (
+            f"Expected at least 3 routing spans, found {len(routing_spans)}"
+        )
 
     @pytest.mark.asyncio
     async def test_extract_routing_experiences(
@@ -106,12 +108,12 @@ class TestRoutingSpanEvaluatorIntegration:
 
         results = await span_evaluator.evaluate_routing_spans(lookback_hours=1)
 
-        assert (
-            results["spans_processed"] >= 4
-        ), f"Expected at least 4 spans processed, got {results['spans_processed']}"
-        assert (
-            results["experiences_created"] >= 4
-        ), f"Expected at least 4 experiences created, got {results['experiences_created']}"
+        assert results["spans_processed"] >= 4, (
+            f"Expected at least 4 spans processed, got {results['spans_processed']}"
+        )
+        assert results["experiences_created"] >= 4, (
+            f"Expected at least 4 experiences created, got {results['experiences_created']}"
+        )
 
     @pytest.mark.asyncio
     async def test_feed_experiences_to_optimizer(
@@ -144,14 +146,16 @@ class TestRoutingSpanEvaluatorIntegration:
         with tempfile.TemporaryDirectory() as _:
             optimizer = AdvancedRoutingOptimizer(
                 tenant_id=_TEST_TENANT,
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
             )
 
             initial_count = len(optimizer.experience_replay)
-            assert (
-                initial_count == 0
-            ), f"Expected empty optimizer, got {initial_count} experiences"
+            assert initial_count == 0, (
+                f"Expected empty optimizer, got {initial_count} experiences"
+            )
 
             evaluator = RoutingSpanEvaluator(
                 optimizer=optimizer, tenant_id=_TEST_TENANT
@@ -163,9 +167,9 @@ class TestRoutingSpanEvaluatorIntegration:
 
             experiences_added = final_count - initial_count
 
-            assert (
-                experiences_added >= 4
-            ), f"Expected at least 4 experiences added to optimizer, got {experiences_added}"
+            assert experiences_added >= 4, (
+                f"Expected at least 4 experiences added to optimizer, got {experiences_added}"
+            )
 
     @pytest.mark.asyncio
     async def test_routing_experience_structure(
@@ -178,9 +182,9 @@ class TestRoutingSpanEvaluatorIntegration:
 
         experiences = span_evaluator.optimizer.experience_replay
 
-        assert (
-            len(experiences) >= 4
-        ), f"Expected at least 4 experiences, got {len(experiences)}"
+        assert len(experiences) >= 4, (
+            f"Expected at least 4 experiences, got {len(experiences)}"
+        )
 
         exp = experiences[0]
         assert exp.query, "Experience should have query"
@@ -215,9 +219,9 @@ class TestRoutingSpanEvaluatorIntegration:
             lookback_hours=1, batch_size=2
         )
 
-        assert (
-            results["spans_processed"] <= 2
-        ), f"Expected at most 2 spans with batch_size=2, got {results['spans_processed']}"
+        assert results["spans_processed"] <= 2, (
+            f"Expected at most 2 spans with batch_size=2, got {results['spans_processed']}"
+        )
         assert results["experiences_created"] <= 2, (
             f"Expected at most 2 experiences with batch_size=2, "
             f"got {results['experiences_created']}"
@@ -245,18 +249,18 @@ class TestRoutingSpanEvaluatorIntegration:
         results = await evaluator.evaluate_routing_spans(lookback_hours=1)
 
         assert results["spans_processed"] >= 1, "Should process at least 1 span"
-        assert (
-            results["experiences_created"] >= 1
-        ), "Should create at least 1 experience"
+        assert results["experiences_created"] >= 1, (
+            "Should create at least 1 experience"
+        )
 
-        assert (
-            len(optimizer.experience_replay) >= 1
-        ), "Optimizer should have experiences"
+        assert len(optimizer.experience_replay) >= 1, (
+            "Optimizer should have experiences"
+        )
 
         queries = [exp.query for exp in optimizer.experience_replay]
-        assert (
-            query in queries
-        ), f"Expected query '{query}' in experiences, got: {queries}"
+        assert query in queries, (
+            f"Expected query '{query}' in experiences, got: {queries}"
+        )
 
         exp = next(exp for exp in optimizer.experience_replay if exp.query == query)
         logger.info(
@@ -275,15 +279,15 @@ class TestRoutingSpanEvaluatorIntegration:
 
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
 
-        assert (
-            len(routing_spans) >= 4
-        ), f"Expected at least 4 routing spans, found {len(routing_spans)}"
+        assert len(routing_spans) >= 4, (
+            f"Expected at least 4 routing spans, found {len(routing_spans)}"
+        )
 
         first_span = routing_spans.iloc[0]
 
-        assert (
-            first_span["name"] == "cogniverse.routing"
-        ), "Span name should be cogniverse.routing"
+        assert first_span["name"] == "cogniverse.routing", (
+            "Span name should be cogniverse.routing"
+        )
 
         has_flattened = (
             "attributes.routing" in first_span and first_span["attributes.routing"]
@@ -292,6 +296,6 @@ class TestRoutingSpanEvaluatorIntegration:
             k.startswith("routing.") for k in first_span.get("attributes", {}).keys()
         )
 
-        assert (
-            has_flattened or has_nested
-        ), "Span should have routing attributes in either flattened or nested format"
+        assert has_flattened or has_nested, (
+            "Span should have routing attributes in either flattened or nested format"
+        )

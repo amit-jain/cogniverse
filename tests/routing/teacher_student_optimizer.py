@@ -339,9 +339,9 @@ async def teacher_student_optimization():
                 teacher_details["total"] += 1
                 if score == 1.0:
                     teacher_details["correct"] += 1
-                print(f"   Teacher test {i+1}: {score:.2f}")
+                print(f"   Teacher test {i + 1}: {score:.2f}")
             except Exception as e:
-                print(f"   Teacher test {i+1}: Error - {e}")
+                print(f"   Teacher test {i + 1}: Error - {e}")
 
         if teacher_details["total"] > 0:
             teacher_score /= teacher_details["total"]
@@ -375,10 +375,12 @@ async def teacher_student_optimization():
 
                 teacher_labeled_data.append(labeled_example)
                 if i % 5 == 0:
-                    print(f"   Generated {i+1}/{len(train_examples)} teacher labels...")
+                    print(
+                        f"   Generated {i + 1}/{len(train_examples)} teacher labels..."
+                    )
 
             except Exception as e:
-                print(f"   Error generating teacher label {i+1}: {e}")
+                print(f"   Error generating teacher label {i + 1}: {e}")
                 continue
 
         print(f"✅ Generated {len(teacher_labeled_data)} teacher-labeled examples")
@@ -401,9 +403,9 @@ async def teacher_student_optimization():
                 student_baseline_details["total"] += 1
                 if score == 1.0:
                     student_baseline_details["correct"] += 1
-                print(f"   Student baseline {i+1}: {score:.2f}")
+                print(f"   Student baseline {i + 1}: {score:.2f}")
             except Exception as e:
-                print(f"   Student baseline {i+1}: Error - {e}")
+                print(f"   Student baseline {i + 1}: Error - {e}")
 
         if student_baseline_details["total"] > 0:
             student_baseline_score /= student_baseline_details["total"]
@@ -450,9 +452,9 @@ async def teacher_student_optimization():
                 optimized_details["total"] += 1
                 if score == 1.0:
                     optimized_details["correct"] += 1
-                print(f"   Optimized student {i+1}: {score:.2f}")
+                print(f"   Optimized student {i + 1}: {score:.2f}")
             except Exception as e:
-                print(f"   Optimized student {i+1}: Error - {e}")
+                print(f"   Optimized student {i + 1}: Error - {e}")
 
         if optimized_details["total"] > 0:
             optimized_score /= optimized_details["total"]

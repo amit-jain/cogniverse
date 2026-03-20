@@ -181,7 +181,9 @@ class TestAdaptiveThresholdLearner:
         config = AdaptiveThresholdConfig(global_learning_rate=0.02)
 
         learner = AdaptiveThresholdLearner(
-            telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant", config=config
+            telemetry_provider=_make_mock_telemetry_provider(),
+            tenant_id="test_tenant",
+            config=config,
         )
 
         assert learner.config.global_learning_rate == 0.02
@@ -213,9 +215,7 @@ class TestAdaptiveThresholdLearner:
             telemetry_provider=_make_mock_telemetry_provider(), tenant_id="test_tenant"
         )
 
-        threshold = learner.get_threshold_value(
-            ThresholdParameter.ROUTING_CONFIDENCE
-        )
+        threshold = learner.get_threshold_value(ThresholdParameter.ROUTING_CONFIDENCE)
 
         assert isinstance(threshold, float)
         assert 0 <= threshold <= 1

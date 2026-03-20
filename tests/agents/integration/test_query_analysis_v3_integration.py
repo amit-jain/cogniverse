@@ -177,7 +177,11 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_complex_query_analysis_with_qwen(
-        self, ollama_config, mock_ollama_query_client, sample_conversation_context, real_telemetry_provider
+        self,
+        ollama_config,
+        mock_ollama_query_client,
+        sample_conversation_context,
+        real_telemetry_provider,
     ):
         """Test complex query analysis with Qwen model"""
         with patch(
@@ -348,7 +352,9 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_multimodal_query_detection(self, ollama_config, real_telemetry_provider):
+    async def test_multimodal_query_detection(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test detection of multimodal queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -378,7 +384,9 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_temporal_query_analysis(self, ollama_config, real_telemetry_provider):
+    async def test_temporal_query_analysis(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test analysis of temporal queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -410,7 +418,9 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_entity_and_keyword_extraction(self, ollama_config, real_telemetry_provider):
+    async def test_entity_and_keyword_extraction(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test entity and keyword extraction capabilities"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -450,7 +460,9 @@ class TestQueryAnalysisV3OllamaIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_confidence_scoring_integration(self, ollama_config, real_telemetry_provider):
+    async def test_confidence_scoring_integration(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test confidence scoring across different query types"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -482,7 +494,9 @@ class TestQueryAnalysisV3WorkflowIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_end_to_end_simple_search_workflow(self, ollama_config, real_telemetry_provider):
+    async def test_end_to_end_simple_search_workflow(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test complete workflow for simple search query"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -521,7 +535,9 @@ class TestQueryAnalysisV3WorkflowIntegration:
         ) as mock_routing_class:
             mock_routing_class.return_value = None
 
-            analyzer = create_enhanced_query_analyzer(telemetry_provider=real_telemetry_provider)
+            analyzer = create_enhanced_query_analyzer(
+                telemetry_provider=real_telemetry_provider
+            )
 
             # Simulate complex analytical query
             query = "analyze the evolution of artificial intelligence research over the past year and provide comprehensive insights with visual analysis"
@@ -551,20 +567,24 @@ class TestQueryAnalysisV3WorkflowIntegration:
                 or QueryIntent.TEMPORAL == result.primary_intent
                 or any("year" in str(step) for step in result.workflow_steps)
             )
-            assert (
-                has_temporal_info
-            ), "Expected some form of temporal analysis for query mentioning 'past year'"
+            assert has_temporal_info, (
+                "Expected some form of temporal analysis for query mentioning 'past year'"
+            )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_statistics_and_monitoring_integration(self, ollama_config, real_telemetry_provider):
+    async def test_statistics_and_monitoring_integration(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test statistics collection and monitoring"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
         ) as mock_routing_class:
             mock_routing_class.return_value = None
 
-            analyzer = create_enhanced_query_analyzer(telemetry_provider=real_telemetry_provider)
+            analyzer = create_enhanced_query_analyzer(
+                telemetry_provider=real_telemetry_provider
+            )
 
             # Perform multiple analyses
             queries = [
@@ -599,7 +619,9 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_routing_agent_failure_handling(self, ollama_config, real_telemetry_provider):
+    async def test_routing_agent_failure_handling(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test handling of routing agent failures"""
         # Mock routing agent that fails
         mock_failing_agent = Mock()
@@ -632,7 +654,9 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_thinking_phase_error_handling(self, ollama_config, real_telemetry_provider):
+    async def test_thinking_phase_error_handling(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test handling of thinking phase errors"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
@@ -659,7 +683,9 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_empty_and_edge_case_queries(self, ollama_config, real_telemetry_provider):
+    async def test_empty_and_edge_case_queries(
+        self, ollama_config, real_telemetry_provider
+    ):
         """Test handling of empty and edge case queries"""
         with patch(
             "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"

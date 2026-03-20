@@ -143,9 +143,7 @@ class SystemTester:
 
     async def test_agent_connectivity(self) -> bool:
         """Test connectivity to all agents."""
-        agent_urls = [
-            self.config.get("video_agent_url")
-        ]
+        agent_urls = [self.config.get("video_agent_url")]
 
         all_connected = True
 
@@ -177,14 +175,14 @@ class SystemTester:
     async def test_agent_discovery(self) -> bool:
         """Test agent discovery functionality."""
         try:
-            agent_urls = [
-                self.config.get("video_agent_url")
-            ]
+            agent_urls = [self.config.get("video_agent_url")]
 
             discovered_agents = {}
             for url in agent_urls:
                 try:
-                    response = await self.client.get(f"{url}/.well-known/agent-card.json")
+                    response = await self.client.get(
+                        f"{url}/.well-known/agent-card.json"
+                    )
                     if response.status_code == 200:
                         card = response.json()
                         discovered_agents[card.get("name", url)] = card
@@ -341,7 +339,7 @@ class SystemTester:
                 "Local LLM Connectivity",
                 True,
                 f"Local LLM server running with {len(models)} models: {', '.join(model_names[:3])}"
-                + (f" and {len(models)-3} more" if len(models) > 3 else ""),
+                + (f" and {len(models) - 3} more" if len(models) > 3 else ""),
             )
             return True
 
@@ -430,9 +428,11 @@ class SystemTester:
     async def test_end_to_end_system(self) -> bool:
         """Test complete end-to-end multi-agent system via OrchestratorAgent."""
         try:
-            orchestrator_url = self.config.get("agents", {}).get(
-                "orchestrator", {}
-            ).get("url", "http://localhost:8013")
+            orchestrator_url = (
+                self.config.get("agents", {})
+                .get("orchestrator", {})
+                .get("url", "http://localhost:8013")
+            )
 
             print("\n" + "=" * 60)
             print("Testing end-to-end via OrchestratorAgent A2A")
@@ -442,7 +442,7 @@ class SystemTester:
 
             # Test up to 5 random queries
             for i, (query, expected_videos) in enumerate(self.test_queries[:5]):
-                print(f"\n[{i+1}/5] Testing query: '{query}'")
+                print(f"\n[{i + 1}/5] Testing query: '{query}'")
 
                 # Call OrchestratorAgent via HTTP
                 resp = await self.client.post(
@@ -462,7 +462,9 @@ class SystemTester:
                 print(f"  Agents executed: {list(agent_results.keys())}")
                 successful_tests += 1
 
-            print(f"\nSuccessful queries: {successful_tests}/{min(5, len(self.test_queries))}")
+            print(
+                f"\nSuccessful queries: {successful_tests}/{min(5, len(self.test_queries))}"
+            )
 
             self.log_test(
                 "End-to-End System",
@@ -530,7 +532,7 @@ class SystemTester:
         print(f"Total Tests: {total_tests}")
         print(f"Passed: {passed_count}")
         print(f"Failed: {failed_count}")
-        print(f"Success Rate: {(passed_count/total_tests)*100:.1f}%")
+        print(f"Success Rate: {(passed_count / total_tests) * 100:.1f}%")
 
         if failed_count > 0:
             print("\n❌ Failed Tests:")

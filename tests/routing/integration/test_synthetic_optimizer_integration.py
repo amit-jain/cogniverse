@@ -88,7 +88,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test AdvancedRoutingOptimizer can be initialized"""
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
         assert optimizer is not None
@@ -101,7 +103,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test generating synthetic data for AdvancedRoutingOptimizer"""
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
 
@@ -121,7 +125,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test generated data has correct structure"""
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
 
@@ -145,7 +151,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         """Test that generated data has variety"""
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
 
@@ -233,7 +241,9 @@ class TestMultiOptimizerIntegration:
         )
         routing = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
         workflow = WorkflowIntelligence()
@@ -259,7 +269,9 @@ class TestMultiOptimizerIntegration:
         )
         routing = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             telemetry_provider=real_telemetry_provider,
         )
 

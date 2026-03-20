@@ -324,9 +324,9 @@ class TestEnsembleConfigurationValidation:
         assert "gliner" in strategies_used, "GLiNER should have participated"
         assert "llm" in strategies_used, "LLM should have participated via Ollama"
         assert "keyword" in strategies_used, "Keyword should have participated"
-        assert (
-            len(strategies_used) == 3
-        ), f"Expected 3 strategies, got {len(strategies_used)}"
+        assert len(strategies_used) == 3, (
+            f"Expected 3 strategies, got {len(strategies_used)}"
+        )
 
         # Should have real confidence from weighted voting
         assert decision.confidence_score > 0.0

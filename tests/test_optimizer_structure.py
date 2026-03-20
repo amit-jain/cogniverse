@@ -65,7 +65,7 @@ def test_imports():
     print("📊 IMPORT TEST SUMMARY")
     print("=" * 60)
     print(f"✅ Passed: {tests_passed}/{total_tests}")
-    print(f"📈 Success Rate: {(tests_passed/total_tests)*100:.1f}%")
+    print(f"📈 Success Rate: {(tests_passed / total_tests) * 100:.1f}%")
 
     return tests_passed == total_tests
 

@@ -1444,9 +1444,9 @@ class TestDSPyModules:
             "reasoning",
         ]
         for key in required_decision_keys:
-            assert (
-                key in result.routing_decision
-            ), f"Missing routing decision key: {key}"
+            assert key in result.routing_decision, (
+                f"Missing routing decision key: {key}"
+            )
 
         # Verify agent_workflow structure
         assert isinstance(result.agent_workflow, list)
@@ -1570,9 +1570,9 @@ class TestDSPyIntegrationReadiness:
             "confidence",
         ]
         for field in required_reformulation_fields:
-            assert (
-                field in reformulation_fields
-            ), f"Missing reformulation field: {field}"
+            assert field in reformulation_fields, (
+                f"Missing reformulation field: {field}"
+            )
 
         # Verify Path B signature (unified extraction + reformulation)
         assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
@@ -1927,8 +1927,6 @@ class TestQueryEnhancementIntegration:
             assert hasattr(result, attr), f"Missing routing required attribute: {attr}"
 
 
-
-
 @pytest.mark.unit
 class TestDSPyComponentsIntegration:
     """Integration tests validating complete pipeline from DSPy-A2A through query enhancement"""
@@ -2015,9 +2013,9 @@ class TestDSPyComponentsIntegration:
             QueryReformulationSignature,
             UnifiedExtractionReformulationSignature,
         ]:
-            assert hasattr(
-                signature, "model_fields"
-            ), f"Signature {signature.__name__} not DSPy 3.0 compatible"
+            assert hasattr(signature, "model_fields"), (
+                f"Signature {signature.__name__} not DSPy 3.0 compatible"
+            )
 
     def test_error_propagation_across_phases(self):
         """Test error handling propagates correctly through the pipeline"""
@@ -2219,21 +2217,19 @@ class TestDSPyComponentsIntegration:
             ]
 
             for requirement in phase4_requirements:
-                assert (
-                    requirement in result
-                ), f"Phase 4 requires '{requirement}' but not found in result"
+                assert requirement in result, (
+                    f"Phase 4 requires '{requirement}' but not found in result"
+                )
 
             # Quality score should be reasonable for routing decisions
-            assert (
-                0 <= result["quality_score"] <= 1
-            ), "Quality score should be normalized for routing thresholds"
+            assert 0 <= result["quality_score"] <= 1, (
+                "Quality score should be normalized for routing thresholds"
+            )
 
             # Enhanced query should be different from original (actual enhancement occurred)
-            assert (
-                result["enhanced_query"] != test_query
-            ), "Query should be actually enhanced for Phase 4"
-
-
+            assert result["enhanced_query"] != test_query, (
+                "Query should be actually enhanced for Phase 4"
+            )
 
 
 @pytest.mark.unit
@@ -2528,7 +2524,6 @@ class TestMultiAgentOrchestrator:
         assert updated_stats["total_workflows"] == 10
         assert updated_stats["completion_rate"] == 0.8
         assert updated_stats["failure_rate"] == 0.2
-
 
 
 @pytest.mark.unit
@@ -2909,8 +2904,6 @@ class TestSystemIntegration:
         intel_stats = intelligence.get_intelligence_statistics()
         assert isinstance(intel_stats, dict)
         assert "total_optimizations" in intel_stats
-
-
 
 
 @pytest.mark.unit

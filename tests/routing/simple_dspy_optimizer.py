@@ -407,7 +407,7 @@ class SimpleGLiNEROptimizer:
 
         print("\n📈 Performance Analysis:")
         print(f"   • Best accuracy: {max(accuracies):.1%}")
-        print(f"   • Average accuracy: {sum(accuracies)/len(accuracies):.1%}")
+        print(f"   • Average accuracy: {sum(accuracies) / len(accuracies):.1%}")
         print(f"   • Accuracy range: {max(accuracies) - min(accuracies):.1%}")
         print(f"   • Fastest eval: {min(eval_times):.2f}s")
         print(f"   • Slowest eval: {max(eval_times):.2f}s")
@@ -417,7 +417,7 @@ class SimpleGLiNEROptimizer:
             print(f"\n🔍 Sample Results for Best Config ({best_name}):")
             for i, detail in enumerate(best_result["detailed_results"][:3]):
                 if "error" not in detail:
-                    print(f"   Query: \"{detail['query']}\"")
+                    print(f'   Query: "{detail["query"]}"')
                     print(
                         f"   Score: {detail['score']:.2f} (V:{detail['video_correct']}, T:{detail['text_correct']}, Temp:{detail['temporal_correct']})"
                     )

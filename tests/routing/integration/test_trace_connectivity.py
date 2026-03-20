@@ -218,18 +218,18 @@ async def test_cross_operation_trace_connectivity():
 
     # ASSERTIONS
     assert len(trace_ids) == 3, "Should have 3 spans"
-    assert (
-        len(set(trace_ids)) == 1
-    ), f"All spans should share same trace_id, got: {trace_ids}"
+    assert len(set(trace_ids)) == 1, (
+        f"All spans should share same trace_id, got: {trace_ids}"
+    )
 
     # Verify parent-child chain
     assert span_infos[0]["parent_id"] is None, "Request span should be root (no parent)"
-    assert (
-        span_infos[1]["parent_id"] == span_infos[0]["span_id"]
-    ), "Routing should be child of Request"
-    assert (
-        span_infos[2]["parent_id"] == span_infos[1]["span_id"]
-    ), "Search should be child of Routing"
+    assert span_infos[1]["parent_id"] == span_infos[0]["span_id"], (
+        "Routing should be child of Request"
+    )
+    assert span_infos[2]["parent_id"] == span_infos[1]["span_id"], (
+        "Search should be child of Routing"
+    )
 
     logger.info("✅ Cross-operation trace connectivity verified!")
     for info in span_infos:
@@ -308,9 +308,9 @@ async def test_session_based_trace_linking():
                 ) as child_span:
                     if child_span and hasattr(child_span, "context"):
                         # Child should have same trace_id as parent request
-                        assert (
-                            child_span.context.trace_id == trace_id
-                        ), "Child span should share trace_id with parent request span"
+                        assert child_span.context.trace_id == trace_id, (
+                            "Child span should share trace_id with parent request span"
+                        )
 
                 await asyncio.sleep(0.01)
 
@@ -321,15 +321,15 @@ async def test_session_based_trace_linking():
 
     # Each request should have a DIFFERENT trace_id (separate requests)
     trace_ids = [t["trace_id"] for t in request_traces]
-    assert (
-        len(set(trace_ids)) == 3
-    ), f"Each request should have unique trace_id. Got: {trace_ids}"
+    assert len(set(trace_ids)) == 3, (
+        f"Each request should have unique trace_id. Got: {trace_ids}"
+    )
 
     # All requests should share the SAME session_id
     session_ids = [t["session_id"] for t in request_traces]
-    assert (
-        len(set(session_ids)) == 1
-    ), f"All requests should share same session_id. Got: {session_ids}"
+    assert len(set(session_ids)) == 1, (
+        f"All requests should share same session_id. Got: {session_ids}"
+    )
     assert session_ids[0] == session_id, "Session ID should match"
 
     logger.info("✅ Session-based trace linking verified!")
@@ -437,9 +437,9 @@ async def test_session_span_with_nested_hierarchy():
 
     # All spans should share same trace_id
     trace_ids = [s["trace_id"] for s in span_infos]
-    assert (
-        len(set(trace_ids)) == 1
-    ), f"All spans should share trace_id. Got: {trace_ids}"
+    assert len(set(trace_ids)) == 1, (
+        f"All spans should share trace_id. Got: {trace_ids}"
+    )
 
     # Verify parent-child chain
     root = span_infos[0]
@@ -448,9 +448,9 @@ async def test_session_span_with_nested_hierarchy():
 
     assert root["parent_id"] is None, "Root span (session_span) should have no parent"
     assert routing["parent_id"] == root["span_id"], "Routing should be child of root"
-    assert (
-        search["parent_id"] == routing["span_id"]
-    ), "Search should be child of routing"
+    assert search["parent_id"] == routing["span_id"], (
+        "Search should be child of routing"
+    )
 
     logger.info("✅ Session span hierarchy verified!")
     logger.info(f"   Trace ID: {trace_ids[0]}")

@@ -45,31 +45,37 @@ async def stub_a2a_rpc(request: Request):
     params = body.get("params", {})
 
     if method != "message/send":
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-        })
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
+        )
 
     metadata = params.get("metadata", {})
     agent_name = metadata.get("agent_name", "unknown")
     query = metadata.get("query", "")
 
-    _request_log.append({
-        "agent_name": agent_name,
-        "url": str(request.url),
-        "body": body,
-        "headers": dict(request.headers),
-        "metadata": metadata,
-        "query": query,
-    })
+    _request_log.append(
+        {
+            "agent_name": agent_name,
+            "url": str(request.url),
+            "body": body,
+            "headers": dict(request.headers),
+            "metadata": metadata,
+            "query": query,
+        }
+    )
 
     if agent_name in _error_agents:
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32000, "message": "Simulated failure"},
-        })
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "error": {"code": -32000, "message": "Simulated failure"},
+            }
+        )
 
     if agent_name in _slow_agents:
         await asyncio.sleep(_slow_agents[agent_name])
@@ -81,18 +87,20 @@ async def stub_a2a_rpc(request: Request):
     # Return as A2A Message response (what the executor produces)
     task_id = str(uuid.uuid4())
     context_id = str(uuid.uuid4())
-    return JSONResponse({
-        "jsonrpc": "2.0",
-        "id": rpc_id,
-        "result": {
-            "kind": "message",
-            "messageId": str(uuid.uuid4()),
-            "role": "agent",
-            "parts": [{"kind": "text", "text": json.dumps(agent_result)}],
-            "taskId": task_id,
-            "contextId": context_id,
-        },
-    })
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "result": {
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "role": "agent",
+                "parts": [{"kind": "text", "text": json.dumps(agent_result)}],
+                "taskId": task_id,
+                "contextId": context_id,
+            },
+        }
+    )
 
 
 def _generate_stub_port(module_name: str) -> int:
@@ -165,8 +173,12 @@ def orchestrator(stub_server, telemetry_manager_without_phoenix):
     }
 
     with (
-        patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-        patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
+        patch(
+            "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+        ) as mock_routing_cls,
+        patch(
+            "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+        ),
     ):
         mock_routing_instance = Mock()
         mock_routing_instance.route_query = AsyncMock()
@@ -197,10 +209,22 @@ class TestOrchestratorHttpPipeline:
         _error_agents.add("summarizer_agent")
 
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "q1", "dependencies": []},
-                {"task_id": "t2", "agent": "search_agent", "query": "q2", "dependencies": []},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "q1",
+                        "dependencies": [],
+                    },
+                    {
+                        "task_id": "t2",
+                        "agent": "search_agent",
+                        "query": "q2",
+                        "dependencies": [],
+                    },
+                ]
+            )
         )
 
         # Zero retries to avoid backoff delays
@@ -252,9 +276,16 @@ class TestOrchestratorHttpPipeline:
     async def test_a2a_jsonrpc_request_format(self, orchestrator):
         """Verify JSON-RPC 2.0 structure and metadata in stub-received request."""
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "find videos", "dependencies": []},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "find videos",
+                        "dependencies": [],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query("find videos")
@@ -278,10 +309,22 @@ class TestOrchestratorHttpPipeline:
     async def test_http_hallucinated_agents_resolved(self, orchestrator):
         """Planner returns unknown agent names → resolved before HTTP call."""
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "VideoSearchAgent", "query": "search", "dependencies": []},
-                {"task_id": "t2", "agent": "ContentSummarizer", "query": "summarize", "dependencies": ["t1"]},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "VideoSearchAgent",
+                        "query": "search",
+                        "dependencies": [],
+                    },
+                    {
+                        "task_id": "t2",
+                        "agent": "ContentSummarizer",
+                        "query": "summarize",
+                        "dependencies": ["t1"],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query("test")
@@ -297,9 +340,16 @@ class TestOrchestratorHttpPipeline:
     async def test_http_uses_configured_endpoint(self, orchestrator, stub_server):
         """Agent endpoint set to stub URL → stub actually receives the request."""
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "test",
+                        "dependencies": [],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query("test")
@@ -312,14 +362,29 @@ class TestOrchestratorHttpPipeline:
     @pytest.mark.asyncio
     async def test_a2a_dependency_context_in_metadata(self, orchestrator):
         """Second task's metadata.dependency_context contains first task's result."""
-        _response_map["search_agent"] = {"result": "search data found", "confidence": 0.9}
+        _response_map["search_agent"] = {
+            "result": "search data found",
+            "confidence": 0.9,
+        }
         _response_map["summarizer_agent"] = {"result": "summary", "confidence": 0.85}
 
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "search data", "dependencies": []},
-                {"task_id": "t2", "agent": "summarizer_agent", "query": "summarize", "dependencies": ["t1"]},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "search data",
+                        "dependencies": [],
+                    },
+                    {
+                        "task_id": "t2",
+                        "agent": "summarizer_agent",
+                        "query": "summarize",
+                        "dependencies": ["t1"],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query("test")
@@ -337,13 +402,28 @@ class TestOrchestratorHttpPipeline:
     async def test_http_full_pipeline_sequential(self, orchestrator):
         """2 dependent tasks → stub receives requests in order, correct summary."""
         _response_map["search_agent"] = {"result": "video results", "confidence": 0.9}
-        _response_map["summarizer_agent"] = {"result": "summary of videos", "confidence": 0.85}
+        _response_map["summarizer_agent"] = {
+            "result": "summary of videos",
+            "confidence": 0.85,
+        }
 
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "find videos", "dependencies": []},
-                {"task_id": "t2", "agent": "summarizer_agent", "query": "summarize findings", "dependencies": ["t1"]},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "find videos",
+                        "dependencies": [],
+                    },
+                    {
+                        "task_id": "t2",
+                        "agent": "summarizer_agent",
+                        "query": "summarize findings",
+                        "dependencies": ["t1"],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query("find videos and summarize")
@@ -362,7 +442,9 @@ class TestOrchestratorHttpPipeline:
         assert _request_log[1]["agent_name"] == "summarizer_agent"
 
     @pytest.mark.asyncio
-    async def test_http_timeout_handling(self, stub_server, telemetry_manager_without_phoenix):
+    async def test_http_timeout_handling(
+        self, stub_server, telemetry_manager_without_phoenix
+    ):
         """Stub delays response beyond task timeout → orchestrator handles gracefully."""
         _slow_agents["search_agent"] = 5.0  # 5 second delay
 
@@ -376,8 +458,12 @@ class TestOrchestratorHttpPipeline:
         }
 
         with (
-            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent") as mock_routing_cls,
-            patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"),
+            patch(
+                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+            ) as mock_routing_cls,
+            patch(
+                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+            ),
         ):
             mock_routing_cls.return_value = Mock()
 
@@ -390,9 +476,16 @@ class TestOrchestratorHttpPipeline:
 
             orch.workflow_planner = Mock()
             orch.workflow_planner.forward = Mock(
-                return_value=_make_planner_result([
-                    {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
-                ])
+                return_value=_make_planner_result(
+                    [
+                        {
+                            "task_id": "t1",
+                            "agent": "search_agent",
+                            "query": "test",
+                            "dependencies": [],
+                        },
+                    ]
+                )
             )
 
             # Zero retries to avoid waiting
@@ -422,9 +515,16 @@ class TestConversationAwareOrchestration:
     async def test_conversation_history_accepted(self, orchestrator):
         """process_complex_query accepts conversation_history without error."""
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "show more", "dependencies": []},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "show more",
+                        "dependencies": [],
+                    },
+                ]
+            )
         )
 
         history = [
@@ -444,9 +544,16 @@ class TestConversationAwareOrchestration:
     async def test_conversation_history_none_works(self, orchestrator):
         """process_complex_query works when conversation_history is not provided."""
         orchestrator.workflow_planner.forward = Mock(
-            return_value=_make_planner_result([
-                {"task_id": "t1", "agent": "search_agent", "query": "test", "dependencies": []},
-            ])
+            return_value=_make_planner_result(
+                [
+                    {
+                        "task_id": "t1",
+                        "agent": "search_agent",
+                        "query": "test",
+                        "dependencies": [],
+                    },
+                ]
+            )
         )
 
         result = await orchestrator.process_complex_query(

@@ -430,7 +430,7 @@ class EmbeddingIntegrityTester:
         # Export each slice
         for slice_id in range(num_slices):
             print(
-                f"📥 Exporting slice {slice_id}/{num_slices-1}...", end="", flush=True
+                f"📥 Exporting slice {slice_id}/{num_slices - 1}...", end="", flush=True
             )
 
             slice_file = output_dir / f"slice_{slice_id}.jsonl"

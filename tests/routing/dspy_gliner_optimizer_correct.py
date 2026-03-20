@@ -7,7 +7,6 @@ This shows what DSPy MIPROv2 actually optimizes:
 - BUT the logic for converting GLiNER entities to routing decisions
 """
 
-
 import dspy
 
 

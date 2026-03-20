@@ -71,6 +71,7 @@ def _make_httpx_mock(response_factory):
     Args:
         response_factory: callable(url, json) -> dict to return as JSON response
     """
+
     async def mock_post(url, json=None, **kwargs):
         resp = Mock()
         resp.raise_for_status = Mock()
@@ -115,7 +116,9 @@ class TestA2APipelineFlow:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
+            result = await orchestrator._process_impl(
+                OrchestratorInput(query="ML videos")
+            )
 
         assert isinstance(result, OrchestratorOutput)
         assert len(result.plan_steps) == 2
@@ -182,7 +185,9 @@ class TestRegistryDiscovery:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            await orchestrator._process_impl(OrchestratorInput(query="machine learning"))
+            await orchestrator._process_impl(
+                OrchestratorInput(query="machine learning")
+            )
 
         # Verify registry was consulted
         mock_registry.get_agent.assert_called()
@@ -229,7 +234,9 @@ class TestParallelExecution:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            result = await orchestrator._process_impl(OrchestratorInput(query="ML videos"))
+            result = await orchestrator._process_impl(
+                OrchestratorInput(query="ML videos")
+            )
 
         # Steps 0,1 parallel (no deps), step 2 depends on 0,1, step 3 depends on 2
         assert result.plan_steps[0]["depends_on"] == []
@@ -256,7 +263,9 @@ class TestParallelExecution:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            result = await orchestrator._process_impl(OrchestratorInput(query="test query"))
+            result = await orchestrator._process_impl(
+                OrchestratorInput(query="test query")
+            )
 
         assert len(result.agent_results) == 4
         assert all(
@@ -374,17 +383,14 @@ class TestConversationHistory:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            await orchestrator._process_impl(
-                OrchestratorInput(query="search for dogs")
-            )
+            await orchestrator._process_impl(OrchestratorInput(query="search for dogs"))
 
         assert captured_kwargs["conversation_context"] == ""
 
     def test_format_conversation_context_truncates(self, orchestrator):
         """_format_conversation_context truncates to last 5 turns, 200 chars each."""
         history = [
-            {"role": "user", "content": f"Turn {i}: {'x' * 300}"}
-            for i in range(10)
+            {"role": "user", "content": f"Turn {i}: {'x' * 300}"} for i in range(10)
         ]
 
         result = orchestrator._format_conversation_context(history)

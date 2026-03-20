@@ -399,11 +399,21 @@ class BackendProfileConfig:
     extra_config: Dict[str, Any] = field(default_factory=dict)
 
     # Keys handled by named fields (everything else goes into extra_config)
-    _KNOWN_KEYS = frozenset({
-        "type", "description", "schema_name", "embedding_model",
-        "pipeline_config", "strategies", "embedding_type", "schema_config",
-        "model_specific", "process_type", "model_loader",
-    })
+    _KNOWN_KEYS = frozenset(
+        {
+            "type",
+            "description",
+            "schema_name",
+            "embedding_model",
+            "pipeline_config",
+            "strategies",
+            "embedding_type",
+            "schema_config",
+            "model_specific",
+            "process_type",
+            "model_loader",
+        }
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, preserving extra fields like semantic_model."""
@@ -433,9 +443,7 @@ class BackendProfileConfig:
         cls, profile_name: str, data: Dict[str, Any]
     ) -> "BackendProfileConfig":
         """Create from dictionary, capturing unknown keys in extra_config."""
-        extra = {
-            k: v for k, v in data.items() if k not in cls._KNOWN_KEYS
-        }
+        extra = {k: v for k, v in data.items() if k not in cls._KNOWN_KEYS}
         return cls(
             profile_name=profile_name,
             type=data.get("type", "video"),
@@ -854,5 +862,3 @@ class SyntheticGeneratorConfig:
     ) -> Optional[OptimizerGenerationConfig]:
         """Get configuration for a specific optimizer"""
         return self.optimizer_configs.get(optimizer_type)
-
-

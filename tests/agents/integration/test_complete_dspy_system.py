@@ -506,9 +506,9 @@ class TestComposableModulePathSelection:
         assert isinstance(result.query_variants, list)
 
         # With real Ollama, composable module should generate variants
-        assert (
-            len(result.query_variants) >= 1
-        ), f"Real Ollama should generate query variants, got: {result.query_variants}"
+        assert len(result.query_variants) >= 1, (
+            f"Real Ollama should generate query variants, got: {result.query_variants}"
+        )
 
         # Verify variant structure
         for variant in result.query_variants:
@@ -735,7 +735,9 @@ class TestAdvancedRoutingOptimizerWithRealLLM:
         )
         return AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             config=config,
             telemetry_provider=real_telemetry_provider,
         )
@@ -1076,7 +1078,9 @@ class TestFullLearningPipelineIntegration:
         dspy.configure(lm=None)
 
     @pytest.mark.asyncio
-    async def test_query_analysis_feeds_learning_pipeline(self, tmp_path, real_telemetry_provider):
+    async def test_query_analysis_feeds_learning_pipeline(
+        self, tmp_path, real_telemetry_provider
+    ):
         """
         Full loop: analyze query, record to SIMBA + optimizer, check learning.
 
@@ -1117,7 +1121,9 @@ class TestFullLearningPipelineIntegration:
 
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=_TEST_TENANT,
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             config=AdvancedOptimizerConfig(
                 min_experiences_for_training=3,
                 update_frequency=3,
@@ -1385,7 +1391,9 @@ class TestSIMBACompileWithRealLLM:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_simba_compile_skipped_below_threshold(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_simba_compile_skipped_below_threshold(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """Patterns below quality threshold (avg_improvement < 0.6) are excluded from training."""
         from cogniverse_agents.routing.simba_query_enhancer import (
             SIMBAConfig,
@@ -1444,7 +1452,9 @@ class TestForceOptimizerSelection:
         yield lm
         dspy.configure(lm=None)
 
-    async def _create_optimizer_with_force(self, tmp_path, force_optimizer_name, telemetry_provider):
+    async def _create_optimizer_with_force(
+        self, tmp_path, force_optimizer_name, telemetry_provider
+    ):
         """Helper to create AdvancedRoutingOptimizer with force_optimizer and trigger lazy init."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1460,7 +1470,9 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id=f"test_force_{force_optimizer_name}",
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             config=config,
             telemetry_provider=telemetry_provider,
         )
@@ -1490,9 +1502,13 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_simba_selects_simba(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_force_simba_selects_simba(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """force_optimizer='simba' → _select_optimizer returns SIMBA."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "simba", real_telemetry_provider)
+        optimizer = await self._create_optimizer_with_force(
+            tmp_path, "simba", real_telemetry_provider
+        )
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1500,9 +1516,13 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_gepa_selects_gepa(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_force_gepa_selects_gepa(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """force_optimizer='gepa' → _select_optimizer returns GEPA."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "gepa", real_telemetry_provider)
+        optimizer = await self._create_optimizer_with_force(
+            tmp_path, "gepa", real_telemetry_provider
+        )
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1510,9 +1530,13 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_mipro_selects_mipro(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_force_mipro_selects_mipro(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """force_optimizer='mipro' → _select_optimizer returns MIPROv2."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "mipro", real_telemetry_provider)
+        optimizer = await self._create_optimizer_with_force(
+            tmp_path, "mipro", real_telemetry_provider
+        )
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1520,9 +1544,13 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_bootstrap_selects_bootstrap(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_force_bootstrap_selects_bootstrap(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """force_optimizer='bootstrap' → _select_optimizer returns BootstrapFewShot."""
-        optimizer = await self._create_optimizer_with_force(tmp_path, "bootstrap", real_telemetry_provider)
+        optimizer = await self._create_optimizer_with_force(
+            tmp_path, "bootstrap", real_telemetry_provider
+        )
         assert optimizer.advanced_optimizer is not None
 
         selected_opt, name = optimizer.advanced_optimizer._select_optimizer(10)
@@ -1530,7 +1558,9 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_adaptive_selects_best_for_dataset_size(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_adaptive_selects_best_for_dataset_size(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """Without force_optimizer, adaptive strategy selects based on dataset size."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1547,7 +1577,9 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_adaptive",
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             config=config,
             telemetry_provider=real_telemetry_provider,
         )
@@ -1586,7 +1618,9 @@ class TestForceOptimizerSelection:
 
     @skip_if_no_ollama
     @pytest.mark.asyncio
-    async def test_force_optimizer_compile_end_to_end(self, dspy_lm, tmp_path, real_telemetry_provider):
+    async def test_force_optimizer_compile_end_to_end(
+        self, dspy_lm, tmp_path, real_telemetry_provider
+    ):
         """Force bootstrap optimizer and verify compile produces optimized policy."""
         from cogniverse_agents.routing.advanced_optimizer import (
             AdvancedOptimizerConfig,
@@ -1602,7 +1636,9 @@ class TestForceOptimizerSelection:
         )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test_compile_e2e",
-            llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+            llm_config=LLMEndpointConfig(
+                model="ollama/gemma3:4b", api_base="http://localhost:11434"
+            ),
             config=config,
             telemetry_provider=real_telemetry_provider,
         )

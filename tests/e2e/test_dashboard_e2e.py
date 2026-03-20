@@ -47,8 +47,6 @@ def _nav(page):
     wait_for_streamlit(page)
 
 
-
-
 class TestSidebarAndNavigation:
     """Verify sidebar tenant input and top-level tab navigation."""
 
@@ -83,24 +81,17 @@ class TestSidebarAndNavigation:
         # the tenant in session state. Check DOM value, React fiber
         # state, and page body text for tenant ID presence.
         sidebar = page.locator('[data-testid="stSidebar"]')
-        tenant_input = sidebar.locator(
-            '[data-testid="stTextInput"] input'
-        ).first
-        value = tenant_input.evaluate(
-            "el => el.value || ''"
-        )
+        tenant_input = sidebar.locator('[data-testid="stTextInput"] input').first
+        value = tenant_input.evaluate("el => el.value || ''")
         body_text = page.inner_text("body")
         assert TENANT_ID in value or TENANT_ID in body_text, (
-            f"Tenant should persist after tab switch. "
-            f"Input value: '{value}'"
+            f"Tenant should persist after tab switch. Input value: '{value}'"
         )
 
     def test_top_level_tabs_present(self, page):
         _nav(page)
         tabs = page.locator('button[role="tab"]')
-        tab_texts = [
-            tabs.nth(i).inner_text().lower() for i in range(tabs.count())
-        ]
+        tab_texts = [tabs.nth(i).inner_text().lower() for i in range(tabs.count())]
         assert any("user" in t for t in tab_texts), (
             f"User tab missing, tabs: {tab_texts}"
         )
@@ -118,8 +109,6 @@ class TestSidebarAndNavigation:
         assert "agent" in sidebar_text or "status" in sidebar_text, (
             f"Sidebar should show agent status, got: {sidebar_text[:200]}"
         )
-
-
 
 
 class TestInteractiveSearch:
@@ -174,9 +163,7 @@ class TestInteractiveSearch:
         )
 
         # Result expanders with actual result content (scores, video IDs)
-        result_expanders = page.locator(
-            '[data-testid="stExpander"]:has-text("score")'
-        )
+        result_expanders = page.locator('[data-testid="stExpander"]:has-text("score")')
         assert result_expanders.count() > 0, (
             "Search results must render as expanders with score information"
         )
@@ -234,8 +221,6 @@ class TestInteractiveSearch:
         # block, so clicking Save triggers a rerun where search_button=False,
         # causing the results block (and annotation callback) to not execute.
         # This is documented in CLAUDE.local.md as an architectural limitation.
-
-
 
 
 class TestMultiModalChat:
@@ -330,11 +315,11 @@ class TestMultiModalChat:
         )
 
         # At least one agent response should be visible (routed / search result)
-        assert "routing_agent" in body_text or "search_agent" in body_text or "routed" in body_text, (
-            "At least one agent response must be visible in the conversation"
-        )
-
-
+        assert (
+            "routing_agent" in body_text
+            or "search_agent" in body_text
+            or "routed" in body_text
+        ), "At least one agent response must be visible in the conversation"
 
 
 class TestOptimizationOverview:
@@ -365,7 +350,10 @@ class TestOptimizationOverview:
             )
         else:
             # If no metrics, must show the optimization workflow or history sections
-            assert "optimization workflow" in body_text or "recent optimization" in body_text, (
+            assert (
+                "optimization workflow" in body_text
+                or "recent optimization" in body_text
+            ), (
                 "Overview must show optimization metrics or workflow section, "
                 f"got: {body_text[:300]}"
             )
@@ -411,18 +399,14 @@ class TestAnnotationHarvesting:
         )
 
         fetch_btn = page.locator('button:has-text("Fetch")')
-        assert fetch_btn.count() > 0, (
-            "Fetch Search Results button should be present"
-        )
+        assert fetch_btn.count() > 0, "Fetch Search Results button should be present"
 
         click_button(page, "Fetch")
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Exact alert text: "Fetched N search results" or "No results returned"
-        fetched_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Fetched")'
-        )
+        fetched_alert = page.locator('[data-testid="stAlert"]:has-text("Fetched")')
         no_results = page.locator(
             '[data-testid="stAlert"]:has-text("No results returned")'
         )
@@ -441,8 +425,6 @@ class TestAnnotationHarvesting:
         )
 
 
-
-
 class TestGoldenDataset:
     """Scenario 10: Build golden dataset from annotations."""
 
@@ -457,15 +439,11 @@ class TestGoldenDataset:
 
         # Verify Lookback Days number input
         number_inputs = page.locator('[data-testid="stNumberInput"]')
-        assert number_inputs.count() > 0, (
-            "Lookback Days number input should be present"
-        )
+        assert number_inputs.count() > 0, "Lookback Days number input should be present"
 
         # Verify Build button
         build_btn = page.locator('button:has-text("Build")')
-        assert build_btn.count() > 0, (
-            "Build Golden Dataset button should be present"
-        )
+        assert build_btn.count() > 0, "Build Golden Dataset button should be present"
 
     def test_build_golden_dataset_execution(self, page):
         """Click Build Golden Dataset and verify it produces a result.
@@ -490,12 +468,8 @@ class TestGoldenDataset:
         built_alert = page.locator(
             '[data-testid="stAlert"]:has-text("Built golden dataset")'
         )
-        no_data_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("No annotated")'
-        )
-        error_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Failed")'
-        )
+        no_data_alert = page.locator('[data-testid="stAlert"]:has-text("No annotated")')
+        error_alert = page.locator('[data-testid="stAlert"]:has-text("Failed")')
 
         # System errors are test failures — infrastructure must be working
         if error_alert.count() > 0:
@@ -509,8 +483,6 @@ class TestGoldenDataset:
             "Build must produce 'Built golden dataset with N queries' or "
             "'No annotated queries found' — system should work even with no data"
         )
-
-
 
 
 class TestSyntheticDataAndApproval:
@@ -559,18 +531,14 @@ class TestSyntheticDataAndApproval:
         connect_error = page.locator(
             '[data-testid="stAlert"]:has-text("Cannot connect")'
         )
-        timeout_error = page.locator(
-            '[data-testid="stAlert"]:has-text("timed out")'
-        )
+        timeout_error = page.locator('[data-testid="stAlert"]:has-text("timed out")')
         if connect_error.count() > 0:
             pytest.fail("Synthetic generation failed: cannot connect to runtime API")
         if timeout_error.count() > 0:
             pytest.fail("Synthetic generation failed: request timed out")
 
         # Success must show "Generated N examples" or example data on page
-        success_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Generated")'
-        )
+        success_alert = page.locator('[data-testid="stAlert"]:has-text("Generated")')
         body_text = page.inner_text("body").lower()
         has_examples = "example" in body_text and "confidence" in body_text
 
@@ -616,8 +584,6 @@ class TestSyntheticDataAndApproval:
         assert "synthetic" in body_text and "generation" in body_text, (
             "Synthetic Data tab must show 'Synthetic Data Generation' header"
         )
-
-
 
 
 class TestModuleOptimization:
@@ -687,16 +653,12 @@ class TestModuleOptimization:
         success = page.locator(
             '[data-testid="stAlert"]:has-text("submitted successfully")'
         )
-        kubectl_warning = page.locator(
-            '[data-testid="stAlert"]:has-text("kubectl")'
-        )
+        kubectl_warning = page.locator('[data-testid="stAlert"]:has-text("kubectl")')
         no_dataset = page.locator(
             '[data-testid="stAlert"]:has-text("No dataset"), '
             '[data-testid="stAlert"]:has-text("training data")'
         )
-        upload_prompt = page.locator(
-            '[data-testid="stAlert"]:has-text("Upload")'
-        )
+        upload_prompt = page.locator('[data-testid="stAlert"]:has-text("Upload")')
 
         # These are all valid outcomes (system works but prerequisites vary)
         assert (
@@ -708,8 +670,6 @@ class TestModuleOptimization:
             "Module optimization must show: success, kubectl warning, "
             "or no-dataset prompt — not a silent failure"
         )
-
-
 
 
 class TestRerankingAndProfileOptimization:
@@ -726,9 +686,7 @@ class TestRerankingAndProfileOptimization:
 
         body_text = page.inner_text("body").lower()
         # Reranking tab must show "Current Annotations" metric and Train button
-        assert "reranking" in body_text, (
-            "Reranking tab must show 'Reranking' in header"
-        )
+        assert "reranking" in body_text, "Reranking tab must show 'Reranking' in header"
 
         # "Current Annotations" metric is always shown
         metrics = page.locator('[data-testid="stMetric"]')
@@ -742,9 +700,7 @@ class TestRerankingAndProfileOptimization:
 
         # Train Reranker button MUST exist
         train_btn = page.locator('button:has-text("Train")')
-        assert train_btn.count() > 0, (
-            "Reranking tab must have Train Reranker button"
-        )
+        assert train_btn.count() > 0, "Reranking tab must have Train Reranker button"
 
     def test_profile_selection_tab(self, page):
         _nav(page)
@@ -768,8 +724,6 @@ class TestRerankingAndProfileOptimization:
         )
 
 
-
-
 class TestTenantLifecycleDashboard:
     """Scenario 14: Create org + tenant, verify, delete via dashboard."""
 
@@ -781,15 +735,11 @@ class TestTenantLifecycleDashboard:
         page.wait_for_load_state("networkidle")
 
         # Verify sub-tabs exist
-        org_tab = page.locator(
-            'button[role="tab"]:has-text("Organizations")'
-        )
+        org_tab = page.locator('button[role="tab"]:has-text("Organizations")')
         create_org_tab = page.locator(
             'button[role="tab"]:has-text("Create Organization")'
         )
-        assert org_tab.count() > 0, (
-            "Organizations sub-tab should be present"
-        )
+        assert org_tab.count() > 0, "Organizations sub-tab should be present"
         assert create_org_tab.count() > 0, (
             "Create Organization sub-tab should be present"
         )
@@ -816,9 +766,7 @@ class TestTenantLifecycleDashboard:
         fill_input(inputs.nth(1), f"E2E Dashboard Org {org_id}")
 
         # Create Organization button MUST exist
-        submit_btn = page.locator(
-            'button:has-text("Create Organization")'
-        )
+        submit_btn = page.locator('button:has-text("Create Organization")')
         assert submit_btn.count() > 0, (
             "Create Organization submit button must be present"
         )
@@ -837,9 +785,7 @@ class TestTenantLifecycleDashboard:
         # st.rerun() clears transient alerts — authoritative check via API
         page.wait_for_timeout(3_000)
 
-        verify_resp = httpx.get(
-            f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0
-        )
+        verify_resp = httpx.get(f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0)
 
         # Streamlit form submission via headless Playwright is unreliable —
         # JS-filled values may not propagate to Streamlit's state manager.
@@ -868,9 +814,7 @@ class TestTenantLifecycleDashboard:
             assert org_data["org_id"] == org_id
 
         # Cleanup via API
-        httpx.delete(
-            f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0
-        )
+        httpx.delete(f"{RUNTIME}/admin/organizations/{org_id}", timeout=10.0)
 
     def test_create_tenant_sub_tab(self, page):
         _nav(page)
@@ -883,15 +827,11 @@ class TestTenantLifecycleDashboard:
 
         # Verify Create Tenant form widgets
         body_text = page.inner_text("body").lower()
-        assert "tenant" in body_text, (
-            "Create Tenant sub-tab should mention 'tenant'"
-        )
+        assert "tenant" in body_text, "Create Tenant sub-tab should mention 'tenant'"
         inputs = page.locator('[data-testid="stTextInput"] input')
         selectboxes = page.locator('[data-testid="stSelectbox"]')
         has_form = inputs.count() > 0 or selectboxes.count() > 0
-        assert has_form, (
-            "Create Tenant tab should have input fields or selectboxes"
-        )
+        assert has_form, "Create Tenant tab should have input fields or selectboxes"
 
     def test_tenants_list_sub_tab(self, page):
         _nav(page)
@@ -903,16 +843,12 @@ class TestTenantLifecycleDashboard:
         page.wait_for_load_state("networkidle")
 
         body_text = page.inner_text("body").lower()
-        assert "tenant" in body_text, (
-            "Tenants list tab must mention 'tenant'"
-        )
+        assert "tenant" in body_text, "Tenants list tab must mention 'tenant'"
 
         # Must show either tenant list (selectbox + expanders) or "No tenants" info
         selectboxes = page.locator('[data-testid="stSelectbox"]')
         expanders = page.locator('[data-testid="stExpander"]')
-        no_tenants = page.locator(
-            '[data-testid="stAlert"]:has-text("No tenants")'
-        )
+        no_tenants = page.locator('[data-testid="stAlert"]:has-text("No tenants")')
         refresh_btn = page.locator('button:has-text("Refresh")')
         assert (
             selectboxes.count() > 0
@@ -923,8 +859,6 @@ class TestTenantLifecycleDashboard:
             "Tenants tab must show org selector, tenant expanders, "
             "'No tenants' message, or Refresh button"
         )
-
-
 
 
 class TestConfigManagement:
@@ -972,9 +906,7 @@ class TestConfigManagement:
 
         # Verify Export button and click it to trigger export
         export_btn = page.locator('button:has-text("Export")')
-        assert export_btn.count() > 0, (
-            "Export Configurations button should be present"
-        )
+        assert export_btn.count() > 0, "Export Configurations button should be present"
 
         # Click Export and verify outcome
         click_button(page, "Export")
@@ -982,12 +914,8 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # Export produces: "Exported N configurations" success alert
-        export_success = page.locator(
-            '[data-testid="stAlert"]:has-text("Exported")'
-        )
-        export_error = page.locator(
-            '[data-testid="stAlert"]:has-text("Export failed")'
-        )
+        export_success = page.locator('[data-testid="stAlert"]:has-text("Exported")')
+        export_error = page.locator('[data-testid="stAlert"]:has-text("Export failed")')
         download_btn = page.locator('[data-testid="stDownloadButton"]')
 
         if export_error.count() > 0:
@@ -1014,9 +942,7 @@ class TestConfigManagement:
 
         body_text = page.inner_text("body").lower()
         # Agent Configs has a Save button and agent name input/selectbox
-        assert "agent" in body_text, (
-            "Agent Configs tab must mention 'agent' in content"
-        )
+        assert "agent" in body_text, "Agent Configs tab must mention 'agent' in content"
         save_btn = page.locator('button:has-text("Save")')
         inputs = page.locator('[data-testid="stTextInput"]')
         selectboxes = page.locator('[data-testid="stSelectbox"]')
@@ -1035,9 +961,7 @@ class TestConfigManagement:
 
         # Routing Config must have a Save Routing Configuration button
         save_btn = page.locator('button:has-text("Save")')
-        assert save_btn.count() > 0, (
-            "Routing Config must have Save button"
-        )
+        assert save_btn.count() > 0, "Routing Config must have Save button"
         body_text = page.inner_text("body").lower()
         assert "routing" in body_text, (
             "Routing Config tab must mention 'routing' in content"
@@ -1054,9 +978,7 @@ class TestConfigManagement:
 
         # Telemetry Config must have Save button and mention telemetry/phoenix
         save_btn = page.locator('button:has-text("Save")')
-        assert save_btn.count() > 0, (
-            "Telemetry Config must have Save button"
-        )
+        assert save_btn.count() > 0, "Telemetry Config must have Save button"
         body_text = page.inner_text("body").lower()
         assert "telemetry" in body_text or "phoenix" in body_text, (
             "Telemetry Config must mention 'telemetry' or 'phoenix'"
@@ -1093,9 +1015,7 @@ class TestConfigManagement:
 
         # History tab MUST have Scope selectbox for filtering
         selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert selectboxes.count() > 0, (
-            "History tab must have Scope selectbox"
-        )
+        assert selectboxes.count() > 0, "History tab must have Scope selectbox"
 
         body_text = page.inner_text("body").lower()
         # Must show history-specific content — not just generic page text
@@ -1108,14 +1028,10 @@ class TestConfigManagement:
         rollback_btn = page.locator('button:has-text("Rollback")')
         no_history = page.locator('[data-testid="stAlert"]:has-text("No history")')
         assert (
-            dataframes.count() > 0
-            or rollback_btn.count() > 0
-            or no_history.count() > 0
+            dataframes.count() > 0 or rollback_btn.count() > 0 or no_history.count() > 0
         ), (
             "History must show version dataframe, rollback button, or 'No history' message"
         )
-
-
 
 
 class TestMemoryLifecycle:
@@ -1153,9 +1069,7 @@ class TestMemoryLifecycle:
 
         # Target the "Memory Content" textarea specifically (not Chat's textarea)
         memory_textarea = page.locator('textarea[aria-label="Memory Content"]')
-        assert memory_textarea.count() > 0, (
-            "Memory Content text area should be present"
-        )
+        assert memory_textarea.count() > 0, "Memory Content text area should be present"
         fill_textarea(memory_textarea, memory_text)
 
         assert page.locator('button:has-text("Add Memory")').count() > 0, (
@@ -1166,12 +1080,8 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Memory add alerts persist (no st.rerun) — assert exact feedback
-        success = page.locator(
-            '[data-testid="stAlert"]:has-text("added successfully")'
-        )
-        error = page.locator(
-            '[data-testid="stAlert"]:has-text("Failed")'
-        )
+        success = page.locator('[data-testid="stAlert"]:has-text("added successfully")')
+        error = page.locator('[data-testid="stAlert"]:has-text("Failed")')
         assert success.count() > 0 or error.count() > 0, (
             "Memory add must show 'added successfully' or 'Failed' alert — "
             f"success={success.count()}, error={error.count()}"
@@ -1183,9 +1093,7 @@ class TestMemoryLifecycle:
 
         # Target the "Search Query" textarea specifically
         search_textarea = page.locator('textarea[aria-label="Search Query"]')
-        assert search_textarea.count() > 0, (
-            "Search Query text area should be present"
-        )
+        assert search_textarea.count() > 0, "Search Query text area should be present"
         fill_textarea(search_textarea, "E2E test memory")
 
         assert page.locator('button:has-text("Search")').count() > 0, (
@@ -1196,9 +1104,7 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Memory search alerts persist (no st.rerun) — assert specific feedback
-        found_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Found")'
-        )
+        found_alert = page.locator('[data-testid="stAlert"]:has-text("Found")')
         no_results = page.locator(
             '[data-testid="stAlert"]:has-text("No memories found")'
         )
@@ -1212,9 +1118,11 @@ class TestMemoryLifecycle:
             expanders = page.locator('[data-testid="stExpander"]')
             dataframes = page.locator('[data-testid="stDataFrame"]')
             json_blocks = page.locator('[data-testid="stJson"]')
-            assert expanders.count() > 0 or dataframes.count() > 0 or json_blocks.count() > 0, (
-                "Found memories must be rendered as expanders, dataframe, or JSON blocks"
-            )
+            assert (
+                expanders.count() > 0
+                or dataframes.count() > 0
+                or json_blocks.count() > 0
+            ), "Found memories must be rendered as expanders, dataframe, or JSON blocks"
 
     def test_view_all_memories(self, page):
         _nav(page)
@@ -1226,22 +1134,16 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         load_btn = page.locator('button:has-text("Load")')
-        assert load_btn.count() > 0, (
-            "View All tab should have Load All Memories button"
-        )
+        assert load_btn.count() > 0, "View All tab should have Load All Memories button"
         click_button(page, "Load")
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Alerts persist (no st.rerun) — check for specific outcomes
-        found_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Found")'
-        )
+        found_alert = page.locator('[data-testid="stAlert"]:has-text("Found")')
         dataframes = page.locator('[data-testid="stDataFrame"]')
         expanders = page.locator('[data-testid="stExpander"]')
-        no_memories = page.locator(
-            '[data-testid="stAlert"]:has-text("No memories")'
-        )
+        no_memories = page.locator('[data-testid="stAlert"]:has-text("No memories")')
         assert (
             found_alert.count() > 0
             or dataframes.count() > 0
@@ -1264,15 +1166,11 @@ class TestMemoryLifecycle:
 
         # Verify Memory ID input and Delete button present
         inputs = page.locator('[data-testid="stTextInput"] input')
-        assert inputs.count() > 0, (
-            "Delete Memory tab should have Memory ID text input"
-        )
+        assert inputs.count() > 0, "Delete Memory tab should have Memory ID text input"
         delete_btn = page.locator('button:has-text("Delete")')
         assert delete_btn.count() > 0, (
             "Delete Memory tab should have Delete Memory button"
         )
-
-
 
 
 class TestMonitoringDashboard:
@@ -1342,9 +1240,11 @@ class TestMonitoringDashboard:
         assert selectboxes.count() > 0 or not_available.count() > 0, (
             "Evaluation tab must show dataset selector or 'module not available' message"
         )
-        assert "evaluation" in body_text or "experiment" in body_text or not_available.count() > 0, (
-            "Evaluation tab must mention 'evaluation' or 'experiment' in content"
-        )
+        assert (
+            "evaluation" in body_text
+            or "experiment" in body_text
+            or not_available.count() > 0
+        ), "Evaluation tab must mention 'evaluation' or 'experiment' in content"
 
     def test_routing_evaluation_tab(self, page):
         self._goto_monitoring(page)
@@ -1365,9 +1265,11 @@ class TestMonitoringDashboard:
             number_inputs = page.locator('[data-testid="stNumberInput"]')
             selectboxes = page.locator('[data-testid="stSelectbox"]')
             metrics = page.locator('[data-testid="stMetric"]')
-            assert number_inputs.count() > 0 or selectboxes.count() > 0 or metrics.count() > 0, (
-                "Routing Evaluation must have lookback input, selectbox, or metrics"
-            )
+            assert (
+                number_inputs.count() > 0
+                or selectboxes.count() > 0
+                or metrics.count() > 0
+            ), "Routing Evaluation must have lookback input, selectbox, or metrics"
 
     def test_orchestration_tab(self, page):
         self._goto_monitoring(page)
@@ -1417,9 +1319,7 @@ class TestMonitoringDashboard:
             or "latency" in body_text
             or "modality" in body_text
             or metrics.count() > 0
-        ), (
-            "Multi-Modal Performance must show performance content or metrics"
-        )
+        ), "Multi-Modal Performance must show performance content or metrics"
 
         # If metrics are present, verify they are performance-specific
         if metrics.count() > 0:

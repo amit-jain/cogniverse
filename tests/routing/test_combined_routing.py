@@ -436,7 +436,10 @@ class CombinedRoutingTester:
         return gliner_queries
 
     async def test_query_with_gliner_model(
-        self, analyzer: "QueryAnalyzer", query_tuple: tuple, model_name: str  # type: ignore  # noqa: F821
+        self,
+        analyzer: "QueryAnalyzer",
+        query_tuple: tuple,
+        model_name: str,  # type: ignore  # noqa: F821
     ) -> TestResult:
         """Test a single query with GLiNER model."""
         query, expected_video, expected_text, expected_temporal = query_tuple

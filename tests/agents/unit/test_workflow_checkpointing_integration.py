@@ -214,7 +214,8 @@ class TestCheckpointCreation:
         mock_checkpoint_storage,
         checkpoint_config,
         mock_a2a_client,
-        mock_routing_agent, mock_telemetry_manager,
+        mock_routing_agent,
+        mock_telemetry_manager,
     ):
         """Test that checkpoints are created after each phase completes"""
         orchestrator = MultiAgentOrchestrator(
@@ -225,7 +226,6 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-
 
         # Execute a workflow
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
@@ -264,7 +264,8 @@ class TestCheckpointCreation:
         mock_checkpoint_storage,
         checkpoint_config,
         mock_a2a_client,
-        mock_routing_agent, mock_telemetry_manager,
+        mock_routing_agent,
+        mock_telemetry_manager,
     ):
         """Test that checkpoints contain correct task states"""
         orchestrator = MultiAgentOrchestrator(
@@ -275,7 +276,6 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -303,7 +303,9 @@ class TestCheckpointCreation:
             assert task_state.agent_name == "search_agent"
 
     @pytest.mark.asyncio
-    async def test_checkpointing_disabled(self, mock_a2a_client, mock_routing_agent, mock_telemetry_manager):
+    async def test_checkpointing_disabled(
+        self, mock_a2a_client, mock_routing_agent, mock_telemetry_manager
+    ):
         """Test that no checkpoints are saved when disabled"""
         disabled_config = CheckpointConfig(enabled=False)
         mock_storage = MockCheckpointStorage()
@@ -316,7 +318,6 @@ class TestCheckpointCreation:
             checkpoint_storage=mock_storage,
             enable_workflow_intelligence=False,
         )
-
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -358,7 +359,6 @@ class TestCheckpointCreation:
             checkpoint_storage=None,  # No storage configured
             enable_workflow_intelligence=False,
         )
-
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(
@@ -439,7 +439,6 @@ class TestWorkflowResume:
             enable_workflow_intelligence=False,
         )
 
-
         # Resume the workflow
         result = await orchestrator.process_complex_query(
             "Resume test", resume_from_workflow_id="wf_resume_1"
@@ -494,7 +493,6 @@ class TestWorkflowResume:
             enable_workflow_intelligence=False,
         )
 
-
         await orchestrator.process_complex_query(
             "Supersede test", resume_from_workflow_id="wf_supersede"
         )
@@ -507,7 +505,11 @@ class TestWorkflowResume:
 
     @pytest.mark.asyncio
     async def test_resume_without_checkpoint_returns_error(
-        self, mock_checkpoint_storage, checkpoint_config, mock_routing_agent, mock_telemetry_manager
+        self,
+        mock_checkpoint_storage,
+        checkpoint_config,
+        mock_routing_agent,
+        mock_telemetry_manager,
     ):
         """Test that resume fails gracefully when no checkpoint exists"""
         orchestrator = MultiAgentOrchestrator(
@@ -628,7 +630,11 @@ class TestCheckpointLevels:
 
     @pytest.mark.asyncio
     async def test_phase_level_checkpointing(
-        self, mock_checkpoint_storage, mock_a2a_client, mock_routing_agent, mock_telemetry_manager
+        self,
+        mock_checkpoint_storage,
+        mock_a2a_client,
+        mock_routing_agent,
+        mock_telemetry_manager,
     ):
         """Test phase-level checkpointing creates checkpoint after each phase"""
         config = CheckpointConfig(enabled=True, level=CheckpointLevel.PHASE)
@@ -641,7 +647,6 @@ class TestCheckpointLevels:
             checkpoint_storage=mock_checkpoint_storage,
             enable_workflow_intelligence=False,
         )
-
 
         with patch.object(orchestrator, "_plan_workflow") as mock_plan:
             workflow_plan = WorkflowPlan(

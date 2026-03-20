@@ -118,9 +118,9 @@ class TestRoutingToEnhancedSearchIntegration:
                             len(routing_decision.entities) > 0,
                             len(routing_decision.relationships) > 0,
                         ]
-                        assert any(
-                            enhancement_indicators
-                        ), f"No enhancement indicators found. Metadata: {routing_decision.metadata}"
+                        assert any(enhancement_indicators), (
+                            f"No enhancement indicators found. Metadata: {routing_decision.metadata}"
+                        )
 
     def test_orchestration_need_assessment_integration(
         self, mock_dependencies, telemetry_manager_without_phoenix
@@ -353,17 +353,21 @@ class TestEnhancedAgentComponentIntegration:
         import json as _json
         import uuid as _uuid
 
-        search_payload = _json.dumps({
-            "results": [
-                {"id": 1, "title": "Robot soccer championship", "score": 0.8},
-                {"id": 2, "title": "AI in sports", "score": 0.7},
-            ],
-            "confidence": 0.9,
-        })
-        summarize_payload = _json.dumps({
-            "summary": "Enhanced summary of robot soccer content",
-            "confidence": 0.85,
-        })
+        search_payload = _json.dumps(
+            {
+                "results": [
+                    {"id": 1, "title": "Robot soccer championship", "score": 0.8},
+                    {"id": 2, "title": "AI in sports", "score": 0.7},
+                ],
+                "confidence": 0.9,
+            }
+        )
+        summarize_payload = _json.dumps(
+            {
+                "summary": "Enhanced summary of robot soccer content",
+                "confidence": 0.85,
+            }
+        )
 
         def _make_a2a_response(text_payload: str) -> dict:
             """Wrap a text payload in a valid A2A JSON-RPC 2.0 response."""
@@ -389,11 +393,15 @@ class TestEnhancedAgentComponentIntegration:
             call_index["n"] += 1
             mock_resp = Mock()
             mock_resp.raise_for_status = Mock()
-            mock_resp.json = Mock(return_value=http_responses[idx % len(http_responses)])
+            mock_resp.json = Mock(
+                return_value=http_responses[idx % len(http_responses)]
+            )
             return mock_resp
 
         mock_http_client = AsyncMock()
-        mock_http_client.post = AsyncMock(side_effect=lambda *a, **kw: make_mock_response())
+        mock_http_client.post = AsyncMock(
+            side_effect=lambda *a, **kw: make_mock_response()
+        )
 
         with patch(
             "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
@@ -791,9 +799,9 @@ class TestRoutingEnhancementErrorHandlingIntegration:
                 )
 
                 # Should not crash and return expected number of results
-                assert (
-                    len(enhanced_results) == case["expected_count"]
-                ), f"Test case {i} failed"
+                assert len(enhanced_results) == case["expected_count"], (
+                    f"Test case {i} failed"
+                )
 
                 # All results should be valid EnhancedResult objects
                 for result in enhanced_results:
@@ -886,9 +894,9 @@ class TestRoutingEnhancementPerformanceIntegration:
         processing_time = end_time - start_time
 
         # Performance assertions
-        assert (
-            processing_time < 10.0
-        ), f"Large scale enhancement took too long: {processing_time:.2f}s"
+        assert processing_time < 10.0, (
+            f"Large scale enhancement took too long: {processing_time:.2f}s"
+        )
         assert len(enhanced_results) == 500
 
         # Verify enhancement quality isn't degraded (allow for different enhancement patterns)
@@ -906,9 +914,9 @@ class TestRoutingEnhancementPerformanceIntegration:
         total_enhancements = (
             enhanced_count + relevance_enhanced_count + entity_match_count
         )
-        assert (
-            total_enhancements > 0
-        ), f"No enhancements found: enhanced={enhanced_count}, relevance={relevance_enhanced_count}, entity_matches={entity_match_count}"
+        assert total_enhancements > 0, (
+            f"No enhancements found: enhanced={enhanced_count}, relevance={relevance_enhanced_count}, entity_matches={entity_match_count}"
+        )
 
         # Test statistics generation performance
         stats_start = time.time()
@@ -916,9 +924,9 @@ class TestRoutingEnhancementPerformanceIntegration:
         stats_end = time.time()
 
         stats_time = stats_end - stats_start
-        assert (
-            stats_time < 1.0
-        ), f"Statistics generation took too long: {stats_time:.2f}s"
+        assert stats_time < 1.0, (
+            f"Statistics generation took too long: {stats_time:.2f}s"
+        )
         assert stats["total_results"] == 500
 
     def test_concurrent_processing_simulation(self):
@@ -980,15 +988,15 @@ class TestRoutingEnhancementPerformanceIntegration:
         assert all(r["results_count"] == 20 for r in results)
 
         # Performance should be reasonable
-        assert (
-            total_time < 5.0
-        ), f"Concurrent processing took too long: {total_time:.2f}s"
+        assert total_time < 5.0, (
+            f"Concurrent processing took too long: {total_time:.2f}s"
+        )
 
         # Individual request times should be reasonable
         avg_request_time = sum(r["processing_time"] for r in results) / len(results)
-        assert (
-            avg_request_time < 1.0
-        ), f"Average request time too high: {avg_request_time:.2f}s"
+        assert avg_request_time < 1.0, (
+            f"Average request time too high: {avg_request_time:.2f}s"
+        )
 
     def test_memory_usage_stability(self):
         """Test memory usage doesn't grow unbounded during processing"""

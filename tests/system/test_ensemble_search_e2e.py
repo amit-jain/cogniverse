@@ -370,9 +370,9 @@ class TestEnsembleSearchEndToEnd:
         # VALIDATE: Average latency meets target (with mocked encoders)
         # Real target with real models is <700ms
         # With mocked encoders and real Vespa in E2E test, allow <1000ms (includes test overhead)
-        assert (
-            avg_latency < 1000
-        ), f"Average latency {avg_latency:.2f}ms exceeds 1000ms threshold"
+        assert avg_latency < 1000, (
+            f"Average latency {avg_latency:.2f}ms exceeds 1000ms threshold"
+        )
 
         logger.info(f"✅ Latency requirement validated: {avg_latency:.2f}ms < 1000ms")
 
@@ -451,9 +451,9 @@ class TestEnsembleSearchEndToEnd:
             assert len(video1_results) == 1, "test_video_1 should appear once"
 
             video1 = video1_results[0]
-            assert (
-                video1["num_profiles"] == 3
-            ), f"test_video_1 should appear in 3 profiles, got {video1['num_profiles']}"
+            assert video1["num_profiles"] == 3, (
+                f"test_video_1 should appear in 3 profiles, got {video1['num_profiles']}"
+            )
 
             # VALIDATE: test_video_0 appears in 2 profiles
             video0_results = [r for r in results if r["id"] == "test_video_0"]

@@ -335,7 +335,13 @@ class ProfileValidator:
         errors = []
 
         # Fields that cannot be updated
-        immutable_fields = {"schema_name", "embedding_model", "schema_config", "type", "model_loader"}
+        immutable_fields = {
+            "schema_name",
+            "embedding_model",
+            "schema_config",
+            "type",
+            "model_loader",
+        }
 
         for field in immutable_fields:
             if field in update_fields:

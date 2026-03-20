@@ -100,16 +100,22 @@ class TestA2AMultiTurnHistoryAccumulation:
 
         # Turn 2 — same context, same task
         resp2 = _send_message(
-            a2a_client, "now search for dog videos", context_id,
-            task_id=task_id, rpc_id=2,
+            a2a_client,
+            "now search for dog videos",
+            context_id,
+            task_id=task_id,
+            rpc_id=2,
         )
         text2 = _extract_response_text(resp2)
         assert text2, "Turn 2 should produce a response"
 
         # Turn 3 — same context, same task
         resp3 = _send_message(
-            a2a_client, "compare the two sets of results", context_id,
-            task_id=task_id, rpc_id=3,
+            a2a_client,
+            "compare the two sets of results",
+            context_id,
+            task_id=task_id,
+            rpc_id=3,
         )
         text3 = _extract_response_text(resp3)
         assert text3, "Turn 3 should produce a response"
@@ -132,8 +138,11 @@ class TestA2AMultiTurnHistoryAccumulation:
 
         # Context A turn 2: should NOT see dog history
         resp_a2 = _send_message(
-            a2a_client, "show me more of those", ctx_a,
-            task_id=task_a, rpc_id=12,
+            a2a_client,
+            "show me more of those",
+            ctx_a,
+            task_id=task_a,
+            rpc_id=12,
         )
         text_a2 = _extract_response_text(resp_a2)
         assert text_a2, "Context A turn 2 should produce a response"
@@ -156,8 +165,11 @@ class TestA2AMultiTurnHistoryAccumulation:
 
         # Turn 2 — should succeed (task is alive)
         resp2 = _send_message(
-            a2a_client, "filter by duration", context_id,
-            task_id=task_id, rpc_id=21,
+            a2a_client,
+            "filter by duration",
+            context_id,
+            task_id=task_id,
+            rpc_id=21,
         )
         assert "result" in resp2, "Turn 2 should succeed on alive task"
 
@@ -166,7 +178,9 @@ class TestA2AMultiTurnHistoryAccumulation:
         context_id = f"test-agent-hist-{uuid.uuid4()}"
 
         # Turn 1
-        resp1 = _send_message(a2a_client, "search for cat videos", context_id, rpc_id=30)
+        resp1 = _send_message(
+            a2a_client, "search for cat videos", context_id, rpc_id=30
+        )
         task_id = _extract_task_id(resp1)
 
         # The agent's response from turn 1 should be persisted in the task store.
@@ -174,8 +188,11 @@ class TestA2AMultiTurnHistoryAccumulation:
         # received history here, but we verify the round-trip works — the turn 2
         # response should succeed, meaning the executor correctly extracted history.
         resp2 = _send_message(
-            a2a_client, "show me more like those", context_id,
-            task_id=task_id, rpc_id=31,
+            a2a_client,
+            "show me more like those",
+            context_id,
+            task_id=task_id,
+            rpc_id=31,
         )
         text2 = _extract_response_text(resp2)
         assert text2, "Turn 2 should produce a response with history from turn 1"
@@ -185,7 +202,10 @@ class TestA2AMultiTurnHistoryAccumulation:
         context_id = f"test-no-rewrite-{uuid.uuid4()}"
 
         resp = _send_message(
-            a2a_client, "search for dog videos", context_id, rpc_id=40,
+            a2a_client,
+            "search for dog videos",
+            context_id,
+            rpc_id=40,
         )
         text = _extract_response_text(resp)
         assert text, "First turn should produce a response"
@@ -206,13 +226,18 @@ class TestA2AMultiTurnHistoryAccumulation:
         context_id = f"test-rewrite-e2e-{uuid.uuid4()}"
 
         # Turn 1: explicit query
-        resp1 = _send_message(a2a_client, "search for cat videos", context_id, rpc_id=50)
+        resp1 = _send_message(
+            a2a_client, "search for cat videos", context_id, rpc_id=50
+        )
         task_id = _extract_task_id(resp1)
 
         # Turn 2: anaphoric reference — should trigger query rewrite
         resp2 = _send_message(
-            a2a_client, "show me longer ones", context_id,
-            task_id=task_id, rpc_id=51,
+            a2a_client,
+            "show me longer ones",
+            context_id,
+            task_id=task_id,
+            rpc_id=51,
         )
         text2 = _extract_response_text(resp2)
         assert text2, "Turn 2 should produce a response"
@@ -224,8 +249,8 @@ class TestA2AMultiTurnHistoryAccumulation:
             if "rewritten_query" in result_data:
                 rewritten = result_data["rewritten_query"].lower()
                 # Rewritten query should reference the topic from turn 1
-                assert any(
-                    word in rewritten for word in ["cat", "video", "long"]
-                ), f"Rewritten query '{result_data['rewritten_query']}' should resolve references"
+                assert any(word in rewritten for word in ["cat", "video", "long"]), (
+                    f"Rewritten query '{result_data['rewritten_query']}' should resolve references"
+                )
         except json.JSONDecodeError:
             pass  # Non-JSON response is acceptable

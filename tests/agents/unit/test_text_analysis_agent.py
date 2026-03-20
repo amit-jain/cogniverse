@@ -231,9 +231,9 @@ class TestTextAnalysisEndpoints:
 
         assert response.status_code == 422  # FastAPI validation error
         error_detail = response.json()["detail"]
-        assert any(
-            error["loc"] == ["query", "tenant_id"] for error in error_detail
-        ), "Should have validation error for missing tenant_id"
+        assert any(error["loc"] == ["query", "tenant_id"] for error in error_detail), (
+            "Should have validation error for missing tenant_id"
+        )
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch(

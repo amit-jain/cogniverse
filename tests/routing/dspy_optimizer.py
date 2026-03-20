@@ -394,14 +394,14 @@ async def optimize_llm_with_dspy():
 
         for i, example in enumerate(test_examples):
             try:
-                print(f"   Testing example {i+1}: '{example.query}'")
+                print(f"   Testing example {i + 1}: '{example.query}'")
                 prediction = router(query=example.query)
                 score = metric(example, prediction)
                 baseline_score += score
                 successful_tests += 1
                 print(f"   Score: {score:.2f}")
             except Exception as e:
-                print(f"   ❌ Error in baseline example {i+1}: {e}")
+                print(f"   ❌ Error in baseline example {i + 1}: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -457,14 +457,14 @@ async def optimize_llm_with_dspy():
 
             for i, example in enumerate(test_examples):
                 try:
-                    print(f"   Testing optimized example {i+1}: '{example.query}'")
+                    print(f"   Testing optimized example {i + 1}: '{example.query}'")
                     prediction = optimized_router(query=example.query)
                     score = metric(example, prediction)
                     optimized_score += score
                     successful_optimized += 1
                     print(f"   Score: {score:.2f}")
                 except Exception as e:
-                    print(f"   ❌ Error in optimized example {i+1}: {e}")
+                    print(f"   ❌ Error in optimized example {i + 1}: {e}")
 
             if successful_optimized > 0:
                 optimized_score /= successful_optimized
@@ -521,7 +521,7 @@ async def optimize_gliner_configuration():
     )
 
     for i, labels in enumerate(label_combinations):
-        print(f"\n📋 Label set {i+1}/{len(label_combinations)}: {len(labels)} labels")
+        print(f"\n📋 Label set {i + 1}/{len(label_combinations)}: {len(labels)} labels")
 
         for threshold in threshold_values:
             try:

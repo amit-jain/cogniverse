@@ -383,9 +383,9 @@ class TestPhase12Integration:
             metrics_tracker.record_modality_execution(modality, latency_ms, True)
 
             # Verify latency under target
-            assert (
-                latency_ms < target_ms
-            ), f"{modality.value} latency {latency_ms:.0f}ms exceeds target {target_ms}ms"
+            assert latency_ms < target_ms, (
+                f"{modality.value} latency {latency_ms:.0f}ms exceeds target {target_ms}ms"
+            )
 
         # Verify all modalities have stats
         for modality in LATENCY_TARGETS.keys():

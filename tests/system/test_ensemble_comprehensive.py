@@ -227,9 +227,9 @@ class TestComprehensiveEnsembleSearch:
             assert result.total_results is not None
 
             # VALIDATE: MUST have results (real Vespa with ingested data)
-            assert (
-                result.total_results > 0
-            ), "Should return results from REAL Vespa with ingested videos"
+            assert result.total_results > 0, (
+                "Should return results from REAL Vespa with ingested videos"
+            )
             assert len(result.results) > 0, "Results list should not be empty"
 
             # VALIDATE: RRF fusion metadata on ALL results
@@ -341,9 +341,9 @@ class TestComprehensiveEnsembleSearch:
             # VALIDATE: Reasonable latency with REAL encoders and REAL Vespa
             # Target: <60000ms (60s) for real ColPali encoder (~2GB model) + real Vespa
             # First run includes model loading time
-            assert (
-                elapsed_ms < 60000
-            ), f"Latency {elapsed_ms:.2f}ms exceeds 60s threshold"
+            assert elapsed_ms < 60000, (
+                f"Latency {elapsed_ms:.2f}ms exceeds 60s threshold"
+            )
 
             logger.info(
                 f"✅ Latency validated: {elapsed_ms:.2f}ms with REAL encoders and REAL Vespa"

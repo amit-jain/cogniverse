@@ -88,14 +88,19 @@ class TestMemorySystemCompleteE2E:
         # Generate a real embedding via Ollama nomic-embed-text (same model Mem0 uses)
         embed_resp = requests.post(
             "http://localhost:11434/api/embed",
-            json={"model": "nomic-embed-text", "input": "test content for schema verification"},
+            json={
+                "model": "nomic-embed-text",
+                "input": "test content for schema verification",
+            },
             timeout=30,
         )
         assert embed_resp.status_code == 200, (
             f"Ollama embedding failed: {embed_resp.status_code}: {embed_resp.text[:200]}"
         )
         real_embedding = embed_resp.json()["embeddings"][0]
-        assert len(real_embedding) == 768, f"Expected 768-dim, got {len(real_embedding)}"
+        assert len(real_embedding) == 768, (
+            f"Expected 768-dim, got {len(real_embedding)}"
+        )
 
         # Test by feeding a test document with the real embedding
         test_doc = {

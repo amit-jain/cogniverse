@@ -173,30 +173,32 @@ class TestEntityExtractionAgentIntegration:
 
         # VALIDATE CORRECTNESS: Expected entities are present
         entity_texts = " ".join([e.text.lower() for e in result.entities])
-        assert (
-            "obama" in entity_texts or "barack" in entity_texts
-        ), f"Should extract 'Barack Obama', got: {[e.text for e in result.entities]}"
+        assert "obama" in entity_texts or "barack" in entity_texts, (
+            f"Should extract 'Barack Obama', got: {[e.text for e in result.entities]}"
+        )
 
         # VALIDATE: Entity types are assigned
-        assert all(
-            e.type and len(e.type) > 0 for e in result.entities
-        ), "All entities must have non-empty types"
+        assert all(e.type and len(e.type) > 0 for e in result.entities), (
+            "All entities must have non-empty types"
+        )
 
         # VALIDATE: Confidence scores are valid
         for entity in result.entities:
-            assert (
-                0.0 <= entity.confidence <= 1.0
-            ), f"Invalid confidence for {entity.text}: {entity.confidence}"
+            assert 0.0 <= entity.confidence <= 1.0, (
+                f"Invalid confidence for {entity.text}: {entity.confidence}"
+            )
 
         # VALIDATE: Context extraction works
         for entity in result.entities:
-            assert (
-                entity.context and len(entity.context) > 0
-            ), f"Entity '{entity.text}' missing context"
+            assert entity.context and len(entity.context) > 0, (
+                f"Entity '{entity.text}' missing context"
+            )
             # Context should contain the entity or be from the query
             assert entity.text.lower() in entity.context.lower() or any(
                 word in entity.context.lower() for word in result.query.lower().split()
-            ), f"Context '{entity.context}' doesn't relate to entity '{entity.text}' or query"
+            ), (
+                f"Context '{entity.context}' doesn't relate to entity '{entity.text}' or query"
+            )
 
         # VALIDATE: Dominant types calculation
         assert len(result.dominant_types) > 0, "Should calculate dominant entity types"
@@ -221,9 +223,9 @@ class TestEntityExtractionAgentIntegration:
             or "iphone" in entity_texts
             or "cupertino" in entity_texts
         )
-        assert (
-            key_entities_found
-        ), f"Should extract Apple/iPhone/Cupertino, got: {[e.text for e in result.entities]}"
+        assert key_entities_found, (
+            f"Should extract Apple/iPhone/Cupertino, got: {[e.text for e in result.entities]}"
+        )
 
         # VALIDATE: Dominant types include expected categories
         if result.dominant_types:
@@ -254,13 +256,13 @@ class TestEntityExtractionAgentIntegration:
         # VALIDATE CORRECTNESS: Empty input = empty output
         assert result.query == ""
         assert result.entity_count == 0, "Empty query should have 0 entities"
-        assert (
-            result.has_entities is False
-        ), "Empty query should have has_entities=False"
+        assert result.has_entities is False, (
+            "Empty query should have has_entities=False"
+        )
         assert len(result.entities) == 0, "Empty query should have empty entities list"
-        assert (
-            len(result.dominant_types) == 0
-        ), "Empty query should have no dominant types"
+        assert len(result.dominant_types) == 0, (
+            "Empty query should have no dominant types"
+        )
 
 
 @pytest.mark.integration
@@ -283,9 +285,9 @@ class TestProfileSelectionAgentIntegration:
         ), f"Selected profile '{result.selected_profile}' not in available profiles"
 
         # VALIDATE CORRECTNESS: Video query should prefer video profile
-        assert (
-            "video" in result.selected_profile.lower()
-        ), f"Query mentions 'videos' but selected non-video profile: {result.selected_profile}"
+        assert "video" in result.selected_profile.lower(), (
+            f"Query mentions 'videos' but selected non-video profile: {result.selected_profile}"
+        )
 
         # VALIDATE: Modality detection is correct
         assert result.modality in [
@@ -295,9 +297,9 @@ class TestProfileSelectionAgentIntegration:
             "audio",
         ], f"Invalid modality: {result.modality}"
         # Should detect video intent
-        assert (
-            result.modality == "video"
-        ), f"Query mentions 'videos' but detected modality: {result.modality}"
+        assert result.modality == "video", (
+            f"Query mentions 'videos' but detected modality: {result.modality}"
+        )
 
         # VALIDATE: Query intent is appropriate
         assert (
@@ -308,14 +310,14 @@ class TestProfileSelectionAgentIntegration:
         # VALIDATE: Reasoning is meaningful
         assert len(result.reasoning) > 20, "Reasoning should be substantial"
         reasoning_lower = result.reasoning.lower()
-        assert (
-            "video" in reasoning_lower or "tutorial" in reasoning_lower
-        ), f"Reasoning should mention video/tutorial, got: {result.reasoning}"
+        assert "video" in reasoning_lower or "tutorial" in reasoning_lower, (
+            f"Reasoning should mention video/tutorial, got: {result.reasoning}"
+        )
 
         # VALIDATE: Confidence is reasonable
-        assert (
-            0.0 < result.confidence <= 1.0
-        ), f"Confidence should be > 0 for clear video query: {result.confidence}"
+        assert 0.0 < result.confidence <= 1.0, (
+            f"Confidence should be > 0 for clear video query: {result.confidence}"
+        )
 
     @pytest.mark.asyncio
     async def test_select_image_profile_validates_correctness(
@@ -332,9 +334,9 @@ class TestProfileSelectionAgentIntegration:
             "image" in result.selected_profile.lower()
             or "text" in result.selected_profile.lower()
         )
-        assert (
-            is_image_or_text
-        ), f"Query mentions 'pictures' but selected: {result.selected_profile}"
+        assert is_image_or_text, (
+            f"Query mentions 'pictures' but selected: {result.selected_profile}"
+        )
 
         # VALIDATE: Modality detection
         # Should detect image modality
@@ -348,9 +350,9 @@ class TestProfileSelectionAgentIntegration:
         assert isinstance(result.alternatives, list), "Should provide alternatives"
         # Alternatives should not include selected profile
         alt_names = [a.profile_name for a in result.alternatives]
-        assert (
-            result.selected_profile not in alt_names
-        ), "Alternatives should not include selected profile"
+        assert result.selected_profile not in alt_names, (
+            "Alternatives should not include selected profile"
+        )
 
     @pytest.mark.asyncio
     async def test_empty_query_default_behavior(self, profile_agent_with_real_lm):
@@ -369,9 +371,9 @@ class TestProfileSelectionAgentIntegration:
 
         # VALIDATE: Reasoning mentions default/empty
         reasoning_lower = result.reasoning.lower()
-        assert (
-            "default" in reasoning_lower or "empty" in reasoning_lower
-        ), f"Reasoning should mention default/empty, got: {result.reasoning}"
+        assert "default" in reasoning_lower or "empty" in reasoning_lower, (
+            f"Reasoning should mention default/empty, got: {result.reasoning}"
+        )
 
 
 @pytest.mark.integration
@@ -391,14 +393,14 @@ class TestQueryEnhancementAgentIntegration:
         assert result.original_query == original_query
 
         # VALIDATE CORRECTNESS: Enhanced query should be different and expanded
-        assert len(result.enhanced_query) >= len(
-            original_query
-        ), "Enhanced query should not be shorter than original"
+        assert len(result.enhanced_query) >= len(original_query), (
+            "Enhanced query should not be shorter than original"
+        )
 
         # VALIDATE: Expansion terms provided
-        assert isinstance(
-            result.expansion_terms, list
-        ), "Should provide expansion terms"
+        assert isinstance(result.expansion_terms, list), (
+            "Should provide expansion terms"
+        )
         # Expansions should be non-empty strings
         if result.expansion_terms:
             assert all(
@@ -427,14 +429,14 @@ class TestQueryEnhancementAgentIntegration:
             for term in ["learning", "intelligence", "neural", "model", "algorithm"]
         )
 
-        assert (
-            ml_expanded or has_related_terms
-        ), f"ML query should expand to learning/AI terms. Got enhanced='{result.enhanced_query}', expansions={result.expansion_terms}, synonyms={result.synonyms}"
+        assert ml_expanded or has_related_terms, (
+            f"ML query should expand to learning/AI terms. Got enhanced='{result.enhanced_query}', expansions={result.expansion_terms}, synonyms={result.synonyms}"
+        )
 
         # VALIDATE: Confidence is reasonable
-        assert (
-            0.0 < result.confidence <= 1.0
-        ), f"Confidence should be > 0 for valid query: {result.confidence}"
+        assert 0.0 < result.confidence <= 1.0, (
+            f"Confidence should be > 0 for valid query: {result.confidence}"
+        )
 
     @pytest.mark.asyncio
     async def test_acronym_expansion_validates_correctness(
@@ -461,9 +463,9 @@ class TestQueryEnhancementAgentIntegration:
             "artificial intelligence" in all_terms or "intelligence" in all_terms
         )
 
-        assert (
-            nlp_expanded or ai_expanded
-        ), f"Should expand NLP/AI acronyms. Got: enhanced='{result.enhanced_query}', expansions={result.expansion_terms}"
+        assert nlp_expanded or ai_expanded, (
+            f"Should expand NLP/AI acronyms. Got: enhanced='{result.enhanced_query}', expansions={result.expansion_terms}"
+        )
 
     @pytest.mark.asyncio
     async def test_empty_query_no_enhancement(self, query_agent_with_real_lm):
@@ -477,9 +479,9 @@ class TestQueryEnhancementAgentIntegration:
         assert result.enhanced_query == "", "Empty query should not be enhanced"
         assert len(result.expansion_terms) == 0, "Empty query should have no expansions"
         assert len(result.synonyms) == 0, "Empty query should have no synonyms"
-        assert (
-            len(result.context_additions) == 0
-        ), "Empty query should have no context additions"
+        assert len(result.context_additions) == 0, (
+            "Empty query should have no context additions"
+        )
         assert result.confidence == 0.0, "Empty query should have 0 confidence"
 
 
@@ -499,24 +501,24 @@ class TestOrchestratorAgentIntegration:
         assert len(result.plan_steps) > 0, "Should create execution plan"
 
         # VALIDATE CORRECTNESS: Agents were actually executed
-        assert (
-            len(result.agent_results) > 0
-        ), "Should execute at least one agent from plan"
+        assert len(result.agent_results) > 0, (
+            "Should execute at least one agent from plan"
+        )
 
         # VALIDATE: Executed agents match plan
         planned_agents = [step["agent_type"] for step in result.plan_steps]
         for agent_name in result.agent_results.keys():
-            assert (
-                agent_name in planned_agents
-            ), f"Agent '{agent_name}' executed but not in plan: {planned_agents}"
+            assert agent_name in planned_agents, (
+                f"Agent '{agent_name}' executed but not in plan: {planned_agents}"
+            )
 
         # VALIDATE CORRECTNESS: Results are from actual execution, not defaults
         for agent_name, agent_result in result.agent_results.items():
             if isinstance(agent_result, dict):
                 # Should have status from actual execution
-                assert "status" in agent_result or isinstance(
-                    agent_result, dict
-                ), f"Agent '{agent_name}' result should have status or be valid result"
+                assert "status" in agent_result or isinstance(agent_result, dict), (
+                    f"Agent '{agent_name}' result should have status or be valid result"
+                )
 
         # VALIDATE: Final output aggregates results
         assert result.final_output["status"] == "success"
@@ -530,12 +532,12 @@ class TestOrchestratorAgentIntegration:
         if len(summary_parts) >= 2:
             executed = int(summary_parts[0].split()[-1])
             total = int(summary_parts[1].split()[0])
-            assert executed == len(
-                result.agent_results
-            ), f"Summary says {executed} executed but have {len(result.agent_results)} results"
-            assert total == len(
-                result.plan_steps
-            ), f"Summary says {total} total but plan has {len(result.plan_steps)} steps"
+            assert executed == len(result.agent_results), (
+                f"Summary says {executed} executed but have {len(result.agent_results)} results"
+            )
+            assert total == len(result.plan_steps), (
+                f"Summary says {total} total but plan has {len(result.plan_steps)} steps"
+            )
 
     @pytest.mark.asyncio
     async def test_orchestrate_validates_dependencies(
@@ -561,9 +563,9 @@ class TestOrchestratorAgentIntegration:
             seen_indices = set()
             for group in result.parallel_groups:
                 for idx in group:
-                    assert (
-                        idx not in seen_indices
-                    ), f"Step {idx} in multiple parallel groups"
+                    assert idx not in seen_indices, (
+                        f"Step {idx} in multiple parallel groups"
+                    )
                     seen_indices.add(idx)
 
     @pytest.mark.asyncio
@@ -576,9 +578,9 @@ class TestOrchestratorAgentIntegration:
         # VALIDATE CORRECTNESS: No execution for empty query
         assert result.query == ""
         assert len(result.plan_steps) == 0, "Empty query should have no plan steps"
-        assert (
-            len(result.agent_results) == 0
-        ), "Empty query should not execute any agents"
+        assert len(result.agent_results) == 0, (
+            "Empty query should not execute any agents"
+        )
         assert result.final_output["status"] == "error"
         assert "empty" in result.final_output["message"].lower()
 
@@ -614,12 +616,12 @@ class TestOrchestratorAgentIntegration:
         # VALIDATE: Parallel steps have no mutual dependencies
         step_0 = result.plan_steps[0]
         step_1 = result.plan_steps[1]
-        assert (
-            step_0["depends_on"] == []
-        ), "First parallel step should have no dependencies"
-        assert (
-            step_1["depends_on"] == []
-        ), "Second parallel step should have no dependencies"
+        assert step_0["depends_on"] == [], (
+            "First parallel step should have no dependencies"
+        )
+        assert step_1["depends_on"] == [], (
+            "Second parallel step should have no dependencies"
+        )
 
         # VALIDATE: Next step depends on both parallel steps
         if len(result.plan_steps) > 2:
@@ -627,12 +629,14 @@ class TestOrchestratorAgentIntegration:
             assert set(step_2["depends_on"]) == {
                 0,
                 1,
-            }, f"Third step should depend on both parallel steps, got: {step_2['depends_on']}"
+            }, (
+                f"Third step should depend on both parallel steps, got: {step_2['depends_on']}"
+            )
 
         # VALIDATE: All agents actually executed
-        assert (
-            len(result.agent_results) == 3
-        ), f"Should execute all 3 agents, got: {len(result.agent_results)}"
+        assert len(result.agent_results) == 3, (
+            f"Should execute all 3 agents, got: {len(result.agent_results)}"
+        )
 
     @pytest.mark.asyncio
     async def test_complex_workflow_validates_execution_order(
@@ -657,9 +661,9 @@ class TestOrchestratorAgentIntegration:
         )
 
         # VALIDATE: 3-step plan created
-        assert (
-            len(result.plan_steps) == 3
-        ), f"Should create 3-step plan, got: {len(result.plan_steps)}"
+        assert len(result.plan_steps) == 3, (
+            f"Should create 3-step plan, got: {len(result.plan_steps)}"
+        )
 
         # VALIDATE: Dependency structure is correct
         # Steps 0,1 parallel (no deps)
@@ -670,12 +674,14 @@ class TestOrchestratorAgentIntegration:
         assert set(result.plan_steps[2]["depends_on"]) == {
             0,
             1,
-        }, f"Step 2 should depend on both parallel steps, got: {result.plan_steps[2]['depends_on']}"
+        }, (
+            f"Step 2 should depend on both parallel steps, got: {result.plan_steps[2]['depends_on']}"
+        )
 
         # VALIDATE: All agents executed
-        assert (
-            len(result.agent_results) == 3
-        ), f"Should execute all 3 agents, got: {len(result.agent_results)}"
+        assert len(result.agent_results) == 3, (
+            f"Should execute all 3 agents, got: {len(result.agent_results)}"
+        )
 
         # VALIDATE: Each agent produced results
         for agent_name, agent_result in result.agent_results.items():
@@ -739,9 +745,9 @@ class TestOrchestratorAgentIntegration:
 
         # VALIDATE: Summary reflects execution
         assert "3/3" in result.execution_summary, "Summary should show all 3 attempted"
-        assert (
-            "successful" in result.execution_summary
-        ), "Summary should mention successful count"
+        assert "successful" in result.execution_summary, (
+            "Summary should mention successful count"
+        )
 
 
 @pytest.mark.integration
@@ -780,7 +786,9 @@ class TestAgentCoordinationIntegration:
             assert (
                 "video" in profile_result.selected_profile.lower()
                 or profile_result.modality == "video"
-            ), f"Video query with entities should select video profile, got: {profile_result.selected_profile}"
+            ), (
+                f"Video query with entities should select video profile, got: {profile_result.selected_profile}"
+            )
 
     @pytest.mark.asyncio
     async def test_full_pipeline_validates_enhancement_benefit(
@@ -823,16 +831,16 @@ class TestAgentCoordinationIntegration:
         # VALIDATE: Pipeline decisions are logical
         # ML query should ultimately select video or text profile
         profile_lower = profile_result.selected_profile.lower()
-        assert (
-            "video" in profile_lower or "text" in profile_lower
-        ), f"ML videos query should select video/text profile, got: {profile_result.selected_profile}"
+        assert "video" in profile_lower or "text" in profile_lower, (
+            f"ML videos query should select video/text profile, got: {profile_result.selected_profile}"
+        )
 
         # VALIDATE: Enhancement improved the query
         # Original: "ML videos" (9 chars)
         # Enhanced: Should have more context
-        assert len(query_result.enhanced_query) >= len(
-            original_query
-        ), "Enhanced query should not be shorter"
+        assert len(query_result.enhanced_query) >= len(original_query), (
+            "Enhanced query should not be shorter"
+        )
 
         # VALIDATE: Pipeline maintains query intent
         # Final profile should align with original "videos" intent
@@ -871,9 +879,9 @@ class TestOrchestratorComplexPatterns:
         )
 
         # VALIDATE: Two parallel groups created
-        assert (
-            len(result.parallel_groups) == 2
-        ), f"Should have 2 parallel groups, got: {len(result.parallel_groups)}"
+        assert len(result.parallel_groups) == 2, (
+            f"Should have 2 parallel groups, got: {len(result.parallel_groups)}"
+        )
         assert result.parallel_groups[0] == [0, 1]
         assert result.parallel_groups[1] == [2, 3]
 
@@ -885,16 +893,20 @@ class TestOrchestratorComplexPatterns:
         assert set(result.plan_steps[2]["depends_on"]) == {
             0,
             1,
-        }, f"Step 2 should depend on steps 0,1, got: {result.plan_steps[2]['depends_on']}"
+        }, (
+            f"Step 2 should depend on steps 0,1, got: {result.plan_steps[2]['depends_on']}"
+        )
         assert set(result.plan_steps[3]["depends_on"]) == {
             0,
             1,
-        }, f"Step 3 should depend on steps 0,1, got: {result.plan_steps[3]['depends_on']}"
+        }, (
+            f"Step 3 should depend on steps 0,1, got: {result.plan_steps[3]['depends_on']}"
+        )
 
         # VALIDATE: All 4 agents executed
-        assert (
-            len(result.agent_results) == 4
-        ), f"Should execute all 4 agents, got: {len(result.agent_results)}"
+        assert len(result.agent_results) == 4, (
+            f"Should execute all 4 agents, got: {len(result.agent_results)}"
+        )
 
     @pytest.mark.asyncio
     async def test_mixed_parallel_sequential_validates_dependencies(
@@ -1082,9 +1094,9 @@ class TestOrchestratorComplexPatterns:
 
         # VALIDATE: All executed agents produced results (no truncation errors)
         for agent_name, agent_result in result.agent_results.items():
-            assert (
-                agent_result is not None
-            ), f"Agent {agent_name} should handle long query"
+            assert agent_result is not None, (
+                f"Agent {agent_name} should handle long query"
+            )
 
     @pytest.mark.asyncio
     async def test_multi_sentence_query_validates_coherence(
@@ -1133,9 +1145,9 @@ class TestOrchestratorComplexPatterns:
         assert len(result.plan_steps) > 0, "Special chars should not break planning"
 
         # VALIDATE: Agents handled special characters
-        assert (
-            len(result.agent_results) > 0
-        ), "Special chars should not prevent execution"
+        assert len(result.agent_results) > 0, (
+            "Special chars should not prevent execution"
+        )
 
         # VALIDATE: No crashes or exceptions in results
         for agent_name, agent_result in result.agent_results.items():

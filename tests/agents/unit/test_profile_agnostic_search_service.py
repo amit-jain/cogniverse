@@ -269,9 +269,7 @@ class TestBackendCaching:
             patch(
                 "cogniverse_foundation.telemetry.context.add_embedding_details_to_span"
             ),
-            patch(
-                "cogniverse_foundation.telemetry.context.add_search_results_to_span"
-            ),
+            patch("cogniverse_foundation.telemetry.context.add_search_results_to_span"),
         ):
             mock_reg.return_value.get_search_backend.return_value = mock_backend
             mock_search_span.return_value.__enter__ = MagicMock()

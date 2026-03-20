@@ -464,4 +464,3 @@ class TestOrchestratorAgent:
         assert "plan" in skills[0]["output_schema"]
         assert "agent_results" in skills[0]["output_schema"]
         assert len(skills[0]["examples"]) > 0
-

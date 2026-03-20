@@ -74,9 +74,9 @@ class TestDocumentAgent:
         ]
         for query in queries:
             strategy = self.agent._select_strategy(query)
-            assert (
-                strategy == "visual"
-            ), f"Expected visual for '{query}', got {strategy}"
+            assert strategy == "visual", (
+                f"Expected visual for '{query}', got {strategy}"
+            )
 
     def test_select_strategy_text(self):
         """Test strategy selection for text queries"""

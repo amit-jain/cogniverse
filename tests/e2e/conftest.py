@@ -75,7 +75,9 @@ def restart_runtime(timeout_s: int = 30) -> bool:
     try:
         result = subprocess.run(
             ["lsof", "-i", ":8000", "-t"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for pid_str in result.stdout.strip().split():
             try:
@@ -89,8 +91,18 @@ def restart_runtime(timeout_s: int = 30) -> bool:
 
     env = {**os.environ, "BACKEND_URL": "http://localhost", "BACKEND_PORT": "8080"}
     subprocess.Popen(
-        ["uv", "run", "uvicorn", "cogniverse_runtime.main:app",
-         "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"],
+        [
+            "uv",
+            "run",
+            "uvicorn",
+            "cogniverse_runtime.main:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "--log-level",
+            "info",
+        ],
         env=env,
         stdout=open("/tmp/runtime_e2e_restart.log", "w"),
         stderr=subprocess.STDOUT,
@@ -120,9 +132,7 @@ def browser_context_args():
 
 def wait_for_streamlit(page, timeout: int = 30_000):
     """Wait for Streamlit app to fully render."""
-    page.wait_for_selector(
-        '[data-testid="stAppViewContainer"]', timeout=timeout
-    )
+    page.wait_for_selector('[data-testid="stAppViewContainer"]', timeout=timeout)
     page.wait_for_load_state("networkidle")
 
 
@@ -152,12 +162,9 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
                 return
         if attempt < retries - 1:
             page.wait_for_timeout(3_000)
-    tab_texts = [
-        tabs.nth(i).text_content() or "" for i in range(tabs.count())
-    ]
+    tab_texts = [tabs.nth(i).text_content() or "" for i in range(tabs.count())]
     raise ValueError(
-        f"Tab '{label}' not found after {retries} attempts. "
-        f"Available tabs: {tab_texts}"
+        f"Tab '{label}' not found after {retries} attempts. Available tabs: {tab_texts}"
     )
 
 
@@ -262,11 +269,15 @@ def click_button(page, text: str):
         page.wait_for_load_state("networkidle")
         elapsed = (_time.monotonic() - start) * 1000
         if _report_collector:
-            _report_collector.record_browser_op("click_button", text, elapsed_ms=elapsed)
+            _report_collector.record_browser_op(
+                "click_button", text, elapsed_ms=elapsed
+            )
         return True
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
-        _report_collector.record_browser_op("click_button (not found)", text, elapsed_ms=elapsed)
+        _report_collector.record_browser_op(
+            "click_button (not found)", text, elapsed_ms=elapsed
+        )
     return False
 
 
@@ -352,8 +363,13 @@ def real_pdf_path():
 def real_image_path():
     """Real 1280x720 Big Buck Bunny keyframe from processed data."""
     path = (
-        DATA_ROOT / "testset" / "evaluation" / "processed"
-        / "keyframes" / "big_buck_bunny_clip" / "frame_0000.jpg"
+        DATA_ROOT
+        / "testset"
+        / "evaluation"
+        / "processed"
+        / "keyframes"
+        / "big_buck_bunny_clip"
+        / "frame_0000.jpg"
     )
     if not path.exists():
         pytest.skip(f"Keyframe image not found: {path}")
@@ -388,9 +404,20 @@ def extracted_audio_path(real_video_path):
     try:
         subprocess.run(
             [
-                "ffmpeg", "-i", str(real_video_path),
-                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                "-t", "10", str(dest), "-y",
+                "ffmpeg",
+                "-i",
+                str(real_video_path),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-t",
+                "10",
+                str(dest),
+                "-y",
             ],
             capture_output=True,
             check=True,
@@ -430,20 +457,28 @@ class E2EReportCollector:
         }
         self._current_test = None
 
-    def record_browser_op(self, action: str, target: str, value: str = "", elapsed_ms: float = 0):
+    def record_browser_op(
+        self, action: str, target: str, value: str = "", elapsed_ms: float = 0
+    ):
         """Record a Playwright browser interaction (tab click, input fill, button click)."""
-        self.operations.append({
-            "test": self._current_test or "unknown",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "method": "BROWSER",
-            "url": action,
-            "status_code": 200,
-            "elapsed_ms": round(elapsed_ms, 1),
-            "request": {"target": target, "value": value} if value else {"target": target},
-            "response": {"status_code": 200, "status": "ok"},
-        })
+        self.operations.append(
+            {
+                "test": self._current_test or "unknown",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "method": "BROWSER",
+                "url": action,
+                "status_code": 200,
+                "elapsed_ms": round(elapsed_ms, 1),
+                "request": {"target": target, "value": value}
+                if value
+                else {"target": target},
+                "response": {"status_code": 200, "status": "ok"},
+            }
+        )
 
-    def record(self, request: httpx.Request, response: httpx.Response, elapsed_ms: float):
+    def record(
+        self, request: httpx.Request, response: httpx.Response, elapsed_ms: float
+    ):
         url = str(request.url)
         # Only capture calls to the runtime, not external downloads
         if "localhost:8000" not in url and "127.0.0.1:8000" not in url:
@@ -455,16 +490,20 @@ class E2EReportCollector:
         # Parse response body
         resp_body = self._safe_json(response)
 
-        self.operations.append({
-            "test": self._current_test or "unknown",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "method": request.method,
-            "url": self._short_url(url),
-            "status_code": response.status_code,
-            "elapsed_ms": round(elapsed_ms, 1),
-            "request": self._extract_request_fields(req_body, url),
-            "response": self._extract_response_fields(resp_body, url, response.status_code),
-        })
+        self.operations.append(
+            {
+                "test": self._current_test or "unknown",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "method": request.method,
+                "url": self._short_url(url),
+                "status_code": response.status_code,
+                "elapsed_ms": round(elapsed_ms, 1),
+                "request": self._extract_request_fields(req_body, url),
+                "response": self._extract_response_fields(
+                    resp_body, url, response.status_code
+                ),
+            }
+        )
 
     def install_hook(self):
         """Monkeypatch httpx.Client.send to record all HTTP calls."""
@@ -518,17 +557,13 @@ class E2EReportCollector:
             if "multipart" in ct:
                 fields = {"_multipart": True}
                 # Extract form field values from multipart body
-                for match in re.finditer(
-                    rb'name="(\w+)"\r\n\r\n([^\r]+)', content
-                ):
+                for match in re.finditer(rb'name="(\w+)"\r\n\r\n([^\r]+)', content):
                     key = match.group(1).decode()
                     val = match.group(2).decode(errors="replace")
                     if len(val) < 200:
                         fields[key] = val
                 # Extract filename from file field
-                fn_match = re.search(
-                    rb'filename="([^"]+)"', content
-                )
+                fn_match = re.search(rb'filename="([^"]+)"', content)
                 if fn_match:
                     fields["filename"] = fn_match.group(1).decode()
                 return fields
@@ -551,10 +586,23 @@ class E2EReportCollector:
 
         fields = {}
         # Agent process requests
-        for key in ("query", "agent_name", "top_k", "profile", "strategy",
-                     "tenant_id", "video_dir", "max_videos", "batch_size",
-                     "org_id", "org_name", "tenant_name", "profile_name",
-                     "schema_name", "base_schemas"):
+        for key in (
+            "query",
+            "agent_name",
+            "top_k",
+            "profile",
+            "strategy",
+            "tenant_id",
+            "video_dir",
+            "max_videos",
+            "batch_size",
+            "org_id",
+            "org_name",
+            "tenant_name",
+            "profile_name",
+            "schema_name",
+            "base_schemas",
+        ):
             if key in body:
                 fields[key] = body[key]
         # Nested context
@@ -588,14 +636,35 @@ class E2EReportCollector:
 
         # Common fields across many endpoints
         for key in (
-            "status", "agent", "recommended_agent", "confidence", "reasoning",
-            "enhanced_query", "entity_count", "has_entities", "dominant_types",
-            "results_count", "query", "profile", "strategy", "session_id",
-            "job_id", "videos_processed", "videos_total",
-            "filename", "video_id", "chunks_created", "documents_fed",
-            "processing_time", "total_agents", "count",
-            "org_id", "tenant_full_id", "tenants_deleted",
-            "service", "protocolVersion",
+            "status",
+            "agent",
+            "recommended_agent",
+            "confidence",
+            "reasoning",
+            "enhanced_query",
+            "entity_count",
+            "has_entities",
+            "dominant_types",
+            "results_count",
+            "query",
+            "profile",
+            "strategy",
+            "session_id",
+            "job_id",
+            "videos_processed",
+            "videos_total",
+            "filename",
+            "video_id",
+            "chunks_created",
+            "documents_fed",
+            "processing_time",
+            "total_agents",
+            "count",
+            "org_id",
+            "tenant_full_id",
+            "tenants_deleted",
+            "service",
+            "protocolVersion",
         ):
             if key in body:
                 fields[key] = body[key]
@@ -604,10 +673,13 @@ class E2EReportCollector:
         if "entities" in body and isinstance(body["entities"], list):
             fields["entities_count"] = len(body["entities"])
             if body["entities"]:
-                fields["entity_types"] = list({
-                    e.get("type", "unknown") for e in body["entities"]
-                    if isinstance(e, dict)
-                })
+                fields["entity_types"] = list(
+                    {
+                        e.get("type", "unknown")
+                        for e in body["entities"]
+                        if isinstance(e, dict)
+                    }
+                )
         if "results" in body and isinstance(body["results"], list):
             fields["results_returned"] = len(body["results"])
         if "strategies" in body and isinstance(body["strategies"], list):
@@ -616,7 +688,9 @@ class E2EReportCollector:
             fields["profiles_count"] = len(body["profiles"])
         if "agents" in body and isinstance(body["agents"], (list, dict)):
             agents = body["agents"]
-            fields["agents_count"] = len(agents) if isinstance(agents, list) else len(agents)
+            fields["agents_count"] = (
+                len(agents) if isinstance(agents, list) else len(agents)
+            )
         if "backends" in body and isinstance(body["backends"], dict):
             fields["backends_count"] = len(body["backends"])
         if "organizations" in body and isinstance(body["organizations"], list):
@@ -631,7 +705,9 @@ class E2EReportCollector:
             fields["generators"] = body["generators"]
         if "optimizers" in body:
             fields["optimizers_count"] = (
-                len(body["optimizers"]) if isinstance(body["optimizers"], (list, dict)) else 0
+                len(body["optimizers"])
+                if isinstance(body["optimizers"], (list, dict))
+                else 0
             )
         if "skills" in body and isinstance(body["skills"], list):
             fields["skills_count"] = len(body["skills"])
@@ -663,7 +739,10 @@ class E2EReportCollector:
 
         # Group tests by class
         tests_by_class: dict[str, list[str]] = {}
-        for nodeid in {**self.test_results, **{op["test"]: None for op in self.operations}}:
+        for nodeid in {
+            **self.test_results,
+            **{op["test"]: None for op in self.operations},
+        }:
             if nodeid == "unknown":
                 continue
             parts = nodeid.split("::")
@@ -697,7 +776,9 @@ class E2EReportCollector:
                 cls: [
                     {
                         "nodeid": nid,
-                        **self.test_results.get(nid, {"outcome": "unknown", "duration_s": 0}),
+                        **self.test_results.get(
+                            nid, {"outcome": "unknown", "duration_s": 0}
+                        ),
                         "operations": ops_by_test.get(nid, []),
                     }
                     for nid in sorted(set(tests))
@@ -740,7 +821,11 @@ class E2EReportCollector:
                 icon = {"passed": "PASS", "failed": "FAIL", "skipped": "SKIP"}.get(
                     outcome, "?"
                 )
-                method = test["nodeid"].split("::")[-1] if "::" in test["nodeid"] else test["nodeid"]
+                method = (
+                    test["nodeid"].split("::")[-1]
+                    if "::" in test["nodeid"]
+                    else test["nodeid"]
+                )
                 lines.append(f"### [{icon}] {method} ({test['duration_s']}s)")
                 lines.append("")
 
@@ -762,7 +847,9 @@ class E2EReportCollector:
                         value = req.get("value", "")
                         detail = f"{target}"
                         if value:
-                            detail += f"=\"{value[:30]}{'...' if len(value) > 30 else ''}\""
+                            detail += (
+                                f'="{value[:30]}{"..." if len(value) > 30 else ""}"'
+                            )
                         lines.append(
                             f"| UI | `{op['url']}` | - "
                             f"| {op['elapsed_ms']:.0f}ms | {detail} |"
@@ -791,7 +878,7 @@ class E2EReportCollector:
             parts.append(f"entities={resp['entities_count']}")
         if resp.get("enhanced_query"):
             eq = resp["enhanced_query"]
-            parts.append(f"enhanced=\"{eq[:40]}{'...' if len(eq) > 40 else ''}\"")
+            parts.append(f'enhanced="{eq[:40]}{"..." if len(eq) > 40 else ""}"')
 
         # Search operations
         if resp.get("results_count") is not None:
@@ -847,13 +934,15 @@ class E2EReportCollector:
 
         # Errors
         if resp.get("error_detail"):
-            parts.append(f"err=\"{resp['error_detail'][:50]}\"")
+            parts.append(f'err="{resp["error_detail"][:50]}"')
 
         # Fallback: status field
         if not parts and resp.get("status"):
             parts.append(f"status={resp['status']}")
 
-        return ", ".join(parts[:5]) if parts else f"status={resp.get('status_code', '?')}"
+        return (
+            ", ".join(parts[:5]) if parts else f"status={resp.get('status_code', '?')}"
+        )
 
 
 # Singleton collector — created once per session

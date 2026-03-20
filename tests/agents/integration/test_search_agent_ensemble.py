@@ -354,9 +354,9 @@ class TestSearchAgentEnsemble:
 
         # With real Vespa and parallel execution, should complete reasonably fast
         # Allow generous threshold for CI environment
-        assert (
-            total_time < 60.0
-        ), f"Ensemble took {total_time:.3f}s (too slow even for parallel execution)"
+        assert total_time < 60.0, (
+            f"Ensemble took {total_time:.3f}s (too slow even for parallel execution)"
+        )
 
         logger.info(
             f"✅ Parallel execution validated: {len(profiles)} profiles searched in {total_time:.3f}s"
@@ -390,16 +390,16 @@ class TestSearchAgentEnsemble:
         # Validate RRF metadata structure on all results
         for doc in results:
             assert "rrf_score" in doc, f"Missing rrf_score in doc {doc.get('id')}"
-            assert (
-                "profile_ranks" in doc
-            ), f"Missing profile_ranks in doc {doc.get('id')}"
+            assert "profile_ranks" in doc, (
+                f"Missing profile_ranks in doc {doc.get('id')}"
+            )
             assert "num_profiles" in doc, f"Missing num_profiles in doc {doc.get('id')}"
-            assert (
-                doc["rrf_score"] > 0
-            ), f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
-            assert (
-                doc["num_profiles"] >= 1
-            ), f"Invalid num_profiles {doc['num_profiles']} in doc {doc.get('id')}"
+            assert doc["rrf_score"] > 0, (
+                f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
+            )
+            assert doc["num_profiles"] >= 1, (
+                f"Invalid num_profiles {doc['num_profiles']} in doc {doc.get('id')}"
+            )
 
         logger.info(
             f"✅ RRF fusion validated on {len(results)} real results with proper metadata"
@@ -541,9 +541,9 @@ class TestMultiQueryFusionIntegration:
         elapsed_ms = (time.time() - start_time) * 1000
 
         assert result["status"] == "completed"
-        assert (
-            elapsed_ms < 60000
-        ), f"Multi-query fusion took {elapsed_ms:.2f}ms (too slow)"
+        assert elapsed_ms < 60000, (
+            f"Multi-query fusion took {elapsed_ms:.2f}ms (too slow)"
+        )
 
         logger.info(
             f"✅ Multi-query fusion latency: {elapsed_ms:.2f}ms for "
@@ -901,15 +901,15 @@ class TestEndToEndQueryFusionPipeline:
 
         # VALIDATE: Original query is included
         variant_names = [v["name"] for v in result.query_variants]
-        assert (
-            "original" in variant_names
-        ), f"Expected 'original' variant, got: {variant_names}"
+        assert "original" in variant_names, (
+            f"Expected 'original' variant, got: {variant_names}"
+        )
 
         # VALIDATE: At least one strategy variant is present
         strategy_variants = [n for n in variant_names if n != "original"]
-        assert (
-            len(strategy_variants) >= 1
-        ), f"Expected at least one strategy variant, got: {variant_names}"
+        assert len(strategy_variants) >= 1, (
+            f"Expected at least one strategy variant, got: {variant_names}"
+        )
 
         # VALIDATE: Each variant has required structure
         for variant in result.query_variants:
@@ -972,9 +972,9 @@ class TestEndToEndQueryFusionPipeline:
         )
 
         # Verify variants were generated
-        assert (
-            len(routing_result.query_variants) >= 2
-        ), f"Expected at least 2 query variants, got {len(routing_result.query_variants)}"
+        assert len(routing_result.query_variants) >= 2, (
+            f"Expected at least 2 query variants, got {len(routing_result.query_variants)}"
+        )
 
         # Step 2: Pass to SearchAgent
         search_agent = search_agent_single_profile

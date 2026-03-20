@@ -36,7 +36,9 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
                 tenant_id=_TEST_TENANT,
                 vespa_client=None,
@@ -164,13 +166,17 @@ class TestModalityOptimizationIntegration:
             assert pair in fusion_optimizer.fusion_success_rates
 
     @pytest.mark.asyncio
-    async def test_modality_optimizer_with_synthetic_strategy(self, real_telemetry_provider):
+    async def test_modality_optimizer_with_synthetic_strategy(
+        self, real_telemetry_provider
+    ):
         """Test optimizer with synthetic training strategy"""
         with patch(
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
                 tenant_id=_TEST_TENANT,
                 vespa_client=None,
@@ -235,7 +241,9 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
                 tenant_id=_TEST_TENANT,
                 vespa_client=None,
@@ -329,7 +337,9 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
                 tenant_id=_TEST_TENANT,
                 vespa_client=None,
@@ -357,7 +367,9 @@ class TestModalityOptimizationIntegration:
             "cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"
         ):
             optimizer = ModalityOptimizer(
-                llm_config=LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434"),
+                llm_config=LLMEndpointConfig(
+                    model="ollama/gemma3:4b", api_base="http://localhost:11434"
+                ),
                 telemetry_provider=real_telemetry_provider,
                 tenant_id=_TEST_TENANT,
                 vespa_client=None,

@@ -305,13 +305,13 @@ class TestMultiModalRoutingIntegration:
             end_time=end_time,
         )
 
-        assert (
-            not spans_df.empty
-        ), f"No spans found in telemetry for project {project_name}"
+        assert not spans_df.empty, (
+            f"No spans found in telemetry for project {project_name}"
+        )
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
-        assert (
-            len(routing_spans) >= 3
-        ), f"Expected 3 routing spans, got {len(routing_spans)}"
+        assert len(routing_spans) >= 3, (
+            f"Expected 3 routing spans, got {len(routing_spans)}"
+        )
 
         logger.info(f"✅ Found {len(routing_spans)} audio routing spans in telemetry")
 
@@ -489,9 +489,9 @@ class TestMultiModalRoutingIntegration:
             # Should detect multiple modalities
             logger.info(f"  Detected modalities: {decision.detected_modalities}")
             logger.info(f"  Search modality: {decision.search_modality}")
-            assert (
-                len(decision.detected_modalities) >= 2
-            ), f"Expected multiple modalities, got {decision.detected_modalities}"
+            assert len(decision.detected_modalities) >= 2, (
+                f"Expected multiple modalities, got {decision.detected_modalities}"
+            )
 
         telemetry_manager.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)

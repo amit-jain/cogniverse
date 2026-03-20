@@ -196,7 +196,11 @@ class TestCrossModalFusionIntegration:
 
         # Load models
         print("\n📦 Loading models...")
-        colpali_config = {"colpali_model": "vidore/colsmol-500m", "embedding_type": "frame_based", "model_loader": "colpali"}
+        colpali_config = {
+            "colpali_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
+        }
         colpali_model, colpali_processor = get_or_load_model(
             "vidore/colsmol-500m", colpali_config, None
         )
@@ -280,9 +284,9 @@ class TestCrossModalFusionIntegration:
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
-        assert (
-            response.status_code == 200
-        ), f"Document visual ingestion failed: {response.text}"
+        assert response.status_code == 200, (
+            f"Document visual ingestion failed: {response.text}"
+        )
         print("✅ Document visual content ingested")
 
         # 3. Ingest document content (text)
@@ -325,9 +329,9 @@ class TestCrossModalFusionIntegration:
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
-        assert (
-            response.status_code == 200
-        ), f"Document text ingestion failed: {response.text}"
+        assert response.status_code == 200, (
+            f"Document text ingestion failed: {response.text}"
+        )
         print("✅ Document text content ingested")
 
         # Wait for indexing

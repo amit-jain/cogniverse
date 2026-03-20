@@ -215,9 +215,7 @@ class TestA2AProtocol:
                     "params": {
                         "message": {
                             "role": "user",
-                            "parts": [
-                                {"kind": "text", "text": "show me shorter ones"}
-                            ],
+                            "parts": [{"kind": "text", "text": "show me shorter ones"}],
                             "messageId": msg_id_2,
                             "taskId": task_id,
                             "contextId": context_id,

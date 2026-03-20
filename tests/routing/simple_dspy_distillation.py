@@ -196,7 +196,7 @@ class SimpleDistillation:
         training_examples = []
 
         for i, query in enumerate(queries):
-            print(f"\n[{i+1}/{len(queries)}] Query: '{query}'")
+            print(f"\n[{i + 1}/{len(queries)}] Query: '{query}'")
 
             try:
                 # Get teacher's decision

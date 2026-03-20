@@ -2893,8 +2893,13 @@ with main_tabs[8]:
                                             )
 
         # Show annotation count
-        if hasattr(st.session_state, "search_annotations") and st.session_state.search_annotations:
-            st.info(f"📊 {len(st.session_state.search_annotations)} annotation(s) saved this session")
+        if (
+            hasattr(st.session_state, "search_annotations")
+            and st.session_state.search_annotations
+        ):
+            st.info(
+                f"📊 {len(st.session_state.search_annotations)} annotation(s) saved this session"
+            )
 
         # Export annotations
         if st.button("📥 Export Annotations") and hasattr(

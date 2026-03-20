@@ -293,9 +293,7 @@ class TestDSPyOptimizerIntegration:
         mock_provider.datasets = Mock()
         mock_provider.datasets.create_dataset = AsyncMock(return_value="ds-123")
         mock_provider.experiments = Mock()
-        mock_provider.experiments.create_experiment = AsyncMock(
-            return_value="exp-123"
-        )
+        mock_provider.experiments.create_experiment = AsyncMock(return_value="exp-123")
         mock_provider.experiments.log_run = AsyncMock(return_value="run-123")
 
         # Save prompts via telemetry
@@ -500,7 +498,10 @@ class TestDSPyEndToEndOptimization:
             assert not default_metadata["enabled"]
             assert optimized_metadata["enabled"]
             # optimization_score is stored in dspy_optimized_prompts["metadata"]
-            assert "optimization_score" in agent_optimized.dspy_optimized_prompts["metadata"]
+            assert (
+                "optimization_score"
+                in agent_optimized.dspy_optimized_prompts["metadata"]
+            )
 
 
 if __name__ == "__main__":

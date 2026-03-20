@@ -184,7 +184,6 @@ async def get_system_stats(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
 @router.post("/profiles", response_model=ProfileCreateResponse, status_code=201)
 async def create_profile(
     request: ProfileCreateRequest,
@@ -340,7 +339,9 @@ async def list_profiles(
                         schema_name=profile.schema_name, tenant_id=tenant_id
                     )
             except Exception as e:
-                logger.warning(f"Failed to check schema deployment status for '{profile_name}': {e}")
+                logger.warning(
+                    f"Failed to check schema deployment status for '{profile_name}': {e}"
+                )
 
             profile_summaries.append(
                 ProfileSummary(
@@ -446,7 +447,9 @@ async def get_profile(
             model_specific=profile.model_specific,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
-            created_at=config_entry.created_at.isoformat() if config_entry else datetime.now().isoformat(),
+            created_at=config_entry.created_at.isoformat()
+            if config_entry
+            else datetime.now().isoformat(),
             version=config_version,
         )
 

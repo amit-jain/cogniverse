@@ -425,7 +425,9 @@ class TestCheckpointEventIntegration:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_checkpoint_save_emits_events(self, telemetry_manager_without_phoenix):
+    async def test_checkpoint_save_emits_events(
+        self, telemetry_manager_without_phoenix
+    ):
         """Test that saving a checkpoint emits A2A events."""
         from datetime import datetime
 
