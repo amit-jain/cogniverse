@@ -209,7 +209,7 @@ class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=...,
-    llm_config=LLMEndpointConfig(model="ollama/smollm3:3b", api_base="http://localhost:11434"),
+    llm_config=LLMEndpointConfig(model="ollama/qwen3:4b", api_base="http://localhost:11434"),
 )  # No tenant_id at construction — arrives per-request
 config = A2AAgentConfig(
     agent_name="routing_agent",
@@ -1026,7 +1026,7 @@ Loads ColBERT late-interaction models via PyLate for document and audio semantic
 from cogniverse_core.common.models import ColBERTModelLoader
 
 loader = ColBERTModelLoader(
-    model_name="lightonai/GTE-ModernColBERT-v1",
+    model_name="lightonai/Reason-ModernColBERT",
     config={"model_loader": "colbert"},
     logger=logger,
 )

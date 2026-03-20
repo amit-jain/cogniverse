@@ -715,5 +715,6 @@ class TestDetailedReportAgentCoreFunctionality:
             assert routing_decision.recommended_agent == "detailed_report_agent"
 
 
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

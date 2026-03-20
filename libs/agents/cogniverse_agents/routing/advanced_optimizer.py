@@ -242,7 +242,9 @@ class AdvancedRoutingOptimizer:
 
         if len(self.experiences) >= self.config.min_experiences_for_training:
             self.advanced_optimizer = self._create_advanced_optimizer()
-            logger.info("Advanced optimizer initialized with sufficient experience data")
+            logger.info(
+                "Advanced optimizer initialized with sufficient experience data"
+            )
         else:
             logger.info(
                 "Need %d more experiences to start advanced optimization training",
@@ -1139,9 +1141,7 @@ class AdvancedRoutingOptimizer:
                 relationships=inp.get("relationships", []),
                 enhanced_query=inp.get("enhanced_query", ""),
                 chosen_agent=out.get("chosen_agent", ""),
-                routing_confidence=float(
-                    out.get("routing_confidence", 0.0)
-                ),
+                routing_confidence=float(out.get("routing_confidence", 0.0)),
                 search_quality=float(meta.get("search_quality", 0.0)),
                 agent_success=bool(meta.get("agent_success", False)),
                 reward=float(out.get("reward", 0.0))
@@ -1153,9 +1153,7 @@ class AdvancedRoutingOptimizer:
             )
             self.experiences.append(exp)
 
-        self.experience_replay = self.experiences[
-            -self.config.experience_replay_size :
-        ]
+        self.experience_replay = self.experiences[-self.config.experience_replay_size :]
         logger.info("Loaded %d routing experiences", len(self.experiences))
 
     def get_optimization_status(self) -> Dict[str, Any]:

@@ -28,7 +28,6 @@ from tests.e2e.conftest import (
 PROFILE = "video_colpali_smol500_mv_frame"
 
 
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestRoutingPipeline:
@@ -125,8 +124,6 @@ class TestRoutingPipeline:
         assert isinstance(metadata["processing_time_ms"], (int, float))
 
 
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestQueryEnhancementViaRouting:
@@ -186,8 +183,6 @@ class TestQueryEnhancementViaRouting:
         assert resp.status_code == 200
         data = resp.json()
         assert 0.0 <= data["confidence"] <= 1.0
-
-
 
 
 @pytest.mark.e2e
@@ -252,8 +247,6 @@ class TestOrchestration:
         assert resp2.status_code == 200
         data2 = resp2.json()
         assert data2["status"] == "success"
-
-
 
 
 @pytest.mark.e2e
@@ -392,8 +385,6 @@ class TestSearchAPI:
         assert resp.status_code == 400
 
 
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestProfileCRUD:
@@ -517,8 +508,6 @@ class TestProfileCRUD:
                 )
 
 
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestSystemStats:
@@ -533,8 +522,6 @@ class TestSystemStats:
         assert "registered_backends" in data
         assert isinstance(data["registered_backends"], list)
         assert "timestamp" in data
-
-
 
 
 @pytest.mark.e2e
@@ -589,9 +576,7 @@ class TestAgentOperations:
                 },
             )
 
-        assert resp.status_code == 200, (
-            f"{agent_name} process failed: {resp.text}"
-        )
+        assert resp.status_code == 200, f"{agent_name} process failed: {resp.text}"
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == agent_name
@@ -608,8 +593,6 @@ class TestAgentOperations:
                 },
             )
         assert resp.status_code == 404
-
-
 
 
 @pytest.mark.e2e
@@ -673,9 +656,7 @@ class TestSyntheticDataAPI:
                 },
             )
 
-        assert resp.status_code == 200, (
-            f"Synthetic generation failed: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Synthetic generation failed: {resp.text}"
         data = resp.json()
         assert data["optimizer"] == "routing"
         assert data["count"] >= 1, (
@@ -715,16 +696,12 @@ class TestSyntheticDataAPI:
                 },
             )
 
-        assert resp.status_code == 200, (
-            f"Cross-modal generation failed: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Cross-modal generation failed: {resp.text}"
         data = resp.json()
         assert data["optimizer"] == "cross_modal"
         assert data["count"] >= 1
         assert isinstance(data["data"], list)
         assert len(data["data"]) >= 1
-
-
 
 
 @pytest.mark.e2e
@@ -755,8 +732,6 @@ class TestEventOperations:
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             resp = client.get("/events/queues/nonexistent_q_xyz/offset")
         assert resp.status_code == 404
-
-
 
 
 @pytest.mark.e2e
@@ -822,8 +797,6 @@ class TestTenantCRUD:
         )
 
 
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestAgentRegistryAndHealth:
@@ -871,7 +844,9 @@ class TestAgentRegistryAndHealth:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert "total_agents" in data, f"Stats missing total_agents, got: {list(data.keys())}"
+        assert "total_agents" in data, (
+            f"Stats missing total_agents, got: {list(data.keys())}"
+        )
         assert isinstance(data["total_agents"], int)
         assert data["total_agents"] >= 1
 
@@ -931,8 +906,6 @@ class TestAgentRegistryAndHealth:
         assert data["agent"] == "search_agent"
 
 
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestA2AProtocol:
@@ -976,8 +949,6 @@ class TestA2AProtocol:
         result = data["result"]
         assert result["id"]
         assert result["contextId"]
-
-
 
 
 @pytest.mark.e2e
@@ -1159,9 +1130,7 @@ class TestAudioIngestionAndSearch:
                     },
                 )
 
-            assert resp.status_code == 200, (
-                f"Audio upload failed: {resp.text}"
-            )
+            assert resp.status_code == 200, f"Audio upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
             assert upload_data["chunks_created"] >= 1, (
@@ -1197,9 +1166,7 @@ class TestPDFIngestionAndSearch:
             with open(real_pdf_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",
-                    files={
-                        "file": (real_pdf_path.name, f, "application/pdf")
-                    },
+                    files={"file": (real_pdf_path.name, f, "application/pdf")},
                     data={
                         "profile": "document_text_semantic",
                         "tenant_id": TENANT_ID,
@@ -1243,18 +1210,14 @@ class TestDocumentIngestionAndSearch:
             with open(real_document_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",
-                    files={
-                        "file": (real_document_path.name, f, "text/markdown")
-                    },
+                    files={"file": (real_document_path.name, f, "text/markdown")},
                     data={
                         "profile": "document_text_semantic",
                         "tenant_id": TENANT_ID,
                     },
                 )
 
-            assert resp.status_code == 200, (
-                f"Document upload failed: {resp.text}"
-            )
+            assert resp.status_code == 200, f"Document upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
             assert upload_data["filename"] == real_document_path.name
@@ -1262,7 +1225,7 @@ class TestDocumentIngestionAndSearch:
                 f"Document should create >=1 chunk, got {upload_data['chunks_created']}"
             )
 
-            # Search verification: document_text_semantic uses GTE-ModernColBERT
+            # Search verification: document_text_semantic uses Reason-ModernColBERT
             # which requires a separate encoder config. Verify search is attempted
             # but accept that the encoder may not be configured for this profile.
             time.sleep(3)
@@ -1328,7 +1291,10 @@ class TestBatchVideoIngestion:
         """Start batch ingestion → poll status → verify event loop responsive."""
         video_dir = str(
             Path(__file__).parent.parent.parent
-            / "data" / "testset" / "evaluation" / "sample_videos"
+            / "data"
+            / "testset"
+            / "evaluation"
+            / "sample_videos"
         )
         if not Path(video_dir).exists():
             pytest.skip(f"Sample video dir not found: {video_dir}")
@@ -1346,9 +1312,7 @@ class TestBatchVideoIngestion:
                 },
             )
 
-            assert resp.status_code == 200, (
-                f"Batch ingestion start failed: {resp.text}"
-            )
+            assert resp.status_code == 200, f"Batch ingestion start failed: {resp.text}"
             data = resp.json()
             assert data["status"] == "started"
             assert "job_id" in data
@@ -1385,9 +1349,7 @@ class TestBatchVideoIngestion:
             "Should be able to poll ingestion status while job is running"
         )
         assert status_data["job_id"] == job_id
-        assert status_data["status"] in (
-            "started", "processing", "completed", "failed"
-        )
+        assert status_data["status"] in ("started", "processing", "completed", "failed")
 
     def test_runtime_responsive_after_batch(self):
         """Verify runtime is fully responsive after batch ingestion completes."""

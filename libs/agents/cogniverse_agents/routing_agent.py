@@ -158,15 +158,10 @@ class RoutingDeps(AgentDeps):
 
     telemetry_config: Any = Field(..., description="Telemetry configuration")
 
-    # Centralized LLM configuration (resolved from llm_config.resolve("routing_agent"))
-    llm_config: LLMEndpointConfig = Field(
-        default_factory=lambda: LLMEndpointConfig(
-            model="ollama/smollm3:3b",
-            api_base="http://localhost:11434",
-            temperature=0.1,
-            max_tokens=1000,
-        ),
-        description="LLM endpoint configuration for DSPy routing",
+    # Centralized LLM configuration — resolved from config.json if not explicitly provided
+    llm_config: Optional[LLMEndpointConfig] = Field(
+        default=None,
+        description="LLM endpoint configuration. If None, resolved from config.json at init.",
     )
 
     # Routing thresholds
@@ -393,10 +388,39 @@ class RoutingAgent(
             self.telemetry_manager = None
 
     def _configure_dspy(self, deps: RoutingDeps) -> None:
-        """Configure DSPy LM instance (scoped via dspy.context, not global)."""
-        self._dspy_lm = create_dspy_lm(deps.llm_config)
+        """Configure DSPy LM instance (scoped via dspy.context, not global).
+
+        If deps.llm_config is None, resolves from config.json via ConfigManager.
+        Disables qwen3 thinking mode which breaks DSPy field parsing.
+        """
+        llm_config = deps.llm_config
+        if llm_config is None:
+            from cogniverse_foundation.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
+
+            cm = create_default_config_manager()
+            config = get_config(tenant_id="default", config_manager=cm)
+            llm_config = config.get_llm_config().resolve("routing_agent")
+            self.logger.info(
+                f"Resolved LLM config from config.json: {llm_config.model}"
+            )
+
+        # qwen3 thinking mode puts output in a 'thinking' field that DSPy can't
+        # parse, leaving content fields empty. Disable it.
+        if "qwen3" in llm_config.model or "qwen-3" in llm_config.model:
+            if not llm_config.extra_body or "think" not in llm_config.extra_body:
+                import dataclasses
+
+                llm_config = dataclasses.replace(
+                    llm_config, extra_body={"think": False}
+                )
+                self.logger.info("Disabled qwen3 thinking mode for DSPy compatibility")
+
+        self._dspy_lm = create_dspy_lm(llm_config)
         self.logger.info(
-            f"Created DSPy LM: {deps.llm_config.model} at {deps.llm_config.api_base}"
+            f"Created DSPy LM: {llm_config.model} at {llm_config.api_base}"
         )
 
     def _initialize_enhancement_pipeline(self, deps: RoutingDeps) -> None:
@@ -803,6 +827,7 @@ class RoutingAgent(
                 )
             try:
                 # Check cache first by searching all modality buckets (if enabled)
+                self.emit_progress("cache_check", "Checking routing cache...")
                 if self.cache_manager:
                     cached_decision = self.cache_manager.get_cached_result_any_modality(
                         query=query, ttl_seconds=self.deps.cache_ttl_seconds
@@ -819,6 +844,9 @@ class RoutingAgent(
                     self.logger.info(f"Contextual insights: {contextual_insights}")
 
                 # Extract entities/relationships and enhance query
+                self.emit_progress(
+                    "entity_extraction", "Extracting entities and enhancing query..."
+                )
                 (
                     entities,
                     relationships,
@@ -827,6 +855,7 @@ class RoutingAgent(
                 ) = await self._analyze_and_enhance_query(query)
 
                 # DSPy-powered routing decision (baseline)
+                self.emit_progress("routing_decision", "Making routing decision...")
                 baseline_routing_result = await self._make_routing_decision(
                     original_query=query,
                     enhanced_query=enhanced_query,
@@ -836,6 +865,7 @@ class RoutingAgent(
                 )
 
                 # Apply GRPO optimization if available
+                self.emit_progress("grpo_optimization", "Applying GRPO optimization...")
                 optimized_routing_result = await self._apply_grpo_optimization(
                     query=query,
                     entities=entities,
@@ -1074,13 +1104,23 @@ class RoutingAgent(
                     query=routing_query, context=routing_context
                 )
 
-            # Extract routing information from DSPy result
+            # Extract routing information from DSPy result.
+            # DSPyAdvancedRoutingModule returns: routing_decision (dict),
+            # reasoning_chain (str), overall_confidence (float).
+            # DSPyBasicRoutingModule returns: recommended_agent, confidence, reasoning.
+            routing_decision = getattr(dspy_result, "routing_decision", {})
             routing_info = {
-                "recommended_agent": getattr(
-                    dspy_result, "recommended_agent", "search_agent"
+                "recommended_agent": (
+                    routing_decision.get("primary_agent")
+                    if isinstance(routing_decision, dict)
+                    else getattr(dspy_result, "recommended_agent", "search_agent")
                 ),
-                "confidence": getattr(dspy_result, "confidence", 0.5),
-                "reasoning": getattr(dspy_result, "reasoning", "DSPy routing decision"),
+                "confidence": getattr(
+                    dspy_result,
+                    "overall_confidence",
+                    getattr(dspy_result, "confidence", 0.5),
+                ),
+                "reasoning": self._extract_reasoning(dspy_result),
                 "primary_intent": getattr(dspy_result, "primary_intent", "search"),
                 "complexity_score": getattr(dspy_result, "complexity_score", 0.5),
             }
@@ -1105,6 +1145,20 @@ class RoutingAgent(
                 "primary_intent": "search",
                 "complexity_score": 0.5,
             }
+
+    @staticmethod
+    def _extract_reasoning(dspy_result) -> str:
+        """Extract reasoning as a string from DSPy prediction.
+
+        DSPyAdvancedRoutingModule returns reasoning_chain (list of strings).
+        DSPyBasicRoutingModule returns reasoning (str).
+        """
+        reasoning = getattr(dspy_result, "reasoning_chain", None)
+        if reasoning is None:
+            reasoning = getattr(dspy_result, "reasoning", "")
+        if isinstance(reasoning, list):
+            return " ".join(str(r) for r in reasoning)
+        return str(reasoning)
 
     def _prepare_routing_context(
         self,
@@ -1372,8 +1426,8 @@ class RoutingAgent(
         The A2AAgent base class handles conversion from A2A protocol format
         to RoutingInput and from RoutingOutput back to A2A format.
 
-        For streaming, use agent.process(input, stream=True) which calls
-        _process_stream_impl() for custom streaming behavior.
+        For streaming, use agent.process(input, stream=True). Agents emit
+        progress events via self.emit_progress() during _process_impl().
 
         Args:
             input: Validated RoutingInput with query, context, require_orchestration
@@ -1703,7 +1757,7 @@ if __name__ == "__main__":
             tenant_id="demo-tenant",
             telemetry_config=MockTelemetryConfig(enabled=False),
             llm_config=LLMEndpointConfig(
-                model="ollama/smollm3:3b",
+                model="ollama/qwen3:4b",
                 api_base="http://localhost:11434",
                 temperature=0.1,
                 max_tokens=1000,

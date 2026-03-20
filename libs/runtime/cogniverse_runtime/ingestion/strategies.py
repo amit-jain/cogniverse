@@ -137,15 +137,30 @@ class AudioTranscriptionStrategy(BaseStrategy):
 
 
 class VLMDescriptionStrategy(BaseStrategy):
-    """Generate descriptions using VLM."""
+    """Generate descriptions using VLM via Modal service."""
 
-    def __init__(self, model_name: str = "gpt-4-vision", batch_size: int = 10):
-        self.model_name = model_name
+    def __init__(
+        self,
+        vlm_endpoint: str,
+        batch_size: int = 500,
+        timeout: int = 10800,
+        auto_start: bool = True,
+    ):
+        self.vlm_endpoint = vlm_endpoint
         self.batch_size = batch_size
+        self.timeout = timeout
+        self.auto_start = auto_start
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """VLM description requires VLM processor."""
-        return {"vlm": {"model_name": self.model_name, "batch_size": self.batch_size}}
+        return {
+            "vlm": {
+                "vlm_endpoint": self.vlm_endpoint,
+                "batch_size": self.batch_size,
+                "timeout": self.timeout,
+                "auto_start": self.auto_start,
+            }
+        }
 
     async def generate_descriptions(
         self,
@@ -225,7 +240,7 @@ class AudioEmbeddingStrategy(BaseStrategy):
     def __init__(
         self,
         clap_model: str = "laion/clap-htsat-unfused",
-        colbert_model: str = "lightonai/GTE-ModernColBERT-v1",
+        colbert_model: str = "lightonai/Reason-ModernColBERT",
     ):
         self.clap_model = clap_model
         self.colbert_model = colbert_model
@@ -283,7 +298,7 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        colbert_model: str = "lightonai/GTE-ModernColBERT-v1",
+        colbert_model: str = "lightonai/Reason-ModernColBERT",
     ):
         self.colbert_model = colbert_model
 

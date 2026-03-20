@@ -40,15 +40,6 @@ class TestSummaryGenerationSignature:
 
 
 @pytest.mark.unit
-class TestVisualAnalysisSignature:
-    """Test DSPy signature for visual analysis"""
-
-    @pytest.mark.ci_fast
-    def test_signature_structure(self):
-        """Test that the visual analysis signature has correct structure"""
-
-
-@pytest.mark.unit
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
@@ -366,7 +357,8 @@ class TestSummarizerAgentCoreFunctionality:
         # Should identify visual content from video results
 
     @pytest.mark.ci_fast
-    def test_generate_brief_summary_logic(
+    @pytest.mark.asyncio
+    async def test_generate_brief_summary_logic(
         self, agent_with_mocks, sample_summary_request
     ):
         """Test brief summary generation"""
@@ -390,7 +382,7 @@ class TestSummarizerAgentCoreFunctionality:
 
         # Need to provide the results parameter as well
         results = sample_summary_request.search_results
-        brief_summary = agent._generate_brief_summary(
+        brief_summary = await agent._generate_brief_summary(
             sample_summary_request, results, thinking_phase
         )
 
@@ -517,6 +509,452 @@ class TestSummarizerAgentCoreFunctionality:
             # Verify enhancement was applied via metadata
             assert result.enhancement_applied is True
             assert result.metadata.get("enhanced_query") is not None
+
+
+@pytest.mark.unit
+class TestEmitProgressStreaming:
+    """Test emit_progress-based streaming via AgentBase._stream_with_progress."""
+
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
+    @patch.object(SummarizerAgent, "_initialize_vlm_client")
+    @pytest.mark.asyncio
+    async def test_stream_yields_progress_and_final(
+        self, mock_init_vlm, mock_vlm_class
+    ):
+        """Streaming yields emit_progress events then final result."""
+        from cogniverse_agents.summarizer_agent import SummarizerInput
+
+        mock_vlm_class.return_value = Mock()
+        agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
+        agent._dspy_lm = Mock()
+
+        mock_prediction = Mock()
+        mock_prediction.summary = "Test summary."
+        agent.summarization_module.forward = Mock(return_value=mock_prediction)
+
+        typed_input = SummarizerInput(
+            query="test query",
+            search_results=[],
+            summary_type="brief",
+            include_visual_analysis=False,
+        )
+
+        events = []
+        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+            async for event in await agent.process(typed_input, stream=True):
+                events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "status" in event_types
+        assert "final" in event_types
+
+        final_event = [e for e in events if e["type"] == "final"][0]
+        assert "summary" in final_event["data"]
+        assert "key_points" in final_event["data"]
+        assert "confidence_score" in final_event["data"]
+
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
+    @patch.object(SummarizerAgent, "_initialize_vlm_client")
+    @pytest.mark.asyncio
+    async def test_stream_thinking_phase_emitted(self, mock_init_vlm, mock_vlm_class):
+        """emit_progress calls produce thinking phase events during streaming."""
+        from cogniverse_agents.summarizer_agent import SummarizerInput
+
+        mock_vlm_class.return_value = Mock()
+        agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
+        agent._dspy_lm = Mock()
+
+        mock_prediction = Mock()
+        mock_prediction.summary = "Test summary."
+        agent.summarization_module.forward = Mock(return_value=mock_prediction)
+
+        typed_input = SummarizerInput(
+            query="test query",
+            search_results=[{"id": "1", "title": "Test"}],
+            summary_type="comprehensive",
+            include_visual_analysis=False,
+        )
+
+        events = []
+        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+            async for event in await agent.process(typed_input, stream=True):
+                events.append(event)
+
+        thinking_partials = [
+            e
+            for e in events
+            if e.get("type") == "partial" and e.get("phase") == "thinking"
+        ]
+        assert len(thinking_partials) == 1
+        assert "themes" in thinking_partials[0]["data"]
+        assert "reasoning" in thinking_partials[0]["data"]
+
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
+    @patch.object(SummarizerAgent, "_initialize_vlm_client")
+    @pytest.mark.asyncio
+    async def test_stream_error_on_processing_failure(
+        self, mock_init_vlm, mock_vlm_class
+    ):
+        """_stream_with_progress yields error event if _process_impl raises."""
+        from cogniverse_agents.summarizer_agent import SummarizerInput
+
+        mock_vlm_class.return_value = Mock()
+        agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
+        agent._dspy_lm = Mock()
+
+        agent._thinking_phase = AsyncMock(side_effect=RuntimeError("LM not configured"))
+
+        typed_input = SummarizerInput(
+            query="test query",
+            search_results=[],
+            include_visual_analysis=False,
+        )
+
+        events = []
+        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+            async for event in await agent.process(typed_input, stream=True):
+                events.append(event)
+
+        # _stream_with_progress catches the exception and yields error event
+        error_events = [e for e in events if e["type"] == "error"]
+        assert len(error_events) == 1
+        assert "LM not configured" in error_events[0]["message"]
+
+        final_events = [e for e in events if e["type"] == "final"]
+        assert len(final_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_emit_progress_noop_when_not_streaming(self):
+        """emit_progress is a no-op when process(stream=False)."""
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class TInput(AgentInput):
+            value: str
+
+        class TOutput(AgentOutput):
+            result: str
+
+        class TDeps(AgentDeps):
+            pass
+
+        class TestAgent(AgentBase[TInput, TOutput, TDeps]):
+            async def _process_impl(self, input):
+                self.emit_progress("step1", "Working...")
+                return TOutput(result=input.value.upper())
+
+        agent = TestAgent(deps=TDeps())
+        result = await agent.process(TInput(value="hello"))
+        assert result.result == "HELLO"
+        assert agent._progress_queue is None
+
+
+@pytest.mark.unit
+class TestEmitProgressGenericAgents:
+    """Test that emit_progress streaming works for any agent, not just summarizer."""
+
+    @pytest.mark.asyncio
+    async def test_multi_phase_agent_streams_all_events(self):
+        """A generic multi-phase agent yields all emit_progress events then final."""
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class MInput(AgentInput):
+            query: str
+
+        class MOutput(AgentOutput):
+            answer: str
+            steps_completed: int
+
+        class MDeps(AgentDeps):
+            pass
+
+        class MultiPhaseAgent(AgentBase[MInput, MOutput, MDeps]):
+            async def _process_impl(self, input):
+                self.emit_progress("encoding", "Encoding query...")
+                self.emit_progress("retrieval", "Searching index...")
+                self.emit_progress("retrieval", "Found results", data={"count": 42})
+                self.emit_progress("ranking", "Re-ranking results...")
+                return MOutput(answer="the answer", steps_completed=3)
+
+        agent = MultiPhaseAgent(deps=MDeps())
+        events = []
+        async for event in await agent.process(MInput(query="test"), stream=True):
+            events.append(event)
+
+        # 4 progress events + 1 final
+        assert len(events) == 5
+
+        # Status events
+        assert events[0] == {
+            "type": "status",
+            "phase": "encoding",
+            "message": "Encoding query...",
+        }
+        assert events[1] == {
+            "type": "status",
+            "phase": "retrieval",
+            "message": "Searching index...",
+        }
+
+        # Partial event (has data)
+        assert events[2]["type"] == "partial"
+        assert events[2]["data"]["count"] == 42
+
+        # Final event
+        assert events[4]["type"] == "final"
+        assert events[4]["data"]["answer"] == "the answer"
+        assert events[4]["data"]["steps_completed"] == 3
+
+    @pytest.mark.asyncio
+    async def test_agent_with_no_emit_progress_still_streams_final(self):
+        """An agent that never calls emit_progress still yields the final event."""
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class SInput(AgentInput):
+            x: int
+
+        class SOutput(AgentOutput):
+            doubled: int
+
+        class SDeps(AgentDeps):
+            pass
+
+        class SilentAgent(AgentBase[SInput, SOutput, SDeps]):
+            async def _process_impl(self, input):
+                return SOutput(doubled=input.x * 2)
+
+        agent = SilentAgent(deps=SDeps())
+        events = []
+        async for event in await agent.process(SInput(x=21), stream=True):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "final"
+        assert events[0]["data"]["doubled"] == 42
+
+    @pytest.mark.asyncio
+    async def test_agent_error_during_streaming_yields_error_event(self):
+        """If _process_impl raises, _stream_with_progress yields error event."""
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class EInput(AgentInput):
+            query: str
+
+        class EOutput(AgentOutput):
+            result: str
+
+        class EDeps(AgentDeps):
+            pass
+
+        class FailingAgent(AgentBase[EInput, EOutput, EDeps]):
+            async def _process_impl(self, input):
+                self.emit_progress("step1", "Starting...")
+                raise RuntimeError("Backend connection failed")
+
+        agent = FailingAgent(deps=EDeps())
+        events = []
+        async for event in await agent.process(EInput(query="test"), stream=True):
+            events.append(event)
+
+        assert len(events) == 2
+        assert events[0]["type"] == "status"
+        assert events[1]["type"] == "error"
+        assert "Backend connection failed" in events[1]["message"]
+
+    @pytest.mark.asyncio
+    async def test_progress_queue_cleaned_up_after_streaming(self):
+        """_progress_queue is None after streaming completes."""
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class CInput(AgentInput):
+            val: str
+
+        class COutput(AgentOutput):
+            val: str
+
+        class CDeps(AgentDeps):
+            pass
+
+        class CleanAgent(AgentBase[CInput, COutput, CDeps]):
+            async def _process_impl(self, input):
+                self.emit_progress("work", "Working...")
+                return COutput(val=input.val)
+
+        agent = CleanAgent(deps=CDeps())
+        assert agent._progress_queue is None
+
+        async for _ in await agent.process(CInput(val="x"), stream=True):
+            pass
+
+        assert agent._progress_queue is None
+
+
+@pytest.mark.unit
+class TestA2AExecutorStreaming:
+    """Test CogniverseAgentExecutor streaming through A2A protocol."""
+
+    @pytest.mark.asyncio
+    async def test_create_streaming_agent_summarization(self):
+        """create_streaming_agent returns agent + typed input for summarizers."""
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+        mock_registry = Mock()
+        mock_agent_entry = Mock()
+        mock_agent_entry.capabilities = ["summarization"]
+        mock_registry.get_agent.return_value = mock_agent_entry
+
+        dispatcher = AgentDispatcher(
+            agent_registry=mock_registry,
+            config_manager=Mock(),
+            schema_loader=Mock(),
+        )
+
+        with (
+            patch("cogniverse_agents.summarizer_agent.VLMInterface"),
+            patch.object(SummarizerAgent, "_initialize_vlm_client"),
+        ):
+            agent, typed_input = dispatcher.create_streaming_agent(
+                "summarizer_agent", "test query", "default"
+            )
+
+        assert isinstance(agent, SummarizerAgent)
+        assert typed_input.query == "test query"
+
+    @pytest.mark.asyncio
+    async def test_create_streaming_agent_unsupported(self):
+        """create_streaming_agent raises for non-streaming agents."""
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+        mock_registry = Mock()
+        mock_agent_entry = Mock()
+        mock_agent_entry.capabilities = ["search"]
+        mock_registry.get_agent.return_value = mock_agent_entry
+
+        dispatcher = AgentDispatcher(
+            agent_registry=mock_registry,
+            config_manager=Mock(),
+            schema_loader=Mock(),
+        )
+
+        with pytest.raises(ValueError, match="does not support streaming"):
+            dispatcher.create_streaming_agent("search_agent", "query", "default")
+
+    @pytest.mark.asyncio
+    async def test_executor_streaming_emits_a2a_events(self):
+        """Streaming executor emits intermediate + final A2A TaskStatusUpdateEvents."""
+        from a2a.server.events import EventQueue as A2AEventQueue
+        from a2a.types import TaskState
+
+        from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+        mock_dispatcher = Mock()
+        mock_dispatcher._registry = Mock()
+        mock_agent_entry = Mock()
+        mock_agent_entry.capabilities = ["summarization"]
+        mock_dispatcher._registry.get_agent.return_value = mock_agent_entry
+
+        # Create a mock agent that streams events
+        mock_agent = AsyncMock()
+
+        async def fake_stream():
+            yield {"type": "status", "phase": "thinking", "message": "Analyzing..."}
+            yield {"type": "final", "data": {"summary": "result"}}
+
+        mock_agent.process = AsyncMock(return_value=fake_stream())
+        mock_typed_input = Mock()
+        mock_dispatcher.create_streaming_agent = Mock(
+            return_value=(mock_agent, mock_typed_input)
+        )
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+
+        # Build a mock RequestContext
+        mock_context = Mock()
+        mock_context.get_user_input.return_value = "summarize this"
+        mock_context.metadata = {
+            "agent_name": "summarizer_agent",
+            "query": "summarize this",
+            "stream": True,
+        }
+        mock_context.task_id = "task_123"
+        mock_context.context_id = "ctx_456"
+        mock_context.current_task = None
+
+        a2a_queue = A2AEventQueue()
+
+        await executor.execute(mock_context, a2a_queue)
+
+        # Dequeue events and verify
+        events = []
+        while not a2a_queue.queue.empty():
+            events.append(a2a_queue.queue.get_nowait())
+
+        assert len(events) == 2
+        # First event: status (working state)
+        assert events[0].status.state == TaskState.working
+        # Second event: final (input_required for multi-turn)
+        assert events[1].status.state == TaskState.input_required
+
+    @pytest.mark.asyncio
+    async def test_executor_non_streaming_when_not_requested(self):
+        """Executor uses non-streaming path when stream=False in metadata."""
+        from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+        mock_dispatcher = Mock()
+        mock_dispatcher._registry = Mock()
+        mock_agent_entry = Mock()
+        mock_agent_entry.capabilities = ["summarization"]
+        mock_dispatcher._registry.get_agent.return_value = mock_agent_entry
+
+        mock_dispatcher.dispatch = AsyncMock(
+            return_value={"status": "success", "summary": "result"}
+        )
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+
+        mock_context = Mock()
+        mock_context.get_user_input.return_value = "summarize this"
+        mock_context.metadata = {
+            "agent_name": "summarizer_agent",
+            "query": "summarize this",
+            # stream not set — defaults to False
+        }
+        mock_context.task_id = "task_123"
+        mock_context.context_id = "ctx_456"
+        mock_context.current_task = None
+
+        from a2a.server.events import EventQueue as A2AEventQueue
+
+        a2a_queue = A2AEventQueue()
+
+        await executor.execute(mock_context, a2a_queue)
+
+        # Non-streaming: dispatch() called, not create_streaming_agent
+        mock_dispatcher.dispatch.assert_called_once()
 
 
 if __name__ == "__main__":

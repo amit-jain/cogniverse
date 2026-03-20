@@ -241,6 +241,7 @@ class ProfileSelectionAgent(
         profiles_str = ", ".join(profiles) if isinstance(profiles, list) else profiles
 
         # Select profile using DSPy LLM reasoning
+        self.emit_progress("selection", "Selecting optimal profile with DSPy...")
         result = self.dspy_module.forward(query=query, available_profiles=profiles_str)
 
         # Parse confidence
@@ -250,6 +251,7 @@ class ProfileSelectionAgent(
             confidence = 0.5
 
         # Generate alternative profiles (top 3)
+        self.emit_progress("alternatives", "Generating alternative profiles...")
         alternatives = self._generate_alternatives(
             query, profiles, result.selected_profile, result.modality
         )

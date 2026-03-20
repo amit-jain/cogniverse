@@ -80,9 +80,7 @@ class CrossModalOptimizer:
         self.fusion_history: List[Dict[str, Any]] = []
         self.fusion_success_rates: Dict[Tuple[QueryModality, QueryModality], float] = {}
 
-        logger.info(
-            f"Initialized CrossModalOptimizer (tenant: {tenant_id})"
-        )
+        logger.info(f"Initialized CrossModalOptimizer (tenant: {tenant_id})")
 
     def predict_fusion_benefit(
         self,

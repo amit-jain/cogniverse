@@ -642,7 +642,9 @@ class OptimizedRouter:
             for ex in self.examples[:3]:
                 inp = json.loads(ex.get("input", "{}"))
                 out = ex.get("output", "{}")
-                prompt += f"\nConversation History: {inp.get('conversation_history', '')}\n"
+                prompt += (
+                    f"\nConversation History: {inp.get('conversation_history', '')}\n"
+                )
                 prompt += f"User Query: {inp.get('user_query', '')}\n"
                 prompt += f"Output: {out}\n"
 

@@ -885,7 +885,7 @@ def test_routing_agent_initialization():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -905,7 +905,7 @@ async def test_routing_agent_strategy_selection(mocker):
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -1066,7 +1066,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model='ollama/smollm3:3b',
+        model='ollama/qwen3:4b',
         api_base='http://localhost:11434',
     ),
 )
@@ -1263,7 +1263,7 @@ async def main():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

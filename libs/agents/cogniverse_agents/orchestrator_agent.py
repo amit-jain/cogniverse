@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
-
 class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration"""
 
@@ -279,7 +277,6 @@ class OrchestratorAgent(
                 "Continuing without memory support."
             )
 
-
     async def _process_impl(
         self, input: Union[OrchestratorInput, Dict[str, Any]]
     ) -> OrchestratorOutput:
@@ -315,6 +312,7 @@ class OrchestratorAgent(
         self._ensure_memory_for_tenant(tenant_id)
 
         # Get relevant context from memory (cross-session)
+        self.emit_progress("memory_context", "Retrieving memory context...")
         memory_context = self.get_relevant_context(query)
         if memory_context:
             logger.info(f"Retrieved memory context for query: {query[:50]}...")
@@ -325,13 +323,16 @@ class OrchestratorAgent(
         )
 
         # Phase 1: Planning
+        self.emit_progress("planning", "Creating execution plan...")
         plan = await self._create_plan(query, conversation_context)
 
         # Phase 2: Action — execute via A2A HTTP, passing tenant_id/session_id
+        self.emit_progress("execution", "Executing agent plan...")
         agent_results = await self._execute_plan(
             plan, tenant_id=tenant_id, session_id=session_id
         )
 
+        self.emit_progress("aggregation", "Aggregating results...")
         final_output = self._aggregate_results(query, agent_results)
         execution_summary = self._generate_summary(plan, agent_results)
         self.remember_success(query, execution_summary)

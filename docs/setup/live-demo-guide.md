@@ -515,6 +515,7 @@ Key endpoint groups (Runtime on port 8000):
 | **Ingestion** | `/ingestion` | `POST /ingestion/start` — launch job; `GET /ingestion/status/{job_id}` — poll status |
 | **Admin** | `/admin` | `GET /admin/system/stats`; `POST /admin/profiles`; `GET /admin/profiles`; `POST /admin/profiles/{name}/deploy` |
 | **Agents** | `/agents` | `POST /agents/register`; `POST /agents/{name}/process` |
+| **A2A** | `/a2a` | `POST /a2a/tasks/send`; `POST /a2a/tasks/sendSubscribe` (SSE streaming) |
 | **Events** | `/events` | `GET /events/workflows/{id}` — workflow status; `POST /events/workflows/{id}/cancel` |
 | **Health** | `/health` | `/health/live` (liveness); `/health/ready` (readiness) |
 

@@ -806,7 +806,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -838,7 +838,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -1072,7 +1072,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -1446,7 +1446,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )

@@ -1448,7 +1448,7 @@ config = AdvancedOptimizerConfig(
 
 optimizer = AdvancedRoutingOptimizer(
     tenant_id="default",
-    llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+    llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
     telemetry_provider=telemetry_provider,
     config=config,
 )

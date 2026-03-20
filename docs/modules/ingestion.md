@@ -813,7 +813,10 @@ profile_config = {
         },
         "description": {
             "class": "VLMDescriptionStrategy",
-            "params": {"model_name": "Qwen/Qwen2-VL-2B-Instruct"}
+            "params": {
+                "vlm_endpoint": "https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+                "batch_size": 500
+            }
         },
         "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
@@ -984,7 +987,7 @@ result = generator.generate_embeddings(
 - `embedding_type` - Determines which attribute stores the result (required, raises `ValueError` if missing)
 - `embedding_model` - Model identifier for the loader (required, raises `ValueError` if missing)
 - `model_loader` - Selects the loader class in `ModelLoaderFactory` (required, raises `ValueError` if missing)
-- `semantic_model` - Secondary model for `audio_dual` embedding type (e.g., `lightonai/GTE-ModernColBERT-v1`)
+- `semantic_model` - Secondary model for `audio_dual` embedding type (e.g., `lightonai/Reason-ModernColBERT`)
 
 ---
 
@@ -1084,18 +1087,20 @@ strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 
 ### 5. VLMDescriptionStrategy
 
-**Purpose**: Generate descriptions using Vision-Language Models
+**Purpose**: Generate descriptions using Vision-Language Models via Modal service
 
 **Parameters**:
 
-- `model_name`: VLM model name (e.g., "Qwen/Qwen2-VL-2B-Instruct")
-- `batch_size`: Batch size for description generation (default 10)
+- `vlm_endpoint`: URL of the Modal VLM service endpoint (required)
+- `batch_size`: Batch size for frame processing (default 500)
+- `timeout`: Request timeout in seconds (default 10800 / 3 hours)
+- `auto_start`: Whether to auto-start Modal service if not running (default True)
 
 **Usage**:
 ```python
 strategy = VLMDescriptionStrategy(
-    model_name="Qwen/Qwen2-VL-2B-Instruct",
-    batch_size=10
+    vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+    batch_size=500
 )
 ```
 
@@ -1635,8 +1640,8 @@ async def ingest_with_custom_strategy():
             "description": {
                 "class": "VLMDescriptionStrategy",
                 "params": {
-                    "model_name": "Qwen/Qwen2-VL-2B-Instruct",
-                    "batch_size": 20  # Larger batches
+                    "vlm_endpoint": "https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+                    "batch_size": 500
                 }
             },
             "embedding": {

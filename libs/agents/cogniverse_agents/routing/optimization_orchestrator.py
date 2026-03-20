@@ -191,11 +191,9 @@ class OptimizationOrchestrator:
         while True:
             try:
                 # Step 1: Identify spans needing annotation
-                annotation_requests = (
-                    await (
-                        self.annotation_agent.identify_spans_needing_annotation(
-                            lookback_hours=24
-                        )
+                annotation_requests = await (
+                    self.annotation_agent.identify_spans_needing_annotation(
+                        lookback_hours=24
                     )
                 )
 

@@ -22,8 +22,6 @@ from cogniverse_core.common.vlm_interface import VLMInterface
 logger = logging.getLogger(__name__)
 
 
-
-
 class DetailedReportInput(AgentInput):
     """Type-safe input for detailed report generation"""
 
@@ -275,34 +273,45 @@ class DetailedReportAgent(
         with dspy.context(lm=self._dspy_lm):
             try:
                 # Phase 1: Thinking phase - comprehensive analysis
+                self.emit_progress("thinking", "Analyzing content...")
                 thinking_phase = await self._thinking_phase(request)
 
                 # Phase 2: Visual analysis (if enabled)
+                self.emit_progress("visual_analysis", "Performing visual analysis...")
                 visual_analysis = await self._perform_visual_analysis(
                     request, thinking_phase
                 )
 
                 # Phase 3: Generate executive summary
+                self.emit_progress(
+                    "executive_summary", "Generating executive summary..."
+                )
                 executive_summary = await self._generate_executive_summary(
                     request, thinking_phase
                 )
 
                 # Phase 4: Generate detailed findings
+                self.emit_progress("findings", "Compiling detailed findings...")
                 detailed_findings = self._generate_detailed_findings(
                     request, thinking_phase
                 )
 
                 # Phase 5: Generate technical details
+                self.emit_progress(
+                    "technical_details", "Generating technical details..."
+                )
                 technical_details = self._generate_technical_details(
                     request, thinking_phase
                 )
 
                 # Phase 6: Generate recommendations
+                self.emit_progress("recommendations", "Generating recommendations...")
                 recommendations = self._generate_recommendations(
                     request, thinking_phase
                 )
 
                 # Phase 7: Confidence assessment
+                self.emit_progress("confidence", "Calculating confidence assessment...")
                 confidence_assessment = self._calculate_confidence_assessment(
                     request, thinking_phase
                 )
@@ -816,7 +825,6 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         return result
 
-
     async def _process_impl(self, input: DetailedReportInput) -> DetailedReportOutput:
         """
         Process report generation request with typed input/output.
@@ -827,6 +835,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         Returns:
             DetailedReportOutput with executive_summary, findings, recommendations, etc.
         """
+        self.emit_progress("preparation", "Preparing report request...")
         # Create report request from typed input
         request = ReportRequest(
             query=input.query,
@@ -839,6 +848,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             max_results_to_analyze=input.max_results_to_analyze,
         )
 
+        self.emit_progress("report_generation", "Generating detailed report...")
         # Generate report
         result = await self._generate_report(request)
 

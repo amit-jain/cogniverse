@@ -371,14 +371,14 @@ class QueryExpander:
             has_text_verb = any(verb in query.lower() for verb in self.text_verbs)
 
             if has_visual_verb:
-                result["expansions"]["text_alternatives"] = (
-                    await self.expand_visual_to_text(query)
-                )
+                result["expansions"][
+                    "text_alternatives"
+                ] = await self.expand_visual_to_text(query)
 
             if has_text_verb:
-                result["expansions"]["visual_alternatives"] = (
-                    await self.expand_text_to_visual(query)
-                )
+                result["expansions"][
+                    "visual_alternatives"
+                ] = await self.expand_text_to_visual(query)
 
             # Always provide modality-specific expansions
             for modality in ["video", "image", "audio", "document"]:

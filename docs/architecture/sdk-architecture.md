@@ -919,7 +919,7 @@ async def test_routing_agent_with_vespa_backend(config_manager, tenant_id):
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

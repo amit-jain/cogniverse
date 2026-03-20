@@ -23,8 +23,6 @@ from cogniverse_core.query.encoders import ColPaliQueryEncoder
 logger = logging.getLogger(__name__)
 
 
-
-
 class DocumentResult(AgentOutput):
     """Result from document search"""
 
@@ -199,7 +197,11 @@ class DocumentAgent(
         """Lazy load ColPali model for visual strategy"""
         if self._colpali_model is None:
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based", "model_loader": "colpali"}
+            config = {
+                "colpali_model": self._colpali_model_name,
+                "embedding_type": "frame_based",
+                "model_loader": "colpali",
+            }
             self._colpali_model, self._colpali_processor = get_or_load_model(
                 self._colpali_model_name, config, logger
             )
@@ -575,12 +577,14 @@ class DocumentAgent(
         Returns:
             DocumentSearchOutput with results and count
         """
+        self.emit_progress("strategy_selection", "Selecting search strategy...")
         results = await self.search_documents(
             query=input.query,
             strategy=input.strategy,
             limit=input.limit,
         )
 
+        self.emit_progress("complete", "Document search complete.")
         return DocumentSearchOutput(results=results, count=len(results))
 
     def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:

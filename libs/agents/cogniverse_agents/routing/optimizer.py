@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -113,9 +113,7 @@ class RoutingOptimizer:
             from dataclasses import fields
 
             valid_fields = {f.name for f in fields(OptimizationConfig)}
-            filtered_config = {
-                k: v for k, v in config.items() if k in valid_fields
-            }
+            filtered_config = {k: v for k, v in config.items() if k in valid_fields}
             self.config = (
                 OptimizationConfig(**filtered_config)
                 if filtered_config

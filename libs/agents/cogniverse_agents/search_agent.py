@@ -71,7 +71,9 @@ class ConversationalQueryRewriteModule(dspy.Module):
         return self.rewriter(query=query, conversation_history=conversation_history)
 
     async def aforward(self, query: str, conversation_history: str) -> dspy.Prediction:
-        return await self.rewriter.acall(query=query, conversation_history=conversation_history)
+        return await self.rewriter.acall(
+            query=query, conversation_history=conversation_history
+        )
 
 
 class SearchInput(AgentInput):
@@ -233,7 +235,6 @@ class RelationshipAwareSearchParams(BaseModel):
     )
 
 
-
 class VideoPart(BaseModel):
     """Video content part for A2A messages"""
 
@@ -250,7 +251,6 @@ class ImagePart(BaseModel):
     image_data: bytes = Field(..., description="Raw image file bytes")
     filename: Optional[str] = Field(None, description="Original filename")
     content_type: Optional[str] = Field(None, description="MIME type")
-
 
 
 class ContentProcessor:
@@ -381,7 +381,6 @@ class ContentProcessor:
             raise ImportError(
                 "OpenCV is required for video frame extraction. Install with: pip install opencv-python"
             )
-
 
 
 class SearchAgent(
@@ -1759,7 +1758,9 @@ class SearchAgent(
         enhanced_query = None
 
         # Check for ensemble mode (multiple profiles)
+        self.emit_progress("retrieval", "Preparing search...")
         if input.profiles and len(input.profiles) > 1:
+            self.emit_progress("retrieval", "Running ensemble search...")
             logger.info(f"Ensemble mode detected: {len(input.profiles)} profiles")
             search_mode = "ensemble"
             profile = None
@@ -1796,6 +1797,7 @@ class SearchAgent(
             )
         else:
             # Text-based search with optional DSPy optimization
+            self.emit_progress("query_optimization", "Optimizing query with DSPy...")
             search_query = query
             try:
                 dspy_result = self.search_module.forward(
@@ -1812,6 +1814,7 @@ class SearchAgent(
             except Exception as e:
                 logger.warning(f"DSPy optimization failed: {e}, using original query")
 
+            self.emit_progress("retrieval", "Searching by text...")
             results = self._search_by_text(
                 query=search_query,
                 tenant_id=tenant_id,
@@ -1834,6 +1837,7 @@ class SearchAgent(
         )
 
         if self.should_use_rlm_for_query(input.rlm, results_context):
+            self.emit_progress("rlm_synthesis", "Synthesizing answer with RLM...")
             logger.info(f"RLM enabled for query: {query[:50]}...")
             try:
                 rlm_result = self.process_with_rlm(
@@ -1870,7 +1874,6 @@ class SearchAgent(
         )
 
     # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
-
 
 
 app = FastAPI(
@@ -2120,7 +2123,6 @@ async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
     except Exception as e:
         logger.error(f"Routing decision search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @app.post("/tasks/send")

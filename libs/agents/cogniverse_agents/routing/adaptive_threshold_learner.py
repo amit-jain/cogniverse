@@ -975,9 +975,7 @@ class AdaptiveThresholdLearner:
         """Load previously stored adaptive learning state from telemetry."""
         try:
             # Load threshold states from blob
-            states_json = await self._artifact_manager.load_blob(
-                "threshold", "states"
-            )
+            states_json = await self._artifact_manager.load_blob("threshold", "states")
             if states_json:
                 stored_states = json.loads(states_json)
                 for param_value, state_dict in stored_states.items():

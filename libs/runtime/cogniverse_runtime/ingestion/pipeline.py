@@ -269,7 +269,6 @@ class VideoIngestionPipeline:
         )
         self.log_file = output_manager.get_logs_dir() / log_filename
 
-        # File handler with detailed formatting
         file_handler = logging.FileHandler(self.log_file)
         log_level = logging.DEBUG if self.debug_mode else logging.INFO
         file_handler.setLevel(log_level)
@@ -278,13 +277,11 @@ class VideoIngestionPipeline:
         )
         file_handler.setFormatter(detailed_formatter)
 
-        # Console handler with simpler formatting
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         simple_formatter = logging.Formatter("%(levelname)s - %(message)s")
         console_handler.setFormatter(simple_formatter)
 
-        # Add both handlers
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
         log_level = logging.DEBUG if self.debug_mode else logging.INFO
@@ -340,7 +337,7 @@ class VideoIngestionPipeline:
                         "class": "AudioTranscriptionStrategy",
                         "params": {},
                     },
-                    "description": {"class": "VLMDescriptionStrategy", "params": {}},
+                    "description": {"class": "NoDescriptionStrategy", "params": {}},
                     "embedding": {
                         "class": "MultiVectorEmbeddingStrategy",
                         "params": {},
@@ -417,7 +414,8 @@ class VideoIngestionPipeline:
             duration = frame_count / fps if fps > 0 else 0
             cap.release()
             return duration
-        except Exception:
+        except Exception as e:
+            self.logger.warning(f"Could not determine duration for {video_path}: {e}")
             return 0.0
 
     async def _check_cache_async(self, video_path: Path) -> dict[str, Any]:
@@ -466,13 +464,12 @@ class VideoIngestionPipeline:
             cache_keys.append("transcript")
 
         # Descriptions cache check
-        if self.config.generate_descriptions and self.vlm_descriptor:
+        vlm_processor = self.processor_manager.get_processor("vlm")
+        if self.config.generate_descriptions and vlm_processor:
             cache_tasks.append(
                 self.cache.get_descriptions(
                     str(video_path),
-                    model_name=getattr(
-                        self.vlm_descriptor, "model_name", "Qwen/Qwen2-VL-2B-Instruct"
-                    ),
+                    model_name="Qwen/Qwen2-VL-7B-Instruct",
                     batch_size=self.config.vlm_batch_size,
                 )
             )
@@ -1231,10 +1228,9 @@ class VideoIngestionPipeline:
         )
         print(f"📄 Summary saved: {summary_file}")
 
-        # Stop VLM service if it was auto-started
-        if self.vlm_descriptor and hasattr(self.vlm_descriptor, "stop_service"):
-            self.vlm_descriptor.stop_service()
-            self.logger.info("VLM service stopped")
+        # Cleanup all processors (including VLM service shutdown)
+        self.processor_manager.cleanup()
+        self.logger.info("Processors cleaned up")
 
         return results
 

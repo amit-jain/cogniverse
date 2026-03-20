@@ -22,7 +22,6 @@ from cogniverse_core.query.encoders import ColPaliQueryEncoder
 logger = logging.getLogger(__name__)
 
 
-
 class ImageResult(AgentOutput):
     """Result from image search"""
 
@@ -133,7 +132,11 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         """Lazy load ColPali model"""
         if self._colpali_model is None:
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {"colpali_model": self._colpali_model_name, "embedding_type": "frame_based", "model_loader": "colpali"}
+            config = {
+                "colpali_model": self._colpali_model_name,
+                "embedding_type": "frame_based",
+                "model_loader": "colpali",
+            }
             self._colpali_model, self._colpali_processor = get_or_load_model(
                 self._colpali_model_name, config, logger
             )
@@ -365,6 +368,8 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Returns:
             ImageSearchOutput with results and count
         """
+        self.emit_progress("encoding", "Encoding query with ColPali...")
+        self.emit_progress("retrieval", "Searching images...")
         results = await self.search_images(
             query=input.query,
             search_mode=input.search_mode,
@@ -372,6 +377,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             visual_filters=input.visual_filters,
         )
 
+        self.emit_progress("complete", "Image search complete.")
         return ImageSearchOutput(results=results, count=len(results))
 
     def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:

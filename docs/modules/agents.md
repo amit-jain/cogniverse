@@ -263,7 +263,7 @@ class RoutingDeps(AgentDeps):
     telemetry_config: Any = Field(..., description="Telemetry configuration")
     llm_config: LLMEndpointConfig = Field(
         default_factory=lambda: LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
         description="LLM endpoint configuration for DSPy routing",
@@ -2826,7 +2826,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -2970,7 +2970,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -3001,7 +3001,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )  # No tenant_id at construction
@@ -3161,7 +3161,7 @@ All agents support OpenAI-style streaming via the `stream=True` parameter on the
 flowchart LR
     subgraph Process["<span style='color:#000'>Agent.process()</span>"]
         NonStream["<span style='color:#000'>stream=False (default)<br/>→ _process_impl()<br/>→ Returns OutputT</span>"]
-        Stream["<span style='color:#000'>stream=True<br/>→ _process_stream_impl()<br/>→ Yields Dict events</span>"]
+        Stream["<span style='color:#000'>stream=True<br/>→ _stream_with_progress()<br/>→ emit_progress() events + final</span>"]
     end
 
     style Process fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -3177,17 +3177,12 @@ When creating agents, override `_process_impl()` for core logic:
 class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
 
     async def _process_impl(self, input: MyInput) -> MyOutput:
-        """Core processing logic (required)."""
-        # Your implementation
+        """Core processing logic (required).
+        Call self.emit_progress() for streaming events."""
+        self.emit_progress("processing", "Working on it...")
+        result = do_work(input)
+        self.emit_progress("processing", "Done", data={"partial": result})
         return MyOutput(...)
-
-    async def _process_stream_impl(
-        self, input: MyInput
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Streaming logic (optional, has default implementation)."""
-        yield {"type": "status", "message": "Processing..."}
-        result = await self._process_impl(input)
-        yield {"type": "final", "data": result.model_dump()}
 ```
 
 ### HTTP SSE Integration
@@ -3482,7 +3477,7 @@ class TestRoutingAgent:
         deps = RoutingDeps(
             telemetry_config=TelemetryConfig(),
             llm_config=LLMEndpointConfig(
-                model="ollama/smollm3:3b",
+                model="ollama/qwen3:4b",
                 api_base="http://localhost:11434",
             ),
         )
@@ -3497,7 +3492,7 @@ class TestRoutingAgent:
         deps = RoutingDeps(
             telemetry_config=TelemetryConfig(),
             llm_config=LLMEndpointConfig(
-                model="ollama/smollm3:3b",
+                model="ollama/qwen3:4b",
                 api_base="http://localhost:11434",
             ),
         )
@@ -3519,7 +3514,7 @@ class TestRoutingAgent:
         deps = RoutingDeps(
             telemetry_config=TelemetryConfig(),
             llm_config=LLMEndpointConfig(
-                model="ollama/smollm3:3b",
+                model="ollama/qwen3:4b",
                 api_base="http://localhost:11434",
             ),
         )
@@ -3612,7 +3607,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -3645,7 +3640,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )  # No tenant_id at construction
@@ -3666,7 +3661,7 @@ def test_tenant_isolation():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

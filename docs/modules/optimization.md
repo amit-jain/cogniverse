@@ -729,7 +729,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize orchestrator with production config
 orchestrator = OptimizationOrchestrator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -784,7 +784,7 @@ config = AdvancedOptimizerConfig(
 optimizer = AdvancedRoutingOptimizer(
     tenant_id="production",             # REQUIRED parameter
     llm_config=LLMEndpointConfig(       # REQUIRED parameter
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -841,7 +841,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Provide them only if using synthetic data generation
 optimizer = ModalityOptimizer(
     llm_config=LLMEndpointConfig(       # REQUIRED: LLM config for DSPy training
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -911,7 +911,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize components
 llm_config = LLMEndpointConfig(
-    model="ollama_chat/smollm3:3b",
+    model="ollama_chat/qwen3:4b",
     api_base="http://localhost:11434",
 )
 routing_optimizer = AdvancedRoutingOptimizer(
@@ -968,7 +968,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize coordinator
 coordinator = OptimizerCoordinator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -1028,7 +1028,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize orchestrator
 orchestrator = OptimizationOrchestrator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -1254,7 +1254,7 @@ logger.info(
 async def main():
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     llm_config = LLMEndpointConfig(
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     )
     orchestrator = OptimizationOrchestrator(
@@ -1604,7 +1604,7 @@ def test_multi_stage_optimizer_selection():
     config = AdvancedOptimizerConfig(optimizer_strategy="adaptive")
     optimizer = AdvancedRoutingOptimizer(
         tenant_id="test",
-        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
         telemetry_provider=telemetry_provider,
         config=config,
     )
@@ -1632,7 +1632,7 @@ async def test_reward_signal_computation():
     """Test reward computation from routing outcomes"""
     optimizer = AdvancedRoutingOptimizer(
         tenant_id="test",
-        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
         telemetry_provider=telemetry_provider,
     )
 
@@ -1675,7 +1675,7 @@ async def test_reward_signal_computation():
 async def test_xgboost_meta_model_training():
     """Test XGBoost meta-models for training decisions"""
     optimizer = ModalityOptimizer(
-        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
         telemetry_provider=telemetry_provider,
         tenant_id="test",
     )
@@ -1714,7 +1714,7 @@ async def test_xgboost_meta_model_training():
 async def test_complete_optimization_cycle():
     """Test end-to-end optimization orchestration"""
     orchestrator = OptimizationOrchestrator(
-        llm_config=LLMEndpointConfig(model="ollama_chat/smollm3:3b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
         telemetry_provider=telemetry_provider,
         tenant_id="test",
         span_eval_interval_minutes=1,
@@ -2044,7 +2044,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize with required LLM config
 orchestrator = OptimizationOrchestrator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/smollm3:3b",
+        model="ollama_chat/qwen3:4b",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -2065,7 +2065,7 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
 {
   "llm_config": {
     "primary": {
-      "model": "ollama_chat/smollm3:3b",
+      "model": "ollama_chat/qwen3:4b",
       "api_base": "http://localhost:11434"
     },
     "teacher": {

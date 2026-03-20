@@ -287,13 +287,9 @@ class MultiAgentOrchestrator:
                 self._update_orchestration_stats(workflow_plan, success=True)
 
                 execution_time = time.monotonic() - start_time_ns
-                agents_used = list(
-                    set(t.agent_name for t in workflow_plan.tasks)
-                )
+                agents_used = list(set(t.agent_name for t in workflow_plan.tasks))
                 completed_tasks = [
-                    t
-                    for t in workflow_plan.tasks
-                    if t.status == TaskStatus.COMPLETED
+                    t for t in workflow_plan.tasks if t.status == TaskStatus.COMPLETED
                 ]
                 execution_pattern = self._determine_execution_pattern(
                     workflow_plan.tasks
@@ -301,15 +297,9 @@ class MultiAgentOrchestrator:
 
                 if span and hasattr(span, "set_attribute"):
                     span.set_attribute("orchestration.query", query)
-                    span.set_attribute(
-                        "orchestration.workflow_id", workflow_id
-                    )
-                    span.set_attribute(
-                        "orchestration.pattern", execution_pattern
-                    )
-                    span.set_attribute(
-                        "orchestration.execution_time", execution_time
-                    )
+                    span.set_attribute("orchestration.workflow_id", workflow_id)
+                    span.set_attribute("orchestration.pattern", execution_pattern)
+                    span.set_attribute("orchestration.execution_time", execution_time)
                     span.set_attribute(
                         "orchestration.tasks_completed", len(completed_tasks)
                     )
@@ -319,9 +309,7 @@ class MultiAgentOrchestrator:
                     )
                     span.set_attribute(
                         "orchestration.execution_order",
-                        json.dumps(
-                            [t.agent_name for t in workflow_plan.tasks]
-                        ),
+                        json.dumps([t.agent_name for t in workflow_plan.tasks]),
                     )
 
                 return {
@@ -340,16 +328,12 @@ class MultiAgentOrchestrator:
                 }
 
             except Exception as e:
-                self.logger.error(
-                    f"Orchestration failed for query '{query}': {e}"
-                )
+                self.logger.error(f"Orchestration failed for query '{query}': {e}")
                 self.orchestration_stats["failed_workflows"] += 1
 
                 if span and hasattr(span, "set_attribute"):
                     span.set_attribute("orchestration.query", query)
-                    span.set_attribute(
-                        "orchestration.workflow_id", workflow_id
-                    )
+                    span.set_attribute("orchestration.workflow_id", workflow_id)
                     span.set_attribute("orchestration.error", str(e))
 
                 return {
@@ -361,9 +345,7 @@ class MultiAgentOrchestrator:
                     ),
                 }
 
-    def _determine_execution_pattern(
-        self, tasks: List["WorkflowTask"]
-    ) -> str:
+    def _determine_execution_pattern(self, tasks: List["WorkflowTask"]) -> str:
         """Inspect task dependencies to classify execution pattern.
 
         Returns:
@@ -847,7 +829,9 @@ class MultiAgentOrchestrator:
                     "total_tasks": len(workflow_plan.tasks),
                     "completed_tasks": len(completed_tasks),
                     "execution_time": (
-                        (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                        (
+                            workflow_plan.end_time - workflow_plan.start_time
+                        ).total_seconds()
                         if workflow_plan.end_time and workflow_plan.start_time
                         else 0.0
                     ),

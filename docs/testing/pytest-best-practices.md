@@ -355,7 +355,7 @@ def test_agents_depends_on_foundation_and_core():
     deps = RoutingDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -590,7 +590,7 @@ def tenant_agent(tenant_a_config):
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

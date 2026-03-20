@@ -3,6 +3,10 @@
 Implements the AgentExecutor interface from the official a2a-sdk so that
 external A2A clients can call cogniverse agents via JSON-RPC 2.0.
 
+Streaming: Agents that support streaming (e.g., SummarizerAgent) emit
+intermediate progress events to the A2A EventQueue during execution.
+Clients using /tasks/sendSubscribe receive these as SSE events.
+
 Multi-turn support: Extracts conversation history from Task.history
 (populated by InMemoryTaskStore when contextId is reused) and threads
 it through the dispatcher so agents can reason over prior turns.
@@ -21,6 +25,9 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
 
+# Agent capabilities that support streaming via emit_progress()
+_STREAMING_CAPABILITIES = frozenset({"summarization", "text_generation"})
+
 
 class CogniverseAgentExecutor(AgentExecutor):
     """Bridges the a2a-sdk AgentExecutor to the internal AgentDispatcher.
@@ -28,6 +35,11 @@ class CogniverseAgentExecutor(AgentExecutor):
     Extracts agent_name + query from the incoming A2A message, dispatches
     to the correct in-process agent, and enqueues the result as an A2A
     text message.
+
+    Streaming: For agents with streaming capabilities, emits intermediate
+    TaskStatusUpdateEvents (state=working, final=False) followed by a
+    final event (state=input_required, final=False for multi-turn).
+    Clients using /tasks/sendSubscribe receive these as SSE.
 
     Multi-turn: When the same contextId is reused across calls,
     Task.history accumulates previous messages. This executor extracts
@@ -38,10 +50,13 @@ class CogniverseAgentExecutor(AgentExecutor):
     def __init__(self, dispatcher: AgentDispatcher) -> None:
         self._dispatcher = dispatcher
 
-    async def execute(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
-        """Handle an incoming A2A message/send request."""
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Handle an incoming A2A message/send request.
+
+        For streaming-capable agents (summarization, text_generation),
+        emits intermediate progress events to the queue during execution.
+        Non-streaming agents emit a single final event.
+        """
         user_text = context.get_user_input()
         metadata = context.metadata
 
@@ -49,6 +64,7 @@ class CogniverseAgentExecutor(AgentExecutor):
         query = metadata.get("query", user_text)
         tenant_id = metadata.get("tenant_id", "default")
         top_k = int(metadata.get("top_k", 10))
+        stream = metadata.get("stream", False)
 
         if not agent_name:
             agent_name = self._infer_agent_from_text(user_text)
@@ -59,6 +75,34 @@ class CogniverseAgentExecutor(AgentExecutor):
             "conversation_history": self._extract_conversation_history(context),
         }
 
+        task_id = context.task_id or ""
+        context_id = context.context_id or ""
+
+        # Check if agent supports streaming and client requested it
+        agent_entry = self._dispatcher._registry.get_agent(agent_name)
+        capabilities = set(agent_entry.capabilities) if agent_entry else set()
+        use_streaming = stream and bool(capabilities & _STREAMING_CAPABILITIES)
+
+        if use_streaming:
+            await self._execute_streaming(
+                agent_name, query, tenant_id, task_id, context_id, event_queue
+            )
+        else:
+            await self._execute_non_streaming(
+                agent_name, query, task_context, top_k, task_id, context_id, event_queue
+            )
+
+    async def _execute_non_streaming(
+        self,
+        agent_name: str,
+        query: str,
+        task_context: Dict[str, Any],
+        top_k: int,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+    ) -> None:
+        """Dispatch non-streaming and emit a single result event."""
         try:
             result = await self._dispatcher.dispatch(
                 agent_name=agent_name,
@@ -73,18 +117,10 @@ class CogniverseAgentExecutor(AgentExecutor):
                 {"status": "error", "error": str(e), "agent": agent_name}
             )
 
-        # Emit a TaskStatusUpdateEvent so the task is persisted to the store
-        # with the agent's response as status.message. This enables multi-turn
-        # conversations: on subsequent turns with the same taskId, the handler
-        # retrieves the task and builds history from prior status messages.
-        # Emit TaskStatusUpdateEvent with input-required state so the task
-        # stays alive for multi-turn conversations. The handler persists it
-        # to InMemoryTaskStore, enabling history accumulation on subsequent
-        # turns with the same taskId.
         response_message = new_agent_text_message(result_text)
         event = TaskStatusUpdateEvent(
-            task_id=context.task_id or "",
-            context_id=context.context_id or "",
+            task_id=task_id,
+            context_id=context_id,
             final=False,
             status=TaskStatus(
                 state=TaskState.input_required,
@@ -93,9 +129,60 @@ class CogniverseAgentExecutor(AgentExecutor):
         )
         await event_queue.enqueue_event(event)
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
+    async def _execute_streaming(
+        self,
+        agent_name: str,
+        query: str,
+        tenant_id: str,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
     ) -> None:
+        """Stream agent results as intermediate A2A events.
+
+        Creates the agent, calls process(stream=True), and maps each
+        yielded event dict to a TaskStatusUpdateEvent on the A2A queue.
+        """
+        try:
+            agent, typed_input = self._dispatcher.create_streaming_agent(
+                agent_name, query, tenant_id
+            )
+
+            async for event in await agent.process(typed_input, stream=True):
+                event_type = event.get("type", "")
+                event_text = json.dumps(event, default=str)
+
+                is_final = event_type == "final"
+                state = TaskState.input_required if is_final else TaskState.working
+
+                a2a_event = TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    final=False,
+                    status=TaskStatus(
+                        state=state,
+                        message=new_agent_text_message(event_text),
+                    ),
+                )
+                await event_queue.enqueue_event(a2a_event)
+
+        except Exception as e:
+            logger.error(f"A2A streaming failed for agent '{agent_name}': {e}")
+            error_text = json.dumps(
+                {"type": "error", "message": str(e), "agent": agent_name}
+            )
+            error_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                final=False,
+                status=TaskStatus(
+                    state=TaskState.input_required,
+                    message=new_agent_text_message(error_text),
+                ),
+            )
+            await event_queue.enqueue_event(error_event)
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise NotImplementedError("Task cancellation not supported")
 
     def _infer_agent_from_text(self, text: str) -> str:

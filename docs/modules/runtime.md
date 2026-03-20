@@ -359,7 +359,7 @@ manager.list_processors()
 | `KeyframeProcessor` | `keyframe` | Extract frames using similarity |
 | `ChunkProcessor` | `chunk` | Extract video chunks |
 | `AudioProcessor` | `audio` | Audio processing utilities |
-| `VLMProcessor` | `vlm` | Generate frame descriptions |
+| `VLMProcessor` | `vlm` | Generate frame descriptions via Modal VLM service |
 | `SingleVectorProcessor` | `single_vector` | Process for single-vector embeddings |
 | `EmbeddingProcessor` | `embedding` | Generate and store embeddings |
 
@@ -530,6 +530,8 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 **POST /agents/{agent_name}/process** - Process task with agent in-process. Dispatches by capability: `routing` instantiates `RoutingAgent` (with memory, query enhancement, entity extraction) and executes the recommended downstream agent via `_execute_downstream_agent`; `search`/`video_search`/`retrieval` execute via `SearchService`; `summarization`/`detailed_report`/`text_analysis` instantiate their respective agents; unsupported capabilities raise `ValueError`. Supports multi-turn conversations via `conversation_history` field — a list of `{"role": "user"|"agent", "content": "..."}` dicts. When present, search agents rewrite queries using `ConversationalQueryRewriteModule` to resolve anaphoric references (e.g., "show me more" → "show me more basketball videos"). The response includes `original_query` and `rewritten_query` fields when rewriting occurs.
 
 **POST /agents/{agent_name}/upload** - Upload file to agent
+
+**A2A Streaming** - Agents that support streaming (summarization, text_generation) emit intermediate progress events via the A2A protocol. Use `POST /a2a/tasks/sendSubscribe` with `metadata.stream: true` to receive SSE events. The SummarizerAgent streams phase-by-phase (thinking → visual analysis → summary generation) as `TaskStatusUpdateEvent`s with `state=working` for progress and `state=input_required` for the final result.
 
 ### Admin Endpoints
 

@@ -105,8 +105,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=False),
-        skills=skills or [
+        capabilities=AgentCapabilities(streaming=True),
+        skills=skills
+        or [
             AgentSkill(
                 id="default",
                 name="default",
@@ -125,9 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_handler=a2a_handler,
     )
     app.mount("/a2a", a2a_server.build())
-    logger.info(
-        f"A2A server mounted at /a2a with {len(skills)} skills"
-    )
+    logger.info(f"A2A server mounted at /a2a with {len(skills)} skills")
 
     # 6. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()

@@ -5,31 +5,34 @@ Provides the foundation for all agents with compile-time type safety
 and runtime Pydantic validation. Type safety is inherent - not an option.
 
 Streaming support: All agents support streaming via `stream=True` parameter.
-Override `_process_stream_impl()` for custom streaming behavior.
+Call `self.emit_progress()` from within `_process_impl()` to emit progress
+events during processing. When streaming, these are yielded to the consumer.
+When not streaming, they are silently discarded — zero overhead, zero changes
+to agent logic.
 
 Usage:
-    class SearchInput(AgentInput):
-        query: str
-        top_k: int = 10
-
-    class SearchOutput(AgentOutput):
-        results: List[SearchResult]
-
-    class SearchDeps(AgentDeps):
-        vespa_client: VespaClient
-
     class SearchAgent(AgentBase[SearchInput, SearchOutput, SearchDeps]):
         async def _process_impl(self, input: SearchInput) -> SearchOutput:
-            # IDE autocomplete works, types are enforced
-            results = await self.deps.vespa_client.search(input.query)
+            self.emit_progress("encoding", "Encoding query...")
+            encoded = await self.encode(input.query)
+
+            self.emit_progress("retrieval", "Searching...")
+            results = await self.deps.vespa_client.search(encoded)
+
             return SearchOutput(results=results)
 
-    # Usage:
-    result = await agent.process(input, stream=False)  # Returns SearchOutput
-    async for event in agent.process(input, stream=True):  # Streams events
+    # Non-streaming — emit_progress calls are no-ops
+    result = await agent.process(input)
+
+    # Streaming — emit_progress calls yield SSE events
+    async for event in await agent.process(input, stream=True):
         print(event)
+        # {"type": "status", "phase": "encoding", "message": "Encoding query..."}
+        # {"type": "status", "phase": "retrieval", "message": "Searching..."}
+        # {"type": "final", "data": {...}}
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import (
@@ -125,7 +128,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
     Pydantic validates at runtime; type checkers validate at write-time.
 
     Streaming: Use `process(input, stream=True)` for SSE-compatible streaming.
-    Override `_process_stream_impl()` for custom streaming behavior.
+    Call `self.emit_progress()` from `_process_impl()` to emit progress events.
 
     Type Parameters:
         InputT: Agent input type (must extend AgentInput)
@@ -197,8 +200,36 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self.deps = deps
         self._process_count = 0
         self._error_count = 0
+        self._progress_queue: Optional[asyncio.Queue] = None
 
         logger.debug(f"Initialized {self.__class__.__name__}")
+
+    def emit_progress(
+        self,
+        phase: str,
+        message: str,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit a progress event during processing.
+
+        When streaming (process(stream=True)), events are yielded to the consumer.
+        When not streaming, this is a no-op — zero overhead.
+
+        Args:
+            phase: Processing phase name (e.g., "thinking", "retrieval", "encoding")
+            message: Human-readable status message
+            data: Optional partial results to include in the event
+        """
+        if self._progress_queue is None:
+            return
+        event: Dict[str, Any] = {
+            "type": "status" if data is None else "partial",
+            "phase": phase,
+            "message": message,
+        }
+        if data is not None:
+            event["data"] = data
+        self._progress_queue.put_nowait(event)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
@@ -260,38 +291,28 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
 
         Args:
             input: Input of type InputT or dict (auto-validated to InputT)
-            stream: If True, returns async generator yielding events (OpenAI style)
+            stream: If True, returns async generator yielding events
 
         Returns:
             If stream=False: Output of type OutputT
             If stream=True: AsyncGenerator yielding event dicts
-
-        Example:
-            # Non-streaming
-            result = await agent.process(input)
-
-            # Streaming
-            async for event in agent.process(input, stream=True):
-                print(event)
         """
-        # Auto-validate dict inputs to typed InputT
         if isinstance(input, dict):
             typed_input = self.validate_input(input)
         else:
             typed_input = input
 
         if stream:
-            return self._process_stream_impl(typed_input)
+            return self._stream_with_progress(typed_input)
         else:
             return await self._process_impl(typed_input)
 
     @abstractmethod
     async def _process_impl(self, input: InputT) -> OutputT:
-        """
-        Core processing logic. Subclasses must implement this.
+        """Core processing logic. Subclasses must implement this.
 
-        This replaces the old `process()` method. Rename your existing
-        `process()` implementations to `_process_impl()`.
+        Call self.emit_progress() during processing to emit streaming events.
+        When not streaming, emit_progress is a no-op.
 
         Args:
             input: Validated input of type InputT
@@ -301,29 +322,60 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         pass
 
-    async def _process_stream_impl(
+    async def _stream_with_progress(
         self, input: InputT
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Run _process_impl() while yielding progress events from emit_progress().
+
+        Creates a progress queue, runs _process_impl in a concurrent task,
+        and yields events as they arrive. After _process_impl completes,
+        yields the final result. On error, yields an error event.
+
+        Agents do NOT override this. They call self.emit_progress() from
+        within _process_impl() instead.
         """
-        Streaming implementation. Override for custom streaming behavior.
+        self._progress_queue = asyncio.Queue()
+        _SENTINEL = object()
 
-        Default implementation wraps _process_impl() result in a final event.
-        Override this to yield intermediate progress events.
+        result_holder: list = []
+        error_holder: list = []
 
-        Args:
-            input: Validated input of type InputT
-
-        Yields:
-            Event dicts with "type" key: "status", "partial", "final", "error"
-
-        Example override:
-            async def _process_stream_impl(self, input: MyInput):
-                yield {"type": "status", "message": "Processing..."}
+        async def _run_impl():
+            try:
                 result = await self._process_impl(input)
-                yield {"type": "final", "data": result.model_dump()}
-        """
-        result = await self._process_impl(input)
-        yield {"type": "final", "data": result.model_dump()}
+                result_holder.append(result)
+            except Exception as e:
+                error_holder.append(e)
+            finally:
+                self._progress_queue.put_nowait(_SENTINEL)
+
+        task = asyncio.create_task(_run_impl())
+
+        try:
+            while True:
+                event = await self._progress_queue.get()
+                if event is _SENTINEL:
+                    break
+                yield event
+
+            if error_holder:
+                yield {
+                    "type": "error",
+                    "message": str(error_holder[0]),
+                }
+            elif result_holder:
+                yield {
+                    "type": "final",
+                    "data": result_holder[0].model_dump(),
+                }
+        finally:
+            self._progress_queue = None
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def run(
         self, raw_input: Dict[str, Any], stream: bool = False
@@ -351,8 +403,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             validated_input = self.validate_input(raw_input)
 
             if stream:
-                # Return streaming generator
-                return self._process_stream_impl(validated_input)
+                return self._stream_with_progress(validated_input)
             else:
                 # Process non-streaming
                 output = await self._process_impl(validated_input)

@@ -73,9 +73,7 @@ class OptimizerCoordinator:
         self._cross_modal_optimizer = None
         self._unified_optimizer = None
 
-        logger.info(
-            f"Initialized OptimizerCoordinator (tenant={tenant_id})"
-        )
+        logger.info(f"Initialized OptimizerCoordinator (tenant={tenant_id})")
 
     def _get_routing_optimizer(self):
         """Lazy-load AdvancedRoutingOptimizer"""

@@ -30,7 +30,7 @@
       "adapter_path": null
     },
     "overrides": {
-      "routing_agent": { "temperature": 0.1, "max_tokens": 150 },
+      "routing_agent": { "temperature": 0.1, "max_tokens": 1000 },
       "summarizer_agent": { "model": "ollama/qwen3:4b" },
       "detailed_report_agent": { "model": "ollama/qwen3:4b" },
       "vlm_interface": { "model": "ollama/deepseek-r1:7b" },
@@ -370,7 +370,12 @@
           },
           "description": {
             "class": "VLMDescriptionStrategy",
-            "params": {}
+            "params": {
+              "vlm_endpoint": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+              "batch_size": 500,
+              "timeout": 10800,
+              "auto_start": true
+            }
           },
           "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
@@ -430,7 +435,7 @@
       },
       "audio_clap_semantic": {
         "type": "audio",
-        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and GTE-ModernColBERT semantic embeddings (128-dim multi-vector) from transcripts.",
+        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and Reason-ModernColBERT semantic embeddings (128-dim multi-vector) from transcripts.",
         "schema_name": "audio_content",
         "embedding_model": "laion/clap-htsat-unfused",
         "pipeline_config": {
@@ -461,7 +466,7 @@
         },
         "embedding_type": "audio_dual",
         "model_loader": "colbert",
-        "semantic_model": "lightonai/GTE-ModernColBERT-v1",
+        "semantic_model": "lightonai/Reason-ModernColBERT",
         "schema_config": {
           "schema_name": "audio_content",
           "acoustic_embedding_dim": 512,
@@ -471,9 +476,9 @@
       },
       "document_text_semantic": {
         "type": "document",
-        "description": "Document text extraction with GTE-ModernColBERT multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
+        "description": "Document text extraction with Reason-ModernColBERT multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
         "schema_name": "document_text",
-        "embedding_model": "lightonai/GTE-ModernColBERT-v1",
+        "embedding_model": "lightonai/Reason-ModernColBERT",
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": false,

@@ -458,7 +458,7 @@ class TestBackendConfigEdgeCases:
         profile = BackendProfileConfig(
             profile_name="colbert_profile",
             schema_name="document_text",
-            embedding_model="lightonai/GTE-ModernColBERT-v1",
+            embedding_model="lightonai/Reason-ModernColBERT",
             embedding_type="document_colbert",
             model_loader="colbert",
         )
@@ -469,7 +469,7 @@ class TestBackendConfigEdgeCases:
         restored = BackendProfileConfig.from_dict("colbert_profile", data)
         assert restored.model_loader == "colbert"
         assert restored.embedding_type == "document_colbert"
-        assert restored.embedding_model == "lightonai/GTE-ModernColBERT-v1"
+        assert restored.embedding_model == "lightonai/Reason-ModernColBERT"
 
     def test_extra_config_round_trip(self):
         """Extra fields (semantic_model, etc.) survive from_dict → to_dict."""
@@ -478,7 +478,7 @@ class TestBackendConfigEdgeCases:
             "embedding_model": "laion/clap-htsat-unfused",
             "embedding_type": "audio_dual",
             "schema_name": "audio_content",
-            "semantic_model": "lightonai/GTE-ModernColBERT-v1",
+            "semantic_model": "lightonai/Reason-ModernColBERT",
             "custom_field": 42,
         }
 
@@ -486,13 +486,13 @@ class TestBackendConfigEdgeCases:
 
         # Extra fields captured
         assert (
-            profile.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+            profile.extra_config["semantic_model"] == "lightonai/Reason-ModernColBERT"
         )
         assert profile.extra_config["custom_field"] == 42
 
         # Round-trip preserves extra fields
         data = profile.to_dict()
-        assert data["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+        assert data["semantic_model"] == "lightonai/Reason-ModernColBERT"
         assert data["custom_field"] == 42
         assert data["embedding_type"] == "audio_dual"
         assert data["embedding_model"] == "laion/clap-htsat-unfused"
@@ -500,5 +500,5 @@ class TestBackendConfigEdgeCases:
         # Second round-trip also works
         restored = BackendProfileConfig.from_dict("audio_clap_semantic", data)
         assert (
-            restored.extra_config["semantic_model"] == "lightonai/GTE-ModernColBERT-v1"
+            restored.extra_config["semantic_model"] == "lightonai/Reason-ModernColBERT"
         )

@@ -43,7 +43,7 @@ from tests.utils.docker_utils import generate_unique_ports
 
 MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
-COLBERT_MODEL_NAME = "lightonai/GTE-ModernColBERT-v1"
+COLBERT_MODEL_NAME = "lightonai/Reason-ModernColBERT"
 COLBERT_CONFIG = {
     "model_loader": "colbert",
     "embedding_type": "document_colbert",

@@ -659,7 +659,7 @@ def routing_deps():
     return RoutingDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -695,7 +695,7 @@ async def test_full_routing_pipeline(config_manager):
     deps = RoutingDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

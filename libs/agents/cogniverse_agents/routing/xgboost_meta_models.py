@@ -7,13 +7,12 @@ eliminating the need for hardcoded thresholds.
 Part of Phase 11: Multi-Modal Optimization.
 """
 
-import json
 import logging
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -275,9 +274,7 @@ class TrainingDecisionModel:
             logger.debug("No TrainingDecisionModel found in telemetry")
             return False
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", mode="w", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tmp:
             tmp.write(model_json)
             tmp_path = tmp.name
 
@@ -497,9 +494,7 @@ class TrainingStrategyModel:
             logger.debug("No TrainingStrategyModel found in telemetry")
             return False
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", mode="w", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tmp:
             tmp.write(model_json)
             tmp_path = tmp.name
 
@@ -693,9 +688,7 @@ class FusionBenefitModel:
             logger.debug("No FusionBenefitModel found in telemetry")
             return False
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", mode="w", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tmp:
             tmp.write(model_json)
             tmp_path = tmp.name
 

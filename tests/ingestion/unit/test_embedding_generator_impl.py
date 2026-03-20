@@ -1139,7 +1139,7 @@ class TestEmbeddingGeneratorImpl:
         """Test _load_model loads ColBERT model when model name contains 'colbert'."""
         config = {
             "schema_name": "document_text",
-            "embedding_model": "lightonai/GTE-ModernColBERT-v1",
+            "embedding_model": "lightonai/Reason-ModernColBERT",
             "embedding_type": "document_colbert",
             "model_loader": "colbert",
         }
@@ -1152,7 +1152,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.model is None
         assert generator.videoprism_loader is None
         mock_get_model.assert_called_once_with(
-            "lightonai/GTE-ModernColBERT-v1", config, mock_logger
+            "lightonai/Reason-ModernColBERT", config, mock_logger
         )
 
     @patch("cogniverse_core.common.models.get_or_load_model")
@@ -1165,7 +1165,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_model": "laion/clap-htsat-unfused",
             "embedding_type": "audio_dual",
             "model_loader": "colbert",
-            "semantic_model": "lightonai/GTE-ModernColBERT-v1",
+            "semantic_model": "lightonai/Reason-ModernColBERT",
         }
         mock_colbert = Mock()
         mock_get_model.return_value = (mock_colbert, None)
@@ -1175,7 +1175,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.colbert_model == mock_colbert
         assert generator.model is None
         mock_get_model.assert_called_once_with(
-            "lightonai/GTE-ModernColBERT-v1", config, mock_logger
+            "lightonai/Reason-ModernColBERT", config, mock_logger
         )
 
     def test_process_document_segments_calls_colbert(
@@ -1184,7 +1184,7 @@ class TestEmbeddingGeneratorImpl:
         """Test _process_document_segments uses ColBERT model to encode text."""
         config = {
             "schema_name": "document_text",
-            "embedding_model": "lightonai/GTE-ModernColBERT-v1",
+            "embedding_model": "lightonai/Reason-ModernColBERT",
             "embedding_type": "frame_based",
             "model_loader": "colpali",
         }
@@ -1255,7 +1255,7 @@ class TestModelLoaderFactoryModelLoader:
         )
 
         loader = ModelLoaderFactory.create_loader(
-            "lightonai/GTE-ModernColBERT-v1",
+            "lightonai/Reason-ModernColBERT",
             {"model_loader": "colbert"},
             None,
         )

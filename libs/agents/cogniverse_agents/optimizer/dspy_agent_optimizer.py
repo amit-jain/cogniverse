@@ -449,9 +449,7 @@ class DSPyAgentOptimizerPipeline:
             return compiled_module
 
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to optimize module '{module_name}': {e}"
-            ) from e
+            raise RuntimeError(f"Failed to optimize module '{module_name}': {e}") from e
 
     def _create_metric_for_module(self, module_name: str):
         """Create evaluation metric for specific module type."""

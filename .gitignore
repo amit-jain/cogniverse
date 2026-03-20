@@ -119,5 +119,5 @@ mlruns/
 # Test artifacts
 test_opt/
 workflow_intelligence.db
-.osgrep/
+.colgrep/
 .playwright-mcp/

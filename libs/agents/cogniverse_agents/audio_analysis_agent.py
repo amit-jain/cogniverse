@@ -587,12 +587,15 @@ class AudioAnalysisAgent(
         Returns:
             AudioSearchOutput with results and count
         """
+        self.emit_progress("encoding", "Encoding audio query...")
+        self.emit_progress("retrieval", "Searching audio content...")
         results = await self.search_audio(
             query=input.query,
             search_mode=input.search_mode,
             limit=input.limit,
         )
 
+        self.emit_progress("complete", "Audio search complete.")
         return AudioSearchOutput(results=results, count=len(results))
 
     def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:

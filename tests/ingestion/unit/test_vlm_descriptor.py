@@ -687,3 +687,236 @@ class TestVLMDescriptor:
             "generate-description", "upload-and-process-frames"
         )
         assert batch_endpoint == expected_batch_endpoint
+
+
+@pytest.mark.unit
+class TestVLMProcessor:
+    """Test VLMProcessor wiring to VLMDescriptor."""
+
+    @pytest.fixture
+    def mock_logger(self):
+        return Mock()
+
+    def test_from_config_requires_vlm_endpoint(self, mock_logger):
+        """from_config raises ValueError when vlm_endpoint is missing."""
+        with pytest.raises(ValueError, match="vlm_endpoint"):
+            from cogniverse_runtime.ingestion.processors.vlm_processor import (
+                VLMProcessor,
+            )
+
+            VLMProcessor.from_config({"batch_size": 100}, mock_logger)
+
+    def test_from_config_with_valid_config(self, mock_logger):
+        """from_config creates processor with correct parameters."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        config = {
+            "vlm_endpoint": "http://test.com/generate-description",
+            "batch_size": 200,
+            "timeout": 600,
+            "auto_start": False,
+        }
+        processor = VLMProcessor.from_config(config, mock_logger)
+
+        assert processor.vlm_endpoint == "http://test.com/generate-description"
+        assert processor.batch_size == 200
+        assert processor.timeout == 600
+        assert processor.auto_start is False
+        assert processor._descriptor is None  # lazy init
+
+    def test_from_config_defaults(self, mock_logger):
+        """from_config uses sensible defaults for optional params."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        config = {"vlm_endpoint": "http://test.com/generate-description"}
+        processor = VLMProcessor.from_config(config, mock_logger)
+
+        assert processor.batch_size == 500
+        assert processor.timeout == 10800
+        assert processor.auto_start is True
+
+    def test_lazy_descriptor_initialization(self, mock_logger):
+        """VLMDescriptor is only created on first generate_descriptions call."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        processor = VLMProcessor(
+            logger=mock_logger,
+            vlm_endpoint="http://test.com/generate-description",
+            auto_start=False,
+        )
+        assert processor._descriptor is None
+
+        with patch(
+            "cogniverse_runtime.ingestion.processors.vlm_descriptor.VLMDescriptor"
+        ) as mock_cls:
+            mock_descriptor = Mock()
+            mock_descriptor.generate_descriptions.return_value = {
+                "descriptions": {"frame_1": "a cat"},
+            }
+            mock_cls.return_value = mock_descriptor
+
+            result = processor.generate_descriptions(
+                {"video_id": "v1", "keyframes": []}
+            )
+
+            mock_cls.assert_called_once_with(
+                vlm_endpoint="http://test.com/generate-description",
+                batch_size=500,
+                timeout=10800,
+                auto_start=False,
+            )
+            mock_descriptor.generate_descriptions.assert_called_once()
+            assert result == {"descriptions": {"frame_1": "a cat"}}
+
+    def test_generate_descriptions_delegates_to_descriptor(self, mock_logger):
+        """generate_descriptions forwards call to VLMDescriptor."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        processor = VLMProcessor(
+            logger=mock_logger,
+            vlm_endpoint="http://test.com/generate-description",
+            auto_start=False,
+        )
+
+        mock_descriptor = Mock()
+        expected_result = {
+            "video_id": "test_video",
+            "descriptions": {"f1": "desc1", "f2": "desc2"},
+            "total_descriptions": 2,
+        }
+        mock_descriptor.generate_descriptions.return_value = expected_result
+        processor._descriptor = mock_descriptor
+
+        frames_data = {"video_id": "test_video", "keyframes": [{"frame_id": "f1"}]}
+        result = processor.generate_descriptions(frames_data)
+
+        assert result == expected_result
+        mock_descriptor.generate_descriptions.assert_called_once_with(frames_data)
+
+    def test_cleanup_stops_service(self, mock_logger):
+        """cleanup stops VLMDescriptor service."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        processor = VLMProcessor(
+            logger=mock_logger,
+            vlm_endpoint="http://test.com/generate-description",
+            auto_start=False,
+        )
+
+        mock_descriptor = Mock()
+        processor._descriptor = mock_descriptor
+
+        processor.cleanup()
+
+        mock_descriptor.stop_service.assert_called_once()
+        assert processor._descriptor is None
+
+    def test_cleanup_noop_when_no_descriptor(self, mock_logger):
+        """cleanup is safe when descriptor was never created."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        processor = VLMProcessor(
+            logger=mock_logger,
+            vlm_endpoint="http://test.com/generate-description",
+            auto_start=False,
+        )
+
+        processor.cleanup()  # Should not raise
+
+    def test_process_delegates_to_generate_descriptions(self, mock_logger):
+        """process() BaseProcessor method delegates to generate_descriptions."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        processor = VLMProcessor(
+            logger=mock_logger,
+            vlm_endpoint="http://test.com/generate-description",
+            auto_start=False,
+        )
+
+        mock_descriptor = Mock()
+        mock_descriptor.generate_descriptions.return_value = {"descriptions": {}}
+        processor._descriptor = mock_descriptor
+
+        frames_data = {"video_id": "v1", "keyframes": []}
+        processor.process(frames_data)
+
+        mock_descriptor.generate_descriptions.assert_called_once_with(frames_data)
+
+
+@pytest.mark.unit
+class TestVLMDescriptionStrategyWiring:
+    """Test the full strategy → processor → descriptor wiring."""
+
+    def test_strategy_provides_vlm_endpoint_to_processor(self):
+        """VLMDescriptionStrategy passes vlm_endpoint through to processor config."""
+        from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
+
+        strategy = VLMDescriptionStrategy(
+            vlm_endpoint="http://modal.run/generate-description",
+            batch_size=300,
+            timeout=1800,
+            auto_start=False,
+        )
+
+        requirements = strategy.get_required_processors()
+
+        assert "vlm" in requirements
+        assert (
+            requirements["vlm"]["vlm_endpoint"]
+            == "http://modal.run/generate-description"
+        )
+        assert requirements["vlm"]["batch_size"] == 300
+        assert requirements["vlm"]["timeout"] == 1800
+        assert requirements["vlm"]["auto_start"] is False
+
+    def test_processor_created_from_strategy_requirements(self):
+        """VLMProcessor can be created from VLMDescriptionStrategy requirements."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+        from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
+
+        strategy = VLMDescriptionStrategy(
+            vlm_endpoint="http://modal.run/generate-description",
+            batch_size=250,
+        )
+
+        requirements = strategy.get_required_processors()
+        processor = VLMProcessor.from_config(requirements["vlm"], Mock())
+
+        assert processor.vlm_endpoint == "http://modal.run/generate-description"
+        assert processor.batch_size == 250
+
+    def test_full_round_trip_strategy_to_descriptor(self):
+        """Full wiring: strategy config → processor → descriptor delegation."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+        from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
+
+        strategy = VLMDescriptionStrategy(
+            vlm_endpoint="http://modal.run/generate-description",
+            batch_size=100,
+            auto_start=False,
+        )
+
+        requirements = strategy.get_required_processors()
+        processor = VLMProcessor.from_config(requirements["vlm"], Mock())
+
+        with patch(
+            "cogniverse_runtime.ingestion.processors.vlm_descriptor.VLMDescriptor"
+        ) as mock_cls:
+            mock_descriptor = Mock()
+            mock_descriptor.generate_descriptions.return_value = {
+                "video_id": "test",
+                "descriptions": {"f1": "a person walking"},
+                "total_descriptions": 1,
+            }
+            mock_cls.return_value = mock_descriptor
+
+            frames_data = {"video_id": "test", "keyframes": [{"frame_id": "f1"}]}
+            result = processor.generate_descriptions(frames_data)
+
+            mock_cls.assert_called_once_with(
+                vlm_endpoint="http://modal.run/generate-description",
+                batch_size=100,
+                timeout=10800,
+                auto_start=False,
+            )
+            assert result["descriptions"]["f1"] == "a person walking"

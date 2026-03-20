@@ -90,7 +90,7 @@ class TestDocumentTextEmbeddingStrategy:
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "document_text"
         assert (
-            processors["embedding"]["colbert_model"] == "lightonai/GTE-ModernColBERT-v1"
+            processors["embedding"]["colbert_model"] == "lightonai/Reason-ModernColBERT"
         )
 
     def test_custom_model(self):

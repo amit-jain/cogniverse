@@ -186,9 +186,11 @@ class QueryEnhancementAgent(
             )
 
         # Enhance query using DSPy
+        self.emit_progress("enhancement", "Enhancing query with DSPy...")
         result = self.dspy_module.forward(query=query)
 
         # Parse lists from comma-separated strings
+        self.emit_progress("parsing", "Parsing expansion terms and synonyms...")
         expansion_terms = [
             t.strip() for t in result.expansion_terms.split(",") if t.strip()
         ]

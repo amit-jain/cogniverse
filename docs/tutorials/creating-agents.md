@@ -373,32 +373,25 @@ async for event in agent.process(input, stream=True):
 
 ### Adding Streaming Support (Optional)
 
-To provide custom streaming events, override `_process_stream_impl()`:
+Call `self.emit_progress()` from within `_process_impl()` to emit streaming events.
+When `stream=False`, these calls are no-ops. When `stream=True`, the base class
+runs `_process_impl()` concurrently and yields progress events as they arrive:
 
 ```python
-from typing import AsyncGenerator, Dict, Any
-
 class SummarizationAgent(A2AAgent[...]):
-    # ... existing code ...
-
-    async def _process_stream_impl(
-        self, input: SummarizationInput
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream summarization progress."""
-        yield {"type": "status", "message": "Analyzing content..."}
-
-        # Stream intermediate results
+    async def _process_impl(self, input: SummarizationInput) -> SummarizationOutput:
+        self.emit_progress("analysis", "Analyzing content...")
         key_points = self._extract_key_points(input.content)
-        yield {"type": "partial", "key_points": key_points}
+        self.emit_progress("analysis", "Content analyzed",
+                          data={"key_points": key_points})
 
-        yield {"type": "status", "message": "Generating summary..."}
-
-        # Final result
-        result = await self._process_impl(input)
-        yield {"type": "final", "data": result.model_dump()}
+        self.emit_progress("summarization", "Generating summary...")
+        summary = await self._generate(input.content, key_points)
+        return SummarizationOutput(summary=summary, key_points=key_points)
 ```
 
-The default `_process_stream_impl()` simply calls `_process_impl()` and yields the final result.
+No separate streaming method needed. The base class `_stream_with_progress()` handles
+yielding events from `emit_progress()` followed by the final result.
 
 ---
 
@@ -780,7 +773,7 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 
 ## Next Steps
 
-- **Add streaming**: Override `_process_stream_impl()` for progressive results
+- **Add streaming**: Call `self.emit_progress()` in `_process_impl()` for progressive results
 - **Add telemetry**: Use `TelemetryManager` from `cogniverse_foundation.telemetry`
 - **Add memory**: Use `MemoryAwareMixin` from `cogniverse_core.agents.memory_aware_mixin` for conversation context
 - **Optimize with DSPy**: Train the module with synthetic data

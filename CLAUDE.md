@@ -24,6 +24,17 @@ uv run python scripts/run_experiments_with_visualization.py --dataset-path data/
 uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 ```
 
+### Code Search Tools
+
+- **`Grep` tool**: Exact string/regex. Fastest. Use for known identifiers.
+- **`colgrep "<query>"`**: Semantic code search via ColBERT + tree-sitter. Finds functions/classes by meaning.
+  - Scoped: `colgrep --include "*.py" "query encoding"`
+  - Hybrid: `colgrep -e "QueryEncoder" "base class pattern"`
+  - Content: `colgrep -c "vespa schema deploy"` (shows function bodies)
+  - JSON: `colgrep --json "embedding generation"`
+  - Multi-type: `colgrep --include "*.py" --include "*.json" "config structure"`
+  - Exclude: `colgrep --exclude-dir data --exclude-dir .venv "pipeline logic"`
+
 ### Vespa Schema Validation
 - Check embedding dimensions: 128 (ColPali/ColQwen patch), 768 (base), 1024 (large)
 - Binary format uses hex strings, float format uses actual floats

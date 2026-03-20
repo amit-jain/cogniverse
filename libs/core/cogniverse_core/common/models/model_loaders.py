@@ -537,7 +537,7 @@ class VideoPrismModelLoader(ModelLoader):
 
 
 class ColBERTModelLoader(ModelLoader):
-    """Loader for ColBERT multi-vector models (e.g., lightonai/GTE-ModernColBERT-v1).
+    """Loader for ColBERT multi-vector models (e.g., lightonai/Reason-ModernColBERT).
 
     Uses PyLate internally for per-token embedding extraction with the model's
     built-in linear projection (768 → 128 dims).

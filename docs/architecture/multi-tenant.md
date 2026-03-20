@@ -86,7 +86,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -420,7 +420,7 @@ memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -557,7 +557,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -1403,7 +1403,7 @@ def test_tenant_isolation():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -1481,7 +1481,7 @@ async def test_end_to_end_tenant_flow():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -1547,7 +1547,7 @@ def create_routing_agent() -> RoutingAgent:
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -1582,7 +1582,7 @@ async def search(
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
@@ -1795,7 +1795,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = RoutingDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/smollm3:3b",
+        model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
@@ -1815,7 +1815,7 @@ def test_tenant_isolation():
     deps = RoutingDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/smollm3:3b",
+            model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )

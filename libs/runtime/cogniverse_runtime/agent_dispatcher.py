@@ -85,6 +85,44 @@ class AgentDispatcher:
                 f"Capabilities: {agent.capabilities}"
             )
 
+    def create_streaming_agent(
+        self, agent_name: str, query: str, tenant_id: str
+    ) -> tuple:
+        """Create a streaming-capable agent and its typed input.
+
+        Returns (agent, typed_input) for use with agent.process(typed_input, stream=True).
+        Used by A2A executor for streaming via /tasks/sendSubscribe.
+
+        Raises:
+            ValueError: If agent_name doesn't support streaming.
+        """
+        agent_entry = self._registry.get_agent(agent_name)
+        if not agent_entry:
+            raise ValueError(f"Agent '{agent_name}' not found in registry")
+
+        capabilities = set(agent_entry.capabilities)
+
+        if capabilities & {"summarization", "text_generation"}:
+            from cogniverse_agents.summarizer_agent import (
+                SummarizerAgent,
+                SummarizerDeps,
+                SummarizerInput,
+            )
+
+            deps = SummarizerDeps(tenant_id=tenant_id)
+            agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
+            typed_input = SummarizerInput(
+                query=query,
+                search_results=[],
+                summary_type="general",
+            )
+            return agent, typed_input
+
+        raise ValueError(
+            f"Agent '{agent_name}' does not support streaming. "
+            f"Capabilities: {agent_entry.capabilities}"
+        )
+
     async def _execute_search_task(
         self,
         query: str,
@@ -104,9 +142,7 @@ class AgentDispatcher:
                 query, conversation_history
             )
             if resolved_query != query:
-                logger.info(
-                    f"Query rewritten: '{query}' -> '{resolved_query}'"
-                )
+                logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         search_service = SearchService(
@@ -180,21 +216,12 @@ class AgentDispatcher:
         self, query: str, context: Dict[str, Any], tenant_id: str
     ) -> Dict[str, Any]:
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.config.utils import get_config
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-
-        llm_config_dict = config.get("llm_config", {})
-        primary = llm_config_dict.get("primary", {})
-
-        llm_endpoint = LLMEndpointConfig(
-            model=primary.get("model", "ollama/smollm3:3b"),
-            api_base=primary.get("api_base", "http://localhost:11434"),
-            temperature=primary.get("temperature", 0.1),
-            max_tokens=primary.get("max_tokens", 1000),
-        )
+        llm_config = config.get_llm_config()
+        llm_endpoint = llm_config.resolve("routing_agent")
 
         routing_config = config.get("routing_agent", {})
         memory_enabled = routing_config.get("enable_memory", False)
@@ -212,13 +239,11 @@ class AgentDispatcher:
                 {
                     "memory_backend_host": backend_url,
                     "memory_backend_port": backend_port,
-                    "memory_llm_model": primary.get("model", "qwen3:4b"),
+                    "memory_llm_model": llm_endpoint.model,
                     "memory_embedding_model": routing_config.get(
                         "memory_embedding_model", "nomic-embed-text"
                     ),
-                    "memory_llm_base_url": primary.get(
-                        "api_base", "http://localhost:11434"
-                    ),
+                    "memory_llm_base_url": llm_endpoint.api_base,
                     "memory_config_manager": self._config_manager,
                     "memory_schema_loader": self._schema_loader,
                 }
@@ -328,7 +353,9 @@ class AgentDispatcher:
 
         if capabilities & {"search", "video_search", "retrieval"}:
             return await self._execute_search_task(
-                query, tenant_id, top_k,
+                query,
+                tenant_id,
+                top_k,
                 conversation_history=conversation_history,
             )
         elif capabilities & {"image_search", "visual_analysis"}:

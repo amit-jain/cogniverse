@@ -140,9 +140,7 @@ class ModalityOptimizer:
         # Trained DSPy models per modality
         self.modality_models: Dict[QueryModality, ModalityRoutingModule] = {}
 
-        logger.info(
-            f"Initialized ModalityOptimizer for tenant '{tenant_id}'"
-        )
+        logger.info(f"Initialized ModalityOptimizer for tenant '{tenant_id}'")
 
     async def optimize_all_modalities(
         self,
@@ -689,7 +687,9 @@ class ModalityOptimizer:
                 )
                 if model_json:
                     with tempfile.TemporaryDirectory() as tmpdir:
-                        model_path = Path(tmpdir) / f"{modality.value}_routing_module.json"
+                        model_path = (
+                            Path(tmpdir) / f"{modality.value}_routing_module.json"
+                        )
                         model_path.write_text(model_json)
                         model = ModalityRoutingModule()
                         model.load(str(model_path))

@@ -23,8 +23,6 @@ from cogniverse_core.common.vlm_interface import VLMInterface
 logger = logging.getLogger(__name__)
 
 
-
-
 class SummarizerInput(AgentInput):
     """Type-safe input for summarization"""
 
@@ -89,9 +87,30 @@ class SummarizationModule(dspy.Module):
 
     def forward(self, content: str, query: str, summary_type: str = "comprehensive"):
         """Generate summary using DSPy"""
-        return self.summarizer(
-            content=content, query=query, summary_type=summary_type
+        return self.summarizer(content=content, query=query, summary_type=summary_type)
+
+    async def stream_forward(
+        self, content: str, query: str, summary_type: str = "comprehensive"
+    ):
+        """Stream summary generation token-by-token via dspy.streamify.
+
+        Yields (str_chunk, None) for intermediate tokens and
+        (None, dspy.Prediction) for the final result.
+        """
+        streaming_fn = dspy.streamify(
+            self,
+            stream_listeners=[
+                dspy.streaming.StreamListener("summary"),
+            ],
+            include_final_prediction_in_output_stream=True,
         )
+        async for chunk in streaming_fn(
+            content=content, query=query, summary_type=summary_type
+        ):
+            if isinstance(chunk, dspy.Prediction):
+                yield None, chunk
+            else:
+                yield str(chunk), None
 
 
 @dataclass
@@ -255,25 +274,42 @@ class SummarizerAgent(
 
         with dspy.context(lm=self._dspy_lm):
             try:
-                # Phase 1: Thinking phase - analyze and categorize results
+                self.emit_progress("thinking", "Analyzing content...")
                 thinking_phase = await self._thinking_phase(request)
+                self.emit_progress(
+                    "thinking",
+                    "Content analysis complete",
+                    data={
+                        "themes": thinking_phase.key_themes,
+                        "categories": thinking_phase.content_categories,
+                        "reasoning": thinking_phase.reasoning,
+                    },
+                )
 
-                # Phase 2: Extract visual content if enabled
                 visual_insights = []
                 if request.include_visual_analysis and self.visual_analysis_enabled:
+                    self.emit_progress("visual_analysis", "Analyzing visual content...")
                     visual_insights = await self._analyze_visual_content(
                         request, thinking_phase
                     )
+                    if visual_insights:
+                        self.emit_progress(
+                            "visual_analysis",
+                            "Visual analysis complete",
+                            data={"visual_insights": visual_insights},
+                        )
 
-                # Phase 3: Generate summary based on analysis
+                self.emit_progress("summarization", "Generating summary...")
                 summary = await self._generate_summary(
                     request, thinking_phase, visual_insights
                 )
+                self.emit_progress(
+                    "summarization",
+                    "Summary generated",
+                    data={"summary": summary},
+                )
 
-                # Phase 4: Extract key points
                 key_points = self._extract_key_points(request, thinking_phase, summary)
-
-                # Phase 5: Calculate confidence score
                 confidence_score = self._calculate_confidence(request, thinking_phase)
 
                 result = SummaryResult(
@@ -511,6 +547,32 @@ and structure summary based on identified themes and content categories.
             logger.error(f"Visual analysis failed: {e}")
             raise
 
+    async def _run_summarization(
+        self, content: str, query: str, summary_type: str
+    ) -> str:
+        """Run DSPy summarization, streaming tokens via emit_progress when active."""
+        if self._progress_queue is not None:
+            summary_text = ""
+            prediction = None
+            async for chunk, pred in self.summarization_module.stream_forward(
+                content=content, query=query, summary_type=summary_type
+            ):
+                if chunk is not None:
+                    summary_text += chunk
+                    self.emit_progress(
+                        "token", chunk, data={"accumulated": summary_text}
+                    )
+                if pred is not None:
+                    prediction = pred
+            if prediction is not None:
+                return prediction.summary
+            return summary_text
+        else:
+            result = self.summarization_module.forward(
+                content=content, query=query, summary_type=summary_type
+            )
+            return result.summary
+
     async def _generate_summary(
         self,
         request: SummaryRequest,
@@ -533,7 +595,9 @@ and structure summary based on identified themes and content categories.
         top_results = sorted_results[: request.max_results_to_analyze]
 
         if request.summary_type == "brief":
-            return self._generate_brief_summary(request, top_results, thinking_phase)
+            return await self._generate_brief_summary(
+                request, top_results, thinking_phase
+            )
         elif request.summary_type == "bullet_points":
             return self._generate_bullet_summary(request, top_results, thinking_phase)
         else:  # comprehensive
@@ -541,7 +605,7 @@ and structure summary based on identified themes and content categories.
                 request, top_results, thinking_phase, visual_insights
             )
 
-    def _generate_brief_summary(
+    async def _generate_brief_summary(
         self,
         request: SummaryRequest,
         results: List[Dict[str, Any]],
@@ -562,14 +626,8 @@ and structure summary based on identified themes and content categories.
 
         content_text = "\n".join(content_parts)
 
-        # Use DSPy for brief summary generation
         try:
-            dspy_result = self.summarization_module.forward(
-                content=content_text, query=request.query, summary_type="brief"
-            )
-
-            return dspy_result.summary
-
+            return await self._run_summarization(content_text, request.query, "brief")
         except Exception as e:
             logger.error(f"DSPy brief summarization failed: {e}")
             raise
@@ -760,13 +818,7 @@ and structure summary based on identified themes and content categories.
     async def summarize_with_relationships(
         self, request: EnhancedSummaryRequest
     ) -> SummaryResult:
-        """
-        Generate relationship-aware summary using enhanced context.
-        (Implementation remains the same as original - keeping core logic)
-        """
-        # For brevity, keeping the existing implementation
-        # This method has extensive logic for relationship-aware summarization
-        # that doesn't need changes for A2A conversion
+        """Generate relationship-aware summary using enhanced context."""
         basic_request = SummaryRequest(
             query=request.enhanced_query or request.original_query,
             search_results=request.search_results,
@@ -792,7 +844,6 @@ and structure summary based on identified themes and content categories.
         )
 
         return result
-
 
     async def _process_impl(self, input: SummarizerInput) -> SummarizerOutput:
         """
@@ -829,8 +880,6 @@ and structure summary based on identified themes and content categories.
             },
             metadata=result.metadata,
         )
-
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # --- FastAPI Server ---

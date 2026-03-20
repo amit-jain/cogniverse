@@ -18,7 +18,6 @@ Features:
 - Adaptive threshold learning
 """
 
-import asyncio
 import json
 import logging
 import statistics
@@ -32,7 +31,6 @@ from typing import Any, Dict, List, Optional
 import dspy
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Shared workflow types
 from cogniverse_agents.workflow.types import (
@@ -41,6 +39,7 @@ from cogniverse_agents.workflow.types import (
     WorkflowStatus,
     WorkflowTask,
 )
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 
 class OptimizationStrategy(Enum):
@@ -942,16 +941,20 @@ class WorkflowIntelligence:
                 "success_rate": template.success_rate,
                 "usage_count": template.usage_count,
                 "created_at": template.created_at.isoformat(),
-                "last_used": template.last_used.isoformat() if template.last_used else None,
+                "last_used": template.last_used.isoformat()
+                if template.last_used
+                else None,
             }
             await self._artifact_manager.save_blob(
-                "workflow", "template_" + template.template_id,
+                "workflow",
+                "template_" + template.template_id,
                 json.dumps(template_dict, default=str),
             )
             # Update template index for reload
             template_ids = list(self.workflow_templates.keys())
             await self._artifact_manager.save_blob(
-                "workflow", "template_index",
+                "workflow",
+                "template_index",
                 json.dumps(template_ids),
             )
         except Exception as e:
