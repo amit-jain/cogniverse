@@ -3,7 +3,7 @@
 **Experience-Guided Multi-Agent System for Multi-Modal Understanding**
 
 
-Production-ready AI platform that continuously learns and improves from real-world interactions. Processes **all content types** (video, audio, images, documents, text, dataframes) using **experience-guided optimization (GEPA)** that adapts in real-time. Achieves **<500ms P95 latency** at **500+ concurrent users** with multiple state-of-the-art embeddings (ColPali, VideoPrism, ColQwen), multi-agent orchestration, cross-modal intelligence fusion, and complete multi-tenant isolation. Built on professional 10-package architecture with comprehensive Phoenix observability.
+Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and Reason-ModernColBERT embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 11-package UV workspace with multi-tenant isolation.
 
 ## 🎯 What Makes Cogniverse Different
 
