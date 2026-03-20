@@ -82,10 +82,12 @@ class TestRoutingOrchestrationHandoff:
         mock_routing_module.RoutingDeps = MagicMock()
 
         mock_config_utils = MagicMock()
-        mock_config_utils.get_config.return_value = {
+        mock_config_obj = MagicMock()
+        mock_config_obj.get.side_effect = lambda key, default=None: {
             "llm_config": {"primary": {}},
             "routing_agent": {},
-        }
+        }.get(key, default)
+        mock_config_utils.get_config.return_value = mock_config_obj
 
         mock_telemetry_config_module = MagicMock()
 
@@ -186,10 +188,12 @@ class TestRoutingOrchestrationHandoff:
         mock_orch_module.MultiAgentOrchestrator = mock_orch_cls
 
         mock_config_utils = MagicMock()
-        mock_config_utils.get_config.return_value = {
+        mock_config_obj2 = MagicMock()
+        mock_config_obj2.get.side_effect = lambda key, default=None: {
             "llm_config": {"primary": {}},
             "routing_agent": {},
-        }
+        }.get(key, default)
+        mock_config_utils.get_config.return_value = mock_config_obj2
 
         mock_telemetry_manager_module = MagicMock()
         mock_telemetry_manager_module.get_telemetry_manager.return_value = (
