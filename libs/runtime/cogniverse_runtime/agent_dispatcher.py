@@ -382,6 +382,11 @@ class AgentDispatcher:
                     processing_time=example.get("processing_time", 0.0),
                 )
 
+            # Explicitly trigger DSPy optimization compile after recording all examples
+            await optimizer._run_optimization_step()
+            # Persist optimized artifacts to Phoenix
+            await optimizer._persist_data()
+
             return {
                 "status": "optimization_triggered",
                 "message": "Routing experiences recorded for optimization",
