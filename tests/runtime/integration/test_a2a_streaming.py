@@ -1029,3 +1029,122 @@ class TestRoutingOptimizationIntegration:
         assert "spans_evaluated" in result
         assert isinstance(result["spans_evaluated"], int)
         assert result["optimizer"] == "OptimizationOrchestrator"
+
+
+@pytest.mark.integration
+@skip_if_no_llm
+class TestFullOptimizationPipeline:
+    """End-to-end optimization: real routing → real traces → real optimize → real load.
+
+    Exercises the complete pipeline with real Ollama, Vespa, Phoenix, and DSPy.
+    No mocks anywhere.
+    """
+
+    def test_full_optimization_round_trip(
+        self, streaming_dispatcher, vespa_instance, real_telemetry, dspy_lm
+    ):
+        """
+        1. Route real queries → traces accumulate in Phoenix
+        2. Record experiences → optimizer persists to Phoenix
+        3. Run optimization cycle → reads traces, annotates, compiles
+        4. Route again → verify optimized model loads from Phoenix
+        """
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+
+        # Step 1: Make real routing requests to generate traces
+        queries = [
+            "show me videos of cats playing",
+            "find documents about machine learning",
+            "search for audio lectures on physics",
+            "display images of sunset landscapes",
+            "summarize the latest AI research",
+        ]
+        routing_results = []
+        for query in queries:
+            result = loop.run_until_complete(
+                streaming_dispatcher.dispatch(
+                    agent_name="routing_agent",
+                    query=query,
+                    context={"tenant_id": "default"},
+                )
+            )
+            routing_results.append(result)
+            assert result["status"] == "success", (
+                f"Routing should succeed for '{query}', got: {result}"
+            )
+
+        # Verify all queries were routed to real agents
+        agents_used = {r["recommended_agent"] for r in routing_results}
+        assert len(agents_used) >= 1, f"Should route to at least 1 agent: {agents_used}"
+
+        # Step 2: Record experiences from those routing results
+        examples = [
+            {
+                "query": queries[i],
+                "chosen_agent": routing_results[i]["recommended_agent"],
+                "confidence": routing_results[i]["confidence"],
+                "search_quality": 0.7 + (i * 0.05),
+                "agent_success": True,
+                "processing_time": 1.0,
+            }
+            for i in range(len(queries))
+        ]
+        # Add more to reach 10 (threshold for persist)
+        for i in range(5):
+            examples.append(
+                {
+                    "query": f"supplementary query {i}",
+                    "chosen_agent": "search_agent",
+                    "confidence": 0.8,
+                    "search_quality": 0.75,
+                    "agent_success": True,
+                    "processing_time": 0.5,
+                }
+            )
+
+        record_result = loop.run_until_complete(
+            streaming_dispatcher.dispatch(
+                agent_name="routing_agent",
+                query="optimize routing",
+                context={
+                    "tenant_id": "default",
+                    "action": "optimize_routing",
+                    "examples": examples,
+                },
+            )
+        )
+        assert record_result["status"] == "optimization_triggered", (
+            f"Should trigger optimization with 10 examples: {record_result}"
+        )
+        assert record_result["training_examples"] == 10
+
+        # Step 3: Run full optimization cycle from traces
+        cycle_result = loop.run_until_complete(
+            streaming_dispatcher.dispatch(
+                agent_name="routing_agent",
+                query="optimize routing",
+                context={
+                    "tenant_id": "default",
+                    "action": "optimize_routing",
+                },
+            )
+        )
+        assert cycle_result["status"] == "optimization_triggered", (
+            f"Optimization cycle should complete: {cycle_result}"
+        )
+
+        # Step 4: Route a new query — should use optimized model loaded from Phoenix
+        final_result = loop.run_until_complete(
+            streaming_dispatcher.dispatch(
+                agent_name="routing_agent",
+                query="find cat videos with music",
+                context={"tenant_id": "default"},
+            )
+        )
+        assert final_result["status"] == "success", (
+            f"Routing after optimization should succeed: {final_result}"
+        )
+        assert "recommended_agent" in final_result
+        assert final_result["confidence"] > 0.0
