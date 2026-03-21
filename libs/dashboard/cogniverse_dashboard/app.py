@@ -68,6 +68,114 @@ sys.path.append(str(project_root / "src"))
 
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
+RUNTIME_URL = "http://localhost:8000"
+
+
+def stream_agent_call(
+    agent_name: str,
+    query: str,
+    tenant_id: str = "default",
+    metadata: dict | None = None,
+) -> list[dict]:
+    """Stream an agent call via A2A message/stream and return parsed events.
+
+    Connects to the runtime's A2A endpoint, sends a streaming request,
+    and collects all SSE events. Returns list of parsed agent event dicts.
+    """
+    import json as _json
+    import uuid as _uuid
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "message/stream",
+        "params": {
+            "message": {
+                "role": "user",
+                "messageId": str(_uuid.uuid4()),
+                "contextId": str(_uuid.uuid4()),
+                "parts": [{"kind": "text", "text": query}],
+            },
+            "metadata": {
+                "agent_name": agent_name,
+                "tenant_id": tenant_id,
+                "stream": True,
+                **(metadata or {}),
+            },
+        },
+    }
+
+    events = []
+    with httpx.Client(timeout=120.0) as client:
+        with client.stream("POST", f"{RUNTIME_URL}/a2a/", json=payload) as resp:
+            for line in resp.iter_lines():
+                line = line.strip()
+                if line.startswith("data:"):
+                    data_str = line[len("data:") :].strip()
+                    if data_str:
+                        raw = _json.loads(data_str)
+                        for part in (
+                            raw.get("result", {})
+                            .get("status", {})
+                            .get("message", {})
+                            .get("parts", [])
+                        ):
+                            text = part.get("text", "")
+                            if text:
+                                try:
+                                    events.append(_json.loads(text))
+                                except _json.JSONDecodeError:
+                                    pass
+    return events
+
+
+def display_streaming_result(
+    agent_name: str,
+    query: str,
+    tenant_id: str = "default",
+    metadata: dict | None = None,
+) -> dict | None:
+    """Call an agent with streaming and display progressive results in Streamlit.
+
+    Shows phase progress as status messages, token chunks as growing text,
+    and returns the final result dict.
+    """
+    status_placeholder = st.empty()
+    text_placeholder = st.empty()
+    accumulated_text = ""
+
+    events = stream_agent_call(agent_name, query, tenant_id, metadata)
+
+    final_data = None
+    for event in events:
+        event_type = event.get("type")
+        phase = event.get("phase", "")
+
+        if event_type == "status":
+            status_placeholder.info(f"⏳ {event.get('message', phase)}")
+        elif event_type == "partial" and phase == "token":
+            chunk = event.get("data", {}).get("accumulated", "")
+            if chunk:
+                accumulated_text = chunk
+                text_placeholder.markdown(accumulated_text + "▌")
+        elif event_type == "partial":
+            data = event.get("data", {})
+            if "themes" in data:
+                status_placeholder.info(f"🧠 Themes: {', '.join(data['themes'][:3])}")
+            elif "summary" in data:
+                text_placeholder.markdown(data["summary"])
+        elif event_type == "final":
+            final_data = event.get("data", {})
+        elif event_type == "error":
+            st.error(f"❌ {event.get('message', 'Unknown error')}")
+
+    # Clear status after completion
+    status_placeholder.empty()
+    if accumulated_text:
+        text_placeholder.markdown(accumulated_text)
+
+    return final_data
+
 
 def run_async_in_streamlit(coro):
     """
@@ -2920,6 +3028,33 @@ with main_tabs[8]:
                 file_name=f"search_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
             )
+
+        # Streaming summarization of search results
+        st.markdown("---")
+        if st.button("📝 Summarize Results (Streaming)"):
+            results_data = st.session_state.current_search_results
+            result_descriptions = []
+            for strategy, items in results_data.get("results", {}).items():
+                for item in items[:5]:
+                    result_descriptions.append(
+                        f"{item.get('video_id', 'unknown')}: {item.get('description', 'no description')}"
+                    )
+
+            summary_query = (
+                f"Summarize the search results for '{results_data['query']}': "
+                + "; ".join(result_descriptions[:10])
+            )
+
+            st.subheader("📄 Summary")
+            final = display_streaming_result(
+                agent_name="summarizer_agent",
+                query=summary_query,
+                tenant_id="default",
+            )
+            if final and "summary" in final:
+                st.markdown("### Key Points")
+                for point in final.get("key_points", []):
+                    st.markdown(f"- {point}")
 
     else:
         st.info("👆 Enter a search query and click Search to see results")
