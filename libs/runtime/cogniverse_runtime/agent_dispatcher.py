@@ -267,7 +267,12 @@ class AgentDispatcher:
         # Handle optimization actions from dashboard
         action = context.get("action")
         if action == "optimize_routing":
-            return await self._handle_routing_optimization(agent, context, tenant_id)
+            examples = context.get("examples", [])
+            if examples:
+                return await self._handle_routing_optimization(
+                    agent, context, tenant_id
+                )
+            return await self._run_optimization_cycle(agent, tenant_id)
         elif action == "get_optimization_status":
             return self._handle_optimization_status(agent, tenant_id)
 
@@ -413,6 +418,49 @@ class AgentDispatcher:
             "optimizer_ready": True,
             "metrics": stats,
         }
+
+    async def _run_optimization_cycle(self, agent, tenant_id: str) -> Dict[str, Any]:
+        """Run full optimization cycle from accumulated traces.
+
+        Creates an OptimizationOrchestrator that reads routing spans from
+        Phoenix, annotates low-quality decisions, feeds back to optimizer,
+        and triggers DSPy compile when enough data exists.
+        """
+        from cogniverse_agents.routing.optimization_orchestrator import (
+            OptimizationOrchestrator,
+        )
+
+        optimizer = agent._get_optimizer(tenant_id)
+        if not optimizer:
+            return {
+                "status": "error",
+                "message": "Advanced optimization not enabled for this tenant",
+            }
+
+        telemetry_provider = agent._get_telemetry_provider(tenant_id)
+
+        try:
+            orchestrator = OptimizationOrchestrator(
+                llm_config=agent.deps.llm_config,
+                telemetry_provider=telemetry_provider,
+                tenant_id=tenant_id,
+            )
+
+            results = await orchestrator.run_once()
+
+            return {
+                "status": "optimization_triggered",
+                "message": "Full optimization cycle completed from traces",
+                "cycle_results": results,
+                "spans_evaluated": results.get("span_evaluation", {}).get(
+                    "spans_processed", 0
+                ),
+                "annotations_generated": results.get("annotations_generated", 0),
+                "optimizer": "OptimizationOrchestrator",
+            }
+        except Exception as e:
+            logger.error(f"Optimization cycle failed: {e}")
+            return {"status": "error", "message": str(e)}
 
     async def _execute_downstream_agent(
         self,

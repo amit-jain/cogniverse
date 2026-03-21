@@ -957,8 +957,10 @@ class TestRoutingOptimizationIntegration:
         )
         assert "recommended_agent" in route_result
 
-    def test_optimize_routing_empty_examples(self, streaming_dispatcher, dspy_lm):
-        """optimize_routing with no examples returns insufficient_data."""
+    def test_optimize_routing_empty_examples_triggers_cycle(
+        self, streaming_dispatcher, real_telemetry, dspy_lm
+    ):
+        """optimize_routing with no examples runs automated cycle from traces."""
 
         async def _run():
             return await streaming_dispatcher.dispatch(
@@ -972,8 +974,12 @@ class TestRoutingOptimizationIntegration:
             )
 
         result = asyncio.get_event_loop().run_until_complete(_run())
-        assert result["status"] == "insufficient_data"
-        assert result["training_examples"] == 0
+        # Empty examples triggers automated optimization cycle from Phoenix traces
+        assert result["status"] == "optimization_triggered", (
+            f"Empty examples should trigger automated cycle, got: {result}"
+        )
+        assert result["optimizer"] == "OptimizationOrchestrator"
+        assert "cycle_results" in result
 
     def test_get_optimization_status(
         self, streaming_dispatcher, real_telemetry, dspy_lm
@@ -997,3 +1003,29 @@ class TestRoutingOptimizationIntegration:
         assert result["optimizer_ready"] is True
         assert isinstance(result["metrics"], dict)
         assert "total_queries" in result["metrics"]
+
+    def test_optimization_cycle_from_traces(
+        self, streaming_dispatcher, real_telemetry, dspy_lm
+    ):
+        """Run full optimization cycle reading from Phoenix traces."""
+
+        async def _run():
+            return await streaming_dispatcher.dispatch(
+                agent_name="routing_agent",
+                query="optimize routing",
+                context={
+                    "tenant_id": "default",
+                    "action": "optimize_routing",
+                    # No examples — triggers automated cycle from traces
+                },
+            )
+
+        result = asyncio.get_event_loop().run_until_complete(_run())
+
+        assert result["status"] == "optimization_triggered", (
+            f"Optimization cycle should complete, got: {result}"
+        )
+        assert "cycle_results" in result
+        assert "spans_evaluated" in result
+        assert isinstance(result["spans_evaluated"], int)
+        assert result["optimizer"] == "OptimizationOrchestrator"
