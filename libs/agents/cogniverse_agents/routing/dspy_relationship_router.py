@@ -261,20 +261,28 @@ class DSPyBasicRoutingModule(dspy.Module):
         super().__init__()
         self.analyzer = dspy.ChainOfThought(BasicQueryAnalysisSignature)
 
-    def forward(self, query: str, context: Optional[str] = None) -> dspy.Prediction:
+    def forward(
+        self,
+        query: str,
+        context: Optional[str] = None,
+        available_agents: Optional[List[str]] = None,
+    ) -> dspy.Prediction:
         """
         Perform basic query analysis for routing decisions.
 
         Args:
             query: User query to analyze
             context: Optional conversation context
+            available_agents: List of registered agent names to choose from
 
         Returns:
             DSPy prediction with routing analysis
         """
         try:
             # Analyze query characteristics
-            analysis_result = self._analyze_query_characteristics(query, context)
+            analysis_result = self._analyze_query_characteristics(
+                query, context, available_agents
+            )
 
             # Create prediction with analysis results
             prediction = dspy.Prediction()
@@ -299,14 +307,17 @@ class DSPyBasicRoutingModule(dspy.Module):
             prediction.needs_video_search = True
             prediction.needs_text_search = False
             prediction.needs_multimodal = True
-            prediction.recommended_agent = "video_search"
+            prediction.recommended_agent = "search_agent"
             prediction.confidence_score = 0.5
             prediction.reasoning = f"Fallback routing for query: {query[:50]}..."
 
             return prediction
 
     def _analyze_query_characteristics(
-        self, query: str, context: Optional[str] = None
+        self,
+        query: str,
+        context: Optional[str] = None,
+        available_agents: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze query to determine routing characteristics.
@@ -314,6 +325,7 @@ class DSPyBasicRoutingModule(dspy.Module):
         Args:
             query: User query
             context: Optional context
+            available_agents: List of registered agent names to choose from
 
         Returns:
             Dictionary with analysis results
@@ -370,17 +382,38 @@ class DSPyBasicRoutingModule(dspy.Module):
             )
         )
 
-        # Agent recommendation
-        if intent == "compare":
-            agent = "summarizer"
-        elif intent in ["analyze", "report"]:
-            agent = "detailed_report"
+        # Agent recommendation — pick from available agents by matching
+        # intent keywords against agent names. No hardcoded agent names.
+        agents = available_agents or []
+        default_agent = agents[0] if agents else "search_agent"
+
+        # Map intent to keywords that should appear in the agent name
+        intent_keywords = {
+            "compare": ["summar"],
+            "summarize": ["summar"],
+            "analyze": ["report", "detail"],
+            "report": ["report", "detail"],
+            "search": ["search"],
+        }
+        # For modality-based routing
+        if needs_text:
+            modality_keywords = ["document", "text"]
         elif needs_video:
-            agent = "video_search"
-        elif needs_text:
-            agent = "text_search"
+            modality_keywords = ["search", "video"]
         else:
-            agent = "video_search"  # Default to video search
+            modality_keywords = ["search"]
+
+        keywords = intent_keywords.get(intent, modality_keywords)
+
+        # Find first agent whose name contains any of the keywords
+        agent = default_agent
+        for keyword in keywords:
+            for a in agents:
+                if keyword in a:
+                    agent = a
+                    break
+            if agent != default_agent:
+                break
 
         # Confidence calculation
         confidence = 0.7  # Base confidence
@@ -441,6 +474,7 @@ class DSPyAdvancedRoutingModule(dspy.Module):
         context: Optional[str] = None,
         user_preferences: Optional[Dict[str, Any]] = None,
         system_state: Optional[Dict[str, Any]] = None,
+        available_agents: Optional[List[str]] = None,
     ) -> dspy.Prediction:
         """
         Perform advanced routing with relationship-aware analysis.
@@ -450,13 +484,16 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             context: Conversation context
             user_preferences: User preferences
             system_state: Current system state
+            available_agents: List of registered agent names to choose from
 
         Returns:
             DSPy prediction with comprehensive routing decision
         """
         try:
             # Step 1: Basic query analysis
-            basic_analysis = self.basic_module.forward(query, context)
+            basic_analysis = self.basic_module.forward(
+                query, context, available_agents=available_agents
+            )
 
             # Step 2: Composable query analysis (entities + relationships + enhancement)
             analysis_result = self.analysis_module.forward(query)
@@ -512,7 +549,9 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             logger.error(f"Advanced routing failed: {e}")
 
             # Fallback to basic routing
-            basic_prediction = self.basic_module.forward(query, context)
+            basic_prediction = self.basic_module.forward(
+                query, context, available_agents=available_agents
+            )
 
             # Create minimal advanced prediction
             prediction = dspy.Prediction()
@@ -567,13 +606,13 @@ class DSPyAdvancedRoutingModule(dspy.Module):
         secondary_agents = []
 
         if basic_analysis.complexity_level == "complex":
-            if primary_agent != "summarizer":
-                secondary_agents.append("summarizer")
+            if primary_agent != "summarizer_agent":
+                secondary_agents.append("summarizer_agent")
             if (
                 generation_type == "detailed_report"
-                and primary_agent != "detailed_report"
+                and primary_agent != "detailed_report_agent"
             ):
-                secondary_agents.append("detailed_report")
+                secondary_agents.append("detailed_report_agent")
 
         # Execution mode
         if len(secondary_agents) > 1:

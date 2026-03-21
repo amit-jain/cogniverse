@@ -84,9 +84,7 @@ class BasicQueryAnalysisSignature(dspy.Signature):
     )
 
     # Routing decision
-    recommended_agent: str = dspy.OutputField(
-        desc="Primary agent to handle query: video_search, text_search, summarizer, report_generator"
-    )
+    recommended_agent: str = dspy.OutputField(desc="Primary agent to handle the query")
     confidence_score: float = dspy.OutputField(
         desc="Confidence in routing decision (0.0-1.0)"
     )

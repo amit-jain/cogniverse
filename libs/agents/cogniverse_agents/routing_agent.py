@@ -300,6 +300,7 @@ class RoutingAgent(
     def __init__(
         self,
         deps: RoutingDeps,
+        registry=None,
         port: int = 8001,
     ):
         """
@@ -307,14 +308,16 @@ class RoutingAgent(
 
         Args:
             deps: Typed dependencies with telemetry_config and routing settings
+            registry: AgentRegistry for discovering available agents (optional)
             port: A2A server port
 
         Raises:
             TypeError: If deps is not RoutingDeps
             ValidationError: If deps fails Pydantic validation
         """
-        # Store telemetry config for production components
+        # Store telemetry config and registry
         self.telemetry_config = deps.telemetry_config
+        self.registry = registry
         self.logger = logging.getLogger(__name__)
 
         # Initialize telemetry manager first (needed by enhancement pipeline, MLflow, etc.)
@@ -1098,10 +1101,15 @@ class RoutingAgent(
                 context, entities, relationships
             )
 
+            # Get available agents from registry
+            available_agents = self.registry.list_agents() if self.registry else None
+
             # DSPy routing decision (scoped LM via context)
             with dspy.context(lm=self._dspy_lm):
                 dspy_result = self.routing_module.forward(
-                    query=routing_query, context=routing_context
+                    query=routing_query,
+                    context=routing_context,
+                    available_agents=available_agents,
                 )
 
             # Extract routing information from DSPy result.
