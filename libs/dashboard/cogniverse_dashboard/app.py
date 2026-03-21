@@ -232,6 +232,22 @@ except ImportError as e:
     orchestration_annotation_tab_available = False
     orchestration_annotation_tab_error = str(e)
 
+try:
+    from enhanced_optimization_tab import render_enhanced_optimization_tab
+
+    enhanced_optimization_tab_available = True
+except ImportError as e:
+    enhanced_optimization_tab_available = False
+    enhanced_optimization_tab_error = str(e)
+
+try:
+    from approval_queue_tab import render_approval_queue_tab
+
+    approval_queue_tab_available = True
+except ImportError as e:
+    approval_queue_tab_available = False
+    approval_queue_tab_error = str(e)
+
 # Page configuration
 st.set_page_config(
     page_title="Analytics Dashboard",
@@ -673,6 +689,8 @@ main_tabs = st.tabs(
         "🔄 Orchestration Annotation",
         "📊 Multi-Modal Performance",
         "🔧 Optimization",
+        "🔬 Synthetic Data & Optimization",
+        "✅ Approval Queue",
         "📥 Ingestion Testing",
         "🔍 Interactive Search",
         "⚙️ Configuration",
@@ -2507,6 +2525,36 @@ with main_tabs[6]:
 
 # Ingestion Testing Tab
 with main_tabs[7]:
+    # Synthetic Data & Optimization (enhanced_optimization_tab)
+    if enhanced_optimization_tab_available:
+        try:
+            render_enhanced_optimization_tab()
+        except Exception as e:
+            st.error(f"Error rendering enhanced optimization tab: {e}")
+    else:
+        st.warning(
+            f"Enhanced optimization tab not available: {enhanced_optimization_tab_error}"
+        )
+        st.info(
+            "This tab provides synthetic data generation, golden dataset builder, "
+            "and comprehensive optimization controls."
+        )
+
+with main_tabs[8]:
+    # Approval Queue (approval_queue_tab)
+    if approval_queue_tab_available:
+        try:
+            render_approval_queue_tab()
+        except Exception as e:
+            st.error(f"Error rendering approval queue tab: {e}")
+    else:
+        st.warning(f"Approval queue tab not available: {approval_queue_tab_error}")
+        st.info(
+            "This tab provides human-in-the-loop review for synthetic data "
+            "and AI-generated outputs."
+        )
+
+with main_tabs[9]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown(
         "Interactive testing and configuration of video ingestion pipelines with different processing profiles."
@@ -2767,7 +2815,7 @@ with main_tabs[7]:
         st.info("📊 Upload a video and process it to see detailed analysis")
 
 # Interactive Search Tab
-with main_tabs[8]:
+with main_tabs[10]:
     st.header("🔍 Interactive Search Interface")
     st.markdown(
         "Live search testing and evaluation with multiple ranking strategies and real-time results."
@@ -3137,17 +3185,17 @@ with main_tabs[8]:
         st.metric("Coverage Rate", "76%", "2%")
 
 # Configuration Tab
-with main_tabs[9]:
+with main_tabs[11]:
     st.header("⚙️ Configuration Management")
     render_config_management_tab()
 
 # Tenant Management Tab
-with main_tabs[10]:
+with main_tabs[12]:
     st.header("👥 Tenant Management")
     render_tenant_management_tab()
 
 # Memory Management Tab
-with main_tabs[11]:
+with main_tabs[13]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
 
