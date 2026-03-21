@@ -272,3 +272,116 @@ class TestAgentDispatcherCapabilityRouting:
             "find cats", "t1", 10, conversation_history=[]
         )
         assert result["status"] == "success"
+
+
+@pytest.mark.unit
+class TestRoutingOptimizationActions:
+    """Test optimization action handling in dispatcher."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_optimize_routing_records_examples(self, dispatcher):
+        """optimize_routing action records examples to optimizer."""
+        mock_optimizer = AsyncMock()
+        mock_optimizer.record_routing_experience = AsyncMock()
+
+        mock_routing_agent = MagicMock()
+        mock_routing_agent._get_optimizer.return_value = mock_optimizer
+        mock_routing_agent.get_routing_statistics.return_value = {}
+
+        routing_ep = MagicMock()
+        routing_ep.capabilities = ["routing"]
+        dispatcher._registry.get_agent.return_value = routing_ep
+
+        examples = [
+            {
+                "query": "find cat videos",
+                "chosen_agent": "search_agent",
+                "confidence": 0.9,
+                "search_quality": 0.8,
+                "agent_success": True,
+            },
+            {
+                "query": "summarize results",
+                "chosen_agent": "summarizer_agent",
+                "confidence": 0.85,
+                "search_quality": 0.7,
+                "agent_success": True,
+            },
+        ]
+
+        mock_config_obj = MagicMock()
+        mock_routing_module = MagicMock()
+        mock_routing_module.RoutingAgent.return_value = mock_routing_agent
+        mock_routing_module.RoutingDeps = MagicMock(return_value=MagicMock())
+
+        mock_config_utils = MagicMock()
+        mock_config_utils.get_config.return_value = mock_config_obj
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "cogniverse_agents.routing_agent": mock_routing_module,
+                    "cogniverse_foundation.config.utils": mock_config_utils,
+                    "cogniverse_foundation.telemetry.config": MagicMock(),
+                },
+            ),
+        ):
+            result = await dispatcher._handle_routing_optimization(
+                mock_routing_agent,
+                {"action": "optimize_routing", "examples": examples},
+                "default",
+            )
+
+        assert result["status"] == "optimization_triggered"
+        assert result["training_examples"] == 2
+        assert mock_optimizer.record_routing_experience.call_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_optimize_routing_no_examples(self, dispatcher):
+        """optimize_routing with empty examples returns insufficient_data."""
+        mock_agent = MagicMock()
+        result = await dispatcher._handle_routing_optimization(
+            mock_agent, {"action": "optimize_routing", "examples": []}, "default"
+        )
+        assert result["status"] == "insufficient_data"
+        assert result["training_examples"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_optimize_routing_no_optimizer(self, dispatcher):
+        """optimize_routing when optimizer not enabled returns error."""
+        mock_agent = MagicMock()
+        mock_agent._get_optimizer.return_value = None
+        result = await dispatcher._handle_routing_optimization(
+            mock_agent,
+            {"action": "optimize_routing", "examples": [{"query": "test"}]},
+            "default",
+        )
+        assert result["status"] == "error"
+        assert "not enabled" in result["message"]
+
+    @pytest.mark.ci_fast
+    def test_optimization_status_active(self, dispatcher):
+        """get_optimization_status returns metrics when optimizer is active."""
+        mock_agent = MagicMock()
+        mock_agent._get_optimizer.return_value = MagicMock()
+        mock_agent.get_routing_statistics.return_value = {
+            "total_queries": 100,
+            "successful_routes": 85,
+        }
+        result = dispatcher._handle_optimization_status(mock_agent, "default")
+        assert result["status"] == "active"
+        assert result["optimizer_ready"] is True
+        assert result["metrics"]["total_queries"] == 100
+
+    @pytest.mark.ci_fast
+    def test_optimization_status_inactive(self, dispatcher):
+        """get_optimization_status when optimizer not enabled."""
+        mock_agent = MagicMock()
+        mock_agent._get_optimizer.return_value = None
+        result = dispatcher._handle_optimization_status(mock_agent, "default")
+        assert result["status"] == "inactive"
+        assert result["optimizer_ready"] is False

@@ -252,6 +252,13 @@ class AgentDispatcher:
         deps = RoutingDeps(**deps_kwargs)
         agent = RoutingAgent(deps=deps, registry=self._registry)
 
+        # Handle optimization actions from dashboard
+        action = context.get("action")
+        if action == "optimize_routing":
+            return await self._handle_routing_optimization(agent, context, tenant_id)
+        elif action == "get_optimization_status":
+            return self._handle_optimization_status(agent, tenant_id)
+
         result = await agent.route_query(
             query=query,
             context=context.get("context"),
@@ -328,6 +335,66 @@ class AgentDispatcher:
             "query_variants": result.query_variants,
             "metadata": result.metadata,
             "downstream_result": downstream_result,
+        }
+
+    async def _handle_routing_optimization(
+        self, agent, context: Dict[str, Any], tenant_id: str
+    ) -> Dict[str, Any]:
+        """Trigger routing optimization with provided examples."""
+        examples = context.get("examples", [])
+        if not examples:
+            return {
+                "status": "insufficient_data",
+                "message": "No routing examples provided",
+                "training_examples": 0,
+            }
+
+        optimizer = agent._get_optimizer(tenant_id)
+        if not optimizer:
+            return {
+                "status": "error",
+                "message": "Advanced optimization not enabled for this tenant",
+            }
+
+        try:
+            for example in examples:
+                await optimizer.record_routing_experience(
+                    query=example.get("query", ""),
+                    entities=example.get("entities", []),
+                    relationships=example.get("relationships", []),
+                    enhanced_query=example.get("enhanced_query", ""),
+                    chosen_agent=example.get("chosen_agent", "search_agent"),
+                    routing_confidence=example.get("confidence", 0.5),
+                    search_quality=example.get("search_quality", 0.5),
+                    agent_success=example.get("agent_success", True),
+                    processing_time=example.get("processing_time", 0.0),
+                )
+
+            return {
+                "status": "optimization_triggered",
+                "message": "Routing experiences recorded for optimization",
+                "training_examples": len(examples),
+                "optimizer": "AdvancedRoutingOptimizer",
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def _handle_optimization_status(self, agent, tenant_id: str) -> Dict[str, Any]:
+        """Get optimization status from routing agent."""
+        optimizer = agent._get_optimizer(tenant_id)
+        if not optimizer:
+            return {
+                "status": "inactive",
+                "message": "Advanced optimization not enabled",
+                "optimizer_ready": False,
+                "metrics": {},
+            }
+
+        stats = agent.get_routing_statistics()
+        return {
+            "status": "active",
+            "optimizer_ready": True,
+            "metrics": stats,
         }
 
     async def _execute_downstream_agent(
