@@ -43,6 +43,10 @@
   "detailed_report_agent_url": "http://localhost:8003",
   "summarizer_agent_url": "http://localhost:8004",
   "orchestrator_agent_port": 8013,
+  "routing_agent": {
+    "enable_advanced_optimization": true,
+    "enable_memory": false
+  },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",

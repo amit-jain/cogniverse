@@ -897,10 +897,16 @@ class TestA2AStreamingFullStack:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestRoutingOptimizationIntegration:
-    """Test optimization actions through real dispatcher + routing agent."""
+    """Test optimization actions through real dispatcher + real optimizer.
 
-    def test_optimize_routing_records_examples(self, streaming_dispatcher, dspy_lm):
-        """optimize_routing action records examples via real routing agent."""
+    Creates routing agent with enable_advanced_optimization=True and
+    real telemetry (Phoenix) to exercise the full optimization path.
+    """
+
+    def test_optimize_routing_records_examples(
+        self, streaming_dispatcher, real_telemetry, dspy_lm
+    ):
+        """optimize_routing action records examples via real AdvancedRoutingOptimizer."""
         examples = [
             {
                 "query": "find cat videos",
@@ -933,14 +939,11 @@ class TestRoutingOptimizationIntegration:
 
         result = asyncio.get_event_loop().run_until_complete(_run())
 
-        # Either optimization was triggered or optimizer isn't enabled
-        # (depends on telemetry config) — both are valid outcomes
-        assert result["status"] in ("optimization_triggered", "error"), (
-            f"Expected optimization_triggered or error, got: {result}"
+        assert result["status"] == "optimization_triggered", (
+            f"Optimization should be triggered with 2 examples, got: {result}"
         )
-        if result["status"] == "optimization_triggered":
-            assert result["training_examples"] == 2
-            assert "optimizer" in result
+        assert result["training_examples"] == 2
+        assert result["optimizer"] == "AdvancedRoutingOptimizer"
 
     def test_optimize_routing_empty_examples(self, streaming_dispatcher, dspy_lm):
         """optimize_routing with no examples returns insufficient_data."""
@@ -960,7 +963,9 @@ class TestRoutingOptimizationIntegration:
         assert result["status"] == "insufficient_data"
         assert result["training_examples"] == 0
 
-    def test_get_optimization_status(self, streaming_dispatcher, dspy_lm):
+    def test_get_optimization_status(
+        self, streaming_dispatcher, real_telemetry, dspy_lm
+    ):
         """get_optimization_status returns routing statistics from real agent."""
 
         async def _run():
@@ -974,10 +979,9 @@ class TestRoutingOptimizationIntegration:
             )
 
         result = asyncio.get_event_loop().run_until_complete(_run())
-        assert result["status"] in ("active", "inactive"), (
-            f"Expected active or inactive, got: {result}"
+        assert result["status"] == "active", (
+            f"Optimizer should be active, got: {result}"
         )
-        assert "optimizer_ready" in result
-        assert isinstance(result["optimizer_ready"], bool)
-        assert "metrics" in result
+        assert result["optimizer_ready"] is True
         assert isinstance(result["metrics"], dict)
+        assert "total_queries" in result["metrics"]

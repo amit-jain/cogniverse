@@ -226,10 +226,22 @@ class AgentDispatcher:
         routing_config = config.get("routing_agent", {})
         memory_enabled = routing_config.get("enable_memory", False)
 
+        # Use global telemetry manager's config if available, else read from config
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        try:
+            global_tm = get_telemetry_manager()
+            telemetry_config = global_tm.config
+        except Exception:
+            telemetry_config = TelemetryConfig(enabled=False)
+
         deps_kwargs: Dict[str, Any] = {
-            "telemetry_config": TelemetryConfig(enabled=False),
+            "telemetry_config": telemetry_config,
             "llm_config": llm_endpoint,
             "enable_memory": memory_enabled,
+            "enable_advanced_optimization": routing_config.get(
+                "enable_advanced_optimization", False
+            ),
         }
 
         if memory_enabled:
