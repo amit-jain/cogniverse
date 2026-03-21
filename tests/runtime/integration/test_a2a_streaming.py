@@ -285,6 +285,18 @@ class TestSummarizerAgentStreaming:
             f"Reasoning should be a real analysis, got: '{thinking_data['reasoning']}'"
         )
 
+        # Token events from call_dspy streaming — verifies dspy.streamify() path.
+        # DSPy caches LM calls, so token streaming only fires on cache misses.
+        # If tokens are present, verify accumulated text grows.
+        token_events = [e for e in events if e.get("phase") == "token"]
+        if token_events:
+            last_token = token_events[-1]
+            assert "data" in last_token
+            assert "accumulated" in last_token["data"]
+            assert len(last_token["data"]["accumulated"]) > 5, (
+                f"Accumulated token text should be substantive, got: '{last_token['data']['accumulated']}'"
+            )
+
         final_data = _get_final(events, "SummarizerAgent")
         assert "summary" in final_data
         assert "key_points" in final_data
@@ -462,6 +474,12 @@ class TestQueryEnhancementAgentStreaming:
         phases = _get_phases(events)
         assert "enhancement" in phases
         assert "parsing" in phases
+
+        # Token events from call_dspy streaming (may be absent on DSPy cache hit)
+        token_events = [e for e in events if e.get("phase") == "token"]
+        if token_events:
+            assert "data" in token_events[-1]
+            assert "accumulated" in token_events[-1]["data"]
 
         final_data = _get_final(events, "QueryEnhancementAgent")
         assert "enhanced_query" in final_data
