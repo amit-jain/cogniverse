@@ -2854,78 +2854,61 @@ with main_tabs[8]:
     if search_button and search_query:
         st.subheader("🎯 Search Results")
 
-        with st.spinner(
-            f"🔍 Searching for: '{search_query}' using {selected_profile}..."
-        ):
-            try:
-                # Prepare search task for video search agent
-                # Include session_id for multi-turn tracing
-                search_task = {
-                    "action": "search_videos",
-                    "query": search_query,
-                    "profile": selected_profile,
-                    "strategies": ranking_strategies,
+        try:
+            # Stream search through A2A — shows progress events as search runs
+            final_data = display_streaming_result(
+                agent_name="search_agent",
+                query=search_query,
+                metadata={
                     "top_k": top_k,
-                    "confidence_threshold": confidence_threshold,
-                    "session_id": st.session_state.session_id,  # Link traces in Phoenix
-                }
+                    "modality": "video",
+                },
+            )
 
-                # Call video search agent for real results
-                search_result = run_async_in_streamlit(
-                    call_agent_async(
-                        agent_config.get("video_search_agent_url"), search_task
+            if final_data and "results" in final_data:
+                # Adapt SearchOutput (flat list) to strategy-keyed dict
+                # the dashboard expects
+                flat_results = final_data["results"]
+                search_results = {}
+                for strategy in ranking_strategies:
+                    search_results[strategy] = flat_results
+                if not search_results:
+                    st.error("❌ Agent returned success but no search results")
+                else:
+                    # Store search results in session state
+                    st.session_state.current_search_results = {
+                        "query": search_query,
+                        "profile": selected_profile,
+                        "results": search_results,
+                        "timestamp": datetime.now(),
+                    }
+
+                    # Add to conversation history for multi-turn tracking
+                    total_results = sum(
+                        len(search_results.get(s, [])) for s in ranking_strategies
                     )
-                )
-
-                if search_result.get("status") == "success":
-                    # Use real search results from agent
-                    search_results = search_result.get("results", {})
-                    if not search_results:
-                        st.error("❌ Agent returned success but no search results")
-                    else:
-                        # Store search results in session state
-                        st.session_state.current_search_results = {
+                    st.session_state.conversation_history.append(
+                        {
                             "query": search_query,
                             "profile": selected_profile,
-                            "results": search_results,
                             "timestamp": datetime.now(),
+                            "result_count": total_results,
+                            "results_summary": {
+                                s: len(search_results.get(s, []))
+                                for s in ranking_strategies
+                            },
                         }
-
-                        # Add to conversation history for multi-turn tracking
-                        total_results = sum(
-                            len(search_results.get(s, [])) for s in ranking_strategies
-                        )
-                        st.session_state.conversation_history.append(
-                            {
-                                "query": search_query,
-                                "profile": selected_profile,
-                                "timestamp": datetime.now(),
-                                "result_count": total_results,
-                                "results_summary": {
-                                    s: len(search_results.get(s, []))
-                                    for s in ranking_strategies
-                                },
-                            }
-                        )
-
-                        st.success(
-                            f"✅ Found results for '{search_query}' across {len(ranking_strategies)} strategies"
-                        )
-                else:
-                    # Agent call failed - show error
-                    st.error(
-                        f"❌ Video search failed: {search_result.get('message', 'Unknown error')}"
                     )
-                    if "Connection refused" in search_result.get("message", ""):
-                        st.error(
-                            f"🔧 Video search agent not available at {search_result.get('agent_url', 'unknown URL')}"
-                        )
 
-            except Exception as e:
-                st.error(f"❌ Search failed: {str(e)}")
-                st.error(
-                    "🔧 Check video search agent configuration and ensure it's running"
-                )
+                    st.success(
+                        f"✅ Found results for '{search_query}' across {len(ranking_strategies)} strategies"
+                    )
+            else:
+                st.error("❌ Search returned no results")
+
+        except Exception as e:
+            st.error(f"❌ Search failed: {str(e)}")
+            st.error("🔧 Check runtime is running at localhost:8000")
 
         # Display results from session state
         if (
