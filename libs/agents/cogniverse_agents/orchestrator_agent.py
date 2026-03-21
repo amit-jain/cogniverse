@@ -369,7 +369,9 @@ class OrchestratorAgent(
         """
         available_agents = ", ".join([a.value for a in AgentType])
 
-        result = self.dspy_module.forward(
+        result = await self.call_dspy(
+            self.dspy_module,
+            output_field="agent_sequence",
             query=query,
             available_agents=available_agents,
             conversation_context=conversation_context,

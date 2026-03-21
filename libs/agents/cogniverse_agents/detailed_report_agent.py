@@ -620,7 +620,9 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         content_text = "\n".join(content_parts)
 
         try:
-            dspy_result = self.report_module.forward(
+            dspy_result = await self.call_dspy(
+                self.report_module,
+                output_field="executive_summary",
                 content=content_text,
                 query=request.query,
                 report_type=request.report_type,

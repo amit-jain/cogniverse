@@ -1106,7 +1106,9 @@ class RoutingAgent(
 
             # DSPy routing decision (scoped LM via context)
             with dspy.context(lm=self._dspy_lm):
-                dspy_result = self.routing_module.forward(
+                dspy_result = await self.call_dspy(
+                    self.routing_module,
+                    output_field="recommended_agent",
                     query=routing_query,
                     context=routing_context,
                     available_agents=available_agents,

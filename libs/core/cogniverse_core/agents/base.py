@@ -231,6 +231,50 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             event["data"] = data
         self._progress_queue.put_nowait(event)
 
+    async def call_dspy(
+        self,
+        module,
+        output_field: str = "summary",
+        **kwargs,
+    ):
+        """Call a DSPy module, streaming tokens via emit_progress when active.
+
+        When not streaming, calls module.forward(**kwargs) directly.
+        When streaming, wraps with dspy.streamify() to emit token-by-token
+        progress events for the specified output_field.
+
+        Args:
+            module: DSPy module (must have forward() method)
+            output_field: Name of the output field to stream tokens for
+            **kwargs: Arguments to pass to module.forward()
+
+        Returns:
+            DSPy Prediction from the module
+        """
+        if self._progress_queue is not None:
+            import dspy
+
+            streaming_fn = dspy.streamify(
+                module,
+                stream_listeners=[
+                    dspy.streaming.StreamListener(output_field),
+                ],
+                include_final_prediction_in_output_stream=True,
+            )
+            accumulated = ""
+            prediction = None
+            async for chunk in streaming_fn(**kwargs):
+                if isinstance(chunk, dspy.Prediction):
+                    prediction = chunk
+                else:
+                    accumulated += str(chunk)
+                    self.emit_progress(
+                        "token", str(chunk), data={"accumulated": accumulated}
+                    )
+            return prediction or module.forward(**kwargs)
+        else:
+            return module.forward(**kwargs)
+
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
         Validate raw input dict and convert to typed InputT.

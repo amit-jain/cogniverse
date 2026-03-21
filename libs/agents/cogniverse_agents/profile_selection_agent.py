@@ -242,7 +242,12 @@ class ProfileSelectionAgent(
 
         # Select profile using DSPy LLM reasoning
         self.emit_progress("selection", "Selecting optimal profile with DSPy...")
-        result = self.dspy_module.forward(query=query, available_profiles=profiles_str)
+        result = await self.call_dspy(
+            self.dspy_module,
+            output_field="selected_profile",
+            query=query,
+            available_profiles=profiles_str,
+        )
 
         # Parse confidence
         try:

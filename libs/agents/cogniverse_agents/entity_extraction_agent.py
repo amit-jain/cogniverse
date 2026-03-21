@@ -168,7 +168,9 @@ class EntityExtractionAgent(
 
         # Extract entities using DSPy
         self.emit_progress("extraction", "Extracting entities with DSPy...")
-        result = self.dspy_module.forward(query=query)
+        result = await self.call_dspy(
+            self.dspy_module, output_field="entities", query=query
+        )
 
         # Parse entities from DSPy output
         self.emit_progress("parsing", "Parsing extracted entities...")

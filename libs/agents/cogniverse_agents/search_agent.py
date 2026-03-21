@@ -1800,8 +1800,12 @@ class SearchAgent(
             self.emit_progress("query_optimization", "Optimizing query with DSPy...")
             search_query = query
             try:
-                dspy_result = self.search_module.forward(
-                    query=query, modality=modality, top_k=top_k
+                dspy_result = await self.call_dspy(
+                    self.search_module,
+                    output_field="enhanced_query",
+                    query=query,
+                    modality=modality,
+                    top_k=top_k,
                 )
                 # Use enhanced query from DSPy if confidence is high
                 if hasattr(dspy_result, "enhanced_query") and hasattr(

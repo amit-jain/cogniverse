@@ -89,29 +89,6 @@ class SummarizationModule(dspy.Module):
         """Generate summary using DSPy"""
         return self.summarizer(content=content, query=query, summary_type=summary_type)
 
-    async def stream_forward(
-        self, content: str, query: str, summary_type: str = "comprehensive"
-    ):
-        """Stream summary generation token-by-token via dspy.streamify.
-
-        Yields (str_chunk, None) for intermediate tokens and
-        (None, dspy.Prediction) for the final result.
-        """
-        streaming_fn = dspy.streamify(
-            self,
-            stream_listeners=[
-                dspy.streaming.StreamListener("summary"),
-            ],
-            include_final_prediction_in_output_stream=True,
-        )
-        async for chunk in streaming_fn(
-            content=content, query=query, summary_type=summary_type
-        ):
-            if isinstance(chunk, dspy.Prediction):
-                yield None, chunk
-            else:
-                yield str(chunk), None
-
 
 @dataclass
 class SummaryRequest:
@@ -551,27 +528,14 @@ and structure summary based on identified themes and content categories.
         self, content: str, query: str, summary_type: str
     ) -> str:
         """Run DSPy summarization, streaming tokens via emit_progress when active."""
-        if self._progress_queue is not None:
-            summary_text = ""
-            prediction = None
-            async for chunk, pred in self.summarization_module.stream_forward(
-                content=content, query=query, summary_type=summary_type
-            ):
-                if chunk is not None:
-                    summary_text += chunk
-                    self.emit_progress(
-                        "token", chunk, data={"accumulated": summary_text}
-                    )
-                if pred is not None:
-                    prediction = pred
-            if prediction is not None:
-                return prediction.summary
-            return summary_text
-        else:
-            result = self.summarization_module.forward(
-                content=content, query=query, summary_type=summary_type
-            )
-            return result.summary
+        result = await self.call_dspy(
+            self.summarization_module,
+            output_field="summary",
+            content=content,
+            query=query,
+            summary_type=summary_type,
+        )
+        return result.summary
 
     async def _generate_summary(
         self,
