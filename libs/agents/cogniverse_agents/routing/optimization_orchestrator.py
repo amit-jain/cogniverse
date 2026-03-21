@@ -237,9 +237,13 @@ class OptimizationOrchestrator:
                 await asyncio.sleep(60)
 
     async def _check_optimization_trigger(self):
-        """Check if we should trigger routing optimization"""
+        """Check if we should trigger routing optimization.
+
+        Uses XGBoost TrainingDecisionModel if available, falls back to
+        annotation count threshold. Also incorporates synthetic data
+        from Phoenix if available.
+        """
         try:
-            # Check if we have enough experiences
             total_experiences = len(self.optimizer.experiences)
 
             # Get annotation count from last 7 days
@@ -248,44 +252,91 @@ class OptimizationOrchestrator:
             annotated_spans = await self.annotation_storage.query_annotated_spans(
                 start_time=start_time, end_time=end_time, only_human_reviewed=False
             )
-
             annotation_count = len(annotated_spans) if annotated_spans else 0
+
+            # Check for synthetic data in Phoenix
+            synthetic_count = await self._load_synthetic_data()
 
             logger.info(
                 f"📈 Optimization check: {total_experiences} experiences, "
-                f"{annotation_count} annotations"
+                f"{annotation_count} annotations, {synthetic_count} synthetic examples"
             )
 
-            # Trigger if we have enough data
-            if annotation_count >= self.min_annotations_for_optimization:
-                if (
-                    self.metrics["last_optimization"] is None
-                    or (datetime.now() - self.metrics["last_optimization"]).days >= 1
-                ):
-                    await self._trigger_optimization()
+            # Use XGBoost should_train() if available
+            should_optimize = False
+            if (
+                hasattr(self.optimizer, "_training_decision_model")
+                and self.optimizer._training_decision_model
+            ):
+                from cogniverse_agents.routing.xgboost_meta_models import (
+                    ModelingContext,
+                )
+
+                context = ModelingContext(
+                    total_examples=total_experiences + synthetic_count,
+                    annotated_examples=annotation_count,
+                    current_accuracy=self._get_current_metrics().get("accuracy", 0.0),
+                    hours_since_last_train=(
+                        (
+                            datetime.now() - self.metrics["last_optimization"]
+                        ).total_seconds()
+                        / 3600
+                        if self.metrics["last_optimization"]
+                        else 999.0
+                    ),
+                )
+                should_optimize, expected_improvement = (
+                    self.optimizer._training_decision_model.should_train(context)
+                )
+                logger.info(
+                    f"XGBoost decision: should_train={should_optimize}, "
+                    f"expected_improvement={expected_improvement:.3f}"
+                )
+            else:
+                # Fallback: annotation count threshold
+                should_optimize = (
+                    annotation_count >= self.min_annotations_for_optimization
+                    and (
+                        self.metrics["last_optimization"] is None
+                        or (datetime.now() - self.metrics["last_optimization"]).days
+                        >= 1
+                    )
+                )
+
+            if should_optimize:
+                await self._trigger_optimization()
 
         except Exception as e:
             logger.error(f"❌ Error checking optimization trigger: {e}")
 
+    async def _load_synthetic_data(self) -> int:
+        """Load approved synthetic data from Phoenix and add to optimizer experiences."""
+        try:
+            demos = await self.optimizer._artifact_manager.load_demonstrations(
+                "synthetic_routing_data"
+            )
+            if demos:
+                self.optimizer._apply_loaded_demos(demos)
+                logger.info(f"Loaded {len(demos)} synthetic examples from Phoenix")
+                return len(demos)
+        except Exception as e:
+            logger.debug(f"No synthetic data available: {e}")
+        return 0
+
     async def _trigger_optimization(self):
-        """Trigger routing optimization"""
+        """Trigger routing optimization — actually runs DSPy compile."""
         try:
             logger.info("🎯 Triggering routing optimization")
 
-            # Get baseline metrics
             baseline_metrics = self._get_current_metrics()
 
-            # Trigger optimization (AdvancedRoutingOptimizer handles this automatically)
-            # When enough experiences are recorded, it will optimize
-            logger.info(
-                "🔄 Optimization triggered - optimizer will process experiences"
-            )
+            # Actually run the optimization step
+            await self.optimizer._run_optimization_step()
+            await self.optimizer._persist_data()
 
-            # Update metrics
             self.metrics["optimizations_triggered"] += 1
             self.metrics["last_optimization"] = datetime.now()
 
-            # Calculate improvement (compare with baseline)
             new_metrics = self._get_current_metrics()
             improvement = self._calculate_improvement(baseline_metrics, new_metrics)
             self.metrics["total_improvement"] += improvement

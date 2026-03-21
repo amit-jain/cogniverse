@@ -3036,6 +3036,41 @@ with main_tabs[10]:
                                                 annotation
                                             )
 
+                                        # Also persist to Phoenix via runtime
+                                        try:
+                                            httpx.post(
+                                                f"{RUNTIME_URL}/agents/routing_agent/process",
+                                                json={
+                                                    "agent_name": "routing_agent",
+                                                    "query": search_query,
+                                                    "context": {
+                                                        "tenant_id": "default",
+                                                        "action": "optimize_routing",
+                                                        "examples": [
+                                                            {
+                                                                "query": search_query,
+                                                                "chosen_agent": "search_agent",
+                                                                "confidence": score,
+                                                                "search_quality": (
+                                                                    0.9
+                                                                    if relevance
+                                                                    == "Highly Relevant"
+                                                                    else 0.5
+                                                                    if relevance
+                                                                    == "Somewhat Relevant"
+                                                                    else 0.1
+                                                                ),
+                                                                "agent_success": relevance
+                                                                != "Not Relevant",
+                                                            }
+                                                        ],
+                                                    },
+                                                },
+                                                timeout=10.0,
+                                            )
+                                        except Exception:
+                                            pass  # Non-blocking — don't break UI for telemetry
+
         # Show annotation count
         if (
             hasattr(st.session_state, "search_annotations")
