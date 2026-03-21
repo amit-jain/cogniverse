@@ -1314,10 +1314,12 @@ class TestDSPyModules:
         assert isinstance(result.needs_text_search, bool)
         assert isinstance(result.needs_multimodal, bool)
         assert result.recommended_agent in [
-            "video_search",
-            "text_search",
-            "summarizer",
-            "detailed_report",
+            "search_agent",
+            "document_agent",
+            "summarizer_agent",
+            "detailed_report_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
         ]
         assert 0.0 <= result.confidence_score <= 1.0
         assert isinstance(result.reasoning, str)

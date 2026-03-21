@@ -328,7 +328,11 @@ class TestDSPyAgentIntegration:
 
             with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
                 telemetry_config = TelemetryConfig(enabled=False)
-                deps = RoutingDeps(telemetry_config=telemetry_config)
+                from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+                deps = RoutingDeps(
+                    telemetry_config=telemetry_config,
+                    llm_config=LLMEndpointConfig(model="test/mock"),
+                )
                 agent = RoutingAgent(deps=deps)
 
                 assert hasattr(agent, "dspy_module")
