@@ -344,6 +344,34 @@ class AgentDispatcher:
         capabilities, passing conversation_history through for query rewrite.
         """
         agent = self._registry.get_agent(agent_name)
+        # DSPy routing may return names (e.g., "video_search") that don't
+        # exactly match registry names (e.g., "search_agent"). Try variants.
+        if not agent:
+            variants = [
+                f"{agent_name}_agent",
+                agent_name.replace("video_search", "search_agent"),
+                agent_name.replace("video_", "") + "_agent",
+            ]
+            # Also try capability-based lookup
+            for variant in variants:
+                agent = self._registry.get_agent(variant)
+                if agent:
+                    agent_name = variant
+                    break
+            # Last resort: find by capability matching
+            if not agent:
+                capability_map = {
+                    "video_search": "video_search",
+                    "search": "search",
+                    "summarizer": "summarization",
+                    "detailed_report": "detailed_report",
+                }
+                cap = capability_map.get(agent_name)
+                if cap:
+                    candidates = self._registry.find_agents_by_capability(cap)
+                    if candidates:
+                        agent = candidates[0]
+                        agent_name = agent.name
         if not agent:
             raise ValueError(
                 f"Routing recommended '{agent_name}' but it is not in the registry"

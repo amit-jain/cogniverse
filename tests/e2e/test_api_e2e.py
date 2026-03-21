@@ -11,6 +11,7 @@ happen INSIDE the routing_agent pipeline. They are not separate registered
 agents. The routing_agent response includes entities, enhanced_query, etc.
 """
 
+import json
 import time
 import uuid
 from pathlib import Path
@@ -53,6 +54,9 @@ class TestRoutingPipeline:
         assert isinstance(data["confidence"], (int, float))
         assert data["confidence"] > 0.0
         assert "reasoning" in data
+        assert len(data["reasoning"]) > 5, (
+            f"Reasoning should be substantive, got: '{data['reasoning']}'"
+        )
 
     def test_routing_returns_entities_and_enhanced_query(self):
         """Routing pipeline extracts entities and enhances query internally."""
@@ -909,7 +913,7 @@ class TestAgentRegistryAndHealth:
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestA2AProtocol:
-    """Scenario 19: A2A protocol agent card and tasks/send."""
+    """Scenario 19: A2A protocol agent card, tasks/send, and streaming."""
 
     def test_runtime_agent_card(self):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
@@ -919,6 +923,18 @@ class TestA2AProtocol:
         card = resp.json()
         assert "name" in card
         assert "skills" in card or "capabilities" in card
+
+    def test_agent_card_advertises_streaming(self):
+        """AgentCard capabilities should include streaming=True."""
+        with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
+            resp = client.get("/a2a/.well-known/agent.json")
+
+        assert resp.status_code == 200
+        card = resp.json()
+        capabilities = card.get("capabilities", {})
+        assert capabilities.get("streaming") is True, (
+            f"AgentCard should advertise streaming=True, got: {capabilities}"
+        )
 
     def test_a2a_single_turn(self):
         with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
@@ -949,6 +965,81 @@ class TestA2AProtocol:
         result = data["result"]
         assert result["id"]
         assert result["contextId"]
+
+    def test_a2a_streaming_produces_sse_events(self):
+        """message/stream returns SSE events with progress + final result."""
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            with client.stream(
+                "POST",
+                "/a2a/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "e2e-stream-1",
+                    "method": "message/stream",
+                    "params": {
+                        "message": {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "kind": "text",
+                                    "text": "summarize what machine learning is",
+                                }
+                            ],
+                            "messageId": str(uuid.uuid4()),
+                        },
+                        "metadata": {
+                            "agent_name": "summarizer_agent",
+                            "tenant_id": TENANT_ID,
+                            "stream": True,
+                        },
+                    },
+                },
+            ) as resp:
+                assert resp.status_code == 200
+                events = []
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        data_str = line[len("data:") :].strip()
+                        if data_str:
+                            events.append(json.loads(data_str))
+
+        assert len(events) >= 2, (
+            f"Streaming should produce ≥2 SSE events (progress + final), got {len(events)}"
+        )
+
+        # Parse agent events from A2A wrapper
+        parsed = []
+        for event in events:
+            for part in (
+                event.get("result", {})
+                .get("status", {})
+                .get("message", {})
+                .get("parts", [])
+            ):
+                text = part.get("text", "")
+                if text:
+                    try:
+                        parsed.append(json.loads(text))
+                    except json.JSONDecodeError:
+                        pass
+
+        # Should have status events (from emit_progress) and a final event
+        types = [e.get("type") for e in parsed]
+        assert "status" in types, f"Should have progress events, got types: {types}"
+
+        # Final event should contain summary
+        finals = [e for e in parsed if e.get("type") == "final"]
+        assert len(finals) == 1, f"Should have exactly 1 final event, got: {parsed}"
+        assert "data" in finals[0]
+        assert "summary" in finals[0]["data"]
+        summary = finals[0]["data"]["summary"]
+        assert len(summary) > 20, f"Summary too short: '{summary}'"
+        summary_lower = summary.lower()
+        assert any(
+            term in summary_lower
+            for term in ["machine learning", "ml", "learn", "algorithm", "data"]
+        ), f"Summary should reference ML, got: '{summary}'"
 
 
 @pytest.mark.e2e

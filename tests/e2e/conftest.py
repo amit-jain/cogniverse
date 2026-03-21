@@ -573,7 +573,7 @@ class E2EReportCollector:
     def _safe_json(response: httpx.Response) -> dict | None:
         try:
             return response.json()
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (json.JSONDecodeError, UnicodeDecodeError, httpx.ResponseNotRead):
             return None
 
     @staticmethod
