@@ -543,104 +543,117 @@ def show_agent_status():
 
 # Helper function for async A2A calls
 async def call_agent_async(agent_url: str, task_data: dict) -> dict:
-    """
-    Make actual A2A call to agent endpoints
+    """Route all agent calls through the runtime at RUNTIME_URL.
+
+    Every action goes through the runtime's agent process endpoint or
+    ingestion API — no direct calls to individual agent servers.
     """
     try:
         action = task_data.get("action", "")
 
         if action == "optimize_routing":
-            # Make real HTTP call to routing agent optimization endpoint
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    f"{agent_url}/optimize",
+                    f"{RUNTIME_URL}/agents/routing_agent/process",
                     json={
-                        "action": "optimize_routing",
-                        "examples": task_data.get("examples", []),
-                        "optimizer": task_data.get("optimizer", "adaptive"),
-                        "min_improvement": task_data.get("min_improvement", 0.05),
+                        "agent_name": "routing_agent",
+                        "query": "optimize routing",
+                        "context": {
+                            "action": "optimize_routing",
+                            "examples": task_data.get("examples", []),
+                            "optimizer": task_data.get("optimizer", "adaptive"),
+                            "min_improvement": task_data.get("min_improvement", 0.05),
+                        },
                     },
                 )
                 if response.status_code == 200:
                     return response.json()
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"HTTP {response.status_code}: {response.text}",
-                    }
+                return {
+                    "status": "error",
+                    "message": f"HTTP {response.status_code}: {response.text}",
+                }
 
         elif action == "get_optimization_status":
-            # Get optimization status from routing agent
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(f"{agent_url}/optimization/status")
+                response = await client.post(
+                    f"{RUNTIME_URL}/agents/routing_agent/process",
+                    json={
+                        "agent_name": "routing_agent",
+                        "query": "optimization status",
+                        "context": {"action": "get_optimization_status"},
+                    },
+                )
                 if response.status_code == 200:
                     return response.json()
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"HTTP {response.status_code}: {response.text}",
-                    }
+                return {
+                    "status": "error",
+                    "message": f"HTTP {response.status_code}: {response.text}",
+                }
 
         elif action == "process_video":
-            # Call video processing agent
-            video_processing_url = agent_config.get("video_processing_agent_url")
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
-                    f"{video_processing_url}/process",
+                    f"{RUNTIME_URL}/ingestion/start",
                     json={
-                        "video_path": task_data.get("video_path"),
-                        "profile": task_data.get("profile"),
-                        "config": task_data.get("config", {}),
+                        "video_dir": task_data.get("video_path", ""),
+                        "profiles": [
+                            task_data.get("profile", "video_colpali_smol500_mv_frame")
+                        ],
+                        "tenant_id": "default",
                     },
                 )
                 if response.status_code == 200:
-                    return response.json()
-                else:
+                    result = response.json()
                     return {
-                        "status": "error",
-                        "message": f"Video processing agent error: HTTP {response.status_code}",
-                        "agent_url": video_processing_url,
+                        "status": "success",
+                        "job_id": result.get("job_id"),
+                        "message": result.get("message", "Ingestion started"),
                     }
+                return {
+                    "status": "error",
+                    "message": f"Ingestion error: HTTP {response.status_code}: {response.text}",
+                }
 
         elif action == "search_videos":
-            # Call video search agent
-            video_search_url = agent_config.get("video_search_agent_url")
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    f"{video_search_url}/search",
+                    f"{RUNTIME_URL}/agents/search_agent/process",
                     json={
-                        "query": task_data.get("query"),
-                        "profile": task_data.get("profile"),
-                        "strategies": task_data.get("strategies", []),
+                        "agent_name": "search_agent",
+                        "query": task_data.get("query", ""),
                         "top_k": task_data.get("top_k", 10),
-                        "confidence_threshold": task_data.get(
-                            "confidence_threshold", 0.5
-                        ),
+                        "context": {
+                            "tenant_id": "default",
+                            "profile": task_data.get("profile"),
+                        },
                     },
                 )
                 if response.status_code == 200:
                     return response.json()
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Video search agent error: HTTP {response.status_code}",
-                        "agent_url": video_search_url,
-                    }
+                return {
+                    "status": "error",
+                    "message": f"Search error: HTTP {response.status_code}: {response.text}",
+                }
 
         elif action == "generate_report":
-            # Generate optimization report from routing agent
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(f"{agent_url}/optimization/report")
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{RUNTIME_URL}/agents/detailed_report_agent/process",
+                    json={
+                        "agent_name": "detailed_report_agent",
+                        "query": "Generate optimization performance report",
+                        "context": {"tenant_id": "default"},
+                    },
+                )
                 if response.status_code == 200:
                     return {"status": "success", "report": response.json()}
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"HTTP {response.status_code}: {response.text}",
-                    }
+                return {
+                    "status": "error",
+                    "message": f"Report error: HTTP {response.status_code}: {response.text}",
+                }
 
         else:
-            return {"status": "error", "message": "Unknown action"}
+            return {"status": "error", "message": f"Unknown action: {action}"}
 
     except httpx.RequestError as e:
         return {"status": "error", "message": f"Request failed: {str(e)}"}
@@ -2466,33 +2479,25 @@ with main_tabs[6]:
 
     with col3:
         if st.button("📋 Generate Report"):
-            with st.spinner("📊 Generating optimization report from routing agent..."):
-                try:
-                    # Get real optimization report from routing agent
-                    routing_agent_url = agent_config.get(
-                        "routing_agent_url", "http://localhost:8001"
-                    )
-                    report_task = {"action": "generate_report"}
-                    report_result = run_async_in_streamlit(
-                        call_agent_async(routing_agent_url, report_task)
-                    )
+            try:
+                report_data = display_streaming_result(
+                    agent_name="detailed_report_agent",
+                    query="Generate optimization performance report with findings and recommendations",
+                )
 
-                    if report_result.get("status") == "success":
-                        report_data = report_result.get("report", {})
-                        st.download_button(
-                            label="Download Report",
-                            data=json.dumps(report_data, indent=2),
-                            file_name=f"optimization_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",
-                        )
-                        st.success("✅ Report generated successfully!")
-                    else:
-                        st.error(
-                            f"❌ Failed to generate report: {report_result.get('message', 'Unknown error')}"
-                        )
-                except Exception as e:
-                    st.error(f"❌ Report generation failed: {str(e)}")
-                    st.error("🔧 Ensure routing agent supports report generation")
+                if report_data:
+                    st.download_button(
+                        label="Download Report",
+                        data=json.dumps(report_data, indent=2),
+                        file_name=f"optimization_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                    )
+                    st.success("✅ Report generated successfully!")
+                else:
+                    st.error("❌ Failed to generate report")
+            except Exception as e:
+                st.error(f"❌ Report generation failed: {str(e)}")
+                st.error("🔧 Ensure routing agent supports report generation")
 
     # Real System Status (no hardcoded claims)
     st.subheader("📊 System Status")
