@@ -117,7 +117,9 @@ def render_interactive_search_tab(agent_status: dict):
             elapsed_ms = (time.time() - start_time) * 1000
 
         if results is None or results.get("status") == "error":
-            error_msg = results.get("message", "Unknown error") if results else "Request failed"
+            error_msg = (
+                results.get("message", "Unknown error") if results else "Request failed"
+            )
             st.error(f"Search error: {error_msg}")
         else:
             result_count = results.get("results_count", 0)
@@ -144,16 +146,23 @@ def render_interactive_search_tab(agent_status: dict):
                     start_t = temporal.get("start_time", 0)
                     end_t = temporal.get("end_time", 0)
 
-                    with st.expander(f"Result #{i+1} — {doc_id} (score: {score:.4f})", expanded=(i < 3)):
+                    with st.expander(
+                        f"Result #{i + 1} — {doc_id} (score: {score:.4f})",
+                        expanded=(i < 3),
+                    ):
                         col_a, col_b = st.columns([1, 2])
                         with col_a:
                             st.markdown(f"**Video ID:** `{video_id}`")
-                            st.markdown(f"**Segment:** {metadata.get('segment_id', '?')}")
+                            st.markdown(
+                                f"**Segment:** {metadata.get('segment_id', '?')}"
+                            )
                             st.markdown(f"**Time:** {start_t:.2f}s — {end_t:.2f}s")
                         with col_b:
                             st.markdown(f"**Score:** {score:.6f}")
                             st.markdown(f"**Profile:** {result.get('profile', 'auto')}")
-                            st.markdown(f"**Schema:** {metadata.get('sddocname', 'N/A')}")
+                            st.markdown(
+                                f"**Schema:** {metadata.get('sddocname', 'N/A')}"
+                            )
 
                             # Relevance annotation
                             _relevance = st.radio(
@@ -165,25 +174,90 @@ def render_interactive_search_tab(agent_status: dict):
                             if st.button("💾 Save Annotation", key=f"save_{i}"):
                                 if "search_annotations" not in st.session_state:
                                     st.session_state["search_annotations"] = []
-                                st.session_state["search_annotations"].append({
-                                    "query": search_query,
-                                    "result_rank": i + 1,
-                                    "video_id": video_id,
-                                    "doc_id": doc_id,
-                                    "score": score,
-                                    "relevance": _relevance,
-                                })
-                                st.success(f"Annotation saved for result #{i+1}: {_relevance}")
+                                st.session_state["search_annotations"].append(
+                                    {
+                                        "query": search_query,
+                                        "result_rank": i + 1,
+                                        "video_id": video_id,
+                                        "doc_id": doc_id,
+                                        "score": score,
+                                        "relevance": _relevance,
+                                    }
+                                )
+                                st.success(
+                                    f"Annotation saved for result #{i + 1}: {_relevance}"
+                                )
+
+                                # Persist to Phoenix via runtime for optimization
+                                try:
+                                    import httpx as _httpx
+
+                                    _httpx.post(
+                                        "http://localhost:8000/agents/routing_agent/process",
+                                        json={
+                                            "agent_name": "routing_agent",
+                                            "query": search_query,
+                                            "context": {
+                                                "tenant_id": "default",
+                                                "action": "optimize_routing",
+                                                "examples": [
+                                                    {
+                                                        "query": search_query,
+                                                        "chosen_agent": "search_agent",
+                                                        "confidence": score,
+                                                        "search_quality": (
+                                                            0.9
+                                                            if _relevance
+                                                            == "Highly Relevant"
+                                                            else 0.5
+                                                            if _relevance == "Relevant"
+                                                            else 0.1
+                                                        ),
+                                                        "agent_success": _relevance
+                                                        != "Not Relevant",
+                                                    }
+                                                ],
+                                            },
+                                        },
+                                        timeout=10.0,
+                                    )
+                                except Exception:
+                                    pass  # Non-blocking
+
+            # Summarize Results (Streaming)
+            if result_count > 0 and st.button("📝 Summarize Results (Streaming)"):
+                from phoenix_dashboard_standalone import display_streaming_result
+
+                descriptions = []
+                for item in results.get("results", [])[:5]:
+                    descriptions.append(
+                        f"{item.get('video_id', 'unknown')}: {item.get('description', '')}"
+                    )
+                summary_query = (
+                    f"Summarize search results for '{search_query}': "
+                    + "; ".join(descriptions[:10])
+                )
+                st.subheader("📄 Summary")
+                final = display_streaming_result(
+                    agent_name="summarizer_agent",
+                    query=summary_query,
+                )
+                if final and "summary" in final:
+                    st.markdown("### Key Points")
+                    for point in final.get("key_points", []):
+                        st.markdown(f"- {point}")
 
             # Store search in session state for statistics
             if "search_history" not in st.session_state:
                 st.session_state["search_history"] = []
-            st.session_state["search_history"].append({
-                "query": search_query,
-                "results_count": result_count,
-                "latency_ms": elapsed_ms,
-                "profile": results.get("profile", "auto"),
-            })
+            st.session_state["search_history"].append(
+                {
+                    "query": search_query,
+                    "results_count": result_count,
+                    "latency_ms": elapsed_ms,
+                    "profile": results.get("profile", "auto"),
+                }
+            )
     else:
         st.info("👆 Enter a query and click Search to see results")
 
@@ -252,6 +326,9 @@ def _call_runtime_search(
         if response.status_code == 200:
             return response.json()
         else:
-            return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+            return {
+                "status": "error",
+                "message": f"HTTP {response.status_code}: {response.text}",
+            }
     except Exception as e:
         return {"status": "error", "message": str(e)}
