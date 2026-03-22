@@ -96,7 +96,7 @@ class TestRESTMultiTurn:
                 "/agents/routing_agent/process",
                 json={
                     "agent_name": "routing_agent",
-                    "query": "show me more",
+                    "query": "find more sports video clips like those",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                     "conversation_history": [
