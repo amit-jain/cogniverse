@@ -79,6 +79,8 @@ class AgentDispatcher:
             return await self._execute_summarization_task(query, tenant_id)
         elif capabilities & {"text_analysis", "sentiment", "classification"}:
             return await self._execute_text_analysis_task(query, context, tenant_id)
+        elif "deep_research" in capabilities:
+            return await self._execute_deep_research_task(query, tenant_id)
         else:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path. "
@@ -162,7 +164,6 @@ class AgentDispatcher:
             typed_input = SearchInput(query=query, tenant_id=tenant_id)
             return agent, typed_input
 
-        # Fallback: agent not supported for streaming
         raise ValueError(
             f"Agent '{agent_name}' streaming not configured. "
             f"Capabilities: {agent_entry.capabilities}"
@@ -262,7 +263,6 @@ class AgentDispatcher:
     ) -> Dict[str, Any]:
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.config.utils import get_config
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         llm_config = config.get_llm_config()
@@ -271,14 +271,10 @@ class AgentDispatcher:
         routing_config = config.get("routing_agent", {})
         memory_enabled = routing_config.get("enable_memory", False)
 
-        # Use global telemetry manager's config if available, else read from config
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        try:
-            global_tm = get_telemetry_manager()
-            telemetry_config = global_tm.config
-        except Exception:
-            telemetry_config = TelemetryConfig(enabled=False)
+        global_tm = get_telemetry_manager()
+        telemetry_config = global_tm.config
 
         deps_kwargs: Dict[str, Any] = {
             "telemetry_config": telemetry_config,
@@ -309,7 +305,6 @@ class AgentDispatcher:
         deps = RoutingDeps(**deps_kwargs)
         agent = RoutingAgent(deps=deps, registry=self._registry)
 
-        # Handle optimization actions from dashboard
         action = context.get("action")
         if action == "optimize_routing":
             examples = context.get("examples", [])
@@ -434,7 +429,6 @@ class AgentDispatcher:
 
             # Explicitly trigger DSPy optimization compile after recording all examples
             await optimizer._run_optimization_step()
-            # Persist optimized artifacts to Phoenix
             await optimizer._persist_data()
 
             return {
@@ -533,14 +527,10 @@ class AgentDispatcher:
         capabilities, passing conversation_history through for query rewrite.
         """
         agent = self._registry.get_agent(agent_name)
-        # Fallback: try appending _agent suffix if bare name was returned
-        if not agent and not agent_name.endswith("_agent"):
-            agent = self._registry.get_agent(f"{agent_name}_agent")
-            if agent:
-                agent_name = f"{agent_name}_agent"
         if not agent:
             raise ValueError(
-                f"Routing recommended '{agent_name}' but it is not in the registry"
+                f"Routing recommended '{agent_name}' but it is not in the registry. "
+                "Register the agent under its exact name before routing to it."
             )
 
         capabilities = set(agent.capabilities)
@@ -727,4 +717,30 @@ class AgentDispatcher:
             "message": f"Found {len(result_list)} documents for '{query}'",
             "results_count": len(result_list),
             "results": result_list,
+        }
+
+    async def _execute_deep_research_task(
+        self, query: str, tenant_id: str
+    ) -> Dict[str, Any]:
+        from cogniverse_agents.deep_research_agent import (
+            DeepResearchAgent,
+            DeepResearchDeps,
+            DeepResearchInput,
+        )
+
+        deps = DeepResearchDeps(tenant_id=tenant_id)
+
+        async def search_fn(query: str, tenant_id: str):
+            result = await self._execute_search_task(query, tenant_id, top_k=10)
+            return result.get("results", [])
+
+        agent = DeepResearchAgent(deps=deps, search_fn=search_fn)
+        input_data = DeepResearchInput(query=query, tenant_id=tenant_id)
+        result = await agent.process(input_data)
+
+        return {
+            "status": "success",
+            "agent": "deep_research_agent",
+            "message": f"Research complete for '{query}'",
+            "result": result.model_dump(),
         }

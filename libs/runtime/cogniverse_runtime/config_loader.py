@@ -29,6 +29,7 @@ AGENT_CAPABILITIES: Dict[str, List[str]] = {
     "image_search_agent": ["image_search", "visual_analysis"],
     "audio_analysis_agent": ["audio_analysis", "transcription"],
     "document_agent": ["document_analysis", "pdf_processing"],
+    "deep_research_agent": ["deep_research", "analysis"],
 }
 
 
@@ -53,6 +54,7 @@ class ConfigLoader:
         "image_search_agent": "cogniverse_agents.image_search_agent:ImageSearchAgent",
         "audio_analysis_agent": "cogniverse_agents.audio_analysis_agent:AudioAnalysisAgent",
         "document_agent": "cogniverse_agents.document_agent:DocumentAgent",
+        "deep_research_agent": "cogniverse_agents.deep_research_agent:DeepResearchAgent",
     }
 
     def __init__(self, tenant_id: str = "default"):

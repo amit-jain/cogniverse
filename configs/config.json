@@ -10,7 +10,8 @@
     "detailed_report_agent": {"url": "http://localhost:8005", "enabled": true},
     "image_search_agent": {"url": "http://localhost:8006", "enabled": true},
     "audio_analysis_agent": {"url": "http://localhost:8007", "enabled": true},
-    "document_agent": {"url": "http://localhost:8008", "enabled": true}
+    "document_agent": {"url": "http://localhost:8008", "enabled": true},
+    "deep_research_agent": {"url": "http://localhost:8009", "enabled": true}
   },
   "llm_config": {
     "primary": {
@@ -107,6 +108,10 @@
       }
     ],
     "output_rails": []
+  },
+  "deep_research_agent": {
+    "max_iterations": 3,
+    "max_sub_questions": 5
   },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
