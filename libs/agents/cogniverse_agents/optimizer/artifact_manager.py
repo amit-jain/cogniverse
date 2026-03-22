@@ -318,6 +318,139 @@ class ArtifactManager:
         )
         return content
 
+    def _versioned_dataset_name(self, kind: str, agent_type: str, version: int) -> str:
+        return f"dspy-{kind}-{self._tenant_id}-{agent_type}-v{version}"
+
+    async def _get_next_version(self, kind: str, agent_type: str) -> int:
+        """Scan existing versioned datasets to find the next version number."""
+        prefix = f"dspy-{kind}-{self._tenant_id}-{agent_type}-v"
+        max_version = 0
+        datasets = await self._provider.datasets.list_datasets()
+        for ds in datasets:
+            name = ds.get("name", "") if isinstance(ds, dict) else str(ds)
+            if name.startswith(prefix):
+                version_str = name[len(prefix):]
+                try:
+                    v = int(version_str)
+                    max_version = max(max_version, v)
+                except ValueError:
+                    continue
+        return max_version + 1
+
+    async def save_prompts_versioned(
+        self, agent_type: str, prompts: Dict[str, str]
+    ) -> tuple[str, int]:
+        """Save prompts with auto-incrementing version.
+
+        Returns:
+            Tuple of (dataset_id, version_number).
+        """
+        version = await self._get_next_version("prompts", agent_type)
+        rows = [{"name": k, "value": v} for k, v in prompts.items()]
+        df = pd.DataFrame(rows)
+        dataset_name = self._versioned_dataset_name("prompts", agent_type, version)
+        dataset_id = await self._provider.datasets.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "artifact_type": "dspy_prompts",
+                "agent_type": agent_type,
+                "tenant_id": self._tenant_id,
+                "version": version,
+                "created_at": datetime.now().isoformat(),
+                "input_keys": ["name"],
+                "output_keys": ["value"],
+            },
+        )
+        logger.info(
+            "Saved prompts v%d for %s/%s → dataset %s",
+            version,
+            self._tenant_id,
+            agent_type,
+            dataset_id,
+        )
+        return dataset_id, version
+
+    async def save_demonstrations_versioned(
+        self, agent_type: str, demos: List[Dict[str, Any]]
+    ) -> tuple[str, int]:
+        """Save demonstrations with auto-incrementing version.
+
+        Returns:
+            Tuple of (dataset_id, version_number).
+        """
+        version = await self._get_next_version("demos", agent_type)
+        df = pd.DataFrame(demos)
+        dataset_name = self._versioned_dataset_name("demos", agent_type, version)
+        dataset_id = await self._provider.datasets.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "artifact_type": "dspy_demos",
+                "agent_type": agent_type,
+                "tenant_id": self._tenant_id,
+                "version": version,
+                "created_at": datetime.now().isoformat(),
+                "input_keys": ["input"],
+                "output_keys": ["output"],
+                "metadata_keys": ["metadata"] if "metadata" in df.columns else [],
+            },
+        )
+        logger.info(
+            "Saved demonstrations v%d for %s/%s → dataset %s",
+            version,
+            self._tenant_id,
+            agent_type,
+            dataset_id,
+        )
+        return dataset_id, version
+
+    async def list_versions(self, kind: str, agent_type: str) -> List[Dict[str, Any]]:
+        """List all versions of a dataset kind for an agent type.
+
+        Args:
+            kind: ``prompts`` or ``demos``.
+            agent_type: Agent identifier.
+
+        Returns:
+            List of dicts with ``version``, ``name``, and ``dataset_id`` keys,
+            sorted by version ascending.
+        """
+        prefix = f"dspy-{kind}-{self._tenant_id}-{agent_type}-v"
+        versions = []
+        datasets = await self._provider.datasets.list_datasets()
+        for ds in datasets:
+            name = ds.get("name", "") if isinstance(ds, dict) else str(ds)
+            ds_id = ds.get("id", "") if isinstance(ds, dict) else ""
+            if name.startswith(prefix):
+                version_str = name[len(prefix):]
+                try:
+                    v = int(version_str)
+                    versions.append({"version": v, "name": name, "dataset_id": ds_id})
+                except ValueError:
+                    continue
+        return sorted(versions, key=lambda x: x["version"])
+
+    async def get_version_lineage(
+        self, kind: str, agent_type: str
+    ) -> List[Dict[str, Any]]:
+        """Get version lineage with metadata for each version.
+
+        Returns:
+            List of version info dicts including metadata from each dataset.
+        """
+        versions = await self.list_versions(kind, agent_type)
+        lineage = []
+        for v_info in versions:
+            entry = {**v_info}
+            try:
+                df = await self._provider.datasets.get_dataset(name=v_info["name"])
+                entry["row_count"] = len(df) if df is not None else 0
+            except (KeyError, ValueError):
+                entry["row_count"] = 0
+            lineage.append(entry)
+        return lineage
+
     async def log_optimization_run(
         self, agent_type: str, metrics: Dict[str, Any]
     ) -> str:

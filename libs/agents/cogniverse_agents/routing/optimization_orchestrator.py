@@ -1,15 +1,13 @@
 """
-Optimization Orchestrator for Complete Routing Optimization Integration
+Optimization Orchestrator for routing optimization integration.
 
-This orchestrator manages the complete end-to-end optimization flow:
+Manages the complete end-to-end optimization flow:
 1. RoutingSpanEvaluator: Extracts routing experiences from telemetry
 2. AnnotationAgent: Identifies low-quality spans needing review
 3. LLMAutoAnnotator: Generates initial annotations
 4. RoutingAnnotationStorage: Stores annotations in telemetry backend
 5. AnnotationFeedbackLoop: Feeds annotations to optimizer
 6. AdvancedRoutingOptimizer: Optimizes routing decisions
-
-Phase 5 Objective: Complete integration with automatic triggers and measurable improvements
 """
 
 from __future__ import annotations
@@ -359,27 +357,51 @@ class OptimizationOrchestrator:
         return 0
 
     async def _trigger_optimization(self):
-        """Trigger routing optimization — actually runs DSPy compile."""
+        """Trigger routing optimization — runs DSPy compile and versioned save."""
         try:
-            logger.info("🎯 Triggering routing optimization")
+            logger.info("Triggering routing optimization")
 
-            baseline_metrics = self._get_current_metrics()
-
-            # Actually run the optimization step
             await self.optimizer._run_optimization_step()
             await self.optimizer._persist_data()
+
+            # Versioned snapshot of training data for lineage tracking
+            artifact_mgr = self.optimizer._artifact_manager
+            if self.optimizer.experiences:
+                import json
+                from dataclasses import asdict
+
+                demos = []
+                for exp in self.optimizer.experiences:
+                    exp_dict = asdict(exp)
+                    exp_dict["timestamp"] = exp_dict["timestamp"].isoformat()
+                    demos.append({
+                        "input": json.dumps(
+                            {
+                                "query": exp_dict["query"],
+                                "entities": exp_dict["entities"],
+                            },
+                            default=str,
+                        ),
+                        "output": json.dumps(
+                            {
+                                "chosen_agent": exp_dict["chosen_agent"],
+                                "reward": exp_dict["reward"],
+                            },
+                            default=str,
+                        ),
+                    })
+                _, version = await artifact_mgr.save_demonstrations_versioned(
+                    "routing_optimizer", demos
+                )
+                logger.info(f"Saved versioned training data snapshot v{version}")
 
             self.metrics["optimizations_triggered"] += 1
             self.metrics["last_optimization"] = datetime.now()
 
-            new_metrics = self._get_current_metrics()
-            improvement = self._calculate_improvement(baseline_metrics, new_metrics)
-            self.metrics["total_improvement"] += improvement
-
-            logger.info(f"✅ Optimization complete - improvement: {improvement:.2%}")
+            logger.info("Optimization complete")
 
         except Exception as e:
-            logger.error(f"❌ Error triggering optimization: {e}")
+            logger.error(f"Error triggering optimization: {e}")
 
     def _get_current_metrics(self) -> Dict[str, float]:
         """Get current routing performance metrics."""
