@@ -27,6 +27,7 @@ from cogniverse_agents.routing.config import AutomationRulesConfig
 from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -114,9 +115,26 @@ class OptimizationOrchestrator:
             telemetry_provider=telemetry_provider,
         )
 
+        # Online evaluator (scores spans in real-time)
+        online_eval_config = self.rules.online_evaluation
+        self.online_evaluator = None
+        if online_eval_config.enabled:
+            from cogniverse_evaluation.online_evaluator import OnlineEvaluator
+
+            telemetry_manager = get_telemetry_manager()
+            eval_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+            eval_project = telemetry_manager.config.get_project_name(tenant_id)
+            self.online_evaluator = OnlineEvaluator(
+                provider=eval_provider,
+                project_name=eval_project,
+                config=online_eval_config,
+            )
+
         # Span evaluation component
         self.span_evaluator = RoutingSpanEvaluator(
-            optimizer=self.optimizer, tenant_id=tenant_id
+            optimizer=self.optimizer,
+            tenant_id=tenant_id,
+            online_evaluator=self.online_evaluator,
         )
 
         # Annotation components

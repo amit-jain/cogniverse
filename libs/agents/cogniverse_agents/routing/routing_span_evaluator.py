@@ -17,6 +17,7 @@ from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 if TYPE_CHECKING:
+    from cogniverse_evaluation.online_evaluator import OnlineEvaluator
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 from .advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
@@ -33,12 +34,19 @@ class RoutingSpanEvaluator:
     2. Compute quality metrics from span data
     3. Feed real experiences to the routing optimizer
     4. Replace synthetic training data with actual routing telemetry
+    5. Optionally score each span online via OnlineEvaluator
     """
 
-    def __init__(self, optimizer: AdvancedRoutingOptimizer, tenant_id: str = "default"):
+    def __init__(
+        self,
+        optimizer: AdvancedRoutingOptimizer,
+        tenant_id: str = "default",
+        online_evaluator: "OnlineEvaluator | None" = None,
+    ):
         """Initialize span evaluator with routing optimizer"""
         self.optimizer = optimizer
         self.tenant_id = tenant_id
+        self.online_evaluator = online_evaluator
 
         # Initialize SpanEvaluator for reading existing spans
         self.span_evaluator = SpanEvaluator(tenant_id=self.tenant_id)
@@ -53,14 +61,12 @@ class RoutingSpanEvaluator:
         )
 
         # Get the unified tenant project name where routing spans are stored
-        # All user operations (request, routing, search, orchestration) use the same project
-        # This ensures parent (cogniverse.request) and child (cogniverse.routing) spans
-        # are in the same project, maintaining proper span hierarchy
         self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
         logger.info(
-            f"🔧 Initialized RoutingSpanEvaluator for tenant '{tenant_id}' "
-            f"(project: {self.project_name})"
+            f"Initialized RoutingSpanEvaluator for tenant '{tenant_id}' "
+            f"(project: {self.project_name}, "
+            f"online_eval={'enabled' if online_evaluator else 'disabled'})"
         )
 
     async def evaluate_routing_spans(
@@ -160,10 +166,24 @@ class RoutingSpanEvaluator:
                         user_satisfaction=experience.user_satisfaction,
                     )
 
+                    # Online evaluation: score the span and persist annotations
+                    if self.online_evaluator:
+                        try:
+                            span_dict = (
+                                span_row.to_dict()
+                                if hasattr(span_row, "to_dict")
+                                else dict(span_row)
+                            )
+                            await self.online_evaluator.evaluate_span(span_dict)
+                        except Exception as eval_err:
+                            logger.warning(
+                                f"Online evaluation failed for {span_id}: {eval_err}"
+                            )
+
                     experiences_created += 1
 
                     logger.info(
-                        f"✅ Created experience: {experience.chosen_agent} "
+                        f"Created experience: {experience.chosen_agent} "
                         f"(confidence: {experience.routing_confidence:.3f}, "
                         f"reward: {reward:.3f})"
                     )

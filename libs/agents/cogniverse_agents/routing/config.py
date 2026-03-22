@@ -106,6 +106,25 @@ class IntervalConfig(BaseModel):
     )
 
 
+class OnlineEvaluationConfig(BaseModel):
+    """Configuration for real-time span evaluation during the optimization loop."""
+
+    enabled: bool = Field(True, description="Enable online evaluation of routing spans")
+    sampling_rate: float = Field(
+        1.0, description="Fraction of spans to evaluate (0.0-1.0)"
+    )
+    evaluators: list[str] = Field(
+        default_factory=lambda: ["routing_outcome", "confidence_calibration"],
+        description="List of evaluator names to run on each span",
+    )
+    persist_scores: bool = Field(
+        True, description="Write evaluation scores back to telemetry as annotations"
+    )
+    score_annotation_name: str = Field(
+        "online_eval", description="Annotation name prefix for persisted scores"
+    )
+
+
 class AutomationRulesConfig(BaseModel):
     """
     Declarative automation rules for the optimization pipeline.
@@ -123,6 +142,9 @@ class AutomationRulesConfig(BaseModel):
     )
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
     intervals: IntervalConfig = Field(default_factory=IntervalConfig)
+    online_evaluation: OnlineEvaluationConfig = Field(
+        default_factory=OnlineEvaluationConfig
+    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AutomationRulesConfig":

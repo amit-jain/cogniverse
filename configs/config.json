@@ -81,6 +81,13 @@
       "annotation_interval_minutes": 30,
       "feedback_interval_minutes": 15,
       "metrics_report_interval_seconds": 300
+    },
+    "online_evaluation": {
+      "enabled": true,
+      "sampling_rate": 1.0,
+      "evaluators": ["routing_outcome", "confidence_calibration"],
+      "persist_scores": true,
+      "score_annotation_name": "online_eval"
     }
   },
   "search_backend": "vespa",
