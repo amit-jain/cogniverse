@@ -8,11 +8,16 @@ Multi-turn support: The context dict may carry 'context_id' and
 forwarded to routing/orchestration and search paths.
 """
 
+from __future__ import annotations
+
 import dataclasses
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
+
+if TYPE_CHECKING:
+    from cogniverse_runtime.sandbox_manager import SandboxManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -31,11 +36,13 @@ class AgentDispatcher:
         agent_registry: AgentRegistry,
         config_manager: ConfigManager,
         schema_loader: SchemaLoader,
+        sandbox_manager: "SandboxManager | None" = None,
     ) -> None:
         self._registry = agent_registry
         self._config_manager = config_manager
         self._schema_loader = schema_loader
-        self._query_rewriter = None  # Lazy-initialized ConversationalQueryRewriteModule
+        self._sandbox_manager = sandbox_manager
+        self._query_rewriter = None
 
     async def dispatch(
         self,

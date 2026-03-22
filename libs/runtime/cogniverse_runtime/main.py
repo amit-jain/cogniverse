@@ -71,9 +71,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 
-    # 5. Wire agent registry and dependencies to agents router + A2A
+    # 5. Initialize SandboxManager (optional — gracefully degrades)
+    from cogniverse_runtime.sandbox_manager import SandboxManager
+
+    sandbox_enabled = config.get("sandbox", {}).get("enabled", False)
+    sandbox_manager = SandboxManager(enabled=sandbox_enabled)
+
+    # 5a. Wire agent registry and dependencies to agents router + A2A
     agents.set_agent_registry(agent_registry)
     agents.set_agent_dependencies(config_manager, schema_loader)
+    agents.set_sandbox_manager(sandbox_manager)
     logger.info("AgentRegistry and dependencies wired to agents router")
 
     # 5b. Mount A2A protocol server (JSON-RPC 2.0)

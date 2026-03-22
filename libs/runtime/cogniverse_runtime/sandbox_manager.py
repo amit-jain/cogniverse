@@ -119,6 +119,44 @@ class SandboxManager:
             logger.warning(f"Failed to create sandbox for {agent_type}: {e}")
             return None
 
+    def exec_in_sandbox(
+        self,
+        agent_type: str,
+        command: list[str],
+        timeout_seconds: int = 60,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Execute a command inside a sandbox for the given agent type.
+
+        Uses the OpenShell Python SDK (SandboxClient.create_session + exec).
+
+        Returns:
+            Dict with stdout, stderr, exit_code. None if sandbox unavailable.
+        """
+        if not self._available or not self._client:
+            return None
+
+        session = None
+        try:
+            session = self._client.create_session()
+            self._client.wait_ready(
+                session.sandbox.name, timeout_seconds=120,
+            )
+            result = session.exec(
+                command, timeout_seconds=timeout_seconds,
+            )
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.exit_code,
+            }
+        except Exception as e:
+            logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
+            return {"stdout": "", "stderr": str(e), "exit_code": -1}
+        finally:
+            if session:
+                session.delete()
+
     def list_sandboxes(self) -> list:
         """List active sandboxes."""
         if not self._available or not self._client:

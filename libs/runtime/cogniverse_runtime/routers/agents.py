@@ -23,6 +23,7 @@ _agent_registry: Optional[AgentRegistry] = None
 _config_manager: Optional[ConfigManager] = None
 _schema_loader: Optional[SchemaLoader] = None
 _dispatcher: Optional[AgentDispatcher] = None
+_sandbox_manager = None
 
 
 def set_agent_registry(registry: AgentRegistry) -> None:
@@ -31,6 +32,14 @@ def set_agent_registry(registry: AgentRegistry) -> None:
     _agent_registry = registry
     _dispatcher = None  # Reset dispatcher so it picks up the new registry
     logger.info("AgentRegistry injected into agents router")
+
+
+def set_sandbox_manager(sandbox_mgr) -> None:
+    """Inject SandboxManager for agent dispatch."""
+    global _sandbox_manager, _dispatcher
+    _sandbox_manager = sandbox_mgr
+    _dispatcher = None
+    logger.info("SandboxManager injected into agents router")
 
 
 def set_agent_dependencies(
@@ -57,6 +66,7 @@ def _ensure_dispatcher() -> AgentDispatcher:
         agent_registry=_agent_registry,
         config_manager=_config_manager,
         schema_loader=_schema_loader,
+        sandbox_manager=_sandbox_manager,
     )
     return _dispatcher
 
