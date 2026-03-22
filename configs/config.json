@@ -907,8 +907,8 @@
           "schema_name": "code_lateon_mv",
           "model_name": "LateOn-Code-edge",
           "num_patches": 2048,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 48,
+          "binary_dim": 6
         }
       }
     },

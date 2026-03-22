@@ -139,7 +139,8 @@ class TestCodingAgentDispatchWiring:
         assert profile["model_loader"] == "colbert"
         assert profile["strategies"]["segmentation"]["class"] == "CodeSegmentationStrategy"
         assert profile["strategies"]["embedding"]["class"] == "CodeTextEmbeddingStrategy"
-        assert profile["schema_config"]["embedding_dim"] == 128
+        assert profile["schema_config"]["embedding_dim"] == 48
+        assert profile["schema_config"]["binary_dim"] == 6
         assert profile["schema_config"]["num_patches"] == 2048
 
 
@@ -154,7 +155,12 @@ class TestCodingAgentWithOllama:
 
     @pytest.mark.asyncio
     async def test_coding_agent_generates_code(self, dspy_configured):
-        """Full coding agent process: plan → generate → execute → evaluate."""
+        """Full coding agent: plan → generate → execute → evaluate.
+
+        Verifies the agent produces actual Python code that gets written
+        to /tmp/coding_workspace/ and executed, with real stdout/stderr
+        captured in execution_results.
+        """
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
@@ -172,25 +178,55 @@ class TestCodingAgentWithOllama:
 
         result = await agent.process(input_data)
 
-        # Verify output structure
+        # Plan must be non-empty — the LLM actually planned something
         assert result.plan, "Plan should be non-empty"
         assert result.iterations_used >= 1
-        assert len(result.code_changes) > 0 or result.summary
 
-        logger.info(f"Coding agent result: iterations={result.iterations_used}")
-        logger.info(f"Plan: {result.plan[:200]}")
-        logger.info(f"Summary: {result.summary}")
+        # Code changes must contain actual generated code
+        assert len(result.code_changes) > 0, "No code was generated"
+        code_change = result.code_changes[0]
+        assert code_change["file_path"].endswith(".py"), (
+            f"Expected .py file, got: {code_change['file_path']}"
+        )
+        generated_code = code_change["content"]
+        assert len(generated_code) > 10, (
+            f"Generated code is suspiciously short: {generated_code!r}"
+        )
+        assert "def " in generated_code or "add" in generated_code, (
+            f"Generated code doesn't contain a function definition: {generated_code[:200]}"
+        )
+
+        # Execution results must exist — code was actually run
+        assert len(result.execution_results) > 0, "No execution results"
+        last_exec = result.execution_results[-1]
+        assert "exit_code" in last_exec, "Execution result missing exit_code"
+        assert "stdout" in last_exec, "Execution result missing stdout"
+        assert "stderr" in last_exec, "Execution result missing stderr"
+
+        # Files modified should reference the workspace path
+        assert len(result.files_modified) > 0
+        assert "/tmp/coding_workspace/" in result.files_modified[0]
+
+        logger.info(f"Iterations: {result.iterations_used}")
+        logger.info(f"Generated code ({len(generated_code)} chars):\n{generated_code[:300]}")
+        logger.info(f"Exit code: {last_exec['exit_code']}")
+        logger.info(f"stdout: {last_exec['stdout'][:200]}")
+        logger.info(f"stderr: {last_exec['stderr'][:200]}")
 
     @pytest.mark.asyncio
     async def test_coding_agent_with_search_fn(self, dspy_configured):
-        """Coding agent with a mock search function providing context."""
+        """Coding agent with mock search context: generates code, writes file, executes."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
             CodingInput,
         )
 
+        search_called = False
+
         async def mock_search_fn(query: str, tenant_id: str):
+            nonlocal search_called
+            search_called = True
             return [
                 {
                     "document_id": "example_utils",
@@ -212,7 +248,18 @@ class TestCodingAgentWithOllama:
         )
 
         result = await agent.process(input_data)
+
+        # search_fn was actually called
+        assert search_called, "search_fn was never called by the agent"
+
+        # Code was generated and executed
         assert result.plan
         assert result.iterations_used >= 1
+        assert len(result.code_changes) > 0, "No code generated"
+        assert len(result.execution_results) > 0, "No execution results"
 
-        logger.info(f"With search context: {result.summary}")
+        generated_code = result.code_changes[0]["content"]
+        assert len(generated_code) > 10
+        logger.info(f"Search called: {search_called}")
+        logger.info(f"Generated code:\n{generated_code[:300]}")
+        logger.info(f"Execution: exit={result.execution_results[-1].get('exit_code')}")
