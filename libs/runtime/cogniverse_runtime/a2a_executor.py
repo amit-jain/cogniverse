@@ -204,7 +204,18 @@ class CogniverseAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(error_event)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise NotImplementedError("Task cancellation not supported")
+        from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
+
+        cancel_event = TaskStatusUpdateEvent(
+            status=TaskStatus(
+                state=TaskState.canceled,
+                message=new_agent_text_message(
+                    "Task cancellation acknowledged. Cogniverse does not support "
+                    "mid-execution cancellation — the task may have already completed."
+                ),
+            ),
+        )
+        await event_queue.enqueue_event(cancel_event)
 
     def _infer_agent_from_text(self, text: str) -> str:
         """Fall back to routing_agent if no agent_name is provided."""

@@ -362,6 +362,8 @@ class OptimizationOrchestrator:
         try:
             logger.info("Triggering routing optimization")
 
+            baseline_metrics = self._get_current_metrics()
+
             await self.optimizer._run_optimization_step()
             await self.optimizer._persist_data()
 
@@ -399,17 +401,31 @@ class OptimizationOrchestrator:
             self.metrics["optimizations_triggered"] += 1
             self.metrics["last_optimization"] = datetime.now()
 
-            logger.info("Optimization complete")
+            new_metrics = self._get_current_metrics()
+            improvement = self._calculate_improvement(baseline_metrics, new_metrics)
+            self.metrics["total_improvement"] += improvement
+
+            logger.info(f"Optimization complete — improvement: {improvement:.2%}")
 
         except Exception as e:
             logger.error(f"Error triggering optimization: {e}")
 
     def _get_current_metrics(self) -> Dict[str, float]:
-        """Get current routing performance metrics."""
-        raise NotImplementedError(
-            "_get_current_metrics is not yet implemented. "
-            "Implement using RoutingEvaluator to query recent routing performance."
+        """Get current routing performance metrics from optimizer experiences."""
+        if not self.optimizer.experiences:
+            return {"accuracy": 0.0, "success_rate": 0.0}
+
+        experiences = self.optimizer.experiences
+        total = len(experiences)
+        successful = sum(1 for e in experiences if e.agent_success)
+        avg_confidence = (
+            sum(e.routing_confidence for e in experiences) / total if total else 0.0
         )
+
+        return {
+            "accuracy": avg_confidence,
+            "success_rate": successful / total if total else 0.0,
+        }
 
     def _calculate_improvement(
         self, baseline: Dict[str, float], current: Dict[str, float]
