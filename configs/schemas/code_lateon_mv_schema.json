@@ -1,0 +1,124 @@
+{
+  "name": "code_lateon_mv",
+  "document": {
+    "name": "code_lateon_mv",
+    "fields": [
+      {
+        "name": "code_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "file_path",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "chunk_name",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "chunk_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "signature",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "line_start",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "line_end",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "source_code",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<bfloat16>(token{}, v[48])",
+        "indexing": ["attribute"]
+      },
+      {
+        "name": "embedding_binary",
+        "type": "tensor<int8>(token{}, v[6])",
+        "indexing": ["attribute", "index"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["chunk_name", "signature", "source_code"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "float_float",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[48])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "bm25_only",
+      "first_phase": "bm25(chunk_name) + bm25(signature) + bm25(source_code)",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_float_bm25",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[48])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "colbert_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(chunk_name) + bm25(signature) + bm25(source_code)"
+        }
+      ],
+      "first_phase": "colbert_sim",
+      "second_phase": {
+        "expression": "text_score",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
+    }
+  ]
+}

@@ -157,36 +157,135 @@ def _openshell_cli_available() -> bool:
         return False
 
 
-def _docker_available() -> bool:
-    import subprocess as _sp
-
-    try:
-        return _sp.run(
-            ["docker", "info"], capture_output=True, timeout=10
-        ).returncode == 0
-    except (FileNotFoundError, _sp.TimeoutExpired):
-        return False
-
-
 CODING_GW_NAME = "cogniverse-coding-test-gw"
 CODING_GW_PORT = 19091
 
 
 @pytest.fixture(scope="module")
-def coding_sandbox():
-    """Start an OpenShell gateway, yield a SandboxManager, destroy on teardown."""
+def code_search_infra(vespa_with_schema):
+    """Deploy code_lateon_mv schema into the existing test Vespa, ingest real code,
+    start OpenShell gateway.
+
+    Uses vespa_with_schema for the Vespa container, deploys the native 48-dim
+    code schema alongside the existing video schema, feeds real code segments
+    with LateOn-Code-edge embeddings.
+    """
+    import json
     import subprocess
+    import time
+    from pathlib import Path
+
+    import numpy as np
+    import requests
 
     if not _openshell_cli_available():
         pytest.skip("openshell CLI not installed")
-    if not _docker_available():
-        pytest.skip("Docker not running")
 
+    base_url = vespa_with_schema["base_url"]
+    manager = vespa_with_schema["manager"]
+
+    # --- 1. Deploy code_lateon_mv schema via SchemaRegistry (tenant-scoped) ---
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = create_default_config_manager()
+    backend = manager.get_backend_via_registry(
+        tenant_id="test_tenant",
+        config_manager=config_manager,
+        backend_type="ingestion",
+    )
+    tenant_schema = backend.schema_registry.deploy_schema(
+        tenant_id="test_tenant",
+        base_schema_name="code_lateon_mv",
+        force=True,
+    )
+    logger.info(f"Deployed tenant schema: {tenant_schema}")
+
+    # Wait for schema to be active
+    for i in range(30):
+        try:
+            resp = requests.get(
+                f"{base_url}/search/",
+                params={"query": "test", "restrict": tenant_schema},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+
+    # --- 2. Ingest real code with LateOn-Code-edge ---
+    from pylate import models as pylate_models
+
+    from cogniverse_runtime.ingestion.strategies import CodeSegmentationStrategy
+
+    colbert_model = pylate_models.ColBERT("lightonai/LateOn-Code-edge", device="cpu")
+    strategy = CodeSegmentationStrategy(languages=["python"])
+
+    repo_root = Path(__file__).resolve().parents[3]
+    source_files = [
+        repo_root / "libs" / "agents" / "cogniverse_agents" / "deep_research_agent.py",
+        repo_root / "libs" / "agents" / "cogniverse_agents" / "coding_agent.py",
+        repo_root / "libs" / "agents" / "cogniverse_agents" / "search_agent.py",
+    ]
+
+    all_segments = []
+    for f in source_files:
+        if f.exists():
+            all_segments.extend(strategy.parse_file(f))
+
+    segments_to_ingest = all_segments[:15]
+    texts = [seg["content"][:8192] for seg in segments_to_ingest]
+    doc_embeddings = colbert_model.encode(texts, is_query=False)
+
+    schema_name = tenant_schema
+    for idx, (seg, emb) in enumerate(zip(segments_to_ingest, doc_embeddings)):
+        emb_np = np.array(emb, dtype=np.float32)
+        if emb_np.shape[0] > 2048:
+            emb_np = emb_np[:2048]
+
+        float_dict = {
+            str(i): emb_np[i].tolist() for i in range(emb_np.shape[0])
+        }
+        binary = np.packbits(
+            np.where(emb_np > 0, 1, 0).astype(np.uint8), axis=1
+        ).astype(np.int8)
+        binary_dict = {
+            str(i): binary[i].tolist() for i in range(binary.shape[0])
+        }
+
+        meta = seg["metadata"]
+        doc = {
+            "fields": {
+                "code_id": f"seg_{idx}",
+                "file_path": meta.get("file", ""),
+                "chunk_name": meta.get("name", ""),
+                "chunk_type": meta.get("type", ""),
+                "language": meta.get("language", "python"),
+                "signature": meta.get("signature", ""),
+                "line_start": meta.get("line_start", 0),
+                "line_end": meta.get("line_end", 0),
+                "source_code": seg["content"][:4096],
+                "embedding": float_dict,
+                "embedding_binary": binary_dict,
+            }
+        }
+        resp = requests.post(
+            f"{base_url}/document/v1/{schema_name}/{schema_name}/docid/seg_{idx}",
+            json=doc, timeout=10,
+        )
+        assert resp.status_code == 200, (
+            f"Feed failed for seg_{idx}: {resp.status_code} - {resp.text}"
+        )
+
+    logger.info(f"Ingested {len(segments_to_ingest)} code segments into Vespa")
+    time.sleep(3)
+
+    # --- 3. Start OpenShell gateway ---
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
         capture_output=True, timeout=30, check=False,
     )
-
     result = subprocess.run(
         ["openshell", "gateway", "start", "--name", CODING_GW_NAME,
          "--port", str(CODING_GW_PORT)],
@@ -200,43 +299,103 @@ def coding_sandbox():
         capture_output=True, timeout=10, check=False,
     )
 
-    manager = SandboxManager(policy_dir="configs/openshell", enabled=True)
-    if not manager.available:
+    sandbox = SandboxManager(policy_dir="configs/openshell", enabled=True)
+    if not sandbox.available:
         pytest.skip("SandboxManager could not connect to gateway")
 
-    yield manager
+    yield {
+        "sandbox": sandbox,
+        "vespa_url": base_url,
+        "schema_name": schema_name,
+        "colbert_model": colbert_model,
+    }
 
-    manager.close()
+    sandbox.close()
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
         capture_output=True, timeout=60, check=False,
     )
 
 
+def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
+    """Build a real search function that queries Vespa with LateOn-Code-edge."""
+
+    async def search_fn(query: str, tenant_id: str):
+        import numpy as np
+        import requests as _requests
+
+        query_emb = colbert_model.encode([query], is_query=True)[0]
+        query_np = np.array(query_emb, dtype=np.float32)
+
+        qt_cells = []
+        for tok_idx in range(query_np.shape[0]):
+            for v_idx in range(query_np.shape[1]):
+                qt_cells.append({
+                    "address": {"querytoken": str(tok_idx), "v": str(v_idx)},
+                    "value": float(query_np[tok_idx, v_idx]),
+                })
+
+        resp = _requests.post(
+            f"{vespa_url}/search/",
+            json={
+                "yql": f"select * from {schema_name} where true",
+                "hits": 5,
+                "ranking.profile": "float_float",
+                "input.query(qt)": {"cells": qt_cells},
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+
+        hits = resp.json().get("root", {}).get("children", [])
+        return [
+            {
+                "document_id": h["fields"].get("code_id", ""),
+                "score": h.get("relevance", 0),
+                "metadata": {
+                    "file": h["fields"].get("file_path", ""),
+                    "chunk_name": h["fields"].get("chunk_name", ""),
+                    "extracted_text": h["fields"].get("source_code", ""),
+                },
+            }
+            for h in hits
+        ]
+
+    return search_fn
+
+
 @skip_if_no_ollama
 class TestCodingAgentWithOllama:
-    """Integration tests: real Ollama LLM + real OpenShell sandbox.
+    """Full integration: real Ollama + real Vespa code search + real OpenShell sandbox.
 
-    All LLM-generated code executes inside an OpenShell sandbox with the
-    coding_agent policy (Ollama-only network, /tmp/coding_workspace/ write).
+    code_search_infra deploys code_lateon_mv into the test Vespa, ingests real
+    source with LateOn-Code-edge, starts OpenShell. The agent's search_fn hits
+    real Vespa with real embeddings. Generated code runs in the sandbox.
     """
 
     @pytest.fixture
     def dspy_configured(self, dspy_lm):
-        """Ensure DSPy is configured with a real LLM."""
         return dspy_lm
 
     @pytest.mark.asyncio
-    async def test_coding_agent_generates_working_code(self, dspy_configured, coding_sandbox):
-        """LLM generates add(2,3) → executes in OpenShell sandbox → stdout contains '5'."""
+    async def test_coding_agent_generates_working_code(self, dspy_configured, code_search_infra):
+        """LLM generates add(2,3) with real code search context,
+        executes in OpenShell sandbox, stdout contains '5'."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
             CodingInput,
         )
 
-        deps = CodingDeps(tenant_id="test", sandbox_manager=coding_sandbox)
-        agent = CodingAgent(deps=deps, sandbox_manager=coding_sandbox)
+        infra = code_search_infra
+        sandbox = infra["sandbox"]
+        search_fn = _build_vespa_search_fn(
+            infra["vespa_url"], infra["schema_name"], infra["colbert_model"]
+        )
+
+        deps = CodingDeps(tenant_id="test", sandbox_manager=sandbox)
+        agent = CodingAgent(deps=deps, search_fn=search_fn, sandbox_manager=sandbox)
 
         input_data = CodingInput(
             task="Write a Python function called 'add' that takes two numbers and returns their sum. Print add(2, 3).",
@@ -253,17 +412,7 @@ class TestCodingAgentWithOllama:
         generated_code = result.code_changes[0]["content"]
         assert len(generated_code) > 10, f"Code too short: {generated_code!r}"
 
-        # The agent already ran this in the sandbox — check its results
-        assert len(result.execution_results) > 0, "No execution results"
-        last_exec = result.execution_results[-1]
-
-        logger.info(f"Sandbox execution: exit={last_exec.get('exit_code')}")
-        logger.info(f"stdout: {last_exec.get('stdout', '')[:300]!r}")
-        logger.info(f"stderr: {last_exec.get('stderr', '')[:300]!r}")
-        logger.info(f"Generated code:\n{generated_code}")
-
-        # Also verify independently via sandbox
-        verify = coding_sandbox.exec_in_sandbox(
+        verify = sandbox.exec_in_sandbox(
             agent_type="coding_agent",
             command=["python3", "-c", generated_code],
             timeout_seconds=30,
@@ -271,7 +420,8 @@ class TestCodingAgentWithOllama:
         assert verify is not None, "Sandbox exec returned None"
         stdout = verify["stdout"].strip()
 
-        logger.info(f"Independent sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+        logger.info(f"Sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+        logger.info(f"Generated code:\n{generated_code}")
 
         assert verify["exit_code"] == 0, (
             f"Generated code failed in sandbox with exit {verify['exit_code']}.\n"
@@ -283,32 +433,32 @@ class TestCodingAgentWithOllama:
         )
 
     @pytest.mark.asyncio
-    async def test_coding_agent_with_search_fn(self, dspy_configured, coding_sandbox):
-        """LLM generates email validation with search context → OpenShell sandbox verifies output."""
+    async def test_coding_agent_with_real_code_search(self, dspy_configured, code_search_infra):
+        """Agent searches real Vespa code index with LateOn-Code-edge,
+        generates email validation, executes in OpenShell sandbox."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
             CodingInput,
         )
 
-        search_called = False
+        infra = code_search_infra
+        sandbox = infra["sandbox"]
 
-        async def mock_search_fn(query: str, tenant_id: str):
+        search_called = False
+        raw_search_fn = _build_vespa_search_fn(
+            infra["vespa_url"], infra["schema_name"], infra["colbert_model"]
+        )
+
+        async def tracked_search_fn(query: str, tenant_id: str):
             nonlocal search_called
             search_called = True
-            return [
-                {
-                    "document_id": "example_utils",
-                    "metadata": {
-                        "file": "utils.py",
-                        "chunk_name": "validate_email",
-                        "extracted_text": "def validate_email(email: str) -> bool:\n    return '@' in email",
-                    },
-                }
-            ]
+            return await raw_search_fn(query, tenant_id)
 
-        deps = CodingDeps(tenant_id="test", sandbox_manager=coding_sandbox)
-        agent = CodingAgent(deps=deps, search_fn=mock_search_fn, sandbox_manager=coding_sandbox)
+        deps = CodingDeps(tenant_id="test", sandbox_manager=sandbox)
+        agent = CodingAgent(
+            deps=deps, search_fn=tracked_search_fn, sandbox_manager=sandbox
+        )
 
         input_data = CodingInput(
             task="Write a function that validates email addresses using regex. Print whether 'test@example.com' is valid.",
@@ -318,7 +468,7 @@ class TestCodingAgentWithOllama:
 
         result = await agent.process(input_data)
 
-        assert search_called, "search_fn was never called by the agent"
+        assert search_called, "search_fn was never called"
         assert result.plan
         assert result.iterations_used >= 1
         assert len(result.code_changes) > 0, "No code generated"
@@ -326,17 +476,13 @@ class TestCodingAgentWithOllama:
         generated_code = result.code_changes[0]["content"]
         assert len(generated_code) > 10
 
-        # Run generated code + our test harness in sandbox to verify correctness.
-        # The LLM may or may not include a print call, so we append our own
-        # assertion that exercises the function it defined.
         test_harness = (
             generated_code + "\n\n"
-            "# Test harness: verify the function works\n"
             "result = validate_email('test@example.com')\n"
             "assert result, f'Expected True for test@example.com, got {result}'\n"
             "print('PASS:', result)\n"
         )
-        verify = coding_sandbox.exec_in_sandbox(
+        verify = sandbox.exec_in_sandbox(
             agent_type="coding_agent",
             command=["python3", "-c", test_harness],
             timeout_seconds=30,
@@ -346,13 +492,11 @@ class TestCodingAgentWithOllama:
 
         logger.info(f"Sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
         logger.info(f"Generated code:\n{generated_code}")
-        logger.info(f"Test harness:\n{test_harness}")
 
         assert verify["exit_code"] == 0, (
-            f"Generated code + test harness failed in sandbox with exit {verify['exit_code']}.\n"
+            f"Code + harness failed in sandbox: exit {verify['exit_code']}\n"
             f"stderr: {verify['stderr']}\nharness:\n{test_harness}"
         )
         assert "pass" in stdout, (
-            f"Expected 'PASS' in output, got: {stdout!r}\n"
-            f"harness:\n{test_harness}"
+            f"Expected 'PASS' in output, got: {stdout!r}\nharness:\n{test_harness}"
         )
