@@ -846,12 +846,12 @@ class TestA2AExecutorStreaming:
 
     @pytest.mark.asyncio
     async def test_create_streaming_agent_unsupported(self):
-        """create_streaming_agent raises for non-streaming agents."""
+        """create_streaming_agent raises for agents with unrecognised capabilities."""
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
         mock_registry = Mock()
         mock_agent_entry = Mock()
-        mock_agent_entry.capabilities = ["search"]
+        mock_agent_entry.capabilities = ["annotation"]  # not handled by dispatcher
         mock_registry.get_agent.return_value = mock_agent_entry
 
         dispatcher = AgentDispatcher(
@@ -860,8 +860,8 @@ class TestA2AExecutorStreaming:
             schema_loader=Mock(),
         )
 
-        with pytest.raises(ValueError, match="does not support streaming"):
-            dispatcher.create_streaming_agent("search_agent", "query", "default")
+        with pytest.raises(ValueError, match="streaming not configured"):
+            dispatcher.create_streaming_agent("annotation_agent", "query", "default")
 
     @pytest.mark.asyncio
     async def test_executor_streaming_emits_a2a_events(self):

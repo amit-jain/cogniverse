@@ -1,0 +1,27 @@
+network_policies:
+  egress:
+    - host: "localhost"
+      port: 8080
+      protocol: "tcp"
+      comment: "Vespa search backend"
+    - host: "localhost"
+      port: 11434
+      protocol: "tcp"
+      comment: "Ollama LLM inference"
+  deny_all_other: true
+
+filesystem:
+  read:
+    - "configs/"
+  write:
+    - "/tmp"
+  deny_all_other: true
+
+inference:
+  allowed_models:
+    - "ollama/qwen3:4b"
+
+process:
+  max_memory_mb: 2048
+  max_cpu_seconds: 60
+  max_processes: 5

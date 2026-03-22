@@ -90,6 +90,24 @@
       "score_annotation_name": "online_eval"
     }
   },
+  "rails": {
+    "enabled": true,
+    "input_rails": [
+      {
+        "type": "topic_boundary",
+        "params": {
+          "allowed_topics": ["video", "search", "document", "audio", "image", "summary", "report", "analysis"]
+        }
+      },
+      {
+        "type": "content_safety",
+        "params": {
+          "blocked_patterns": ["ignore previous instructions", "system prompt", "<script>"]
+        }
+      }
+    ],
+    "output_rails": []
+  },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",

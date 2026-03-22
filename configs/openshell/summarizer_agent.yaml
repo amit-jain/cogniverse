@@ -1,0 +1,24 @@
+network_policies:
+  egress:
+    - host: "localhost"
+      port: 11434
+      protocol: "tcp"
+      comment: "Ollama LLM inference"
+  deny_all_other: true
+
+filesystem:
+  read:
+    - "configs/"
+  write:
+    - "/tmp"
+  deny_all_other: true
+
+inference:
+  allowed_models:
+    - "ollama/qwen3:4b"
+  strip_credentials: true
+
+process:
+  max_memory_mb: 2048
+  max_cpu_seconds: 120
+  max_processes: 5

@@ -966,6 +966,9 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
 ]
+sandbox = [
+    { name = "openshell" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1023,6 +1026,7 @@ requires-dist = [
     { name = "openai-whisper", specifier = ">=20231117" },
     { name = "opencv-python", specifier = ">=4.8.0" },
     { name = "opencv-python", specifier = ">=4.12.0.88" },
+    { name = "openshell", marker = "extra == 'sandbox'", specifier = ">=0.0.13" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-instrumentation", specifier = ">=0.41b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
@@ -1053,7 +1057,7 @@ requires-dist = [
     { name = "umap-learn", specifier = ">=0.5.0" },
     { name = "xgboost", specifier = ">=3.0.5" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "sandbox"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5551,6 +5555,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/75/0f/b794eb009846d4b10af50e205a323ca359f284563ef4d1778f35a80522ac/openinference_semantic_conventions-0.1.21.tar.gz", hash = "sha256:328405b9f79ff72a659c7712b8429c0d7ea68c6a4a1679e3eb44372aa228119b", size = 12534, upload-time = "2025-06-13T05:22:18.982Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6e/4d/092766f8e610f2c513e483c4adc892eea1634945022a73371fe01f621165/openinference_semantic_conventions-0.1.21-py3-none-any.whl", hash = "sha256:acde8282c20da1de900cdc0d6258a793ec3eb8031bfc496bd823dae17d32e326", size = 10167, upload-time = "2025-06-13T05:22:18.118Z" },
+]
+
+[[package]]
+name = "openshell"
+version = "0.0.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/06/6df05f2cdd1bccb055e1540d772374df84a2f795cafdb6599ec08f3bead3/openshell-0.0.13-py3-none-macosx_11_0_arm64.whl", hash = "sha256:3e7dfd8d6e77f5299d885eeb8bfc5c05d2a46bbc63c4b28149fb23ba2dd154a4", size = 6065509, upload-time = "2026-03-21T18:42:25.618Z" },
+    { url = "https://files.pythonhosted.org/packages/af/bf/f8d001c1172bd1576a9ad403166db1a2936f91c299a59e0e9d9861982192/openshell-0.0.13-py3-none-manylinux_2_39_aarch64.whl", hash = "sha256:514e514fe6041c862aca53e0ed622b36af6db2d2de332415aa3912c5bbf9b875", size = 6144431, upload-time = "2026-03-21T18:42:43.203Z" },
+    { url = "https://files.pythonhosted.org/packages/49/6b/7af2242d98397139041f2c806c9ce4d71088c30c15f9e4428b59e6e13b00/openshell-0.0.13-py3-none-manylinux_2_39_x86_64.whl", hash = "sha256:a003105c911369f2455ea915aea48194989e5bfbab048e63cae3a525b3e6d070", size = 6467534, upload-time = "2026-03-21T18:43:04.647Z" },
 ]
 
 [[package]]

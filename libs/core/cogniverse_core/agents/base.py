@@ -36,6 +36,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     ClassVar,
@@ -49,6 +50,9 @@ from typing import (
     get_args,
     overload,
 )
+
+if TYPE_CHECKING:
+    from cogniverse_core.agents.rails import RailChain
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -191,7 +195,6 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             TypeError: If deps is not the correct type
             ValidationError: If deps fails Pydantic validation
         """
-        # Validate deps type at runtime
         if not isinstance(deps, self._deps_type):
             raise TypeError(
                 f"deps must be {self._deps_type.__name__}, got {type(deps).__name__}"
@@ -201,8 +204,19 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self._process_count = 0
         self._error_count = 0
         self._progress_queue: Optional[asyncio.Queue] = None
+        self._input_rails: Optional["RailChain"] = None
+        self._output_rails: Optional["RailChain"] = None
 
         logger.debug(f"Initialized {self.__class__.__name__}")
+
+    def set_rails(
+        self,
+        input_rails: Optional["RailChain"] = None,
+        output_rails: Optional["RailChain"] = None,
+    ) -> None:
+        """Attach input and/or output rail chains to this agent."""
+        self._input_rails = input_rails
+        self._output_rails = output_rails
 
     def emit_progress(
         self,
@@ -333,6 +347,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         Process typed input. Returns result or async generator based on stream param.
 
+        Runs input rails before _process_impl() and output rails after.
+
         Args:
             input: Input of type InputT or dict (auto-validated to InputT)
             stream: If True, returns async generator yielding events
@@ -340,16 +356,27 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         Returns:
             If stream=False: Output of type OutputT
             If stream=True: AsyncGenerator yielding event dicts
+
+        Raises:
+            RailBlockedError: If input or output violates a rail
         """
         if isinstance(input, dict):
             typed_input = self.validate_input(input)
         else:
             typed_input = input
 
+        if self._input_rails:
+            self._input_rails.check(typed_input.model_dump())
+
         if stream:
             return self._stream_with_progress(typed_input)
-        else:
-            return await self._process_impl(typed_input)
+
+        result = await self._process_impl(typed_input)
+
+        if self._output_rails:
+            self._output_rails.check(result.model_dump())
+
+        return result
 
     @abstractmethod
     async def _process_impl(self, input: InputT) -> OutputT:
@@ -443,16 +470,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self._process_count += 1
 
         try:
-            # Validate input
             validated_input = self.validate_input(raw_input)
 
             if stream:
                 return self._stream_with_progress(validated_input)
             else:
-                # Process non-streaming
                 output = await self._process_impl(validated_input)
 
-                # Verify output type
                 if not isinstance(output, self._output_type):
                     raise TypeError(
                         f"_process_impl() must return {self._output_type.__name__}, "

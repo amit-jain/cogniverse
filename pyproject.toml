@@ -106,6 +106,9 @@ dev = [
     # Browser E2E Testing
     "pytest-playwright>=0.5.2",
 ]
+sandbox = [
+    "openshell>=0.0.13",
+]
 
 [tool.black]
 line-length = 88
