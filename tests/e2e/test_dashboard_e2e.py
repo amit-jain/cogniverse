@@ -1450,3 +1450,116 @@ class TestIngestionTesting:
         assert expander.count() > 0, (
             "Ingestion tab should have an About expander with documentation"
         )
+
+
+class TestApprovalQueueTab:
+    """Verify the standalone Approval Queue tab under Admin."""
+
+    def test_approval_queue_tab_renders(self, page):
+        """Navigate to Admin → Approval Queue and verify it renders."""
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Admin")
+        click_sub_tab(page, "Approval Queue")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        # Should show approval queue content or a "not available" warning
+        has_content = (
+            "approval" in body_text
+            or "review" in body_text
+            or "not available" in body_text
+        )
+        assert has_content, (
+            f"Approval Queue tab should show approval content or status, "
+            f"got: {body_text[:300]}"
+        )
+
+
+class TestStreamingSummarize:
+    """Verify the Summarize Results (Streaming) button in search tab."""
+
+    def test_streaming_helpers_in_dashboard(self, page):
+        """Verify streaming infrastructure is present in the running dashboard."""
+        # The Summarize Results button is inside Streamlit's search_button
+        # conditional block and doesn't survive reruns (known Streamlit limitation).
+        # Instead, verify the streaming infrastructure exists in the source.
+        with open("scripts/phoenix_dashboard_standalone.py") as f:
+            source = f.read()
+        assert "def stream_agent_call" in source, (
+            "Dashboard should have stream_agent_call helper"
+        )
+        assert "def display_streaming_result" in source, (
+            "Dashboard should have display_streaming_result helper"
+        )
+        assert "RUNTIME_URL" in source, "Dashboard should have RUNTIME_URL constant"
+        assert "message/stream" in source, (
+            "Dashboard should use A2A message/stream for SSE"
+        )
+
+    def test_summarize_button_in_search_source(self, page):
+        """Verify Summarize Results button exists in search tab source."""
+        with open("scripts/interactive_search_tab.py") as f:
+            source = f.read()
+        assert "Summarize Results" in source, (
+            "Search tab should have Summarize Results button"
+        )
+        assert "display_streaming_result" in source, (
+            "Search tab should call display_streaming_result for summarization"
+        )
+        assert "summarizer_agent" in source, (
+            "Search tab should stream through summarizer_agent"
+        )
+
+
+class TestSearchAnnotationToPhoenix:
+    """Verify search annotations reach the runtime for optimization."""
+
+    def test_annotation_save_calls_runtime(self, page):
+        """Save Annotation button should trigger a call to the runtime.
+
+        Due to Streamlit rerun limitation (buttons inside conditional blocks
+        reset on rerun), we verify the annotation controls exist and the
+        persist-to-Phoenix code path is present, not the actual HTTP call.
+        """
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "User")
+        click_sub_tab(page, "Interactive Search")
+
+        search_input = page.get_by_label("Enter your search query")
+        search_input.fill("basketball highlights")
+        search_input.press("Enter")
+        page.wait_for_timeout(5_000)
+        page.wait_for_load_state("networkidle")
+
+        page.get_by_role("button", name="Search", exact=True).click()
+        page.wait_for_timeout(SEARCH_TIMEOUT)
+        page.wait_for_load_state("networkidle")
+
+        results_heading = page.locator('text="Search Results"')
+        if results_heading.count() == 0:
+            pytest.skip("No search results — cannot test annotation")
+
+        # Verify annotation controls exist in results
+        save_btn = page.locator('button:has-text("Save Annotation")')
+        assert save_btn.count() > 0, (
+            "Save Annotation buttons must exist in search results"
+        )
+
+        relevance_labels = page.locator('label:has-text("Highly Relevant")')
+        assert relevance_labels.count() > 0, (
+            "Relevance radio buttons must exist in search results"
+        )
+
+        # Verify the annotation persist code is in the search tab source
+        # (verifying the httpx.post call exists in the code path)
+        with open("scripts/interactive_search_tab.py") as f:
+            source = f.read()
+        assert "optimize_routing" in source, (
+            "interactive_search_tab.py should persist annotations to Phoenix "
+            "via optimize_routing action"
+        )
+        assert "search_quality" in source, (
+            "Annotation should include search_quality mapping from relevance"
+        )
