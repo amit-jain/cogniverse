@@ -38,6 +38,15 @@ class AnnotationPriority(Enum):
     LOW = "low"  # Edge cases for training data diversity
 
 
+class AnnotationStatus(Enum):
+    """Status of an annotation request in the queue"""
+
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+
+
 @dataclass
 class AnnotationRequest:
     """Request for human annotation on a routing decision"""
@@ -51,6 +60,11 @@ class AnnotationRequest:
     priority: AnnotationPriority
     reason: str
     context: Dict
+    status: AnnotationStatus = AnnotationStatus.PENDING
+    assigned_to: Optional[str] = None
+    assigned_at: Optional[datetime] = None
+    sla_deadline: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for storage"""
@@ -64,6 +78,13 @@ class AnnotationRequest:
             "priority": self.priority.value,
             "reason": self.reason,
             "context": self.context,
+            "status": self.status.value,
+            "assigned_to": self.assigned_to,
+            "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
+            "sla_deadline": self.sla_deadline.isoformat() if self.sla_deadline else None,
+            "completed_at": (
+                self.completed_at.isoformat() if self.completed_at else None
+            ),
         }
 
 
@@ -115,19 +136,12 @@ class AnnotationAgent:
             self.failure_lookback_hours = failure_lookback_hours
             self.max_annotations_per_run = max_annotations_per_run
 
-        # Initialize components - use shared telemetry manager config
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config
-
-        # Get project name for unified tenant project (routing operations)
         self.project_name = self.telemetry_config.get_project_name(tenant_id)
-
-        # Get telemetry provider for querying spans
         self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
             tenant_id=tenant_id
         )
-
-        # Initialize evaluator for outcome classification (using provider, not Phoenix)
         self.evaluator = RoutingEvaluator(
             provider=self.provider, project_name=self.project_name
         )
@@ -162,22 +176,17 @@ class AnnotationAgent:
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
 
-        try:
-            spans_df = await self.provider.traces.get_spans(
-                project=self.project_name,
-                start_time=start_time,
-                end_time=end_time,
-                limit=10000,
-            )
-        except Exception as e:
-            logger.error(f"❌ Error querying spans: {e}")
-            return []
+        spans_df = await self.provider.traces.get_spans(
+            project=self.project_name,
+            start_time=start_time,
+            end_time=end_time,
+            limit=10000,
+        )
 
         if spans_df.empty:
             logger.info(f"📭 No spans found in project {self.project_name}")
             return []
 
-        # Filter for routing spans
         routing_spans_df = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans_df.empty:
@@ -186,19 +195,13 @@ class AnnotationAgent:
 
         logger.info(f"📊 Found {len(routing_spans_df)} routing spans to analyze")
 
-        # Analyze each span and collect annotation requests
         annotation_requests = []
 
         for _, span_row in routing_spans_df.iterrows():
-            try:
-                annotation_request = self._analyze_span_for_annotation(span_row)
-                if annotation_request:
-                    annotation_requests.append(annotation_request)
-            except Exception as e:
-                logger.error(f"❌ Error analyzing span: {e}")
-                continue
+            annotation_request = self._analyze_span_for_annotation(span_row)
+            if annotation_request:
+                annotation_requests.append(annotation_request)
 
-        # Prioritize and limit
         annotation_requests = self._prioritize_requests(annotation_requests)
         annotation_requests = annotation_requests[: self.max_annotations_per_run]
 
@@ -221,7 +224,6 @@ class AnnotationAgent:
         Returns:
             AnnotationRequest if span needs annotation, None otherwise
         """
-        # Extract routing attributes
         routing_attrs = span_row.get("attributes.routing")
         if not routing_attrs or not isinstance(routing_attrs, dict):
             return None
@@ -240,15 +242,7 @@ class AnnotationAgent:
         if isinstance(timestamp, str):
             timestamp = pd.to_datetime(timestamp)
 
-        # Evaluate outcome using RoutingEvaluator
-        try:
-            outcome, outcome_details = self.evaluator._classify_routing_outcome(
-                span_row
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to classify outcome: {e}")
-            outcome = RoutingOutcome.AMBIGUOUS
-            outcome_details = {"reason": "evaluation_error"}
+        outcome, outcome_details = self.evaluator._classify_routing_outcome(span_row)
 
         # Determine if annotation needed and priority
         needs_annotation, priority, reason = self._needs_annotation(

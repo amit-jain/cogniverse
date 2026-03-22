@@ -1,15 +1,27 @@
 """
 Unit tests for agent router endpoints.
 
-Tests the routing→orchestration handoff via AgentDispatcher.
+Tests the routing→orchestration handoff via AgentDispatcher, and HTTP-level
+round-trip tests for the annotation queue endpoints.
 """
 
 from contextlib import contextmanager
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationPriority,
+    AnnotationRequest,
+    AnnotationStatus,
+)
+from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.routers import agents as agents_router
 
 
 @pytest.fixture
@@ -385,3 +397,201 @@ class TestRoutingOptimizationActions:
         result = dispatcher._handle_optimization_status(mock_agent, "default")
         assert result["status"] == "inactive"
         assert result["optimizer_ready"] is False
+
+
+# ── Annotation Queue HTTP endpoints ──────────────────────────────────────
+
+
+def _make_annotation_request(
+    span_id: str = "span-http-1",
+    priority: AnnotationPriority = AnnotationPriority.MEDIUM,
+) -> AnnotationRequest:
+    return AnnotationRequest(
+        span_id=span_id,
+        timestamp=datetime.now(),
+        query="http test query",
+        chosen_agent="search_agent",
+        routing_confidence=0.5,
+        outcome=RoutingOutcome.AMBIGUOUS,
+        priority=priority,
+        reason="http test",
+        context={},
+    )
+
+
+@pytest.fixture
+def annotation_client():
+    """
+    TestClient with agents router mounted and a fresh AnnotationQueue injected.
+
+    Overrides the module-level _annotation_queue singleton so each test
+    gets an isolated queue — no cross-test state leakage.
+    """
+    test_app = FastAPI()
+    test_app.include_router(agents_router.router, prefix="/agents")
+
+    fresh_queue = AnnotationQueue()
+    # Patch the module-level singleton directly for the duration of the test
+    original = agents_router._annotation_queue
+    agents_router._annotation_queue = fresh_queue
+    try:
+        with TestClient(test_app) as client:
+            yield client, fresh_queue
+    finally:
+        agents_router._annotation_queue = original
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestAnnotationQueueEndpoints:
+    """Round-trip HTTP tests for the annotation queue API."""
+
+    def test_get_empty_queue(self, annotation_client):
+        """GET /agents/annotations/queue on empty queue returns zero statistics."""
+        client, _ = annotation_client
+        resp = client.get("/agents/annotations/queue")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["statistics"]["total"] == 0
+        assert data["pending"] == []
+        assert data["assigned"] == []
+        assert data["expired"] == []
+
+    def test_get_queue_shows_pending_items(self, annotation_client):
+        """GET /agents/annotations/queue reflects items enqueued directly in queue."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-a"))
+        queue.enqueue(_make_annotation_request("span-b", AnnotationPriority.HIGH))
+
+        resp = client.get("/agents/annotations/queue")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["statistics"]["total"] == 2
+        assert data["statistics"]["by_status"]["pending"] == 2
+        # HIGH priority item must appear first in the sorted pending list
+        assert data["pending"][0]["span_id"] == "span-b"
+        assert data["pending"][1]["span_id"] == "span-a"
+
+    def test_assign_endpoint_round_trip(self, annotation_client):
+        """POST /agents/annotations/queue/{span_id}/assign transitions PENDING→ASSIGNED."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-assign"))
+
+        resp = client.post(
+            "/agents/annotations/queue/span-assign/assign",
+            json={"reviewer": "alice", "sla_hours": 8},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "assigned"
+        ann = data["annotation"]
+        assert ann["span_id"] == "span-assign"
+        assert ann["status"] == "assigned"
+        assert ann["assigned_to"] == "alice"
+        assert ann["assigned_at"] is not None
+        assert ann["sla_deadline"] is not None
+
+        # Verify queue state is actually updated
+        assert queue.get("span-assign").status == AnnotationStatus.ASSIGNED
+
+    def test_assign_missing_span_returns_404(self, annotation_client):
+        """POST assign on unknown span_id returns 404."""
+        client, _ = annotation_client
+        resp = client.post(
+            "/agents/annotations/queue/nonexistent/assign",
+            json={"reviewer": "bob"},
+        )
+        assert resp.status_code == 404
+
+    def test_assign_already_assigned_returns_400(self, annotation_client):
+        """POST assign on already-ASSIGNED span returns 400."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-dup"))
+        queue.assign("span-dup", reviewer="alice")
+
+        resp = client.post(
+            "/agents/annotations/queue/span-dup/assign",
+            json={"reviewer": "bob"},
+        )
+        assert resp.status_code == 400
+
+    def test_complete_endpoint_round_trip(self, annotation_client):
+        """POST complete transitions ASSIGNED→COMPLETED and persists label."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-complete"))
+        queue.assign("span-complete", reviewer="alice")
+
+        resp = client.post(
+            "/agents/annotations/queue/span-complete/complete",
+            json={"label": "correct_routing"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "completed"
+        ann = data["annotation"]
+        assert ann["status"] == "completed"
+        assert ann["completed_at"] is not None
+
+        # Verify queue state is actually updated
+        assert queue.get("span-complete").status == AnnotationStatus.COMPLETED
+
+    def test_complete_missing_span_returns_404(self, annotation_client):
+        """POST complete on unknown span_id returns 404."""
+        client, _ = annotation_client
+        resp = client.post(
+            "/agents/annotations/queue/ghost/complete",
+            json={},
+        )
+        assert resp.status_code == 404
+
+    def test_complete_already_completed_returns_400(self, annotation_client):
+        """POST complete on already-COMPLETED span returns 400."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-done"))
+        queue.complete("span-done")
+
+        resp = client.post(
+            "/agents/annotations/queue/span-done/complete",
+            json={},
+        )
+        assert resp.status_code == 400
+
+    def test_full_lifecycle_via_http(self, annotation_client):
+        """Full PENDING→ASSIGNED→COMPLETED lifecycle exercised through HTTP."""
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-lifecycle", AnnotationPriority.HIGH))
+
+        # Step 1: Verify appears in queue as PENDING
+        resp = client.get("/agents/annotations/queue")
+        assert resp.status_code == 200
+        assert len(resp.json()["pending"]) == 1
+
+        # Step 2: Assign via HTTP
+        resp = client.post(
+            "/agents/annotations/queue/span-lifecycle/assign",
+            json={"reviewer": "reviewer1"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["annotation"]["status"] == "assigned"
+
+        # Step 3: Verify moved to assigned in GET response
+        resp = client.get("/agents/annotations/queue")
+        data = resp.json()
+        assert len(data["pending"]) == 0
+        assert len(data["assigned"]) == 1
+
+        # Step 4: Complete via HTTP
+        resp = client.post(
+            "/agents/annotations/queue/span-lifecycle/complete",
+            json={"label": "correct"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["annotation"]["status"] == "completed"
+
+        # Step 5: Verify no longer in pending/assigned
+        resp = client.get("/agents/annotations/queue")
+        data = resp.json()
+        assert len(data["pending"]) == 0
+        assert len(data["assigned"]) == 0
+        assert data["statistics"]["total"] == 1
+        assert data["statistics"]["by_status"]["completed"] == 1

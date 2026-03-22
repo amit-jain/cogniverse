@@ -1,7 +1,10 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -139,6 +142,71 @@ async def get_registry_stats() -> Dict[str, Any]:
     """Get registry statistics including health status"""
     registry = get_registry()
     return registry.get_registry_stats()
+
+
+_annotation_queue: Optional["AnnotationQueue"] = None
+
+
+def get_annotation_queue():
+    """Lazily create or return the singleton AnnotationQueue."""
+    global _annotation_queue
+    if _annotation_queue is None:
+        from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+
+        _annotation_queue = AnnotationQueue()
+    return _annotation_queue
+
+
+class AssignRequest(BaseModel):
+    reviewer: str
+    sla_hours: Optional[int] = None
+
+
+class CompleteRequest(BaseModel):
+    label: Optional[str] = None
+
+
+@router.get("/annotations/queue")
+async def get_annotation_queue_status() -> Dict[str, Any]:
+    """Get annotation queue statistics and pending items."""
+    queue = get_annotation_queue()
+    pending = queue.get_pending()
+    assigned = queue.get_assigned()
+    expired = queue.get_expired()
+    return {
+        "statistics": queue.statistics(),
+        "pending": [r.to_dict() for r in pending[:50]],
+        "assigned": [r.to_dict() for r in assigned[:50]],
+        "expired": [r.to_dict() for r in expired[:50]],
+    }
+
+
+@router.post("/annotations/queue/{span_id}/assign")
+async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]:
+    """Assign a pending annotation to a reviewer."""
+    queue = get_annotation_queue()
+    try:
+        request = queue.assign(
+            span_id=span_id, reviewer=body.reviewer, sla_hours=body.sla_hours
+        )
+        return {"status": "assigned", "annotation": request.to_dict()}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/annotations/queue/{span_id}/complete")
+async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, Any]:
+    """Mark an annotation as completed."""
+    queue = get_annotation_queue()
+    try:
+        request = queue.complete(span_id=span_id, label=body.label)
+        return {"status": "completed", "annotation": request.to_dict()}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/by-capability/{capability}")

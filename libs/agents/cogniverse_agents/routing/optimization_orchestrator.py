@@ -145,6 +145,11 @@ class OptimizationOrchestrator:
         self.llm_annotator = LLMAutoAnnotator(llm_config=llm_config)
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
+        # Annotation queue for reviewer assignment
+        from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+
+        self.annotation_queue = AnnotationQueue()
+
         # Feedback loop
         self.feedback_loop = AnnotationFeedbackLoop(
             optimizer=self.optimizer,
@@ -256,9 +261,14 @@ class OptimizationOrchestrator:
                     continue
 
                 logger.info(
-                    f"🔍 Found {len(annotation_requests)} spans needing annotation"
+                    f"Found {len(annotation_requests)} spans needing annotation"
                 )
                 self.metrics["annotations_requested"] += len(annotation_requests)
+
+                # Enqueue for reviewer assignment
+                enqueued = self.annotation_queue.enqueue_batch(annotation_requests)
+                if enqueued:
+                    logger.info(f"Enqueued {enqueued} new annotation requests")
 
                 # Step 2: Generate LLM annotations (batch process)
                 try:
@@ -318,49 +328,15 @@ class OptimizationOrchestrator:
                 f"{annotation_count} annotations, {synthetic_count} synthetic examples"
             )
 
-            # Use XGBoost should_train() if available
-            should_optimize = False
-            if (
-                hasattr(self.optimizer, "_training_decision_model")
-                and self.optimizer._training_decision_model
-            ):
-                from cogniverse_agents.routing.xgboost_meta_models import (
-                    ModelingContext,
+            min_days = self.rules.optimization_triggers.min_days_between_optimizations
+            should_optimize = (
+                annotation_count >= self.min_annotations_for_optimization
+                and (
+                    self.metrics["last_optimization"] is None
+                    or (datetime.now() - self.metrics["last_optimization"]).days
+                    >= min_days
                 )
-
-                context = ModelingContext(
-                    total_examples=total_experiences + synthetic_count,
-                    annotated_examples=annotation_count,
-                    current_accuracy=self._get_current_metrics().get("accuracy", 0.0),
-                    hours_since_last_train=(
-                        (
-                            datetime.now() - self.metrics["last_optimization"]
-                        ).total_seconds()
-                        / 3600
-                        if self.metrics["last_optimization"]
-                        else 999.0
-                    ),
-                )
-                should_optimize, expected_improvement = (
-                    self.optimizer._training_decision_model.should_train(context)
-                )
-                logger.info(
-                    f"XGBoost decision: should_train={should_optimize}, "
-                    f"expected_improvement={expected_improvement:.3f}"
-                )
-            else:
-                # Fallback: annotation count threshold
-                min_days = (
-                    self.rules.optimization_triggers.min_days_between_optimizations
-                )
-                should_optimize = (
-                    annotation_count >= self.min_annotations_for_optimization
-                    and (
-                        self.metrics["last_optimization"] is None
-                        or (datetime.now() - self.metrics["last_optimization"]).days
-                        >= min_days
-                    )
-                )
+            )
 
             if should_optimize:
                 await self._trigger_optimization()
@@ -406,14 +382,11 @@ class OptimizationOrchestrator:
             logger.error(f"❌ Error triggering optimization: {e}")
 
     def _get_current_metrics(self) -> Dict[str, float]:
-        """Get current routing performance metrics"""
-        # This would query recent routing performance
-        # For now, return placeholder - implement based on RoutingEvaluator
-        return {
-            "accuracy": 0.0,
-            "avg_confidence": 0.0,
-            "success_rate": 0.0,
-        }
+        """Get current routing performance metrics."""
+        raise NotImplementedError(
+            "_get_current_metrics is not yet implemented. "
+            "Implement using RoutingEvaluator to query recent routing performance."
+        )
 
     def _calculate_improvement(
         self, baseline: Dict[str, float], current: Dict[str, float]
