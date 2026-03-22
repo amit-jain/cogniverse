@@ -497,11 +497,14 @@ class AgentDispatcher:
                 AutomationRulesConfig.from_dict(rules_data) if rules_data else None
             )
 
+            from cogniverse_runtime.routers.agents import get_annotation_queue
+
             orchestrator = OptimizationOrchestrator(
                 llm_config=agent.deps.llm_config,
                 telemetry_provider=telemetry_provider,
                 tenant_id=tenant_id,
                 automation_rules=automation_rules,
+                annotation_queue=get_annotation_queue(),
             )
 
             results = await orchestrator.run_once()

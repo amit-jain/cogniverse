@@ -59,6 +59,7 @@ class OptimizationOrchestrator:
         min_annotations_for_optimization: int = 50,
         optimization_improvement_threshold: float = 0.05,
         automation_rules: AutomationRulesConfig | None = None,
+        annotation_queue: "AnnotationQueue | None" = None,
     ):
         """
         Initialize optimization orchestrator
@@ -143,10 +144,10 @@ class OptimizationOrchestrator:
         self.llm_annotator = LLMAutoAnnotator(llm_config=llm_config)
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
-        # Annotation queue for reviewer assignment
+        # Annotation queue for reviewer assignment (shared with router)
         from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 
-        self.annotation_queue = AnnotationQueue()
+        self.annotation_queue = annotation_queue or AnnotationQueue()
 
         # Feedback loop
         self.feedback_loop = AnnotationFeedbackLoop(
@@ -479,8 +480,11 @@ class OptimizationOrchestrator:
         )
         results["annotation_requests"] = len(annotation_requests)
 
-        # Update metrics from annotation identification
         self.metrics["annotations_requested"] += len(annotation_requests)
+
+        if annotation_requests:
+            enqueued = self.annotation_queue.enqueue_batch(annotation_requests)
+            results["enqueued"] = enqueued
 
         # 3. Generate annotations (if available)
         if annotation_requests:

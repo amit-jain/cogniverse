@@ -109,6 +109,9 @@ dev = [
 sandbox = [
     "openshell>=0.0.13",
 ]
+test = [
+    "playwright>=1.58.0",
+]
 
 [tool.black]
 line-length = 88

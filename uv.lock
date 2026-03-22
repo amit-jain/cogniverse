@@ -955,6 +955,9 @@ dev = [
 sandbox = [
     { name = "openshell" },
 ]
+test = [
+    { name = "playwright" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1018,6 +1021,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "pdf2image", specifier = ">=1.17.0" },
     { name = "pillow", specifier = ">=10.0.0" },
+    { name = "playwright", marker = "extra == 'test'", specifier = ">=1.58.0" },
     { name = "plotly", specifier = ">=6.0.0" },
     { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pylate", specifier = ">=1.1.7" },
@@ -1043,7 +1047,7 @@ requires-dist = [
     { name = "umap-learn", specifier = ">=0.5.0" },
     { name = "xgboost", specifier = ">=3.0.5" },
 ]
-provides-extras = ["dev", "sandbox"]
+provides-extras = ["dev", "sandbox", "test"]
 
 [package.metadata.requires-dev]
 dev = [
