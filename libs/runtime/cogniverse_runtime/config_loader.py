@@ -30,6 +30,7 @@ AGENT_CAPABILITIES: Dict[str, List[str]] = {
     "audio_analysis_agent": ["audio_analysis", "transcription"],
     "document_agent": ["document_analysis", "pdf_processing"],
     "deep_research_agent": ["deep_research", "analysis"],
+    "coding_agent": ["coding", "code_generation", "code_search"],
 }
 
 
@@ -55,6 +56,7 @@ class ConfigLoader:
         "audio_analysis_agent": "cogniverse_agents.audio_analysis_agent:AudioAnalysisAgent",
         "document_agent": "cogniverse_agents.document_agent:DocumentAgent",
         "deep_research_agent": "cogniverse_agents.deep_research_agent:DeepResearchAgent",
+        "coding_agent": "cogniverse_agents.coding_agent:CodingAgent",
     }
 
     def __init__(self, tenant_id: str = "default"):
@@ -82,7 +84,6 @@ class ConfigLoader:
                     )
                     continue
 
-                # Get package name for this backend type
                 package_name = self.BACKEND_PACKAGES.get(backend_type)
                 if not package_name:
                     logger.warning(
@@ -90,15 +91,13 @@ class ConfigLoader:
                     )
                     continue
 
-                # Import package to trigger auto-registration
+                # Import package to trigger auto-registration side effect
                 try:
                     _ = importlib.import_module(package_name)
                     logger.info(
                         f"✓ Loaded backend package: {package_name} for {backend_name}"
                     )
 
-                    # Backend should be auto-registered via package import
-                    # Verify it's registered
                     if backend_name in self.backend_registry.list_backends():
                         logger.info(
                             f"✓ Backend '{backend_name}' registered successfully"
@@ -140,18 +139,15 @@ class ConfigLoader:
 
         for agent_name, agent_config in agents_config.items():
             try:
-                # Skip if not enabled
                 if not agent_config.get("enabled", True):
                     logger.info(f"Agent '{agent_name}' is disabled, skipping")
                     continue
 
-                # Validate agent class exists
                 agent_class_path = self.AGENT_CLASSES.get(agent_name)
                 if not agent_class_path:
                     logger.warning(f"Unknown agent '{agent_name}', skipping")
                     continue
 
-                # Verify the module can be imported
                 module_path, class_name = agent_class_path.split(":")
                 try:
                     module = importlib.import_module(module_path)
@@ -162,7 +158,6 @@ class ConfigLoader:
                     )
                     continue
 
-                # Register as an agent endpoint in the registry
                 if agent_registry is not None:
                     url = agent_config.get("url", "http://localhost:8000")
                     capabilities = AGENT_CAPABILITIES.get(agent_name, [])
@@ -216,12 +211,9 @@ class ConfigLoader:
         """Reload configuration and re-initialize components."""
         logger.info("Reloading configuration...")
 
-        # Reload config
         self.config = get_config(
             tenant_id=tenant_id, config_manager=self.config_manager
         )
-
-        # Reload backends and agents
         self.load_backends()
         self.load_agents()
 

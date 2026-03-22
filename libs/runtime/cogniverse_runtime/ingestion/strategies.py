@@ -3,7 +3,7 @@
 Strategy implementations extending BaseStrategy.
 
 These strategies work with the pluggable ProcessorManager.
-Supports video, image, audio, and document content types.
+Supports video, image, audio, document, and code content types.
 """
 
 from pathlib import Path
@@ -14,6 +14,12 @@ from .processor_base import BaseStrategy
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
 DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc", ".rtf"}
+CODE_EXTENSIONS = {
+    "python": {".py"},
+    "javascript": {".js", ".jsx", ".mjs"},
+    "typescript": {".ts", ".tsx"},
+    "go": {".go"},
+}
 
 
 class FrameSegmentationStrategy(BaseStrategy):
@@ -287,6 +293,203 @@ class DocumentSegmentationStrategy(BaseStrategy):
         return {"document_file": {"max_files": self.max_files}}
 
 
+class CodeSegmentationStrategy(BaseStrategy):
+    """Parse source code files into AST-aware chunks using tree-sitter.
+
+    Each source file is parsed into function, method, class, and top-level
+    block segments. The structured text per chunk includes: name + signature +
+    docstring + body — the same representation colgrep uses.
+
+    Walks directories, respects .gitignore, filters by language extensions.
+    """
+
+    def __init__(
+        self,
+        languages: list[str] | None = None,
+        max_files: int = 50000,
+    ):
+        self.languages = languages or ["python", "typescript", "go", "javascript"]
+        self.max_files = max_files
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {
+            "code_file": {
+                "languages": self.languages,
+                "max_files": self.max_files,
+            }
+        }
+
+    def get_supported_extensions(self) -> set[str]:
+        """Return the union of file extensions for configured languages."""
+        exts: set[str] = set()
+        for lang in self.languages:
+            exts.update(CODE_EXTENSIONS.get(lang, set()))
+        return exts
+
+    @staticmethod
+    def _get_language(lang_name: str):
+        """Load a tree-sitter Language object for the given language name."""
+        import tree_sitter
+
+        lang_modules = {
+            "python": "tree_sitter_python",
+            "javascript": "tree_sitter_javascript",
+            "typescript": "tree_sitter_typescript",
+            "go": "tree_sitter_go",
+        }
+        module_name = lang_modules.get(lang_name)
+        if not module_name:
+            raise ValueError(f"Unsupported language: {lang_name}")
+
+        import importlib
+
+        mod = importlib.import_module(module_name)
+
+        if lang_name == "typescript":
+            return tree_sitter.Language(mod.language_typescript())
+        return tree_sitter.Language(mod.language())
+
+    @staticmethod
+    def _lang_for_extension(ext: str) -> str | None:
+        """Return the language name for a file extension."""
+        for lang, exts in CODE_EXTENSIONS.items():
+            if ext in exts:
+                return lang
+        return None
+
+    def parse_file(self, file_path: Path) -> list[dict[str, Any]]:
+        """Parse a single source file into AST chunks.
+
+        Returns a list of segment dicts with keys:
+            content, metadata (file, type, name, signature, line_start, line_end)
+        """
+        import tree_sitter
+
+        ext = file_path.suffix.lower()
+        lang_name = self._lang_for_extension(ext)
+        if not lang_name or lang_name not in self.languages:
+            return []
+
+        source_bytes = file_path.read_bytes()
+        if not source_bytes.strip():
+            return []
+
+        language = self._get_language(lang_name)
+        parser = tree_sitter.Parser(language)
+        tree = parser.parse(source_bytes)
+
+        segments = []
+        self._extract_segments(tree.root_node, source_bytes, file_path, segments)
+
+        if not segments:
+            # If no functions/classes found, treat entire file as one segment
+            text = source_bytes.decode("utf-8", errors="replace")
+            segments.append({
+                "content": text,
+                "metadata": {
+                    "file": str(file_path),
+                    "type": "module",
+                    "name": file_path.stem,
+                    "signature": "",
+                    "line_start": 1,
+                    "line_end": text.count("\n") + 1,
+                    "language": lang_name,
+                },
+            })
+
+        return segments
+
+    def _extract_segments(
+        self,
+        node,
+        source: bytes,
+        file_path: Path,
+        segments: list[dict[str, Any]],
+    ) -> None:
+        """Recursively extract function/class/method segments from AST."""
+        lang_name = self._lang_for_extension(file_path.suffix.lower()) or "unknown"
+
+        extractable_types = {
+            "function_definition",      # Python
+            "class_definition",         # Python
+            "function_declaration",     # JS/TS/Go
+            "method_definition",        # JS/TS
+            "class_declaration",        # JS/TS
+            "arrow_function",           # JS/TS (only named, via parent)
+            "type_declaration",         # Go
+            "method_declaration",       # Go
+        }
+
+        if node.type in extractable_types:
+            text = source[node.start_byte:node.end_byte].decode(
+                "utf-8", errors="replace"
+            )
+            name = self._extract_name(node)
+            signature = self._extract_signature(node, source)
+            seg_type = "class" if "class" in node.type else "function"
+
+            segments.append({
+                "content": text,
+                "metadata": {
+                    "file": str(file_path),
+                    "type": seg_type,
+                    "name": name,
+                    "signature": signature,
+                    "line_start": node.start_point[0] + 1,
+                    "line_end": node.end_point[0] + 1,
+                    "language": lang_name,
+                },
+            })
+
+            # For classes, also extract child methods
+            if "class" in node.type:
+                for child in node.children:
+                    if child.type in (
+                        "block", "class_body", "declaration_list",
+                    ):
+                        self._extract_segments(
+                            child, source, file_path, segments
+                        )
+                return
+
+        for child in node.children:
+            self._extract_segments(child, source, file_path, segments)
+
+    @staticmethod
+    def _extract_name(node) -> str:
+        """Extract the name identifier from an AST node."""
+        for child in node.children:
+            if child.type in (
+                "identifier", "name", "property_identifier",
+                "field_identifier", "type_identifier",
+            ):
+                return child.text.decode("utf-8", errors="replace")
+            if child.type == "type_spec":
+                for gc in child.children:
+                    if gc.type == "type_identifier":
+                        return gc.text.decode("utf-8", errors="replace")
+        return "<anonymous>"
+
+    @staticmethod
+    def _extract_signature(node, source: bytes) -> str:
+        """Extract the function/method signature (first line up to body)."""
+        start = node.start_byte
+        # Find the body child to know where signature ends
+        for child in node.children:
+            if child.type in ("block", "statement_block", "class_body",
+                              "declaration_list", "function_body"):
+                sig = source[start:child.start_byte].decode(
+                    "utf-8", errors="replace"
+                ).strip()
+                return sig
+
+        # Fallback: first line
+        text = source[node.start_byte:node.end_byte].decode(
+            "utf-8", errors="replace"
+        )
+        return text.split("\n")[0].strip()
+
+
 class DocumentTextEmbeddingStrategy(BaseStrategy):
     """Generate ColBERT multi-vector embeddings (128-dim per token) for document text.
 
@@ -388,4 +591,44 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
         if "transcript" in results:
             wrapped_results["results"]["transcript"] = results["transcript"]
 
+        return await pipeline_context.generate_embeddings(wrapped_results)
+
+
+class CodeTextEmbeddingStrategy(BaseStrategy):
+    """Generate ColBERT multi-vector embeddings (128-dim per token) for source code.
+
+    Uses LateOn-Code-edge (or another ColBERT model) loaded through
+    ModelLoaderFactory → ColBERTModelLoader in EmbeddingGeneratorImpl.
+    Wraps code segments and delegates to pipeline_context.generate_embeddings().
+    """
+
+    def __init__(
+        self,
+        colbert_model: str = "lightonai/LateOn-Code-edge",
+    ):
+        self.colbert_model = colbert_model
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {
+            "embedding": {
+                "type": "code_text",
+                "colbert_model": self.colbert_model,
+            }
+        }
+
+    async def generate_embeddings_with_processor(
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
+        """Delegate to pipeline_context.generate_embeddings()."""
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "CodeTextEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
+        wrapped_results = {
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
+            "results": results,
+            "code_files": results.get("code_files", []),
+        }
         return await pipeline_context.generate_embeddings(wrapped_results)

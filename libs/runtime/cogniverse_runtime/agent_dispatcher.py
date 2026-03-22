@@ -88,6 +88,8 @@ class AgentDispatcher:
             return await self._execute_text_analysis_task(query, context, tenant_id)
         elif "deep_research" in capabilities:
             return await self._execute_deep_research_task(query, tenant_id)
+        elif "coding" in capabilities:
+            return await self._execute_coding_task(query, tenant_id, context)
         else:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path. "
@@ -566,6 +568,10 @@ class AgentDispatcher:
             return await self._execute_text_analysis_task(
                 query, {"tenant_id": tenant_id}, tenant_id
             )
+        elif "coding" in capabilities:
+            return await self._execute_coding_task(
+                query, tenant_id, {"tenant_id": tenant_id}
+            )
         else:
             raise ValueError(
                 f"Routed agent '{agent_name}' has no supported execution path. "
@@ -752,5 +758,66 @@ class AgentDispatcher:
             "status": "success",
             "agent": "deep_research_agent",
             "message": f"Research complete for '{query}'",
+            "result": result.model_dump(),
+        }
+
+    async def _execute_coding_task(
+        self,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from cogniverse_agents.coding_agent import (
+            CodingAgent,
+            CodingDeps,
+            CodingInput,
+        )
+
+        deps = CodingDeps(
+            tenant_id=tenant_id,
+            sandbox_manager=self._sandbox_manager,
+        )
+
+        async def search_fn(query: str, tenant_id: str):
+            """Search code using the code_lateon_mv profile."""
+            from cogniverse_agents.search.service import SearchService
+            from cogniverse_foundation.config.utils import get_config
+
+            config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            )
+            search_service = SearchService(
+                config=config,
+                config_manager=self._config_manager,
+                schema_loader=self._schema_loader,
+            )
+            results = search_service.search(
+                query=query,
+                profile="code_lateon_mv",
+                tenant_id=tenant_id,
+                top_k=10,
+            )
+            return [r.to_dict() for r in results]
+
+        agent = CodingAgent(
+            deps=deps,
+            search_fn=search_fn,
+            sandbox_manager=self._sandbox_manager,
+        )
+
+        ctx = context or {}
+        input_data = CodingInput(
+            task=query,
+            codebase_path=ctx.get("codebase_path", ""),
+            tenant_id=tenant_id,
+            max_iterations=ctx.get("max_iterations", 5),
+            language=ctx.get("language", "python"),
+        )
+        result = await agent.process(input_data)
+
+        return {
+            "status": "success",
+            "agent": "coding_agent",
+            "message": f"Coding task complete for '{query}'",
             "result": result.model_dump(),
         }

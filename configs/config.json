@@ -11,7 +11,8 @@
     "image_search_agent": {"url": "http://localhost:8006", "enabled": true},
     "audio_analysis_agent": {"url": "http://localhost:8007", "enabled": true},
     "document_agent": {"url": "http://localhost:8008", "enabled": true},
-    "deep_research_agent": {"url": "http://localhost:8009", "enabled": true}
+    "deep_research_agent": {"url": "http://localhost:8009", "enabled": true},
+    "coding_agent": {"url": "http://localhost:8010", "enabled": true}
   },
   "llm_config": {
     "primary": {
@@ -35,6 +36,7 @@
       "summarizer_agent": { "model": "ollama/qwen3:4b" },
       "detailed_report_agent": { "model": "ollama/qwen3:4b" },
       "vlm_interface": { "model": "ollama/deepseek-r1:7b" },
+      "coding_agent": { "model": "ollama/qwen3:4b", "max_tokens": 2048 },
       "query_analysis_module": null,
       "llm_auto_annotator": null
     }
@@ -866,6 +868,47 @@
           "embedding_dim": 1024,
           "binary_dim": 128,
           "chunk_based": true
+        }
+      },
+      "code_lateon_mv": {
+        "type": "code",
+        "description": "Source code semantic search with LateOn-Code-edge multi-vector embeddings (128-dim). Tree-sitter AST chunking by function/class/method.",
+        "schema_name": "code_lateon_mv",
+        "embedding_model": "lightonai/LateOn-Code-edge",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "CodeSegmentationStrategy",
+            "params": {
+              "languages": ["python", "typescript", "go", "javascript"]
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "CodeTextEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "code_colbert",
+        "model_loader": "colbert",
+        "schema_config": {
+          "schema_name": "code_lateon_mv",
+          "model_name": "LateOn-Code-edge",
+          "num_patches": 2048,
+          "embedding_dim": 128,
+          "binary_dim": 16
         }
       }
     },

@@ -348,11 +348,73 @@ class ProcessingStrategySet:
             )
             return {"keyframes": result}
 
+        elif "code_file" in requirements:
+            from .strategies import CodeSegmentationStrategy
+
+            if not isinstance(strategy, CodeSegmentationStrategy):
+                raise TypeError(
+                    f"'code_file' processor requires CodeSegmentationStrategy, "
+                    f"got {type(strategy).__name__}"
+                )
+
+            content_path = video_path
+            supported_exts = strategy.get_supported_extensions()
+
+            if content_path.is_dir():
+                code_files = sorted(
+                    f
+                    for f in content_path.rglob("*")
+                    if f.is_file()
+                    and f.suffix.lower() in supported_exts
+                    and ".git" not in f.parts
+                    and "__pycache__" not in f.parts
+                    and "node_modules" not in f.parts
+                    and ".venv" not in f.parts
+                )
+            elif content_path.suffix.lower() in supported_exts:
+                code_files = [content_path]
+            else:
+                raise ValueError(
+                    f"Expected code file or directory, got: {content_path}"
+                )
+
+            max_files = requirements["code_file"].get("max_files", 50000)
+            code_files = code_files[:max_files]
+
+            if not code_files:
+                raise ValueError(f"No code files found at {content_path}")
+
+            code_file_list = []
+            for idx, code_path in enumerate(code_files):
+                segments = strategy.parse_file(code_path)
+                for seg in segments:
+                    code_file_list.append({
+                        "document_id": f"{code_path.stem}_{seg['metadata']['name']}_{seg['metadata']['line_start']}",
+                        "file_index": idx,
+                        "path": str(code_path),
+                        "filename": code_path.name,
+                        "document_type": code_path.suffix.lstrip("."),
+                        "extracted_text": seg["content"],
+                        "text_length": len(seg["content"]),
+                        "chunk_type": seg["metadata"]["type"],
+                        "chunk_name": seg["metadata"]["name"],
+                        "signature": seg["metadata"]["signature"],
+                        "line_start": seg["metadata"]["line_start"],
+                        "line_end": seg["metadata"]["line_end"],
+                        "language": seg["metadata"].get("language", "unknown"),
+                    })
+
+            pipeline_context.logger.info(
+                f"  Parsed {len(code_file_list)} code segments from {len(code_files)} files"
+            )
+            return {"code_files": code_file_list}
+
         else:
             processor_keys = list(requirements.keys())
             raise ValueError(
                 f"Segmentation strategy {type(strategy).__name__!r} requires unknown "
-                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, document_file, audio_file, image."
+                f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, "
+                f"document_file, audio_file, image, code_file."
             )
 
     async def _process_transcription(
