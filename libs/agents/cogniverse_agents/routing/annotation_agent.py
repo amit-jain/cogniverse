@@ -24,6 +24,7 @@ from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 if TYPE_CHECKING:
+    from cogniverse_agents.routing.config import AutomationRulesConfig
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class AnnotationAgent:
         confidence_threshold: float = 0.6,
         failure_lookback_hours: int = 24,
         max_annotations_per_run: int = 50,
+        automation_rules: "AutomationRulesConfig | None" = None,
     ):
         """
         Initialize annotation agent
@@ -93,11 +95,25 @@ class AnnotationAgent:
             confidence_threshold: Confidence below this needs review
             failure_lookback_hours: How far back to look for failures
             max_annotations_per_run: Maximum annotations to request per run
+            automation_rules: Optional declarative config (overrides individual kwargs)
         """
         self.tenant_id = tenant_id
-        self.confidence_threshold = confidence_threshold
-        self.failure_lookback_hours = failure_lookback_hours
-        self.max_annotations_per_run = max_annotations_per_run
+
+        if automation_rules is not None:
+            thresholds = automation_rules.annotation_thresholds
+            self.confidence_threshold = thresholds.confidence_threshold
+            self.very_low_confidence = thresholds.very_low_confidence
+            self.boundary_low = thresholds.boundary_low
+            self.boundary_high = thresholds.boundary_high
+            self.failure_lookback_hours = thresholds.failure_lookback_hours
+            self.max_annotations_per_run = thresholds.max_annotations_per_run
+        else:
+            self.confidence_threshold = confidence_threshold
+            self.very_low_confidence = 0.3
+            self.boundary_low = 0.6
+            self.boundary_high = 0.75
+            self.failure_lookback_hours = failure_lookback_hours
+            self.max_annotations_per_run = max_annotations_per_run
 
         # Initialize components - use shared telemetry manager config
         telemetry_manager = get_telemetry_manager()
@@ -291,7 +307,7 @@ class AnnotationAgent:
                 )
 
         # HIGH priority: Very low confidence regardless of outcome
-        if confidence < 0.3:
+        if confidence < self.very_low_confidence:
             return (
                 True,
                 AnnotationPriority.HIGH,
@@ -316,7 +332,10 @@ class AnnotationAgent:
 
         # LOW priority: Edge cases for training diversity
         # (e.g., high confidence successes near decision boundaries)
-        if outcome == RoutingOutcome.SUCCESS and 0.6 <= confidence <= 0.75:
+        if (
+            outcome == RoutingOutcome.SUCCESS
+            and self.boundary_low <= confidence <= self.boundary_high
+        ):
             return (
                 True,
                 AnnotationPriority.LOW,

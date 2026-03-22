@@ -39,19 +39,23 @@ class TestOrchestrationEvaluator:
 
     def test_extract_workflow_execution_success(self):
         """Test extracting WorkflowExecution from valid span data"""
+        # Phoenix flattens nested attributes into dot-separated Series keys:
+        # span_row["attributes.orchestration"] → dict with inner keys
         span_row = pd.Series(
             {
                 "context.span_id": "span-123",
                 "status_code": "OK",
-                "attributes": {
-                    "orchestration.workflow_id": "workflow-456",
-                    "orchestration.query": "Find videos and documents about AI",
-                    "orchestration.pattern": "parallel",
-                    "orchestration.agents_used": "video_search_agent,text_search_agent",
-                    "orchestration.execution_order": "video_search_agent,text_search_agent",
-                    "orchestration.execution_time": 2.5,
-                    "orchestration.tasks_completed": 2,
-                    "routing.confidence": 0.9,
+                "attributes.orchestration": {
+                    "workflow_id": "workflow-456",
+                    "query": "Find videos and documents about AI",
+                    "pattern": "parallel",
+                    "agents_used": "video_search_agent,text_search_agent",
+                    "execution_order": "video_search_agent,text_search_agent",
+                    "execution_time": 2.5,
+                    "tasks_completed": 2,
+                },
+                "attributes.routing": {
+                    "confidence": 0.9,
                 },
             }
         )
@@ -73,9 +77,9 @@ class TestOrchestrationEvaluator:
         span_row = pd.Series(
             {
                 "context.span_id": "span-123",
-                "attributes": {
+                "attributes.orchestration": {
                     # Missing workflow_id
-                    "orchestration.query": "Test query",
+                    "query": "Test query",
                 },
             }
         )
@@ -86,8 +90,10 @@ class TestOrchestrationEvaluator:
 
     def test_compute_parallel_efficiency(self):
         """Test parallel efficiency calculation"""
+        # _compute_parallel_efficiency receives already-extracted orch_attrs
+        # so keys should NOT have the "orchestration." prefix
         attributes = {
-            "orchestration.agent_times": "video_search_agent:1.2,text_search_agent:1.5"
+            "agent_times": "video_search_agent:1.2,text_search_agent:1.5"
         }
 
         efficiency = self.evaluator._compute_parallel_efficiency(
@@ -150,15 +156,17 @@ class TestOrchestrationEvaluator:
                     "name": "cogniverse.orchestration",
                     "context.span_id": "span-1",
                     "status_code": "OK",
-                    "attributes": {
-                        "orchestration.workflow_id": "wf-1",
-                        "orchestration.query": "Test query",
-                        "orchestration.pattern": "parallel",
-                        "orchestration.agents_used": "agent1,agent2",
-                        "orchestration.execution_order": "agent1,agent2",
-                        "orchestration.execution_time": 1.5,
-                        "orchestration.tasks_completed": 2,
-                        "routing.confidence": 0.8,
+                    "attributes.orchestration": {
+                        "workflow_id": "wf-1",
+                        "query": "Test query",
+                        "pattern": "parallel",
+                        "agents_used": "agent1,agent2",
+                        "execution_order": "agent1,agent2",
+                        "execution_time": 1.5,
+                        "tasks_completed": 2,
+                    },
+                    "attributes.routing": {
+                        "confidence": 0.8,
                     },
                 }
             ]

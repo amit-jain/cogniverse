@@ -5,10 +5,12 @@ Periodically queries annotated routing spans from Phoenix
 and feeds them to the AdvancedRoutingOptimizer as ground truth training data.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
@@ -16,6 +18,9 @@ from cogniverse_agents.routing.advanced_optimizer import (
 )
 from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
+
+if TYPE_CHECKING:
+    from cogniverse_agents.routing.config import AutomationRulesConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,7 @@ class AnnotationFeedbackLoop:
         tenant_id: str = "default",
         poll_interval_minutes: int = 15,
         min_annotations_for_update: int = 10,
+        automation_rules: AutomationRulesConfig | None = None,
     ):
         """
         Initialize feedback loop
@@ -46,11 +52,26 @@ class AnnotationFeedbackLoop:
             tenant_id: Tenant identifier
             poll_interval_minutes: How often to check for new annotations
             min_annotations_for_update: Minimum annotations before triggering optimizer update
+            automation_rules: Optional declarative config (overrides individual kwargs)
         """
         self.optimizer = optimizer
         self.tenant_id = tenant_id
-        self.poll_interval_minutes = poll_interval_minutes
-        self.min_annotations_for_update = min_annotations_for_update
+
+        if automation_rules is not None:
+            self.poll_interval_minutes = automation_rules.feedback.poll_interval_minutes
+            self.min_annotations_for_update = (
+                automation_rules.feedback.min_annotations_for_update
+            )
+            self._quality_map = dict(automation_rules.feedback.quality_map)
+        else:
+            self.poll_interval_minutes = poll_interval_minutes
+            self.min_annotations_for_update = min_annotations_for_update
+            self._quality_map = {
+                "correct_routing": 0.9,
+                "wrong_routing": 0.3,
+                "ambiguous": 0.6,
+                "insufficient_info": 0.5,
+            }
 
         # Initialize storage
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
@@ -292,16 +313,7 @@ class AnnotationFeedbackLoop:
         """
         try:
             label_enum = AnnotationLabel(label)
-
-            quality_map = {
-                AnnotationLabel.CORRECT_ROUTING: 0.9,  # High quality
-                AnnotationLabel.WRONG_ROUTING: 0.3,  # Low quality
-                AnnotationLabel.AMBIGUOUS: 0.6,  # Medium quality
-                AnnotationLabel.INSUFFICIENT_INFO: 0.5,  # Neutral
-            }
-
-            return quality_map.get(label_enum, 0.5)
-
+            return self._quality_map.get(label_enum.value, 0.5)
         except ValueError:
             logger.warning(f"⚠️ Unknown annotation label: {label}")
             return 0.5

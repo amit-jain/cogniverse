@@ -12,6 +12,8 @@ This orchestrator manages the complete end-to-end optimization flow:
 Phase 5 Objective: Complete integration with automatic triggers and measurable improvements
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -21,6 +23,7 @@ from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimize
 from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
 from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
+from cogniverse_agents.routing.config import AutomationRulesConfig
 from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -56,12 +59,14 @@ class OptimizationOrchestrator:
         confidence_threshold: float = 0.6,
         min_annotations_for_optimization: int = 50,
         optimization_improvement_threshold: float = 0.05,
+        automation_rules: AutomationRulesConfig | None = None,
     ):
         """
         Initialize optimization orchestrator
 
         Args:
             llm_config: LLM endpoint configuration for optimizer and annotator
+            telemetry_provider: Telemetry backend for span access
             tenant_id: Tenant identifier for multi-tenancy
             span_eval_interval_minutes: How often to evaluate spans
             annotation_interval_minutes: How often to identify spans for annotation
@@ -69,11 +74,38 @@ class OptimizationOrchestrator:
             confidence_threshold: Confidence below which annotations are needed
             min_annotations_for_optimization: Minimum annotations before triggering optimization
             optimization_improvement_threshold: Minimum improvement required to accept optimization
+            automation_rules: Optional declarative config (overrides individual kwargs)
         """
         self.tenant_id = tenant_id
-        self.span_eval_interval = span_eval_interval_minutes
-        self.annotation_interval = annotation_interval_minutes
-        self.feedback_interval = feedback_interval_minutes
+
+        # Resolve configuration: automation_rules takes precedence over kwargs
+        if automation_rules is not None:
+            self.rules = automation_rules
+        else:
+            self.rules = AutomationRulesConfig(
+                annotation_thresholds={
+                    "confidence_threshold": confidence_threshold,
+                    "max_annotations_per_run": 100,
+                },
+                optimization_triggers={
+                    "min_annotations_for_optimization": min_annotations_for_optimization,
+                    "optimization_improvement_threshold": optimization_improvement_threshold,
+                },
+                feedback={
+                    "poll_interval_minutes": feedback_interval_minutes,
+                },
+                intervals={
+                    "span_eval_interval_minutes": span_eval_interval_minutes,
+                    "annotation_interval_minutes": annotation_interval_minutes,
+                    "feedback_interval_minutes": feedback_interval_minutes,
+                },
+            )
+
+        intervals = self.rules.intervals
+        triggers = self.rules.optimization_triggers
+        self.span_eval_interval = intervals.span_eval_interval_minutes
+        self.annotation_interval = intervals.annotation_interval_minutes
+        self.feedback_interval = intervals.feedback_interval_minutes
 
         # Initialize core components
         self.optimizer = AdvancedRoutingOptimizer(
@@ -90,8 +122,7 @@ class OptimizationOrchestrator:
         # Annotation components
         self.annotation_agent = AnnotationAgent(
             tenant_id=tenant_id,
-            confidence_threshold=confidence_threshold,
-            max_annotations_per_run=100,
+            automation_rules=self.rules,
         )
         self.llm_annotator = LLMAutoAnnotator(llm_config=llm_config)
         self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
@@ -100,12 +131,11 @@ class OptimizationOrchestrator:
         self.feedback_loop = AnnotationFeedbackLoop(
             optimizer=self.optimizer,
             tenant_id=tenant_id,
-            poll_interval_minutes=feedback_interval_minutes,
-            min_annotations_for_update=min_annotations_for_optimization,
+            automation_rules=self.rules,
         )
 
         # Metrics tracking
-        self.metrics = {
+        self.metrics: Dict[str, Any] = {
             "spans_evaluated": 0,
             "experiences_created": 0,
             "annotations_requested": 0,
@@ -116,16 +146,20 @@ class OptimizationOrchestrator:
             "last_optimization": None,
         }
 
-        self.min_annotations_for_optimization = min_annotations_for_optimization
-        self.optimization_improvement_threshold = optimization_improvement_threshold
+        self.min_annotations_for_optimization = (
+            triggers.min_annotations_for_optimization
+        )
+        self.optimization_improvement_threshold = (
+            triggers.optimization_improvement_threshold
+        )
 
         logger.info(
-            f"🎯 Initialized OptimizationOrchestrator for tenant '{tenant_id}'"
-            f"\n  Span Evaluation: every {span_eval_interval_minutes}m"
-            f"\n  Annotation Check: every {annotation_interval_minutes}m"
-            f"\n  Feedback Loop: every {feedback_interval_minutes}m"
-            f"\n  Min Annotations: {min_annotations_for_optimization}"
-            f"\n  Improvement Threshold: {optimization_improvement_threshold}"
+            f"Initialized OptimizationOrchestrator for tenant '{tenant_id}'"
+            f"\n  Span Evaluation: every {self.span_eval_interval}m"
+            f"\n  Annotation Check: every {self.annotation_interval}m"
+            f"\n  Feedback Loop: every {self.feedback_interval}m"
+            f"\n  Min Annotations: {self.min_annotations_for_optimization}"
+            f"\n  Improvement Threshold: {self.optimization_improvement_threshold}"
         )
 
     async def start(self):
@@ -157,9 +191,10 @@ class OptimizationOrchestrator:
 
         while True:
             try:
-                # Evaluate routing spans from last 2 hours
+                triggers = self.rules.optimization_triggers
                 result = await self.span_evaluator.evaluate_routing_spans(
-                    lookback_hours=2, batch_size=100
+                    lookback_hours=triggers.span_eval_lookback_hours,
+                    batch_size=triggers.span_eval_batch_size,
                 )
 
                 # Update metrics
@@ -173,7 +208,6 @@ class OptimizationOrchestrator:
                     f"{result.get('experiences_created', 0)} experiences"
                 )
 
-                # Check if we should trigger optimization
                 await self._check_optimization_trigger()
 
                 await asyncio.sleep(self.span_eval_interval * 60)
@@ -191,9 +225,10 @@ class OptimizationOrchestrator:
         while True:
             try:
                 # Step 1: Identify spans needing annotation
+                triggers = self.rules.optimization_triggers
                 annotation_requests = await (
                     self.annotation_agent.identify_spans_needing_annotation(
-                        lookback_hours=24
+                        lookback_hours=triggers.annotation_lookback_hours
                     )
                 )
 
@@ -209,8 +244,11 @@ class OptimizationOrchestrator:
 
                 # Step 2: Generate LLM annotations (batch process)
                 try:
+                    batch_size = (
+                        self.rules.annotation_thresholds.max_annotations_per_batch
+                    )
                     annotations = self.llm_annotator.batch_annotate(
-                        annotation_requests[:10]  # Process top 10
+                        annotation_requests[:batch_size]
                     )
 
                     # Step 3: Store annotations
@@ -294,12 +332,15 @@ class OptimizationOrchestrator:
                 )
             else:
                 # Fallback: annotation count threshold
+                min_days = (
+                    self.rules.optimization_triggers.min_days_between_optimizations
+                )
                 should_optimize = (
                     annotation_count >= self.min_annotations_for_optimization
                     and (
                         self.metrics["last_optimization"] is None
                         or (datetime.now() - self.metrics["last_optimization"]).days
-                        >= 1
+                        >= min_days
                     )
                 )
 
@@ -373,11 +414,12 @@ class OptimizationOrchestrator:
 
     async def _run_metrics_reporting(self):
         """Periodic metrics reporting"""
-        logger.info("📊 Starting metrics reporting (interval: 5m)")
+        report_seconds = self.rules.intervals.metrics_report_interval_seconds
+        logger.info(f"Starting metrics reporting (interval: {report_seconds}s)")
 
         while True:
             try:
-                await asyncio.sleep(5 * 60)  # Report every 5 minutes
+                await asyncio.sleep(report_seconds)
 
                 uptime = datetime.now() - self.metrics["started_at"]
                 logger.info(
@@ -406,7 +448,10 @@ class OptimizationOrchestrator:
         results = {}
 
         # 1. Evaluate spans
-        span_result = await self.span_evaluator.evaluate_routing_spans(lookback_hours=2)
+        triggers = self.rules.optimization_triggers
+        span_result = await self.span_evaluator.evaluate_routing_spans(
+            lookback_hours=triggers.span_eval_lookback_hours
+        )
         results["span_evaluation"] = span_result
 
         # Update metrics from span evaluation
@@ -416,7 +461,7 @@ class OptimizationOrchestrator:
         # 2. Identify spans for annotation
         annotation_requests = (
             await self.annotation_agent.identify_spans_needing_annotation(
-                lookback_hours=24
+                lookback_hours=triggers.annotation_lookback_hours
             )
         )
         results["annotation_requests"] = len(annotation_requests)
@@ -427,7 +472,10 @@ class OptimizationOrchestrator:
         # 3. Generate annotations (if available)
         if annotation_requests:
             try:
-                annotations = self.llm_annotator.batch_annotate(annotation_requests[:5])
+                batch = self.rules.annotation_thresholds.max_annotations_per_batch
+                annotations = self.llm_annotator.batch_annotate(
+                    annotation_requests[:batch]
+                )
                 for i, annotation in enumerate(annotations):
                     success = await self.annotation_storage.store_llm_annotation(
                         span_id=annotation_requests[i].span_id, annotation=annotation
@@ -470,9 +518,10 @@ async def main():
 
     orchestrator = OptimizationOrchestrator(
         tenant_id=tenant_id,
-        span_eval_interval_minutes=15,
-        annotation_interval_minutes=30,
-        feedback_interval_minutes=15,
+        llm_config=LLMEndpointConfig(
+            model="ollama/qwen3:4b", api_base="http://localhost:11434"
+        ),
+        telemetry_provider=None,  # type: ignore[arg-type]
     )
 
     # Start orchestration

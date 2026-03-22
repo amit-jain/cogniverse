@@ -485,10 +485,22 @@ class AgentDispatcher:
         telemetry_provider = agent._get_telemetry_provider(tenant_id)
 
         try:
+            from cogniverse_agents.routing.config import AutomationRulesConfig
+            from cogniverse_foundation.config.utils import get_config
+
+            rules_config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            )
+            rules_data = rules_config.get("automation_rules", {})
+            automation_rules = (
+                AutomationRulesConfig.from_dict(rules_data) if rules_data else None
+            )
+
             orchestrator = OptimizationOrchestrator(
                 llm_config=agent.deps.llm_config,
                 telemetry_provider=telemetry_provider,
                 tenant_id=tenant_id,
+                automation_rules=automation_rules,
             )
 
             results = await orchestrator.run_once()

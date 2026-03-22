@@ -47,6 +47,42 @@
     "enable_advanced_optimization": true,
     "enable_memory": false
   },
+  "automation_rules": {
+    "annotation_thresholds": {
+      "confidence_threshold": 0.6,
+      "very_low_confidence": 0.3,
+      "boundary_low": 0.6,
+      "boundary_high": 0.75,
+      "failure_lookback_hours": 24,
+      "max_annotations_per_run": 50,
+      "max_annotations_per_batch": 10
+    },
+    "optimization_triggers": {
+      "min_annotations_for_optimization": 50,
+      "optimization_improvement_threshold": 0.05,
+      "min_days_between_optimizations": 1,
+      "span_eval_lookback_hours": 2,
+      "annotation_lookback_hours": 24,
+      "span_eval_batch_size": 100,
+      "max_annotations_per_cycle": 100
+    },
+    "feedback": {
+      "poll_interval_minutes": 15,
+      "min_annotations_for_update": 10,
+      "quality_map": {
+        "correct_routing": 0.9,
+        "wrong_routing": 0.3,
+        "ambiguous": 0.6,
+        "insufficient_info": 0.5
+      }
+    },
+    "intervals": {
+      "span_eval_interval_minutes": 15,
+      "annotation_interval_minutes": 30,
+      "feedback_interval_minutes": 15,
+      "metrics_report_interval_seconds": 300
+    }
+  },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",

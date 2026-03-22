@@ -7,7 +7,7 @@ and automatic optimization capabilities.
 """
 
 from .base import RoutingDecision, RoutingMetrics, RoutingStrategy
-from .config import RoutingConfig, load_config
+from .config import AutomationRulesConfig, RoutingConfig, load_config
 from .optimizer import AutoTuningOptimizer, RoutingOptimizer
 from .router import ComprehensiveRouter, TieredRouter
 from .strategies import (
@@ -33,6 +33,7 @@ __all__ = [
     "TieredRouter",
     "RoutingOptimizer",
     "AutoTuningOptimizer",
+    "AutomationRulesConfig",
     "RoutingConfig",
     "load_config",
 ]

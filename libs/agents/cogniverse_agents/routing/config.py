@@ -11,8 +11,155 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+
+class AnnotationThresholdsConfig(BaseModel):
+    """Thresholds controlling when spans are flagged for annotation."""
+
+    confidence_threshold: float = Field(
+        0.6, description="Confidence below which annotations are needed"
+    )
+    very_low_confidence: float = Field(
+        0.3, description="Confidence below which HIGH priority is assigned"
+    )
+    boundary_low: float = Field(
+        0.6, description="Lower bound for near-decision-boundary detection"
+    )
+    boundary_high: float = Field(
+        0.75, description="Upper bound for near-decision-boundary detection"
+    )
+    failure_lookback_hours: int = Field(
+        24, description="How far back to look for failures"
+    )
+    max_annotations_per_run: int = Field(
+        50, description="Maximum annotations to request per run"
+    )
+    max_annotations_per_batch: int = Field(
+        10, description="Maximum annotations to LLM-annotate per batch"
+    )
+
+
+class OptimizationTriggersConfig(BaseModel):
+    """Thresholds controlling when optimization is triggered."""
+
+    min_annotations_for_optimization: int = Field(
+        50, description="Minimum annotations before triggering optimization"
+    )
+    optimization_improvement_threshold: float = Field(
+        0.05, description="Minimum improvement required to accept optimization"
+    )
+    min_days_between_optimizations: int = Field(
+        1, description="Minimum days between optimization runs"
+    )
+    span_eval_lookback_hours: int = Field(
+        2, description="How far back to look for span evaluation"
+    )
+    annotation_lookback_hours: int = Field(
+        24, description="How far back to look for annotation identification"
+    )
+    span_eval_batch_size: int = Field(
+        100, description="Batch size for span evaluation"
+    )
+    max_annotations_per_cycle: int = Field(
+        100, description="Max annotations per orchestrator run"
+    )
+
+
+class FeedbackConfig(BaseModel):
+    """Configuration for the annotation feedback loop."""
+
+    poll_interval_minutes: int = Field(
+        15, description="How often to check for new annotations"
+    )
+    min_annotations_for_update: int = Field(
+        10, description="Minimum annotations before triggering optimizer update"
+    )
+    quality_map: dict[str, float] = Field(
+        default_factory=lambda: {
+            "correct_routing": 0.9,
+            "wrong_routing": 0.3,
+            "ambiguous": 0.6,
+            "insufficient_info": 0.5,
+        },
+        description="Mapping from annotation labels to quality scores",
+    )
+
+
+class IntervalConfig(BaseModel):
+    """Interval timings for the orchestrator loops."""
+
+    span_eval_interval_minutes: int = Field(
+        15, description="How often to evaluate spans"
+    )
+    annotation_interval_minutes: int = Field(
+        30, description="How often to identify spans for annotation"
+    )
+    feedback_interval_minutes: int = Field(
+        15, description="How often to process annotations"
+    )
+    metrics_report_interval_seconds: int = Field(
+        300, description="How often to report metrics (seconds)"
+    )
+
+
+class AutomationRulesConfig(BaseModel):
+    """
+    Declarative automation rules for the optimization pipeline.
+
+    Centralizes all thresholds, intervals, and trigger conditions
+    that were previously hardcoded across OptimizationOrchestrator,
+    AnnotationAgent, and AnnotationFeedbackLoop.
+    """
+
+    annotation_thresholds: AnnotationThresholdsConfig = Field(
+        default_factory=AnnotationThresholdsConfig
+    )
+    optimization_triggers: OptimizationTriggersConfig = Field(
+        default_factory=OptimizationTriggersConfig
+    )
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    intervals: IntervalConfig = Field(default_factory=IntervalConfig)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AutomationRulesConfig":
+        """Create from a dictionary (e.g. a JSON config section)."""
+        return cls.model_validate(data)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dictionary."""
+        return self.model_dump()
+
+    @classmethod
+    def from_file(cls, filepath: Path) -> "AutomationRulesConfig":
+        """Load from a JSON or YAML file."""
+        filepath = Path(filepath)
+        if not filepath.exists():
+            raise FileNotFoundError(f"Automation rules file not found: {filepath}")
+        with open(filepath) as f:
+            if filepath.suffix == ".json":
+                data = json.load(f)
+            elif filepath.suffix in (".yaml", ".yml"):
+                data = yaml.safe_load(f)
+            else:
+                raise ValueError(f"Unsupported file format: {filepath.suffix}")
+        return cls.from_dict(data)
+
+    def save(self, filepath: Path) -> None:
+        """Write to a JSON or YAML file."""
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            if filepath.suffix == ".json":
+                json.dump(self.to_dict(), f, indent=2)
+            elif filepath.suffix in (".yaml", ".yml"):
+                yaml.dump(self.to_dict(), f, default_flow_style=False)
+            else:
+                raise ValueError(f"Unsupported file format: {filepath.suffix}")
+        logger.info(f"Automation rules saved to {filepath}")
 
 
 @dataclass
