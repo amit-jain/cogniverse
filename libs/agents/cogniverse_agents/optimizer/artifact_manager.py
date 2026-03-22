@@ -322,20 +322,22 @@ class ArtifactManager:
         return f"dspy-{kind}-{self._tenant_id}-{agent_type}-v{version}"
 
     async def _get_next_version(self, kind: str, agent_type: str) -> int:
-        """Scan existing versioned datasets to find the next version number."""
-        prefix = f"dspy-{kind}-{self._tenant_id}-{agent_type}-v"
-        max_version = 0
-        datasets = await self._provider.datasets.list_datasets()
-        for ds in datasets:
-            name = ds.get("name", "") if isinstance(ds, dict) else str(ds)
-            if name.startswith(prefix):
-                version_str = name[len(prefix):]
-                try:
-                    v = int(version_str)
-                    max_version = max(max_version, v)
-                except ValueError:
-                    continue
-        return max_version + 1
+        """Probe versioned dataset names sequentially to find the next version.
+
+        DatasetStore has no list_datasets(), so we probe v1, v2, ... until
+        get_dataset raises KeyError/ValueError (not found).
+        """
+        v = 1
+        while True:
+            name = self._versioned_dataset_name(kind, agent_type, v)
+            try:
+                df = await self._provider.datasets.get_dataset(name=name)
+                if df is None or df.empty:
+                    break
+                v += 1
+            except (KeyError, ValueError):
+                break
+        return v
 
     async def save_prompts_versioned(
         self, agent_type: str, prompts: Dict[str, str]
@@ -408,28 +410,29 @@ class ArtifactManager:
     async def list_versions(self, kind: str, agent_type: str) -> List[Dict[str, Any]]:
         """List all versions of a dataset kind for an agent type.
 
+        Probes v1, v2, ... sequentially until no dataset is found.
+
         Args:
             kind: ``prompts`` or ``demos``.
             agent_type: Agent identifier.
 
         Returns:
-            List of dicts with ``version``, ``name``, and ``dataset_id`` keys,
+            List of dicts with ``version`` and ``name`` keys,
             sorted by version ascending.
         """
-        prefix = f"dspy-{kind}-{self._tenant_id}-{agent_type}-v"
         versions = []
-        datasets = await self._provider.datasets.list_datasets()
-        for ds in datasets:
-            name = ds.get("name", "") if isinstance(ds, dict) else str(ds)
-            ds_id = ds.get("id", "") if isinstance(ds, dict) else ""
-            if name.startswith(prefix):
-                version_str = name[len(prefix):]
-                try:
-                    v = int(version_str)
-                    versions.append({"version": v, "name": name, "dataset_id": ds_id})
-                except ValueError:
-                    continue
-        return sorted(versions, key=lambda x: x["version"])
+        v = 1
+        while True:
+            name = self._versioned_dataset_name(kind, agent_type, v)
+            try:
+                df = await self._provider.datasets.get_dataset(name=name)
+                if df is None or df.empty:
+                    break
+                versions.append({"version": v, "name": name})
+                v += 1
+            except (KeyError, ValueError):
+                break
+        return versions
 
     async def get_version_lineage(
         self, kind: str, agent_type: str
