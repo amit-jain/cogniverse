@@ -1455,8 +1455,8 @@ class TestIngestionTesting:
 class TestApprovalQueueTab:
     """Verify the standalone Approval Queue tab under Admin."""
 
-    def test_approval_queue_tab_renders(self, page):
-        """Navigate to Admin → Approval Queue and verify it renders."""
+    def test_approval_queue_tab_renders_with_content(self, page):
+        """Navigate to Admin → Approval Queue and verify real content."""
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Admin")
@@ -1464,64 +1464,163 @@ class TestApprovalQueueTab:
         page.wait_for_load_state("networkidle")
 
         body_text = page.inner_text("body").lower()
-        # Should show approval queue content or a "not available" warning
-        has_content = (
-            "approval" in body_text
-            or "review" in body_text
-            or "not available" in body_text
-        )
-        assert has_content, (
-            f"Approval Queue tab should show approval content or status, "
-            f"got: {body_text[:300]}"
-        )
+
+        if "not available" in body_text:
+            # Module import failed — verify the error message is informative
+            assert "approval" in body_text or "review" in body_text, (
+                f"Unavailable message should mention approval/review: {body_text[:300]}"
+            )
+        else:
+            # Module loaded — verify actual approval queue UI elements
+            has_queue_ui = (
+                "pending" in body_text
+                or "approved" in body_text
+                or "rejected" in body_text
+                or "review" in body_text
+                or "queue" in body_text
+                or "no items" in body_text
+            )
+            assert has_queue_ui, (
+                f"Approval Queue should show queue status (pending/approved/rejected/empty), "
+                f"got: {body_text[:300]}"
+            )
 
 
-class TestStreamingSummarize:
-    """Verify the Summarize Results (Streaming) button in search tab."""
+class TestStreamingEndpointFromDashboard:
+    """Verify the A2A streaming endpoint works as the dashboard calls it."""
 
-    def test_streaming_helpers_in_dashboard(self, page):
-        """Verify streaming infrastructure is present in the running dashboard."""
-        # The Summarize Results button is inside Streamlit's search_button
-        # conditional block and doesn't survive reruns (known Streamlit limitation).
-        # Instead, verify the streaming infrastructure exists in the source.
-        with open("scripts/phoenix_dashboard_standalone.py") as f:
-            source = f.read()
-        assert "def stream_agent_call" in source, (
-            "Dashboard should have stream_agent_call helper"
-        )
-        assert "def display_streaming_result" in source, (
-            "Dashboard should have display_streaming_result helper"
-        )
-        assert "RUNTIME_URL" in source, "Dashboard should have RUNTIME_URL constant"
-        assert "message/stream" in source, (
-            "Dashboard should use A2A message/stream for SSE"
-        )
+    def test_streaming_summarize_returns_real_events(self, page):
+        """Call the streaming endpoint the same way the dashboard does.
 
-    def test_summarize_button_in_search_source(self, page):
-        """Verify Summarize Results button exists in search tab source."""
-        with open("scripts/interactive_search_tab.py") as f:
-            source = f.read()
-        assert "Summarize Results" in source, (
-            "Search tab should have Summarize Results button"
+        This tests the actual HTTP path: dashboard → A2A message/stream →
+        SummarizerAgent → emit_progress → SSE events with real summary.
+        """
+        import json
+        import uuid
+
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "message/stream",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": str(uuid.uuid4()),
+                        "contextId": str(uuid.uuid4()),
+                        "parts": [
+                            {
+                                "kind": "text",
+                                "text": "summarize what video search technology does",
+                            }
+                        ],
+                    },
+                    "metadata": {
+                        "agent_name": "summarizer_agent",
+                        "tenant_id": TENANT_ID,
+                        "stream": True,
+                    },
+                },
+            }
+
+            events = []
+            with client.stream("POST", "/a2a/", json=payload) as resp:
+                assert resp.status_code == 200
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        raw = json.loads(line[5:].strip())
+                        for part in (
+                            raw.get("result", {})
+                            .get("status", {})
+                            .get("message", {})
+                            .get("parts", [])
+                        ):
+                            text = part.get("text", "")
+                            if text:
+                                try:
+                                    events.append(json.loads(text))
+                                except json.JSONDecodeError:
+                                    pass
+
+        # Must have progress events + final
+        types = [e.get("type") for e in events]
+        assert "status" in types, f"Should have progress events, got: {types}"
+        assert "final" in types, f"Should have final event, got: {types}"
+
+        # Final must have real summary content
+        finals = [e for e in events if e.get("type") == "final"]
+        assert len(finals) == 1
+        summary = finals[0]["data"]["summary"]
+        assert len(summary) > 20, f"Summary too short: '{summary}'"
+
+    def test_streaming_search_returns_real_events(self, page):
+        """Call search streaming the same way the dashboard does."""
+        import json
+        import uuid
+
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "message/stream",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": str(uuid.uuid4()),
+                        "contextId": str(uuid.uuid4()),
+                        "parts": [{"kind": "text", "text": "find nature videos"}],
+                    },
+                    "metadata": {
+                        "agent_name": "search_agent",
+                        "tenant_id": TENANT_ID,
+                        "stream": True,
+                    },
+                },
+            }
+
+            events = []
+            with client.stream("POST", "/a2a/", json=payload) as resp:
+                assert resp.status_code == 200
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        raw = json.loads(line[5:].strip())
+                        for part in (
+                            raw.get("result", {})
+                            .get("status", {})
+                            .get("message", {})
+                            .get("parts", [])
+                        ):
+                            text = part.get("text", "")
+                            if text:
+                                try:
+                                    events.append(json.loads(text))
+                                except json.JSONDecodeError:
+                                    pass
+
+        # Search uses non-streaming dispatch — returns single event with
+        # the raw dispatch result (not progress + final like streaming agents).
+        assert len(events) == 1, (
+            f"Non-streaming search should return exactly 1 event, got {len(events)}: {events}"
         )
-        assert "display_streaming_result" in source, (
-            "Search tab should call display_streaming_result for summarization"
+        result = events[0]
+        assert "status" in result, f"Search result should have status: {result.keys()}"
+        assert result["status"] == "success", f"Search should succeed, got: {result}"
+        assert "results" in result, (
+            f"Search result should have results list: {result.keys()}"
         )
-        assert "summarizer_agent" in source, (
-            "Search tab should stream through summarizer_agent"
+        assert isinstance(result["results"], list)
+        assert result["agent"] == "search_agent", (
+            f"Agent should be search_agent, got: {result.get('agent')}"
         )
 
 
 class TestSearchAnnotationToPhoenix:
-    """Verify search annotations reach the runtime for optimization."""
+    """Verify search annotation controls and Phoenix persistence path."""
 
-    def test_annotation_save_calls_runtime(self, page):
-        """Save Annotation button should trigger a call to the runtime.
-
-        Due to Streamlit rerun limitation (buttons inside conditional blocks
-        reset on rerun), we verify the annotation controls exist and the
-        persist-to-Phoenix code path is present, not the actual HTTP call.
-        """
+    def test_annotation_controls_in_search_results(self, page):
+        """Search results must have annotation controls (Save + relevance radio)."""
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "User")
@@ -1541,7 +1640,6 @@ class TestSearchAnnotationToPhoenix:
         if results_heading.count() == 0:
             pytest.skip("No search results — cannot test annotation")
 
-        # Verify annotation controls exist in results
         save_btn = page.locator('button:has-text("Save Annotation")')
         assert save_btn.count() > 0, (
             "Save Annotation buttons must exist in search results"
@@ -1552,14 +1650,37 @@ class TestSearchAnnotationToPhoenix:
             "Relevance radio buttons must exist in search results"
         )
 
-        # Verify the annotation persist code is in the search tab source
-        # (verifying the httpx.post call exists in the code path)
-        with open("scripts/interactive_search_tab.py") as f:
-            source = f.read()
-        assert "optimize_routing" in source, (
-            "interactive_search_tab.py should persist annotations to Phoenix "
-            "via optimize_routing action"
+    def test_annotation_persist_to_phoenix_via_api(self, page):
+        """Verify the runtime accepts annotation data for optimization.
+
+        Calls the same endpoint the dashboard's Save Annotation uses,
+        verifying the full path: annotation → runtime → optimizer.
+        """
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "test annotation query",
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "action": "optimize_routing",
+                        "examples": [
+                            {
+                                "query": "basketball highlights",
+                                "chosen_agent": "search_agent",
+                                "confidence": 0.85,
+                                "search_quality": 0.9,
+                                "agent_success": True,
+                            }
+                        ],
+                    },
+                },
+            )
+
+        assert resp.status_code == 200, f"Annotation persist failed: {resp.text}"
+        data = resp.json()
+        assert data.get("status") == "optimization_triggered", (
+            f"Annotation should trigger optimization, got: {data}"
         )
-        assert "search_quality" in source, (
-            "Annotation should include search_quality mapping from relevance"
-        )
+        assert data.get("training_examples") == 1
