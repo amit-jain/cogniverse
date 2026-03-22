@@ -4,10 +4,10 @@ Integration tests for OpenShell sandbox execution.
 Uses the openshell CLI (subprocess) since the Python SDK has a protobuf
 version conflict with opentelemetry-proto (gencode 6.x vs runtime 5.x).
 
-Requires: openshell gateway running (openshell gateway start).
+Tests manage their own OpenShell gateway lifecycle — start on setup,
+destroy on teardown. No pre-existing gateway required.
 """
 
-import json
 import subprocess
 import time
 
@@ -15,31 +15,87 @@ import pytest
 
 from cogniverse_runtime.sandbox_manager import SandboxManager
 
+GATEWAY_NAME = "cogniverse-test-gw"
+GATEWAY_PORT = 19090
 
-def _gateway_available():
+
+def _openshell_cli_available():
     try:
         result = subprocess.run(
-            ["openshell", "status"],
-            capture_output=True, text=True, timeout=10,
+            ["openshell", "--version"],
+            capture_output=True, text=True, timeout=5,
         )
-        return "connected" in result.stdout.lower()
+        return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _gateway_available(), reason="OpenShell gateway not running"
-)
+def _docker_available():
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _openshell_cli_available(), reason="openshell CLI not installed"
+    ),
+    pytest.mark.skipif(
+        not _docker_available(), reason="Docker not running"
+    ),
+]
+
+
+@pytest.fixture(scope="module")
+def openshell_gateway():
+    """
+    Start an OpenShell gateway for integration tests.
+
+    Uses a unique name and port to avoid conflicts with user's dev gateway.
+    Destroys on teardown.
+    """
+    # Destroy any leftover gateway from a previous failed run
+    subprocess.run(
+        ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
+        capture_output=True, timeout=30, check=False,
+    )
+
+    # Start gateway on non-default port
+    result = subprocess.run(
+        ["openshell", "gateway", "start", "--name", GATEWAY_NAME,
+         "--port", str(GATEWAY_PORT)],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Failed to start OpenShell gateway: {result.stderr}")
+
+    # Select this gateway as active
+    subprocess.run(
+        ["openshell", "gateway", "select", GATEWAY_NAME],
+        capture_output=True, timeout=10, check=False,
+    )
+
+    yield GATEWAY_NAME
+
+    # Teardown: destroy gateway
+    subprocess.run(
+        ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
+        capture_output=True, timeout=60, check=False,
+    )
 
 
 class TestSandboxExecution:
     """Test real sandbox creation and command execution via CLI."""
 
-    def test_create_and_exec_in_sandbox(self):
+    def test_create_and_exec_in_sandbox(self, openshell_gateway):
         """Create a sandbox, run a command inside it, verify output, delete."""
-        sandbox_name = f"test-cogniverse-{int(time.time())}"
+        sandbox_name = f"test-exec-{int(time.time())}"
 
-        # Create sandbox with a one-shot command
         result = subprocess.run(
             ["openshell", "sandbox", "create", "--name", sandbox_name,
              "--no-keep", "--", "echo", "hello-cogniverse"],
@@ -48,13 +104,12 @@ class TestSandboxExecution:
         assert result.returncode == 0, f"Failed: {result.stderr}"
         assert "hello-cogniverse" in result.stdout
 
-        # Cleanup (--no-keep should auto-delete, but be safe)
         subprocess.run(
             ["openshell", "sandbox", "delete", sandbox_name],
             capture_output=True, timeout=30, check=False,
         )
 
-    def test_sandbox_network_isolation(self):
+    def test_sandbox_network_isolation(self, openshell_gateway):
         """Sandbox cannot reach arbitrary external hosts."""
         sandbox_name = f"test-netiso-{int(time.time())}"
 
@@ -65,7 +120,6 @@ class TestSandboxExecution:
              "import urllib.request; urllib.request.urlopen('http://example.com', timeout=5)"],
             capture_output=True, text=True, timeout=120,
         )
-        # Default sandbox policy blocks arbitrary egress
         assert result.returncode != 0 or "Error" in result.stderr + result.stdout
 
         subprocess.run(
@@ -74,41 +128,37 @@ class TestSandboxExecution:
         )
 
 
-class TestSandboxManagerWithGateway:
-    """Test SandboxManager policy loading against real gateway."""
+class TestSandboxManagerPolicies:
+    """Test SandboxManager policy loading and validation."""
 
-    def test_manager_connects_to_gateway(self):
-        """SandboxManager detects running gateway as available."""
-        # SandboxManager uses the Python SDK which has protobuf conflict.
-        # Verify policy loading works (no SDK needed), and availability
-        # detection correctly reports the conflict.
+    def test_manager_loads_all_policies(self, openshell_gateway):
         manager = SandboxManager(
             policy_dir="configs/openshell",
             enabled=True,
         )
-        # Gateway is running but SDK import fails — manager should not be available
-        # due to protobuf conflict (this is the current state)
         assert len(manager._policies) >= 4
         assert "search_agent" in manager._policies
+        assert "routing_agent" in manager._policies
+        assert "orchestrator_agent" in manager._policies
+        assert "summarizer_agent" in manager._policies
 
-    def test_policy_egress_rules(self):
-        """Verify loaded policies have correct egress rules."""
-        manager = SandboxManager(
-            policy_dir="configs/openshell",
-            enabled=False,
-        )
+    def test_search_agent_policy_allows_vespa_and_ollama(self, openshell_gateway):
+        manager = SandboxManager(policy_dir="configs/openshell", enabled=False)
         manager._load_policies()
 
-        search_policy = manager.get_policy("search_agent")
-        assert search_policy is not None
-        egress = search_policy["network_policies"]["egress"]
-        allowed_ports = {rule["port"] for rule in egress}
-        assert 8080 in allowed_ports, "Search agent must reach Vespa (8080)"
-        assert 11434 in allowed_ports, "Search agent must reach Ollama (11434)"
-        assert search_policy["network_policies"]["deny_all_other"] is True
+        policy = manager.get_policy("search_agent")
+        egress = policy["network_policies"]["egress"]
+        ports = {rule["port"] for rule in egress}
+        assert 8080 in ports, "Search agent must reach Vespa (8080)"
+        assert 11434 in ports, "Search agent must reach Ollama (11434)"
+        assert policy["network_policies"]["deny_all_other"] is True
 
-        summarizer_policy = manager.get_policy("summarizer_agent")
-        summarizer_egress = summarizer_policy["network_policies"]["egress"]
-        summarizer_ports = {rule["port"] for rule in summarizer_egress}
-        assert 8080 not in summarizer_ports, "Summarizer should NOT reach Vespa"
-        assert 11434 in summarizer_ports, "Summarizer must reach Ollama"
+    def test_summarizer_agent_blocked_from_vespa(self, openshell_gateway):
+        manager = SandboxManager(policy_dir="configs/openshell", enabled=False)
+        manager._load_policies()
+
+        policy = manager.get_policy("summarizer_agent")
+        egress = policy["network_policies"]["egress"]
+        ports = {rule["port"] for rule in egress}
+        assert 8080 not in ports, "Summarizer should NOT reach Vespa"
+        assert 11434 in ports, "Summarizer must reach Ollama"
