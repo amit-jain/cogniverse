@@ -348,16 +348,37 @@ class TestCodeSearchVespaEndToEnd:
                 f"file={fields.get('video_id', '?')}"
             )
 
-        # 5. Verify results
+        # 5. Verify: top result must be from deep_research_agent.py
         assert len(hits) > 0, "Search returned zero results"
         top_hit = hits[0]
         assert top_hit.get("relevance", 0) > 0, "Top result has zero relevance"
 
         top_fields = top_hit.get("fields", {})
-        top_transcript = top_fields.get("audio_transcript", "")
-        assert top_transcript, "Top result has empty content"
+        top_file = top_fields.get("video_id", "")
+        top_name = top_fields.get("video_title", "")
+        top_content = top_fields.get("audio_transcript", "")
+
+        assert "deep_research_agent" in top_file, (
+            f"Top result should be from deep_research_agent.py, got file={top_file!r} "
+            f"name={top_name!r}. All hits: "
+            + str([(h['fields'].get('video_title'), h['fields'].get('video_id'))
+                   for h in hits])
+        )
+        assert "research" in top_content.lower() or "evidence" in top_content.lower(), (
+            f"Top result content should mention 'research' or 'evidence', "
+            f"got: {top_content[:200]!r}"
+        )
+
+        # Verify both source files appear somewhere in results (both were ingested)
+        all_files = {h["fields"].get("video_id", "") for h in hits}
+        has_deep_research = any("deep_research_agent" in f for f in all_files)
+        has_coding_agent = any("coding_agent" in f for f in all_files)
+        assert has_deep_research or has_coding_agent, (
+            f"Expected results from ingested files, got files: {all_files}"
+        )
 
         logger.info(
-            f"Top result: '{top_fields.get('video_title')}' "
-            f"(score={top_hit['relevance']:.4f}, content_length={len(top_transcript)})"
+            f"Top result: '{top_name}' from {top_file} "
+            f"(score={top_hit['relevance']:.4f})"
         )
+        logger.info(f"All result files: {all_files}")

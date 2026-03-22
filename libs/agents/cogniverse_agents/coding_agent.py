@@ -278,7 +278,7 @@ class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
             language=language,
             previous_error=previous_error or "First attempt.",
         )
-        code = str(result.code)
+        code = self._strip_markdown_fences(str(result.code))
         test_command = str(getattr(result, "test_command", ""))
         return code, test_command
 
@@ -289,63 +289,43 @@ class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
         test_command: str,
         language: str,
     ) -> Dict[str, Any]:
-        """Execute code in sandbox or locally."""
-        import os
-
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, "w") as f:
-            f.write(code)
+        """Execute code in an OpenShell sandbox. Refuses to run without one."""
+        if not self._sandbox_manager or not self._sandbox_manager.available:
+            raise RuntimeError(
+                "CodingAgent requires a SandboxManager with an available OpenShell "
+                "gateway. Executing LLM-generated code without sandbox isolation "
+                "is not permitted. Provide a sandbox_manager to CodingAgent or "
+                "CodingDeps, or start the OpenShell gateway."
+            )
 
         run_cmd = test_command.strip()
         if not run_cmd:
             run_cmd = self._default_run_command(file_path, language)
 
-        if self._sandbox_manager and self._sandbox_manager.available:
-            result = self._sandbox_manager.exec_in_sandbox(
-                agent_type="coding_agent",
-                command=["sh", "-c", run_cmd],
-                timeout_seconds=300,
-            )
-            if result is not None:
-                result["success"] = result.get("exit_code", -1) == 0
-                return result
+        # Write code inside the sandbox via exec, not on the host filesystem
+        write_cmd = (
+            f"mkdir -p $(dirname {file_path}) && "
+            f"cat > {file_path} << 'SANDBOX_CODE_EOF'\n{code}\nSANDBOX_CODE_EOF"
+        )
+        self._sandbox_manager.exec_in_sandbox(
+            agent_type="coding_agent",
+            command=["sh", "-c", write_cmd],
+            timeout_seconds=30,
+        )
 
-        # Fallback: local subprocess execution
-        import asyncio
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                run_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd="/tmp/coding_workspace",
+        result = self._sandbox_manager.exec_in_sandbox(
+            agent_type="coding_agent",
+            command=["sh", "-c", run_cmd],
+            timeout_seconds=300,
+        )
+        if result is None:
+            raise RuntimeError(
+                "Sandbox exec returned None — sandbox session may have failed. "
+                "Check OpenShell gateway logs."
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=60
-            )
-            return {
-                "command": run_cmd,
-                "stdout": stdout_bytes.decode("utf-8", errors="replace"),
-                "stderr": stderr_bytes.decode("utf-8", errors="replace"),
-                "exit_code": proc.returncode or 0,
-                "success": proc.returncode == 0,
-            }
-        except asyncio.TimeoutError:
-            return {
-                "command": run_cmd,
-                "stdout": "",
-                "stderr": "Execution timed out after 60 seconds",
-                "exit_code": -1,
-                "success": False,
-            }
-        except Exception as e:
-            return {
-                "command": run_cmd,
-                "stdout": "",
-                "stderr": str(e),
-                "exit_code": -1,
-                "success": False,
-            }
+        result["command"] = run_cmd
+        result["success"] = result.get("exit_code", -1) == 0
+        return result
 
     async def _evaluate_output(
         self,
@@ -368,6 +348,15 @@ class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
         is_successful = bool(result.is_successful)
         feedback = str(result.feedback)
         return is_successful, feedback
+
+    @staticmethod
+    def _strip_markdown_fences(code: str) -> str:
+        """Strip markdown code fences (```python ... ```) from LLM output."""
+        import re
+
+        stripped = re.sub(r"^```[a-zA-Z]*\n?", "", code.strip())
+        stripped = re.sub(r"\n?```$", "", stripped.strip())
+        return stripped.strip()
 
     @staticmethod
     def _ext(language: str) -> str:

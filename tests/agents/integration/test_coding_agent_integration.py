@@ -2,15 +2,17 @@
 Integration test for CodingAgent.
 
 Tests the full coding agent pipeline: DSPy planning + code generation +
-local execution + output evaluation. Uses real Ollama LLM when available.
+sandboxed execution + output evaluation. Uses real Ollama LLM and real
+OpenShell sandbox (started/destroyed per test module).
 
-Requires: Ollama with qwen3:4b model running at localhost:11434.
+Requires: Ollama at localhost:11434, openshell CLI, Docker.
 """
 
 import logging
 
 import pytest
 
+from cogniverse_runtime.sandbox_manager import SandboxManager
 from tests.agents.integration.conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
@@ -144,9 +146,80 @@ class TestCodingAgentDispatchWiring:
         assert profile["schema_config"]["num_patches"] == 2048
 
 
+def _openshell_cli_available() -> bool:
+    import subprocess as _sp
+
+    try:
+        return _sp.run(
+            ["openshell", "--version"], capture_output=True, timeout=5
+        ).returncode == 0
+    except (FileNotFoundError, _sp.TimeoutExpired):
+        return False
+
+
+def _docker_available() -> bool:
+    import subprocess as _sp
+
+    try:
+        return _sp.run(
+            ["docker", "info"], capture_output=True, timeout=10
+        ).returncode == 0
+    except (FileNotFoundError, _sp.TimeoutExpired):
+        return False
+
+
+CODING_GW_NAME = "cogniverse-coding-test-gw"
+CODING_GW_PORT = 19091
+
+
+@pytest.fixture(scope="module")
+def coding_sandbox():
+    """Start an OpenShell gateway, yield a SandboxManager, destroy on teardown."""
+    import subprocess
+
+    if not _openshell_cli_available():
+        pytest.skip("openshell CLI not installed")
+    if not _docker_available():
+        pytest.skip("Docker not running")
+
+    subprocess.run(
+        ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
+        capture_output=True, timeout=30, check=False,
+    )
+
+    result = subprocess.run(
+        ["openshell", "gateway", "start", "--name", CODING_GW_NAME,
+         "--port", str(CODING_GW_PORT)],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Failed to start OpenShell gateway: {result.stderr}")
+
+    subprocess.run(
+        ["openshell", "gateway", "select", CODING_GW_NAME],
+        capture_output=True, timeout=10, check=False,
+    )
+
+    manager = SandboxManager(policy_dir="configs/openshell", enabled=True)
+    if not manager.available:
+        pytest.skip("SandboxManager could not connect to gateway")
+
+    yield manager
+
+    manager.close()
+    subprocess.run(
+        ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
+        capture_output=True, timeout=60, check=False,
+    )
+
+
 @skip_if_no_ollama
 class TestCodingAgentWithOllama:
-    """Integration tests requiring a real Ollama LLM instance."""
+    """Integration tests: real Ollama LLM + real OpenShell sandbox.
+
+    All LLM-generated code executes inside an OpenShell sandbox with the
+    coding_agent policy (Ollama-only network, /tmp/coding_workspace/ write).
+    """
 
     @pytest.fixture
     def dspy_configured(self, dspy_lm):
@@ -154,68 +227,64 @@ class TestCodingAgentWithOllama:
         return dspy_lm
 
     @pytest.mark.asyncio
-    async def test_coding_agent_generates_code(self, dspy_configured):
-        """Full coding agent: plan → generate → execute → evaluate.
-
-        Verifies the agent produces actual Python code that gets written
-        to /tmp/coding_workspace/ and executed, with real stdout/stderr
-        captured in execution_results.
-        """
+    async def test_coding_agent_generates_working_code(self, dspy_configured, coding_sandbox):
+        """LLM generates add(2,3) → executes in OpenShell sandbox → stdout contains '5'."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
             CodingInput,
         )
 
-        deps = CodingDeps(tenant_id="test")
-        agent = CodingAgent(deps=deps)
+        deps = CodingDeps(tenant_id="test", sandbox_manager=coding_sandbox)
+        agent = CodingAgent(deps=deps, sandbox_manager=coding_sandbox)
 
         input_data = CodingInput(
             task="Write a Python function called 'add' that takes two numbers and returns their sum. Print add(2, 3).",
             language="python",
-            max_iterations=2,
+            max_iterations=3,
         )
 
         result = await agent.process(input_data)
 
-        # Plan must be non-empty — the LLM actually planned something
         assert result.plan, "Plan should be non-empty"
         assert result.iterations_used >= 1
-
-        # Code changes must contain actual generated code
         assert len(result.code_changes) > 0, "No code was generated"
-        code_change = result.code_changes[0]
-        assert code_change["file_path"].endswith(".py"), (
-            f"Expected .py file, got: {code_change['file_path']}"
-        )
-        generated_code = code_change["content"]
-        assert len(generated_code) > 10, (
-            f"Generated code is suspiciously short: {generated_code!r}"
-        )
-        assert "def " in generated_code or "add" in generated_code, (
-            f"Generated code doesn't contain a function definition: {generated_code[:200]}"
-        )
 
-        # Execution results must exist — code was actually run
+        generated_code = result.code_changes[0]["content"]
+        assert len(generated_code) > 10, f"Code too short: {generated_code!r}"
+
+        # The agent already ran this in the sandbox — check its results
         assert len(result.execution_results) > 0, "No execution results"
         last_exec = result.execution_results[-1]
-        assert "exit_code" in last_exec, "Execution result missing exit_code"
-        assert "stdout" in last_exec, "Execution result missing stdout"
-        assert "stderr" in last_exec, "Execution result missing stderr"
 
-        # Files modified should reference the workspace path
-        assert len(result.files_modified) > 0
-        assert "/tmp/coding_workspace/" in result.files_modified[0]
+        logger.info(f"Sandbox execution: exit={last_exec.get('exit_code')}")
+        logger.info(f"stdout: {last_exec.get('stdout', '')[:300]!r}")
+        logger.info(f"stderr: {last_exec.get('stderr', '')[:300]!r}")
+        logger.info(f"Generated code:\n{generated_code}")
 
-        logger.info(f"Iterations: {result.iterations_used}")
-        logger.info(f"Generated code ({len(generated_code)} chars):\n{generated_code[:300]}")
-        logger.info(f"Exit code: {last_exec['exit_code']}")
-        logger.info(f"stdout: {last_exec['stdout'][:200]}")
-        logger.info(f"stderr: {last_exec['stderr'][:200]}")
+        # Also verify independently via sandbox
+        verify = coding_sandbox.exec_in_sandbox(
+            agent_type="coding_agent",
+            command=["python3", "-c", generated_code],
+            timeout_seconds=30,
+        )
+        assert verify is not None, "Sandbox exec returned None"
+        stdout = verify["stdout"].strip()
+
+        logger.info(f"Independent sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+
+        assert verify["exit_code"] == 0, (
+            f"Generated code failed in sandbox with exit {verify['exit_code']}.\n"
+            f"stderr: {verify['stderr']}\ncode:\n{generated_code}"
+        )
+        assert "5" in stdout, (
+            f"Expected '5' in stdout from add(2,3), got: {stdout!r}\n"
+            f"code:\n{generated_code}"
+        )
 
     @pytest.mark.asyncio
-    async def test_coding_agent_with_search_fn(self, dspy_configured):
-        """Coding agent with mock search context: generates code, writes file, executes."""
+    async def test_coding_agent_with_search_fn(self, dspy_configured, coding_sandbox):
+        """LLM generates email validation with search context → OpenShell sandbox verifies output."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
@@ -238,28 +307,52 @@ class TestCodingAgentWithOllama:
                 }
             ]
 
-        deps = CodingDeps(tenant_id="test")
-        agent = CodingAgent(deps=deps, search_fn=mock_search_fn)
+        deps = CodingDeps(tenant_id="test", sandbox_manager=coding_sandbox)
+        agent = CodingAgent(deps=deps, search_fn=mock_search_fn, sandbox_manager=coding_sandbox)
 
         input_data = CodingInput(
             task="Write a function that validates email addresses using regex. Print whether 'test@example.com' is valid.",
             language="python",
-            max_iterations=2,
+            max_iterations=3,
         )
 
         result = await agent.process(input_data)
 
-        # search_fn was actually called
         assert search_called, "search_fn was never called by the agent"
-
-        # Code was generated and executed
         assert result.plan
         assert result.iterations_used >= 1
         assert len(result.code_changes) > 0, "No code generated"
-        assert len(result.execution_results) > 0, "No execution results"
 
         generated_code = result.code_changes[0]["content"]
         assert len(generated_code) > 10
-        logger.info(f"Search called: {search_called}")
-        logger.info(f"Generated code:\n{generated_code[:300]}")
-        logger.info(f"Execution: exit={result.execution_results[-1].get('exit_code')}")
+
+        # Run generated code + our test harness in sandbox to verify correctness.
+        # The LLM may or may not include a print call, so we append our own
+        # assertion that exercises the function it defined.
+        test_harness = (
+            generated_code + "\n\n"
+            "# Test harness: verify the function works\n"
+            "result = validate_email('test@example.com')\n"
+            "assert result, f'Expected True for test@example.com, got {result}'\n"
+            "print('PASS:', result)\n"
+        )
+        verify = coding_sandbox.exec_in_sandbox(
+            agent_type="coding_agent",
+            command=["python3", "-c", test_harness],
+            timeout_seconds=30,
+        )
+        assert verify is not None, "Sandbox exec returned None"
+        stdout = verify["stdout"].strip().lower()
+
+        logger.info(f"Sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+        logger.info(f"Generated code:\n{generated_code}")
+        logger.info(f"Test harness:\n{test_harness}")
+
+        assert verify["exit_code"] == 0, (
+            f"Generated code + test harness failed in sandbox with exit {verify['exit_code']}.\n"
+            f"stderr: {verify['stderr']}\nharness:\n{test_harness}"
+        )
+        assert "pass" in stdout, (
+            f"Expected 'PASS' in output, got: {stdout!r}\n"
+            f"harness:\n{test_harness}"
+        )
