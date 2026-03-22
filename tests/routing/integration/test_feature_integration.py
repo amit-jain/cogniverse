@@ -1,5 +1,5 @@
 """
-Integration tests for Sprints 1-6 features against real Phoenix.
+Integration tests for automation, evaluation, and versioning features.
 
 Tests exercise the full round-trip through real telemetry infrastructure:
 1. Online evaluation: write span → evaluate → read back annotation scores
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def test_tenant_id():
-    return f"test_sprint_integ_{int(time.time())}"
+    return f"test_feature_integ_{int(time.time())}"
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def _write_routing_spans(tm, tenant_id, spans_data):
 
 
 class TestOnlineEvaluationIntegration:
-    """Sprint 2: Online evaluation scores real spans and persists annotations."""
+    """2: Online evaluation scores real spans and persists annotations."""
 
     @pytest.mark.asyncio
     async def test_evaluate_span_and_persist_to_phoenix(
@@ -122,7 +122,7 @@ class TestOnlineEvaluationIntegration:
 
 
 class TestAnnotationQueueIntegration:
-    """Sprint 3: Annotation queue with real Phoenix spans."""
+    """3: Annotation queue with real Phoenix spans."""
 
     @pytest.mark.asyncio
     async def test_identify_enqueue_assign_complete(
@@ -178,7 +178,7 @@ class TestAnnotationQueueIntegration:
 
 
 class TestAutomationRulesIntegration:
-    """Sprint 1: Config-driven thresholds change real annotation behavior."""
+    """1: Config-driven thresholds change real annotation behavior."""
 
     @pytest.mark.asyncio
     async def test_strict_threshold_flags_more_spans(
@@ -229,7 +229,7 @@ class TestAutomationRulesIntegration:
 
 
 class TestDatasetVersioningIntegration:
-    """Sprint 5: Versioned dataset save/load round-trip with real Phoenix."""
+    """5: Versioned dataset save/load round-trip with real Phoenix."""
 
     @pytest.mark.asyncio
     async def test_save_v1_v2_list_versions_in_phoenix(
