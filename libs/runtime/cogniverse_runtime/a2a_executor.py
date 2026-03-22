@@ -25,8 +25,29 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
 
-# Agent capabilities that support streaming via emit_progress()
-_STREAMING_CAPABILITIES = frozenset({"summarization", "text_generation"})
+# All agents support streaming via emit_progress() and call_dspy()
+_STREAMING_CAPABILITIES = frozenset(
+    {
+        "summarization",
+        "text_generation",
+        "routing",
+        "search",
+        "video_search",
+        "retrieval",
+        "detailed_report",
+        "orchestration",
+        "planning",
+        "query_enhancement",
+        "entity_extraction",
+        "profile_selection",
+        "image_search",
+        "visual_analysis",
+        "audio_analysis",
+        "transcription",
+        "document_analysis",
+        "pdf_processing",
+    }
+)
 
 
 class CogniverseAgentExecutor(AgentExecutor):

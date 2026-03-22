@@ -91,10 +91,7 @@ class AgentDispatcher:
         """Create a streaming-capable agent and its typed input.
 
         Returns (agent, typed_input) for use with agent.process(typed_input, stream=True).
-        Used by A2A executor for streaming via /tasks/sendSubscribe.
-
-        Raises:
-            ValueError: If agent_name doesn't support streaming.
+        All agents support streaming via emit_progress() and call_dspy().
         """
         agent_entry = self._registry.get_agent(agent_name)
         if not agent_entry:
@@ -112,14 +109,62 @@ class AgentDispatcher:
             deps = SummarizerDeps(tenant_id=tenant_id)
             agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
             typed_input = SummarizerInput(
-                query=query,
-                search_results=[],
-                summary_type="general",
+                query=query, search_results=[], summary_type="general"
             )
             return agent, typed_input
 
+        if capabilities & {"routing"}:
+            from cogniverse_agents.routing_agent import (
+                RoutingAgent,
+                RoutingDeps,
+                RoutingInput,
+            )
+            from cogniverse_foundation.config.utils import get_config
+            from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+            config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            )
+            llm_config = config.get_llm_config().resolve("routing_agent")
+            deps = RoutingDeps(
+                telemetry_config=TelemetryConfig(enabled=False),
+                llm_config=llm_config,
+            )
+            agent = RoutingAgent(deps=deps, registry=self._registry)
+            typed_input = RoutingInput(query=query, tenant_id=tenant_id)
+            return agent, typed_input
+
+        if capabilities & {"detailed_report"}:
+            from cogniverse_agents.detailed_report_agent import (
+                DetailedReportAgent,
+                DetailedReportDeps,
+                DetailedReportInput,
+            )
+
+            deps = DetailedReportDeps(tenant_id=tenant_id)
+            agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
+            typed_input = DetailedReportInput(query=query, search_results=[])
+            return agent, typed_input
+
+        if capabilities & {"search", "video_search", "retrieval"}:
+            from cogniverse_agents.search_agent import (
+                SearchAgent,
+                SearchAgentDeps,
+                SearchInput,
+            )
+
+            deps = SearchAgentDeps(tenant_id=tenant_id)
+            agent = SearchAgent(
+                deps=deps,
+                schema_loader=self._schema_loader,
+                config_manager=self._config_manager,
+            )
+            typed_input = SearchInput(query=query, tenant_id=tenant_id)
+            return agent, typed_input
+
+        # Fallback: agent not supported for streaming
         raise ValueError(
-            f"Agent '{agent_name}' does not support streaming. "
+            f"Agent '{agent_name}' streaming not configured. "
             f"Capabilities: {agent_entry.capabilities}"
         )
 

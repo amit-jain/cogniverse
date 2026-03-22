@@ -1044,6 +1044,202 @@ class TestA2AProtocol:
 
 @pytest.mark.e2e
 @skip_if_no_runtime
+class TestStreamingAllAgents:
+    """Verify A2A streaming works for multiple agent types."""
+
+    @pytest.mark.parametrize(
+        "agent_name,query,expect_streaming",
+        [
+            ("summarizer_agent", "summarize AI trends briefly", True),
+            ("detailed_report_agent", "write a report on search results", True),
+            ("routing_agent", "find videos about cats", True),
+        ],
+    )
+    def test_streaming_agent_returns_events(self, agent_name, query, expect_streaming):
+        """message/stream returns SSE events for streaming-capable agents."""
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            with client.stream(
+                "POST",
+                "/a2a/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "e2e-stream-all",
+                    "method": "message/stream",
+                    "params": {
+                        "message": {
+                            "role": "user",
+                            "messageId": str(uuid.uuid4()),
+                            "contextId": str(uuid.uuid4()),
+                            "parts": [{"kind": "text", "text": query}],
+                        },
+                        "metadata": {
+                            "agent_name": agent_name,
+                            "tenant_id": TENANT_ID,
+                            "stream": True,
+                        },
+                    },
+                },
+            ) as resp:
+                assert resp.status_code == 200
+                events = []
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        data_str = line[len("data:") :].strip()
+                        if data_str:
+                            raw = json.loads(data_str)
+                            for part in (
+                                raw.get("result", {})
+                                .get("status", {})
+                                .get("message", {})
+                                .get("parts", [])
+                            ):
+                                text = part.get("text", "")
+                                if text:
+                                    try:
+                                        events.append(json.loads(text))
+                                    except json.JSONDecodeError:
+                                        pass
+
+        assert len(events) >= 1, (
+            f"{agent_name}: should return ≥1 event, got {len(events)}"
+        )
+
+        if expect_streaming:
+            types = [e.get("type") for e in events]
+            assert "status" in types, (
+                f"{agent_name}: streaming agent should emit progress events, got: {types}"
+            )
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestOptimizationE2E:
+    """End-to-end optimization through the runtime API."""
+
+    def test_record_examples_triggers_optimization(self):
+        """POST optimize_routing with examples → optimization_triggered."""
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "optimize routing",
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "action": "optimize_routing",
+                        "examples": [
+                            {
+                                "query": "find cat videos",
+                                "chosen_agent": "search_agent",
+                                "confidence": 0.9,
+                                "search_quality": 0.85,
+                                "agent_success": True,
+                            },
+                        ],
+                    },
+                },
+            )
+
+        assert resp.status_code == 200, f"Optimization failed: {resp.text}"
+        data = resp.json()
+        assert data.get("status") == "optimization_triggered", (
+            f"Should trigger optimization, got: {data}"
+        )
+        assert data.get("training_examples") == 1
+
+    def test_auto_optimization_cycle_from_traces(self):
+        """POST optimize_routing without examples → runs full cycle from traces."""
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "optimize routing",
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "action": "optimize_routing",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200, f"Optimization cycle failed: {resp.text}"
+        data = resp.json()
+        assert data.get("status") == "optimization_triggered", (
+            f"Auto cycle should trigger optimization, got: {data}"
+        )
+        assert data.get("optimizer") == "OptimizationOrchestrator"
+        assert "cycle_results" in data
+        assert isinstance(data["cycle_results"], dict)
+
+    def test_optimization_status(self):
+        """GET optimization status returns optimizer state."""
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "optimization status",
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "action": "get_optimization_status",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "status" in data
+        assert "optimizer_ready" in data
+        assert isinstance(data["optimizer_ready"], bool)
+        assert "metrics" in data
+        assert isinstance(data["metrics"], dict)
+
+    def test_route_after_optimization_succeeds(self):
+        """Routing works after optimization was triggered."""
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            # First trigger optimization
+            client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "optimize routing",
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "action": "optimize_routing",
+                        "examples": [
+                            {
+                                "query": "basketball videos",
+                                "chosen_agent": "search_agent",
+                                "confidence": 0.8,
+                                "search_quality": 0.7,
+                                "agent_success": True,
+                            },
+                        ],
+                    },
+                },
+            )
+
+            # Then route a query — should use optimized model
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "find basketball highlights",
+                    "context": {"tenant_id": TENANT_ID},
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert "recommended_agent" in data
+        assert data["confidence"] > 0.0
+        assert len(data["reasoning"]) > 5
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
 class TestIngestionAPI:
     """Ingestion endpoints: start, status, upload validation."""
 
