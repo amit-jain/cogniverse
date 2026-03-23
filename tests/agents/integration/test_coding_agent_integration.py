@@ -486,9 +486,15 @@ class TestCodingAgentWithOllama:
         generated_code = result.code_changes[0]["content"]
         assert len(generated_code) > 10
 
+        # Find the function name the LLM chose (it may not be "validate_email")
+        import re as _re
+
+        fn_match = _re.search(r"def\s+(\w+)\s*\(", generated_code)
+        fn_name = fn_match.group(1) if fn_match else "validate_email"
+
         test_harness = (
             generated_code + "\n\n"
-            "result = validate_email('test@example.com')\n"
+            f"result = {fn_name}('test@example.com')\n"
             "assert result, f'Expected True for test@example.com, got {result}'\n"
             "print('PASS:', result)\n"
         )
