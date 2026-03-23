@@ -768,6 +768,7 @@ class AgentDispatcher:
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         import dspy
+
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
