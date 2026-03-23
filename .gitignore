@@ -121,3 +121,4 @@ test_opt/
 workflow_intelligence.db
 .colgrep/
 .playwright-mcp/
+.worktrees/
