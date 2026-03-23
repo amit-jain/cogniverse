@@ -777,8 +777,7 @@ class AgentDispatcher:
         from cogniverse_foundation.config.utils import get_config
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        llm_endpoint = config.get_llm_config().resolve("coding_agent")
-        coding_lm = create_dspy_lm(llm_endpoint)
+        coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
         dspy.configure(lm=coding_lm)
 
         deps = CodingDeps(

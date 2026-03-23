@@ -375,8 +375,18 @@ class TestCodingAgentWithOllama:
     """
 
     @pytest.fixture
-    def dspy_configured(self, dspy_lm):
-        return dspy_lm
+    def dspy_configured(self):
+        """Configure DSPy with the coding_agent's resolved LLM config."""
+        import dspy
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+
+        cm = create_default_config_manager()
+        config = get_config(tenant_id="default", config_manager=cm)
+        endpoint = config.get_llm_config().resolve("coding_agent")
+        lm = create_dspy_lm(endpoint)
+        dspy.configure(lm=lm)
+        return lm
 
     @pytest.mark.asyncio
     async def test_coding_agent_generates_working_code(self, dspy_configured, code_search_infra):
