@@ -767,11 +767,19 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        import dspy
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
             CodingInput,
         )
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.utils import get_config
+
+        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        llm_endpoint = config.get_llm_config().resolve("coding_agent")
+        coding_lm = create_dspy_lm(llm_endpoint)
+        dspy.configure(lm=coding_lm)
 
         deps = CodingDeps(
             tenant_id=tenant_id,
@@ -781,13 +789,12 @@ class AgentDispatcher:
         async def search_fn(query: str, tenant_id: str):
             """Search code using the code_lateon_mv profile."""
             from cogniverse_agents.search.service import SearchService
-            from cogniverse_foundation.config.utils import get_config
 
-            config = get_config(
+            search_config = get_config(
                 tenant_id=tenant_id, config_manager=self._config_manager
             )
             search_service = SearchService(
-                config=config,
+                config=search_config,
                 config_manager=self._config_manager,
                 schema_loader=self._schema_loader,
             )

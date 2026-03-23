@@ -15,7 +15,7 @@ filesystem:
 
 inference:
   allowed_models:
-    - "ollama/qwen3:4b"
+    - "ollama/qwen2.5-coder:7b-instruct"
 
 process:
   max_memory_mb: 4096

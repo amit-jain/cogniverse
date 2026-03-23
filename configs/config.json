@@ -36,7 +36,7 @@
       "summarizer_agent": { "model": "ollama/qwen3:4b" },
       "detailed_report_agent": { "model": "ollama/qwen3:4b" },
       "vlm_interface": { "model": "ollama/deepseek-r1:7b" },
-      "coding_agent": { "model": "ollama/qwen3:4b", "max_tokens": 2048 },
+      "coding_agent": { "model": "ollama/qwen2.5-coder:7b-instruct", "max_tokens": 2048 },
       "query_analysis_module": null,
       "llm_auto_annotator": null
     }
