@@ -92,6 +92,7 @@ cogniverse-sdk = { workspace = true }
 cogniverse-synthetic = { workspace = true }
 cogniverse-telemetry-phoenix = { workspace = true }
 cogniverse-vespa = { workspace = true }
+cogniverse-cli = { workspace = true }
 
 [project.optional-dependencies]
 dev = [
@@ -230,6 +231,7 @@ dev = [
     "isort>=6.0.1",
     "mypy>=1.17.1",
     "ruff>=0.12.9",
+    "cogniverse-cli",
 ]
 docs = [
     "mkdocs==1.6.1",

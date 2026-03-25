@@ -17,6 +17,8 @@ spec:
 
     arguments:
       parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
       - name: tenant-id
         value: "default"
       - name: annotation-threshold
@@ -42,7 +44,7 @@ spec:
     # Check if we have enough annotations to optimize
     - name: check-annotation-count
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -155,7 +157,7 @@ spec:
         - name: optimizer-type
         - name: optimizer-category
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -237,7 +239,7 @@ spec:
         - name: dspy-optimizer
         - name: dataset-name
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -349,6 +351,8 @@ spec:
 
     arguments:
       parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
       - name: tenant-id
         value: "default"
       - name: annotation-threshold
@@ -366,7 +370,7 @@ spec:
 
     - name: check-and-optimize
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |

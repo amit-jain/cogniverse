@@ -2,6 +2,8 @@
 {{- if .Values.initJobs.schemaDeployment.enabled -}}
 ---
 # Schema Deployment Job
+# Waits for runtime to be healthy, then deploys data schemas via runtime API.
+# Runtime deploys metadata schemas at startup — this job handles data schemas.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -29,38 +31,40 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: schema-deployment
-        image: "{{ .Values.initJobs.schemaDeployment.image.repository }}:{{ .Values.initJobs.schemaDeployment.image.tag }}"
-        imagePullPolicy: IfNotPresent
+        image: curlimages/curl:latest
         command:
-          - /bin/bash
+          - /bin/sh
           - -c
           - |
             set -e
-            echo "Waiting for Vespa to be ready..."
-            until curl -sf http://{{ $fullName }}-vespa:{{ .Values.vespa.service.ports.config }}/state/v1/health; do
-              echo "Vespa not ready, waiting..."
+            RUNTIME_URL="http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+
+            echo "Waiting for runtime to be healthy..."
+            until curl -sf "$RUNTIME_URL/health" > /dev/null 2>&1; do
+              echo "Runtime not ready, waiting..."
               sleep 10
             done
-            echo "Vespa is ready!"
+            echo "Runtime is healthy!"
 
-            echo "Deploying Vespa schemas..."
-            {{- range .Values.config.tenants }}
-            echo "Deploying schemas for tenant: {{ .id }}"
-            # Add schema deployment logic here
-            # uv run python /app/scripts/deploy_all_schemas.py --tenant-id {{ .id }}
+            {{- range $tenant := .Values.config.tenants }}
+            echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
+            {{- range $.Values.initJobs.schemaDeployment.profiles }}
+            echo "  Deploying profile: {{ . }}"
+            RESPONSE=$(curl -sf -X POST "$RUNTIME_URL/admin/profiles/{{ . }}/deploy" \
+              -H "Content-Type: application/json" \
+              -d '{"tenant_id": "{{ $tenant.id }}", "force": false}' 2>&1) || true
+            echo "  Response: $RESPONSE"
             {{- end }}
+            {{- end }}
+
             echo "Schema deployment completed!"
-        env:
-        - name: VESPA_URL
-          value: "http://{{ $fullName }}-vespa:{{ .Values.vespa.service.ports.query }}"
-        - name: VESPA_CONFIG_PORT
-          value: "{{ .Values.vespa.service.ports.config }}"
         resources:
           {{- toYaml .Values.initJobs.schemaDeployment.resources | nindent 10 }}
 {{- end }}
-{{- if .Values.initJobs.modelPulling.enabled -}}
+{{- if and .Values.initJobs.modelPulling.enabled .Values.llm.builtin.enabled -}}
 ---
 # Model Pulling Job
+# Only runs when builtin LLM is deployed. Pulls configured models.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -88,32 +92,31 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: model-pulling
-        image: "{{ .Values.initJobs.modelPulling.image.repository }}:{{ .Values.initJobs.modelPulling.image.tag }}"
-        imagePullPolicy: IfNotPresent
+        image: curlimages/curl:latest
         command:
-          - /bin/bash
+          - /bin/sh
           - -c
           - |
             set -e
-            echo "Waiting for Ollama to be ready..."
-            until curl -sf http://{{ $fullName }}-ollama:{{ .Values.ollama.service.port }}/api/tags; do
-              echo "Ollama not ready, waiting..."
+            LLM_URL="http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+
+            echo "Waiting for LLM to be ready..."
+            until curl -sf "$LLM_URL/api/tags" > /dev/null 2>&1; do
+              echo "LLM not ready, waiting..."
               sleep 10
             done
-            echo "Ollama is ready!"
+            echo "LLM is ready!"
 
-            echo "Pulling Ollama models..."
-            {{- range .Values.config.ollamaModels }}
-            echo "Pulling model: {{ . }}"
-            curl -X POST http://{{ $fullName }}-ollama:{{ $.Values.ollama.service.port }}/api/pull \
+            echo "Pulling LLM models..."
+            {{- range .Values.llm.builtin.models }}
+            echo "  Pulling model: {{ . }}"
+            curl -s -X POST "$LLM_URL/api/pull" \
               -H "Content-Type: application/json" \
               -d '{"name": "{{ . }}"}'
-            echo "Model {{ . }} pulled successfully!"
+            echo ""
+            echo "  Model {{ . }} pull initiated"
             {{- end }}
             echo "Model pulling completed!"
-        env:
-        - name: OLLAMA_ENDPOINT
-          value: "http://{{ $fullName }}-ollama:{{ .Values.ollama.service.port }}"
         resources:
           {{- toYaml .Values.initJobs.modelPulling.resources | nindent 10 }}
 {{- end }}

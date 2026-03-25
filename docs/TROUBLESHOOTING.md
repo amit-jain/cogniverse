@@ -148,7 +148,7 @@ Backend: http://localhost:8080
 docker ps | grep vespa
 
 # Start Vespa
-docker-compose up -d vespa
+cogniverse up  # Starts all services including Vespa
 
 # Check health
 curl http://localhost:8080/ApplicationStatus
@@ -247,11 +247,8 @@ lsof -i :6006
 kill -9 <PID>
 
 # Or use different port
-PHOENIX_PORT=6007 docker-compose up -d phoenix
-
-# Start fresh
-docker-compose down phoenix
-docker-compose up -d phoenix
+# Restart services
+cogniverse up
 ```
 
 ### No Traces Visible

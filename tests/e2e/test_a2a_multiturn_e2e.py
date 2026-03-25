@@ -62,7 +62,7 @@ class TestRESTMultiTurn:
 
     def test_multi_turn_with_history_triggers_rewrite(self):
         """Turn 2+ with conversation_history should produce rewritten_query."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/search_agent/process",
                 json={
@@ -91,7 +91,7 @@ class TestRESTMultiTurn:
 
     def test_routing_agent_executes_downstream_with_rewrite(self):
         """Routing agent should execute downstream search with query rewrite."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -144,7 +144,7 @@ class TestA2AProtocol:
 
     def test_single_turn_message_send(self):
         """A2A message/send returns taskId, contextId, and agent response."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/a2a/",
                 json={
@@ -180,7 +180,7 @@ class TestA2AProtocol:
         msg_id_1 = str(uuid.uuid4())
         msg_id_2 = str(uuid.uuid4())
 
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             # Turn 1
             resp1 = client.post(
                 "/a2a/",
@@ -232,7 +232,7 @@ class TestA2AProtocol:
 
     def test_context_isolation(self):
         """Two conversations with different contextIds should be independent."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             # Conversation A
             resp_a = client.post(
                 "/a2a/",

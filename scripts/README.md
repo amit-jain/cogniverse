@@ -596,28 +596,16 @@ uv run python scripts/deploy_all_schemas.py \
 
 ---
 
-#### `deploy_kubernetes.sh` - Kubernetes Deployment
-**Deploy full Cogniverse stack to Kubernetes**
+#### Deployment (via CLI)
+
+Deployment is now handled by the unified `cogniverse` CLI:
 
 ```bash
-# Deploy to Kubernetes
-bash scripts/deploy_kubernetes.sh --namespace cogniverse --environment production
+# Start all services via k3d/Helm
+cogniverse up
 
-# With custom values
-bash scripts/deploy_kubernetes.sh \
-  --namespace acme-corp \
-  --environment staging \
-  --values helm/custom-values.yaml
-```
-
----
-
-#### `deploy_k3s.sh` - K3s Lightweight Deployment
-**Deploy to K3s (lightweight Kubernetes)**
-
-```bash
-# Deploy to K3s
-bash scripts/deploy_k3s.sh --namespace cogniverse
+# Check status
+cogniverse status
 ```
 
 ---
@@ -987,7 +975,7 @@ bash scripts/start_phoenix.sh
 | **Optimization** | 4 | `run_module_optimization.py`, `auto_optimization_trigger.py`, `optimize_system.py` |
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
-| **Deployment** | 6 | `deploy_production.py`, `deploy_all_schemas.py`, `deploy_kubernetes.sh`, `run_optimization.py` |
+| **Deployment** | 4 | `deploy_production.py`, `deploy_all_schemas.py`, `run_optimization.py` |
 | **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_vespa_embeddings.py`, `embedding_atlas_tab.py` |
 | **Setup** | 5 | `setup_system.py`, `start_phoenix.py`, `run_servers.sh`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |

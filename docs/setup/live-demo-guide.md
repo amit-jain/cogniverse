@@ -73,7 +73,7 @@ graph TB
 | **Vespa** | 19071 | Config Server API | (same as above) |
 | **Vespa** | 19092 | Metrics endpoint | — |
 | **Runtime** | 8000 | Unified FastAPI (search, ingest, agents, events) | `curl http://localhost:8000/health` |
-| **Tenant Manager** | 9000 | Organization & tenant management API (standalone, not in docker-compose) | `curl http://localhost:9000/health` |
+| **Tenant Manager** | 9000 | Organization & tenant management API | `curl http://localhost:9000/health` |
 | **Dashboard** | 8501 | Streamlit UI | `curl http://localhost:8501/_stcore/health` |
 | **Phoenix** | 6006 | Evaluation & observability UI | — |
 | **OTel Collector** | 4317 | OTLP gRPC receiver | — |
@@ -83,17 +83,11 @@ graph TB
 ### Launch & Verify
 
 ```bash
-# Start all services
-docker-compose up -d
+# Start all services via k3d
+cogniverse up
 
-# Watch startup progress
-docker-compose ps
-
-# Wait for Vespa (takes ~60s on first boot)
-docker-compose logs -f vespa 2>&1 | grep -m1 "started"
-
-# Confirm all healthy
-docker-compose ps --format "table {{.Name}}\t{{.Status}}"
+# Check status
+cogniverse status
 ```
 
 ---
@@ -472,7 +466,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 ### Launch the Dashboard
 
 ```bash
-# Via Docker (already running if you did docker-compose up)
+# Via Docker (already running if you did cogniverse up)
 # Or locally:
 uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 ```
@@ -535,7 +529,7 @@ The complete demo flow ties all sections together:
 ```mermaid
 flowchart TD
     subgraph "Infrastructure"
-        DC["<span style='color:#000'>docker-compose up</span>"]
+        DC["<span style='color:#000'>cogniverse up</span>"]
     end
 
     subgraph "Bootstrap (Section 3)"
@@ -577,7 +571,7 @@ flowchart TD
 
 ```bash
 # 1. Start services
-docker-compose up -d
+cogniverse up
 
 # 2. Create tenant (auto-provisions org + schemas)
 curl -X POST http://localhost:9000/admin/tenants \

@@ -1,0 +1,41 @@
+# Production values
+llm:
+  builtin:
+    gpu:
+      enabled: true
+    resources:
+      limits:
+        cpu: "8"
+        memory: "16Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
+
+runtime:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: cogniverse.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: runtime
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: dashboard
+          port: 8501
+  tls:
+    - secretName: cogniverse-tls
+      hosts:
+        - cogniverse.example.com

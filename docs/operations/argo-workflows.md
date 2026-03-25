@@ -21,7 +21,7 @@ For local testing of Argo Workflows, use K3s:
 
 ```bash
 # One-command local setup with K3s + Argo
-./scripts/deploy_k3s.sh --install-k3s --install-argo
+cogniverse up  # Deploys k3d cluster with all services
 
 # This installs:
 # - K3s (lightweight Kubernetes)
@@ -622,7 +622,7 @@ kubectl get storageclass
 ## Related Documentation
 
 - [Kubernetes Deployment](kubernetes-deployment.md) - K8s setup
-- [Docker Deployment](docker-deployment.md) - Docker Compose
+- [Deployment](deployment.md) - Deployment overview (use `cogniverse up`)
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Tenant management
 
 ---

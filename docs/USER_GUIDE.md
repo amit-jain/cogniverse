@@ -75,7 +75,7 @@ cd cogniverse
 uv sync
 
 # Start infrastructure services
-docker compose -f deployment/docker-compose.yml up -d
+cogniverse up
 ```
 
 #### 2. Verify Services
@@ -1197,7 +1197,7 @@ tail -f outputs/logs/*.log
 - **Module Docs**: See [modules/sdk.md](modules/sdk.md) for package-specific documentation
 
 ### For DevOps
-- **Docker Deployment**: See [operations/docker-deployment.md](operations/docker-deployment.md)
+- **Deployment**: See [operations/deployment.md](operations/deployment.md) (use `cogniverse up`)
 - **Kubernetes Deployment**: See [operations/kubernetes-deployment.md](operations/kubernetes-deployment.md)
 - **Multi-Tenant Operations**: See [operations/multi-tenant-ops.md](operations/multi-tenant-ops.md)
 

@@ -180,13 +180,16 @@ ingress:
       hosts:
         - cogniverse.your-domain.com
 
-# GPU configuration for Ollama
-ollama:
-  nodeSelector:
-    nvidia.com/gpu: "true"
-  resources:
-    limits:
-      nvidia.com/gpu: "1"
+# GPU configuration for LLM
+llm:
+  builtin:
+    gpu:
+      enabled: true
+    nodeSelector:
+      nvidia.com/gpu: "true"
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
 ```
 
 ### Deploy to Production
@@ -231,20 +234,14 @@ K3s is a lightweight Kubernetes distribution perfect for local development, test
 
 ### Quick Start with K3s
 
-The easiest way to deploy to K3s is using the deployment script:
+The easiest way to deploy locally is using the CLI:
 
 ```bash
-# Install K3s and deploy Cogniverse (all-in-one)
-./scripts/deploy_k3s.sh --install-k3s
+# Start all services via k3d/Helm
+cogniverse up
 
-# Deploy to existing K3s
-./scripts/deploy_k3s.sh
-
-# Full local setup with Argo Workflows (recommended for testing batch workflows)
-./scripts/deploy_k3s.sh --install-k3s --install-argo
-
-# With custom values
-./scripts/deploy_k3s.sh --values my-values.yaml
+# Check status
+cogniverse status
 ```
 
 **Argo Workflows on K3s:**
@@ -252,8 +249,8 @@ The easiest way to deploy to K3s is using the deployment script:
 Argo Workflows works perfectly on K3s for local testing of batch processing workflows:
 
 ```bash
-# Deploy K3s + Cogniverse + Argo
-./scripts/deploy_k3s.sh --install-k3s --install-argo
+# Deploy with Argo Workflows
+cogniverse up
 
 # Access Argo UI locally
 kubectl port-forward -n argo svc/argo-server 2746:2746
@@ -360,22 +357,24 @@ phoenix:
       cpu: "1"
       memory: "2Gi"
 
-ollama:
-  replicaCount: 1
-  persistence:
-    enabled: true
-    storageClass: "local-path"
-    size: "20Gi"
-  resources:
-    requests:
-      cpu: "1"
-      memory: "4Gi"
-    limits:
-      cpu: "2"
-      memory: "8Gi"
-  # GPU support (if available on local machine)
-  nodeSelector: {}
-  tolerations: []
+llm:
+  builtin:
+    replicaCount: 1
+    persistence:
+      enabled: true
+      storageClass: "local-path"
+      size: "20Gi"
+    resources:
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
+    models:
+      - "qwen3:4b"
+    nodeSelector: {}
+    tolerations: []
 
 # Ingress with Traefik (K3s default)
 ingress:
@@ -399,8 +398,8 @@ config:
   tenants:
     - id: "default"
       name: "Default Tenant"
-  ollamaModels:
-    - "mistral:7b-instruct"
+  llmModels:
+    - "qwen3:4b"
 
 # Enable init jobs
 initJobs:
@@ -602,24 +601,27 @@ multiTenant:
 
 ### GPU Configuration
 
-For Ollama with GPU support:
+For LLM builtin (Ollama) with GPU support:
 
 ```yaml
-ollama:
-  enabled: true
-  nodeSelector:
-    nvidia.com/gpu: "true"
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-  resources:
-    limits:
-      nvidia.com/gpu: "1"
-      memory: "16Gi"
-    requests:
-      cpu: "4"
-      memory: "8Gi"
+llm:
+  builtin:
+    enabled: true
+    gpu:
+      enabled: true
+    nodeSelector:
+      nvidia.com/gpu: "true"
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+        memory: "16Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
 ```
 
 ### Persistent Storage
@@ -640,11 +642,12 @@ phoenix:
     storageClass: "standard"
     size: "50Gi"
 
-ollama:
-  persistence:
-    enabled: true
-    storageClass: "standard"
-    size: "100Gi"
+llm:
+  builtin:
+    persistence:
+      enabled: true
+      storageClass: "standard"
+      size: "100Gi"
 ```
 
 ---
@@ -879,34 +882,23 @@ kubectl run test-dns --image=busybox -i --rm --restart=Never -- \
 
 ## Deployment Scripts
 
-For automated deployment, use the provided scripts:
+For automated deployment, use the CLI:
 
-**Local Docker Compose:**
 ```bash
-./scripts/deploy_local_docker.sh [--production] [--logs]
+# Start all services via k3d/Helm
+cogniverse up
+
+# Check status
+cogniverse status
 ```
 
-**Local K3s:**
-```bash
-./scripts/deploy_k3s.sh [--install-k3s] [--install-argo]
-```
-
-**Remote Kubernetes:**
-```bash
-./scripts/deploy_kubernetes.sh \
-  --cloud-provider aws \
-  --domain cogniverse.example.com \
-  --install-ingress \
-  --install-cert-manager
-```
-
-See script help for full options: `./scripts/deploy_*.sh --help`
+See `cogniverse --help` for full options.
 
 ---
 
 ## Related Documentation
 
-- [Docker Deployment](docker-deployment.md) - Docker Compose setup
+- [Deployment](deployment.md) - Deployment overview (use `cogniverse up`)
 - [Argo Workflows](argo-workflows.md) - Batch processing workflows
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Tenant management
 - [SDK Architecture](../architecture/sdk-architecture.md) - System architecture

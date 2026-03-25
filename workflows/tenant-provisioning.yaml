@@ -8,6 +8,8 @@ spec:
 
   arguments:
     parameters:
+    - name: runtime-image
+      value: "cogniverse/runtime:dev"
     - name: tenant-id
       value: ""
     - name: tenant-name
@@ -47,7 +49,7 @@ spec:
   # Validate tenant configuration
   - name: validate-tenant
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -101,7 +103,7 @@ spec:
   # Deploy Vespa schemas for tenant
   - name: deploy-schemas
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -137,7 +139,7 @@ spec:
   # Create Phoenix project for tenant
   - name: create-phoenix-project
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -217,7 +219,7 @@ spec:
   # Initialize Mem0 memory system for tenant
   - name: initialize-memory
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -258,7 +260,7 @@ spec:
   # Verify tenant provisioning
   - name: verify-tenant
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |

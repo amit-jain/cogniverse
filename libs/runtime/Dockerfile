@@ -1,7 +1,7 @@
 # Cogniverse Runtime Dockerfile
 # Multi-stage build for optimized production image
 
-FROM python:3.10-slim as builder
+FROM python:3.12-slim AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -10,26 +10,40 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster dependency management
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Set working directory
 WORKDIR /app
 
-# Copy workspace configuration
-COPY pyproject.toml ./
+# Copy workspace configuration and lockfile
+COPY pyproject.toml uv.lock ./
+
+# Copy all workspace packages in the dependency chain
+COPY libs/sdk ./libs/sdk
+COPY libs/foundation ./libs/foundation
+COPY libs/evaluation ./libs/evaluation
 COPY libs/core ./libs/core
+COPY libs/synthetic ./libs/synthetic
+COPY libs/vespa ./libs/vespa
+COPY libs/agents ./libs/agents
+COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 
-# Install dependencies with uv
-RUN uv pip install --system -e ./libs/core
-RUN uv pip install --system -e "./libs/runtime[all]"
+# Install dependencies with uv using the lockfile
+RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen
+
+# Also install telemetry-phoenix into the same venv — agents discover it via entry points
+RUN uv pip install -e ./libs/telemetry-phoenix
 
 # Runtime stage
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y \
     libgomp1 \
+    libgl1 \
+    libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -40,13 +54,20 @@ RUN useradd -m -u 1000 cogniverse && \
 # Set working directory
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy installed virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
+COPY --chown=cogniverse:cogniverse libs/sdk ./libs/sdk
+COPY --chown=cogniverse:cogniverse libs/foundation ./libs/foundation
+COPY --chown=cogniverse:cogniverse libs/evaluation ./libs/evaluation
 COPY --chown=cogniverse:cogniverse libs/core ./libs/core
+COPY --chown=cogniverse:cogniverse libs/synthetic ./libs/synthetic
+COPY --chown=cogniverse:cogniverse libs/vespa ./libs/vespa
+COPY --chown=cogniverse:cogniverse libs/agents ./libs/agents
+COPY --chown=cogniverse:cogniverse libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY --chown=cogniverse:cogniverse libs/runtime ./libs/runtime
+COPY --chown=cogniverse:cogniverse configs/schemas ./configs/schemas
 COPY --chown=cogniverse:cogniverse configs/config.json ./configs/config.json
 
 # Switch to non-root user
@@ -57,11 +78,12 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)"
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV PATH="/app/.venv/bin:$PATH"
 ENV RUNTIME_HOST=0.0.0.0
 ENV RUNTIME_PORT=8000
 

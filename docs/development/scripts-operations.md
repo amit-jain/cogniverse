@@ -2016,7 +2016,7 @@ for i in range(0, len(videos), videos_per_batch):
 ```bash
 # Solution: Ensure Vespa is running
 docker ps | grep vespa  # Check Vespa container
-docker-compose up vespa  # Start Vespa if not running
+cogniverse up  # Start Vespa if not running
 ```
 
 **Issue: "Experiment failed: Text encoder not available"**

@@ -1,0 +1,121 @@
+# K3s/k3d local development values
+# Requires Docker Desktop memory ≥ 48Gi (Settings → Resources → Memory)
+global:
+  storageClass: "local-path"
+
+vespa:
+  replicaCount: 1
+  persistence:
+    storageClass: "local-path"
+    size: "20Gi"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "16Gi"
+
+runtime:
+  replicaCount: 1
+  image:
+    tag: "dev"
+    pullPolicy: Never
+  autoscaling:
+    enabled: false
+  # ML model loading blocks the event loop for 60-120s on first request.
+  # Increase probe tolerance so K8s doesn't kill the pod during model load.
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    timeoutSeconds: 10
+    failureThreshold: 10
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "16"
+      memory: "40Gi"
+
+dashboard:
+  replicaCount: 1
+  image:
+    tag: "dev"
+    pullPolicy: Never
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+phoenix:
+  replicaCount: 1
+  persistence:
+    storageClass: "local-path"
+    size: "10Gi"
+  resources:
+    requests:
+      cpu: "1"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+llm:
+  builtin:
+    gpu:
+      enabled: false
+    persistence:
+      storageClass: "local-path"
+      size: "20Gi"
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+      limits:
+        cpu: "4"
+        memory: "16Gi"
+    nodeSelector: {}
+    tolerations: []
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations: {}
+  hosts:
+    - host: cogniverse.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: runtime
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: dashboard
+          port: 8501
+  tls: []
+
+config:
+  tenants:
+    - id: "default"
+      name: "Default Tenant"
+
+initJobs:
+  schemaDeployment:
+    enabled: false  # Handled by E2E test fixtures
+  modelPulling:
+    enabled: false  # Handled by E2E test fixtures

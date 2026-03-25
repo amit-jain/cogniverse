@@ -92,7 +92,7 @@ Return the proper image name
 Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "cogniverse.imagePullSecrets" -}}
-{{- include "common.images.pullSecrets" (dict "images" (list .Values.image .Values.vespa.image .Values.phoenix.image .Values.ollama.image) "global" .Values.global) -}}
+{{- include "common.images.pullSecrets" (dict "images" (list .Values.image .Values.vespa.image .Values.phoenix.image .Values.llm.builtin.image) "global" .Values.global) -}}
 {{- end -}}
 
 {{/*

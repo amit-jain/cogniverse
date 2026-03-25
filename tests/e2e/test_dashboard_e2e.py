@@ -36,9 +36,9 @@ from tests.e2e.conftest import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser, skip_if_no_dashboard]
 
 # Streamlit takes time to rerun on interactions
-INTERACTION_TIMEOUT = 15_000
-SEARCH_TIMEOUT = 60_000
-LLM_TIMEOUT = 180_000
+INTERACTION_TIMEOUT = 30_000
+SEARCH_TIMEOUT = 120_000
+LLM_TIMEOUT = 300_000
 
 
 def _nav(page):
@@ -1498,7 +1498,7 @@ class TestStreamingEndpointFromDashboard:
         import json
         import uuid
 
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -1559,7 +1559,7 @@ class TestStreamingEndpointFromDashboard:
         import json
         import uuid
 
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,

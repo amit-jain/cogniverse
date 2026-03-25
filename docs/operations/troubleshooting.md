@@ -399,7 +399,7 @@ curl http://localhost:8080/state/v1/health
 
 **Prevention:**
 
-- Add Vespa to docker-compose
+- Ensure Vespa is running via `cogniverse up`
 
 - Use health checks in tests
 
@@ -551,7 +551,7 @@ rm -rf ~/.cache/huggingface/
 rm -rf .pytest_cache/
 
 # Restart services
-docker-compose down && docker-compose up -d
+cogniverse down && cogniverse up
 ```
 
 ### Log Locations

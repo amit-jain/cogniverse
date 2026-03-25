@@ -742,7 +742,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_vespa_config_store.py
 
 ```bash
 # Test with real backends
-docker compose -f deployment/docker-compose.yml up -d vespa
+cogniverse up  # Starts all services including Vespa
 
 # Run integration tests
 JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v

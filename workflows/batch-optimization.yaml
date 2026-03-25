@@ -8,6 +8,8 @@ spec:
 
   arguments:
     parameters:
+    - name: runtime-image
+      value: "cogniverse/runtime:dev"
     - name: tenant-id
       value: "default"
     - name: optimizer-category
@@ -46,7 +48,7 @@ spec:
   # Validate optimization configuration
   - name: validate-config
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -95,7 +97,7 @@ spec:
   # Prepare evaluation dataset
   - name: prepare-dataset
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -126,7 +128,7 @@ spec:
   # Run optimization (supports both DSPy and routing optimizers)
   - name: run-optimization
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -266,7 +268,7 @@ spec:
   # Evaluate optimization results
   - name: evaluate-results
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -301,7 +303,7 @@ spec:
   # Deploy optimized model
   - name: deploy-optimized-model
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |

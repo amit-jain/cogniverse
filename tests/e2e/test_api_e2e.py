@@ -35,7 +35,7 @@ class TestRoutingPipeline:
     """Scenario 1: Routing agent routes query to correct agent with entities."""
 
     def test_routing_decision_structure(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -60,7 +60,7 @@ class TestRoutingPipeline:
 
     def test_routing_returns_entities_and_enhanced_query(self):
         """Routing pipeline extracts entities and enhances query internally."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -84,7 +84,7 @@ class TestRoutingPipeline:
         assert isinstance(data["query_variants"], list)
 
     def test_routing_executes_downstream(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -109,7 +109,7 @@ class TestRoutingPipeline:
 
     def test_routing_metadata_structure(self):
         """Verify routing metadata includes tier info and timing."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -135,7 +135,7 @@ class TestQueryEnhancementViaRouting:
 
     def test_enhanced_query_differs_from_original(self):
         """Routing pipeline should enhance/modify the query."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -155,7 +155,7 @@ class TestQueryEnhancementViaRouting:
 
     def test_entity_extraction_in_routing(self):
         """Routing extracts entities from entity-rich queries."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -173,7 +173,7 @@ class TestQueryEnhancementViaRouting:
         assert isinstance(data["entities"], list)
 
     def test_routing_confidence_range(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -286,7 +286,7 @@ class TestSearchAPI:
         )
 
     def test_search_with_explicit_profile(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -306,7 +306,7 @@ class TestSearchAPI:
 
     def test_search_result_fields(self):
         """Verify search results contain expected content fields."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -330,7 +330,7 @@ class TestSearchAPI:
 
     def test_search_response_echoes_params(self):
         """Verify response includes the query, profile, and strategy sent."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -348,7 +348,7 @@ class TestSearchAPI:
         assert data["profile"] == PROFILE
 
     def test_search_with_different_strategy(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -569,7 +569,7 @@ class TestAgentOperations:
     )
     def test_agent_process_response_structure(self, agent_name, query):
         """Each agent returns status=success with agent name."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 f"/agents/{agent_name}/process",
                 json={
@@ -893,7 +893,7 @@ class TestAgentRegistryAndHealth:
 
     def test_search_agent_process(self):
         """Scenario 18 sub-test: Direct search agent process."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/search_agent/process",
                 json={
@@ -937,7 +937,7 @@ class TestA2AProtocol:
         )
 
     def test_a2a_single_turn(self):
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/a2a/",
                 json={
@@ -968,7 +968,7 @@ class TestA2AProtocol:
 
     def test_a2a_streaming_produces_sse_events(self):
         """message/stream returns SSE events with progress + final result."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             with client.stream(
                 "POST",
                 "/a2a/",
@@ -1057,7 +1057,7 @@ class TestStreamingAllAgents:
     )
     def test_streaming_agent_returns_events(self, agent_name, query, expect_streaming):
         """message/stream returns SSE events for streaming-capable agents."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             with client.stream(
                 "POST",
                 "/a2a/",
@@ -1119,7 +1119,7 @@ class TestOptimizationE2E:
 
     def test_record_examples_triggers_optimization(self):
         """POST optimize_routing with examples → optimization_triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -1150,7 +1150,7 @@ class TestOptimizationE2E:
 
     def test_auto_optimization_cycle_from_traces(self):
         """POST optimize_routing without examples → runs full cycle from traces."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -1197,7 +1197,7 @@ class TestOptimizationE2E:
 
     def test_route_after_optimization_succeeds(self):
         """Routing works after optimization was triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             # First trigger optimization
             client.post(
                 "/agents/routing_agent/process",

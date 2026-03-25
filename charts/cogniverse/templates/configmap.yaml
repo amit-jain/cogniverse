@@ -1,0 +1,10 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-config
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+data:
+  config.json: |-
+    {{ .Files.Get "files/config.json" | nindent 4 }}

@@ -31,7 +31,7 @@ vespa:
   enabled: true
   image:
     repository: vespaengine/vespa
-    tag: "8.259.19"
+    tag: "latest"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -220,7 +220,7 @@ phoenix:
   enabled: true
   image:
     repository: arizephoenix/phoenix
-    tag: "4.11.0"
+    tag: "latest"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -274,137 +274,65 @@ phoenix:
   affinity: {}
 
 # ===========================================
-# Ollama Configuration
+# LLM Inference Configuration
 # ===========================================
-ollama:
-  enabled: true
-  image:
-    repository: ollama/ollama
-    tag: "0.1.22"
-    pullPolicy: IfNotPresent
-
-  replicaCount: 1
-
-  resources:
-    limits:
-      cpu: "8"
-      memory: "16Gi"
-      nvidia.com/gpu: "1"
-    requests:
-      cpu: "4"
-      memory: "8Gi"
-      nvidia.com/gpu: "1"
-
-  persistence:
+llm:
+  # Deploy builtin Ollama pod
+  builtin:
     enabled: true
-    storageClass: ""
-    accessMode: ReadWriteOnce
-    size: "100Gi"
-    annotations: {}
-
-  service:
-    type: ClusterIP
-    port: 11434
-    annotations: {}
-
-  env:
-    OLLAMA_HOST: "0.0.0.0:11434"
-    OLLAMA_NUM_PARALLEL: "4"
-    OLLAMA_MAX_LOADED_MODELS: "2"
-
-  # GPU node selector
-  nodeSelector:
-    nvidia.com/gpu: "true"
-
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-
-  # Health checks
-  livenessProbe:
-    httpGet:
-      path: /api/tags
-      port: 11434
-    initialDelaySeconds: 120
-    periodSeconds: 30
-    timeoutSeconds: 10
-    failureThreshold: 3
-
-  readinessProbe:
-    httpGet:
-      path: /api/tags
-      port: 11434
-    initialDelaySeconds: 60
-    periodSeconds: 20
-    timeoutSeconds: 5
-    failureThreshold: 3
-
-  affinity: {}
-
-# ===========================================
-# OTEL Collector Configuration
-# ===========================================
-otelCollector:
-  enabled: true
-  image:
-    repository: otel/opentelemetry-collector
-    tag: "0.92.0"
-    pullPolicy: IfNotPresent
-
-  replicaCount: 1
-
-  resources:
-    limits:
-      cpu: "2"
-      memory: "2Gi"
-    requests:
-      cpu: "500m"
-      memory: "512Mi"
-
-  service:
-    type: ClusterIP
-    ports:
-      grpc: 4317
-      http: 4318
-      metrics: 8888
-      health: 13133
-    annotations: {}
-
-  config: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-
-    processors:
-      batch:
-        timeout: 10s
-        send_batch_size: 1024
-
-    exporters:
-      logging:
-        loglevel: info
-
-      # Add your exporters here (Jaeger, Prometheus, etc.)
-
+    image:
+      repository: ollama/ollama
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: "8"
+        memory: "16Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
+    gpu:
+      enabled: false  # true for enterprise with NVIDIA GPUs
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: "100Gi"
+      annotations: {}
     service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [batch]
-          exporters: [logging]
-        metrics:
-          receivers: [otlp]
-          processors: [batch]
-          exporters: [logging]
-
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
+      type: ClusterIP
+      port: 11434
+      annotations: {}
+    env:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_NUM_PARALLEL: "4"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+    models:
+      - "qwen3:4b"
+    livenessProbe:
+      httpGet:
+        path: /api/tags
+        port: 11434
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /api/tags
+        port: 11434
+      initialDelaySeconds: 60
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  # External LLM endpoint (any URL — Ollama, vLLM, etc.)
+  external:
+    enabled: false
+    url: ""
 
 # ===========================================
 # Ingress Configuration
@@ -459,57 +387,52 @@ config:
       name: "colqwen/colqwen2-omni"
       device: "cuda"
 
-  # Ollama models to pull
-  ollamaModels:
-    - "mistral:7b-instruct"
-    - "llama2:13b"
+  # LLM models to pull (references llm.builtin.models)
+  llmModels:
+    - "qwen3:4b"
 
 # ===========================================
 # Init Jobs
 # ===========================================
 initJobs:
-  # Schema deployment job
+  # Schema deployment job — calls runtime API to deploy data schemas
   schemaDeployment:
     enabled: true
-    image:
-      repository: cogniverse/runtime
-      tag: "2.0.0"
+    # Profiles to deploy for each tenant
+    profiles:
+      - "video_colpali_smol500_mv_frame"
     resources:
       limits:
-        cpu: "1"
-        memory: "2Gi"
-      requests:
         cpu: "500m"
-        memory: "1Gi"
-    backoffLimit: 3
+        memory: "256Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    backoffLimit: 5
     restartPolicy: OnFailure
 
-  # Model pulling job
+  # Model pulling job — pulls LLM models via Ollama API
   modelPulling:
     enabled: true
-    image:
-      repository: ollama/ollama
-      tag: "0.1.22"
     resources:
       limits:
-        cpu: "2"
-        memory: "4Gi"
+        cpu: "500m"
+        memory: "256Mi"
       requests:
-        cpu: "1"
-        memory: "2Gi"
-    backoffLimit: 3
+        cpu: "100m"
+        memory: "128Mi"
+    backoffLimit: 5
     restartPolicy: OnFailure
 
 # ===========================================
 # Security
 # ===========================================
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
-
-podSecurityContext:
-  fsGroup: 1000
+# Security contexts are set per-component in templates:
+# Vespa: runAsUser 0 (needs root for JVM)
+# LLM builtin: runAsUser 0 (needs root for model storage)
+# Runtime, Dashboard, Phoenix: runAsUser 1000
+securityContext: {}
+podSecurityContext: {}
 
 # Service account
 serviceAccount:

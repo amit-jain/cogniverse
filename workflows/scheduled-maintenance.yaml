@@ -11,6 +11,10 @@ spec:
   failedJobsHistoryLimit: 3
   workflowSpec:
     entrypoint: backup-pipeline
+    arguments:
+      parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
     templates:
     - name: backup-pipeline
       steps:
@@ -25,7 +29,7 @@ spec:
 
     - name: backup-vespa
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -54,7 +58,7 @@ spec:
 
     - name: backup-phoenix
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -136,6 +140,10 @@ spec:
   failedJobsHistoryLimit: 3
   workflowSpec:
     entrypoint: optimization-pipeline
+    arguments:
+      parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
     templates:
     - name: optimization-pipeline
       steps:
@@ -155,7 +163,7 @@ spec:
         parameters:
         - name: tenant-id
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -199,6 +207,10 @@ spec:
   failedJobsHistoryLimit: 3
   workflowSpec:
     entrypoint: cleanup-pipeline
+    arguments:
+      parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
     templates:
     - name: cleanup-pipeline
       steps:
@@ -255,7 +267,7 @@ spec:
 
     - name: vacuum-databases
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -274,7 +286,7 @@ spec:
 
     - name: cleanup-expired-memories
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -334,6 +346,10 @@ spec:
   failedJobsHistoryLimit: 3
   workflowSpec:
     entrypoint: reporting-pipeline
+    arguments:
+      parameters:
+      - name: runtime-image
+        value: "cogniverse/runtime:dev"
     templates:
     - name: reporting-pipeline
       steps:
@@ -346,7 +362,7 @@ spec:
 
     - name: generate-usage-report
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |
@@ -390,7 +406,7 @@ spec:
 
     - name: generate-performance-report
       container:
-        image: cogniverse/runtime:2.0.0
+        image: "{{workflow.parameters.runtime-image}}"
         command: ["/bin/bash", "-c"]
         args:
           - |

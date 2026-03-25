@@ -85,13 +85,26 @@ class ConfigManager:
         )
 
         if entry is None:
-            # Return default system config
             logger.warning(
                 f"No system config found for tenant {tenant_id}, using defaults"
             )
-            return SystemConfig(tenant_id=tenant_id)
+            cfg = SystemConfig(tenant_id=tenant_id)
+        else:
+            cfg = SystemConfig.from_dict(entry.config_value)
 
-        return SystemConfig.from_dict(entry.config_value)
+        # Environment variables ALWAYS override stored/default config.
+        # Deployment layer (Helm template) sets these to k8s service URLs.
+        import os
+        if os.environ.get("BACKEND_URL"):
+            cfg.backend_url = os.environ["BACKEND_URL"]
+        if os.environ.get("BACKEND_PORT"):
+            cfg.backend_port = int(os.environ["BACKEND_PORT"])
+        if os.environ.get("LLM_ENDPOINT"):
+            cfg.base_url = os.environ["LLM_ENDPOINT"]
+        if os.environ.get("PHOENIX_ENDPOINT"):
+            cfg.telemetry_url = os.environ["PHOENIX_ENDPOINT"]
+
+        return cfg
 
     def set_system_config(
         self, system_config: SystemConfig, tenant_id: Optional[str] = None

@@ -58,7 +58,7 @@ cd cogniverse
 uv sync
 
 # Start infrastructure
-docker compose -f deployment/docker-compose.yml up -d  # Starts Vespa, Phoenix, Ollama
+cogniverse up  # Starts Vespa, Phoenix, Ollama via k3d
 
 # Verify services
 curl -s http://localhost:8080/ApplicationStatus  # Vespa
@@ -355,24 +355,13 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 
 ## 🚀 Production Deployment
 
-### Docker Compose
+### Unified Deployment
 ```bash
-# Production stack
-docker compose -f deployment/docker-compose.prod.yml up -d
-
-# Verify health
-./scripts/health_check.sh
-```
-
-### Kubernetes
-```bash
-# Deploy with Helm
-helm install cogniverse charts/cogniverse \
-  --namespace cogniverse \
-  --values charts/cogniverse/values.prod.yaml
+# Start all services via k3d/Helm
+cogniverse up
 
 # Check status
-kubectl get pods -n cogniverse
+cogniverse status
 ```
 
 ### Modal (Serverless)

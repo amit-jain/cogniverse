@@ -51,7 +51,7 @@ cd cogniverse
 uv sync
 
 # Start services
-docker compose -f deployment/docker-compose.yml up -d
+cogniverse up
 
 # Run tests to verify setup
 uv run pytest tests/common/ -v
@@ -178,7 +178,7 @@ source .venv/bin/activate  # macOS/Linux
 
 ```bash
 # Start Vespa, Phoenix, Ollama
-docker compose -f deployment/docker-compose.yml up -d
+cogniverse up
 
 # Verify services
 curl http://localhost:8080/ApplicationStatus  # Vespa
@@ -988,7 +988,7 @@ source .venv/bin/activate
 docker ps | grep -E "vespa|phoenix|ollama"
 
 # Restart services
-docker compose -f deployment/docker-compose.yml restart
+cogniverse up  # Restart services via k3d
 ```
 
 **Issue**: Out of memory

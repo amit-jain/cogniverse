@@ -156,150 +156,23 @@ JAX_PLATFORM_NAME=cpu
 
 Cogniverse supports multiple deployment methods depending on your needs:
 
-### Quick Deployment Scripts
+### Unified Deployment (k3d/Helm)
 
-**1. Local Development - Docker Compose** (Recommended for development)
 ```bash
-# Quick start with all services
-./scripts/deploy_local_docker.sh
+# Start all services (Vespa, Phoenix, Ollama, Runtime, Dashboard)
+cogniverse up
 
-# Production mode
-./scripts/deploy_local_docker.sh --production
-
-# With live logs
-./scripts/deploy_local_docker.sh --logs
-```
-
-**2. Local Kubernetes - K3s** (For testing K8s deployments locally)
-```bash
-# Install K3s and deploy
-./scripts/deploy_k3s.sh --install-k3s
-
-# Deploy to existing K3s
-./scripts/deploy_k3s.sh
-
-# With Argo Workflows
-./scripts/deploy_k3s.sh --install-argo
-```
-
-**3. Production Kubernetes** (For remote K8s clusters: EKS, GKE, AKS)
-```bash
-# Full production deployment with ingress and TLS
-./scripts/deploy_kubernetes.sh \
-  --cloud-provider aws \
-  --domain cogniverse.example.com \
-  --install-ingress \
-  --install-cert-manager \
-  --install-argo
+# Check status
+cogniverse status
 ```
 
 **See detailed guides:**
-
-- [Docker Deployment Guide](docker-deployment.md) - Complete Docker Compose setup
 
 - [Kubernetes Deployment Guide](kubernetes-deployment.md) - K8s/K3s/Helm deployment
 
 - [Istio Service Mesh Guide](istio-service-mesh.md) - Service mesh with mTLS, Phoenix tracing, DNS-based multi-cluster
 
 - [Argo Workflows Guide](argo-workflows.md) - Batch processing workflows
-
----
-
-## Docker Compose Deployment (Manual)
-
-For manual Docker Compose setup, here's the reference configuration:
-
-### Complete Stack
-
-```yaml
-# deployment/docker-compose.yml
-version: '3.8'
-
-services:
-  vespa:
-    image: vespaengine/vespa:latest
-    ports:
-      - "8080:8080"
-      - "19071:19071"
-    volumes:
-      - vespa-data:/opt/vespa/var
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/ApplicationStatus"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  phoenix:
-    image: arizephoenix/phoenix:latest
-    ports:
-      - "6006:6006"   # UI + REST API
-      - "4317:4317"   # OTLP gRPC collector
-    volumes:
-      - phoenix-data:/data
-    environment:
-      - PHOENIX_WORKING_DIR=/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6006/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  cogniverse:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - BACKEND_URL=http://vespa
-      - BACKEND_PORT=8080
-      - OTLP_ENDPOINT=http://phoenix:4317
-      - ENVIRONMENT=production
-      # tenant_id is per-request in A2A task payload, not an env var
-    depends_on:
-      - vespa
-      - phoenix
-      - ollama
-    volumes:
-      - model-cache:/app/models
-      - ./configs:/app/configs:ro
-      - ./libs:/app/libs:ro  # Mount SDK packages
-
-volumes:
-  vespa-data:
-  phoenix-data:
-  ollama-data:
-  model-cache:
-```
-
-### Deploy with Docker Compose
-
-```bash
-# Deploy stack
-docker-compose up -d
-
-# Pull Ollama models
-docker-compose exec ollama ollama pull llama3.2
-docker-compose exec ollama ollama pull nomic-embed-text
-
-# View logs
-docker-compose logs -f cogniverse
-
-# Scale application
-docker-compose up -d --scale cogniverse=3
-```
 
 ---
 

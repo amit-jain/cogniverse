@@ -28,8 +28,8 @@ uv sync
 ## 2. Start Services
 
 ```bash
-# Start Vespa (vector database) and Phoenix (telemetry)
-docker-compose up -d vespa phoenix
+# Start all services (Vespa, Phoenix, Ollama) via k3d
+cogniverse up
 
 # Wait for services to be ready (~30 seconds)
 curl http://localhost:8080/ApplicationStatus  # Vespa

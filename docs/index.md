@@ -79,7 +79,7 @@ git clone <repository-url> && cd cogniverse
 uv sync
 
 # Start services (Vespa, Phoenix, Ollama)
-docker compose -f deployment/docker-compose.yml up -d
+cogniverse up
 
 # Launch dashboard
 uv run streamlit run scripts/phoenix_dashboard_standalone.py
@@ -112,4 +112,4 @@ See [Getting Started](operations/setup-installation.md) for ingestion and config
 |----------|-----------|
 | **Users** | [User Guide](USER_GUIDE.md) · [Setup](operations/setup-installation.md) · [Configuration](operations/configuration.md) |
 | **Developers** | [Developer Guide](DEVELOPER_GUIDE.md) · [Architecture](architecture/overview.md) · [Modules](modules/sdk.md) |
-| **DevOps** | [Deployment](operations/deployment.md) · [Docker](operations/docker-deployment.md) · [Kubernetes](operations/kubernetes-deployment.md) |
+| **DevOps** | [Deployment](operations/deployment.md) · [Kubernetes](operations/kubernetes-deployment.md) |

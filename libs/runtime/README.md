@@ -372,7 +372,7 @@ uv run pytest tests/runtime/unit/test_search_endpoints.py -v
 
 ```bash
 # 1. Start required services
-docker-compose up -d vespa phoenix redis
+cogniverse up  # Starts Vespa, Phoenix, and other services via k3d
 
 # 2. Run runtime server
 uv run uvicorn cogniverse_runtime.main:app --reload

@@ -1,0 +1,987 @@
+{
+  "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
+  "default_tenant": "flywheel_org:production",
+  "active_video_profile": "video_colpali_smol500_mv_frame",
+  "agents": {
+    "routing_agent": {
+      "url": "http://localhost:8001",
+      "enabled": true
+    },
+    "search_agent": {
+      "url": "http://localhost:8002",
+      "enabled": true
+    },
+    "text_analysis_agent": {
+      "url": "http://localhost:8003",
+      "enabled": true
+    },
+    "summarizer_agent": {
+      "url": "http://localhost:8004",
+      "enabled": true
+    },
+    "detailed_report_agent": {
+      "url": "http://localhost:8005",
+      "enabled": true
+    },
+    "image_search_agent": {
+      "url": "http://localhost:8006",
+      "enabled": true
+    },
+    "audio_analysis_agent": {
+      "url": "http://localhost:8007",
+      "enabled": true
+    },
+    "document_agent": {
+      "url": "http://localhost:8008",
+      "enabled": true
+    },
+    "deep_research_agent": {
+      "url": "http://localhost:8009",
+      "enabled": true
+    },
+    "coding_agent": {
+      "url": "http://localhost:8010",
+      "enabled": true
+    }
+  },
+  "llm_config": {
+    "primary": {
+      "model": "ollama/qwen3:4b",
+      "api_base": "http://cogniverse-llm:11434",
+      "api_key": null,
+      "temperature": 0.1,
+      "max_tokens": 1000,
+      "adapter_path": null
+    },
+    "teacher": {
+      "model": "claude-3-5-sonnet-20241022",
+      "api_base": null,
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2048,
+      "adapter_path": null
+    },
+    "overrides": {
+      "routing_agent": {
+        "temperature": 0.1,
+        "max_tokens": 1000
+      },
+      "summarizer_agent": {
+        "model": "ollama/qwen3:4b"
+      },
+      "detailed_report_agent": {
+        "model": "ollama/qwen3:4b"
+      },
+      "vlm_interface": {
+        "model": "ollama/qwen3:4b"
+      },
+      "coding_agent": {
+        "model": "ollama/qwen3:4b",
+        "max_tokens": 2048
+      },
+      "query_analysis_module": null,
+      "llm_auto_annotator": null
+    }
+  },
+  "routing_agent_url": "http://localhost:8001",
+  "video_agent_url": "http://localhost:8002",
+  "detailed_report_agent_url": "http://localhost:8003",
+  "summarizer_agent_url": "http://localhost:8004",
+  "orchestrator_agent_port": 8013,
+  "routing_agent": {
+    "enable_advanced_optimization": true,
+    "enable_memory": false
+  },
+  "automation_rules": {
+    "annotation_thresholds": {
+      "confidence_threshold": 0.6,
+      "very_low_confidence": 0.3,
+      "boundary_low": 0.6,
+      "boundary_high": 0.75,
+      "failure_lookback_hours": 24,
+      "max_annotations_per_run": 50,
+      "max_annotations_per_batch": 10
+    },
+    "optimization_triggers": {
+      "min_annotations_for_optimization": 50,
+      "optimization_improvement_threshold": 0.05,
+      "min_days_between_optimizations": 1,
+      "span_eval_lookback_hours": 2,
+      "annotation_lookback_hours": 24,
+      "span_eval_batch_size": 100,
+      "max_annotations_per_cycle": 100
+    },
+    "feedback": {
+      "poll_interval_minutes": 15,
+      "min_annotations_for_update": 10,
+      "quality_map": {
+        "correct_routing": 0.9,
+        "wrong_routing": 0.3,
+        "ambiguous": 0.6,
+        "insufficient_info": 0.5
+      }
+    },
+    "intervals": {
+      "span_eval_interval_minutes": 15,
+      "annotation_interval_minutes": 30,
+      "feedback_interval_minutes": 15,
+      "metrics_report_interval_seconds": 300
+    },
+    "online_evaluation": {
+      "enabled": true,
+      "sampling_rate": 1.0,
+      "evaluators": [
+        "routing_outcome",
+        "confidence_calibration"
+      ],
+      "persist_scores": true,
+      "score_annotation_name": "online_eval"
+    }
+  },
+  "rails": {
+    "enabled": true,
+    "input_rails": [
+      {
+        "type": "topic_boundary",
+        "params": {
+          "allowed_topics": [
+            "video",
+            "search",
+            "document",
+            "audio",
+            "image",
+            "summary",
+            "report",
+            "analysis"
+          ]
+        }
+      },
+      {
+        "type": "content_safety",
+        "params": {
+          "blocked_patterns": [
+            "ignore previous instructions",
+            "system prompt",
+            "<script>"
+          ]
+        }
+      }
+    ],
+    "output_rails": []
+  },
+  "deep_research_agent": {
+    "max_iterations": 3,
+    "max_sub_questions": 5
+  },
+  "search_backend": "vespa",
+  "byaldi_index_name": ".byaldi/my_video_index",
+  "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+  "auto_start_vlm_service": true,
+  "colpali_model": "vidore/colsmol-500m",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "local_llm_model": "qwen3:4b",
+  "base_url": "http://localhost:11434",
+  "prompts": {
+    "artifacts_path": null,
+    "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
+  },
+  "remote_inference_url": null,
+  "evaluation_datasets": {
+    "default": "visual_test_queries",
+    "registry_path": "configs/dataset_registry.json"
+  },
+  "evaluators": {
+    "visual_judge": {
+      "provider": "ollama",
+      "model": "llava:7b",
+      "base_url": "http://localhost:11434",
+      "api_key": null,
+      "frames_per_video": 30,
+      "max_videos": 2,
+      "sample_all_frames": false,
+      "max_total_frames": 60
+    },
+    "llm_judge": {
+      "provider": "ollama",
+      "model": "deepseek-r1:7b",
+      "base_url": "http://localhost:11434",
+      "api_key": null
+    },
+    "modal_visual_judge": {
+      "provider": "modal",
+      "model": "qwen2-vl",
+      "base_url": "https://your-modal-endpoint.modal.run/",
+      "api_key": "your-modal-api-key"
+    }
+  },
+  "remote_inference_api_key": null,
+  "remote_inference_provider": null,
+  "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",
+  "pipeline_cache": {
+    "enabled": true,
+    "backends": [
+      {
+        "backend_type": "structured_filesystem",
+        "base_path": "~/.cache/cogniverse/structured_pipeline",
+        "serialization_format": "json",
+        "priority": 0,
+        "enable_ttl": true,
+        "cleanup_on_startup": true,
+        "metadata_format": "json"
+      }
+    ],
+    "default_ttl": 0,
+    "enable_compression": true,
+    "serialization_format": "json"
+  },
+  "query_inference_engine": {
+    "mode": "llm",
+    "available_gliner_models": [
+      "urchade/gliner_small-v2.1",
+      "urchade/gliner_medium-v2.1",
+      "urchade/gliner_large-v2.1",
+      "urchade/gliner_multi-v2.1"
+    ],
+    "current_gliner_model": "urchade/gliner_large-v2.1",
+    "enable_llm_fallback": false,
+    "gliner_labels": [
+      "video_content",
+      "visual_content",
+      "document_content",
+      "text_information",
+      "time_reference",
+      "date_pattern",
+      "search_intent"
+    ],
+    "gliner_threshold": 0.3,
+    "optimization_results": {
+      "strategy": "focused",
+      "accuracy": 0.9333,
+      "optimized_on": "2025-01-03",
+      "configurations_tested": 608,
+      "best_runtime": "49.4s"
+    }
+  },
+  "pipeline_config": {
+    "extract_keyframes": true,
+    "transcribe_audio": true,
+    "generate_descriptions": true,
+    "generate_embeddings": true,
+    "keyframe_extraction_method": "fps",
+    "keyframe_fps": 1.0
+  },
+  "device": "mps",
+  "max_workers": 4,
+  "timeout": 60.0,
+  "log_level": "INFO",
+  "log_file": "multi_agent_system.log",
+  "output_base_dir": "outputs",
+  "video_data_dir": "data/videos",
+  "text_data_dir": "data/text",
+  "index_dir": "data/indexes",
+  "reranking": {
+    "enabled": false,
+    "model": "heuristic",
+    "use_hybrid": false,
+    "hybrid_strategy": "weighted_ensemble",
+    "learned_weight": 0.7,
+    "heuristic_weight": 0.3,
+    "max_results_to_rerank": 100,
+    "top_n": null,
+    "api_base": null,
+    "supported_models": {
+      "cohere": "cohere/rerank-english-v3.0",
+      "together_ai": "together_ai/Salesforce/Llama-Rank-V1",
+      "jina": "jina/jina-reranker-v2-base-multilingual",
+      "ollama_bge": "openai/bge-reranker-v2-m3",
+      "ollama_mxbai": "openai/mxbai-rerank-large-v2",
+      "heuristic": "heuristic"
+    },
+    "ollama_config": {
+      "api_base": "http://localhost:11434/v1",
+      "comment": "For Ollama models, set 'model' to 'ollama_bge' or 'ollama_mxbai' and 'api_base' to this value"
+    }
+  },
+  "routing": {
+    "routing_mode": "tiered",
+    "tier_config": {
+      "enable_fast_path": true,
+      "enable_slow_path": true,
+      "enable_langextract": true,
+      "enable_fallback": true,
+      "fast_path_confidence_threshold": 0.7,
+      "slow_path_confidence_threshold": 0.6,
+      "langextract_confidence_threshold": 0.5,
+      "max_routing_time_ms": 5000
+    },
+    "gliner_config": {
+      "gliner_model": "urchade/gliner_multi-v2.1",
+      "gliner_threshold": 0.3,
+      "gliner_labels": [
+        "video_content",
+        "visual_content",
+        "media_content",
+        "document_content",
+        "text_information",
+        "written_content",
+        "summary_request",
+        "detailed_analysis",
+        "report_request",
+        "time_reference",
+        "date_pattern",
+        "temporal_context",
+        "purchase_intent",
+        "comparison_intent",
+        "query_intent",
+        "complaint_intent"
+      ],
+      "device": "cpu",
+      "batch_size": 32,
+      "max_length": 512
+    },
+    "llm_config": {
+      "provider": "local",
+      "model": "smollm2:1.7b",
+      "endpoint": "http://localhost:11434",
+      "temperature": 0.1,
+      "max_tokens": 150,
+      "use_chain_of_thought": true,
+      "timeout": 30,
+      "system_prompt": "You are a routing agent. Classify queries using these examples:\n\nGENERATION TYPES:\nraw_results: extract timestamps, get IDs, list items, parse data, JSON output, specific values\nsummary: main points, key takeaways, brief overview, gist, recap\ndetailed_report: detailed analysis, comprehensive breakdown, full report, in-depth review\n\nExamples:\n\"extract timestamps from video\" \u2192 {\"search_modality\":\"video\",\"generation_type\":\"raw_results\"}\n\"summarize the main points\" \u2192 {\"search_modality\":\"both\",\"generation_type\":\"summary\"}\n\"detailed analysis of issues\" \u2192 {\"search_modality\":\"both\",\"generation_type\":\"detailed_report\"}\n\nRESPOND WITH ONLY JSON:\n{\"search_modality\":\"video\" or \"text\" or \"both\",\"generation_type\":\"raw_results\" or \"summary\" or \"detailed_report\",\"reasoning\":\"brief explanation\"}"
+    },
+    "langextract_config": {
+      "langextract_model": "qwen2.5:7b",
+      "ollama_url": "http://localhost:11434",
+      "timeout": 30,
+      "use_structured_extraction": true
+    },
+    "keyword_config": {
+      "video_keywords": [
+        "video",
+        "clip",
+        "scene",
+        "recording",
+        "footage",
+        "show me",
+        "visual",
+        "watch",
+        "frame",
+        "moment",
+        "demonstration",
+        "presentation",
+        "meeting",
+        "tutorial",
+        "screencast",
+        "webinar",
+        "stream",
+        "broadcast"
+      ],
+      "text_keywords": [
+        "document",
+        "report",
+        "text",
+        "article",
+        "information",
+        "data",
+        "details",
+        "analysis",
+        "research",
+        "study",
+        "paper",
+        "blog",
+        "documentation",
+        "guide",
+        "manual",
+        "whitepaper",
+        "book"
+      ],
+      "summary_keywords": [
+        "summary",
+        "summarize",
+        "brief",
+        "overview",
+        "main points",
+        "key takeaways",
+        "tldr",
+        "gist",
+        "essence",
+        "highlights"
+      ],
+      "report_keywords": [
+        "detailed report",
+        "comprehensive analysis",
+        "full report",
+        "in-depth",
+        "thorough",
+        "extensive",
+        "complete analysis",
+        "deep dive",
+        "exhaustive"
+      ]
+    },
+    "ensemble_config": {
+      "enabled_strategies": [
+        "gliner",
+        "keyword"
+      ],
+      "voting_method": "weighted",
+      "weights": {
+        "gliner": 2.0,
+        "keyword": 1.0
+      }
+    },
+    "optimization_config": {
+      "enable_auto_optimization": false,
+      "optimization_interval_seconds": 3600,
+      "min_samples_for_optimization": 100,
+      "performance_degradation_threshold": 0.1,
+      "min_accuracy": 0.8,
+      "max_acceptable_latency_ms": 1000,
+      "dspy_enabled": false,
+      "gliner_threshold_optimization": true,
+      "gliner_label_optimization": false
+    },
+    "monitoring_config": {
+      "enable_metrics": true,
+      "metrics_batch_size": 100,
+      "export_metrics": true,
+      "metrics_export_dir": "outputs/routing_metrics",
+      "enable_tracing": false
+    },
+    "cache_config": {
+      "enable_caching": true,
+      "cache_ttl_seconds": 300,
+      "max_cache_size": 1000,
+      "backend": "integrated",
+      "use_pipeline_cache": true
+    },
+    "query_fusion_config": {
+      "include_original": true,
+      "rrf_k": 60
+    },
+    "entity_confidence_threshold": 0.6,
+    "min_entities_for_fast_path": 1,
+    "annotation": {
+      "model": "claude-3-5-sonnet-20241022",
+      "api_base": null,
+      "api_key": null
+    }
+  },
+  "backend": {
+    "type": "vespa",
+    "url": "http://cogniverse-vespa",
+    "port": 8080,
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "type": "video",
+        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": true,
+          "generate_descriptions": true,
+          "generate_embeddings": true,
+          "keyframe_strategy": "fps",
+          "keyframe_fps": 1.0
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {
+              "fps": 1.0,
+              "threshold": 0.999,
+              "max_frames": 3000
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "VLMDescriptionStrategy",
+            "params": {
+              "vlm_endpoint": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+              "batch_size": 500,
+              "timeout": 10800,
+              "auto_start": true
+            }
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "frame_based",
+        "model_loader": "colpali",
+        "schema_config": {
+          "schema_name": "video_colpali",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "image_colpali_mv": {
+        "type": "image",
+        "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
+        "schema_name": "image_colpali_mv",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "ImageSegmentationStrategy",
+            "params": {
+              "max_images": 10000
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "frame_based",
+        "model_loader": "colpali",
+        "schema_config": {
+          "schema_name": "image_colpali",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "audio_clap_semantic": {
+        "type": "audio",
+        "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and Reason-ModernColBERT semantic embeddings (128-dim multi-vector) from transcripts.",
+        "schema_name": "audio_content",
+        "embedding_model": "laion/clap-htsat-unfused",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": true,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "AudioFileSegmentationStrategy",
+            "params": {
+              "max_files": 10000
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "AudioEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "audio_dual",
+        "model_loader": "colbert",
+        "semantic_model": "lightonai/Reason-ModernColBERT",
+        "schema_config": {
+          "schema_name": "audio_content",
+          "acoustic_embedding_dim": 512,
+          "semantic_embedding_dim": 128,
+          "semantic_binary_dim": 16
+        }
+      },
+      "document_text_semantic": {
+        "type": "document",
+        "description": "Document text extraction with Reason-ModernColBERT multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
+        "schema_name": "document_text",
+        "embedding_model": "lightonai/Reason-ModernColBERT",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "DocumentSegmentationStrategy",
+            "params": {
+              "max_files": 10000
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "DocumentTextEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "document_colbert",
+        "model_loader": "colbert",
+        "schema_config": {
+          "schema_name": "document_text",
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "video_colqwen_omni_mv_chunk_30s": {
+        "type": "video",
+        "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",
+        "schema_name": "video_colqwen_omni_mv_chunk_30s",
+        "embedding_model": "vidore/colqwen-omni-v0.1",
+        "process_type": "video_chunks",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": true,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "ChunkSegmentationStrategy",
+            "params": {
+              "chunk_duration": 30.0,
+              "chunk_overlap": 5.0,
+              "cache_chunks": false
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "video_chunks",
+        "model_loader": "colqwen",
+        "model_specific": {
+          "max_patches": 1024,
+          "segment_duration": 30.0,
+          "chunk_duration": 30.0,
+          "chunk_overlap": 5.0,
+          "extract_audio": true,
+          "transcribe_audio": true,
+          "whisper_model": "base",
+          "store_as_single_doc": true,
+          "adaptive_segmentation": false,
+          "max_pixels": 16777216,
+          "sampling_fps": 1.0
+        },
+        "schema_config": {
+          "schema_name": "video_colqwen_omni_mv_chunk_30s",
+          "model_name": "ColQwen-Omni",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "video_videoprism_base_mv_chunk_30s": {
+        "type": "video",
+        "description": "VideoPrism base model for 30-second chunk embeddings with 768-dim global representations. Native video understanding without keyframes.",
+        "schema_name": "video_videoprism_base_mv_chunk_30s",
+        "embedding_model": "videoprism_public_v1_base_hf",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "ChunkSegmentationStrategy",
+            "params": {
+              "chunk_duration": 30.0,
+              "chunk_overlap": 0.0,
+              "cache_chunks": false
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "direct_video_segment",
+        "model_loader": "videoprism",
+        "model_specific": {
+          "segment_duration": 30.0,
+          "sampling_fps": 1.0,
+          "max_frames": 30,
+          "min_frames": 8,
+          "frame_features": true,
+          "native_dimensions": true
+        },
+        "inference_config": {
+          "model_type": "videoprism",
+          "backend": "auto",
+          "query_encoder": "vidore/colsmol-500m"
+        },
+        "schema_config": {
+          "schema_name": "video_videoprism_base_mv_chunk_30s",
+          "model_name": "VideoPrism-Base",
+          "num_patches": 4096,
+          "embedding_dim": 768,
+          "binary_dim": 96
+        }
+      },
+      "video_videoprism_large_mv_chunk_30s": {
+        "type": "video",
+        "description": "VideoPrism large model for 30-second chunk embeddings with 1024-dim global representations. Enhanced capacity for complex video understanding.",
+        "schema_name": "video_videoprism_large_mv_chunk_30s",
+        "embedding_model": "videoprism_public_v1_large_hf",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "ChunkSegmentationStrategy",
+            "params": {
+              "chunk_duration": 30.0,
+              "chunk_overlap": 0.0,
+              "cache_chunks": false
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "direct_video_segment",
+        "model_loader": "videoprism",
+        "model_specific": {
+          "segment_duration": 30.0,
+          "sampling_fps": 1.0,
+          "max_frames": 30,
+          "min_frames": 8,
+          "frame_features": true,
+          "native_dimensions": true
+        },
+        "inference_config": {
+          "model_type": "videoprism",
+          "backend": "auto",
+          "query_encoder": "vidore/colsmol-500m"
+        },
+        "schema_config": {
+          "schema_name": "video_videoprism_large_mv_chunk_30s",
+          "model_name": "VideoPrism-Large",
+          "num_patches": 2048,
+          "embedding_dim": 1024,
+          "binary_dim": 128
+        }
+      },
+      "video_videoprism_lvt_base_sv_chunk_6s": {
+        "type": "video",
+        "description": "VideoPrism LVT base for 6-second chunk single-vector embeddings with 768-dim. Optimized for shorter segments with temporal context.",
+        "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
+        "embedding_model": "videoprism_lvt_public_v1_base",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "SingleVectorSegmentationStrategy",
+            "params": {
+              "strategy": "chunks",
+              "segment_duration": 6.0,
+              "segment_overlap": 1.0,
+              "sampling_fps": 2.0,
+              "max_frames_per_segment": 12,
+              "store_as_single_doc": true
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "SingleVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "videoprism",
+        "model_specific": {
+          "chunk_duration": 6.0,
+          "chunk_overlap": 1.0,
+          "sampling_fps": 2.0,
+          "max_frames_per_chunk": 12,
+          "min_frames": 4
+        },
+        "inference_config": {
+          "model_type": "videoprism",
+          "backend": "auto",
+          "query_encoder": "videoprism_lvt_public_v1_base"
+        },
+        "schema_config": {
+          "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
+          "model_name": "VideoPrism-LVT-Base",
+          "embedding_dim": 768,
+          "binary_dim": 96,
+          "chunk_based": true
+        }
+      },
+      "video_videoprism_lvt_large_sv_chunk_6s": {
+        "type": "video",
+        "description": "VideoPrism LVT large for 6-second chunk single-vector embeddings with 1024-dim. High-capacity model for fine-grained temporal understanding.",
+        "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
+        "embedding_model": "videoprism_lvt_public_v1_large",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "SingleVectorSegmentationStrategy",
+            "params": {
+              "strategy": "chunks",
+              "segment_duration": 6.0,
+              "segment_overlap": 1.0,
+              "sampling_fps": 2.0,
+              "max_frames_per_segment": 12,
+              "store_as_single_doc": true
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "SingleVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "videoprism",
+        "model_specific": {
+          "chunk_duration": 6.0,
+          "chunk_overlap": 1.0,
+          "sampling_fps": 2.0,
+          "max_frames_per_chunk": 12,
+          "min_frames": 4
+        },
+        "inference_config": {
+          "model_type": "videoprism",
+          "backend": "auto",
+          "query_encoder": "videoprism_lvt_public_v1_large"
+        },
+        "schema_config": {
+          "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
+          "model_name": "VideoPrism-LVT-Large",
+          "embedding_dim": 1024,
+          "binary_dim": 128,
+          "chunk_based": true
+        }
+      },
+      "code_lateon_mv": {
+        "type": "code",
+        "description": "Source code semantic search with LateOn-Code-edge multi-vector embeddings (128-dim). Tree-sitter AST chunking by function/class/method.",
+        "schema_name": "code_lateon_mv",
+        "embedding_model": "lightonai/LateOn-Code-edge",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "CodeSegmentationStrategy",
+            "params": {
+              "languages": [
+                "python",
+                "typescript",
+                "go",
+                "javascript"
+              ]
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "CodeTextEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "code_colbert",
+        "model_loader": "colbert",
+        "schema_config": {
+          "schema_name": "code_lateon_mv",
+          "model_name": "LateOn-Code-edge",
+          "num_patches": 2048,
+          "embedding_dim": 48,
+          "binary_dim": 6
+        }
+      }
+    },
+    "default_profiles": {
+      "video": {
+        "profile": "video_colpali_smol500_mv_frame",
+        "strategy": "segmentation"
+      }
+    }
+  },
+  "telemetry_collector_endpoint": null,
+  "phoenix_endpoint": null
+}

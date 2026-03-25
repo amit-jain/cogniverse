@@ -47,77 +47,167 @@ def dashboard_available() -> bool:
         return False
 
 
-skip_if_no_runtime = pytest.mark.skipif(
-    not runtime_available(),
-    reason="Runtime not available at localhost:8000",
-)
+def _ensure_stack_running() -> bool:
+    """Ensure the cogniverse stack is running.
 
-skip_if_no_dashboard = pytest.mark.skipif(
-    not dashboard_available(),
-    reason="Dashboard not available at localhost:8501",
-)
+    If services are already reachable (e.g., from a prior `cogniverse up`),
+    returns True immediately. Otherwise attempts `cogniverse up`.
+    """
+    if runtime_available() and dashboard_available():
+        return True
+
+    # Try starting with cogniverse up
+    try:
+        result = subprocess.run(
+            ["cogniverse", "up", "--llm=builtin"],
+            capture_output=True, text=True, timeout=600,
+        )
+        return result.returncode == 0 and runtime_available()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _skip_if_no_runtime():
+    """Skip marker that checks runtime availability at test time, not import time."""
+    if not runtime_available():
+        pytest.skip("Runtime not available at localhost:8000 — run 'cogniverse up' first")
+
+def _skip_if_no_dashboard():
+    """Skip marker that checks dashboard availability at test time, not import time."""
+    if not dashboard_available():
+        pytest.skip("Dashboard not available at localhost:8501 — run 'cogniverse up' first")
+
+# Keep the old names for backward compat but make them no-ops
+# The actual check happens in e2e_stack fixture (autouse, session-scoped)
+skip_if_no_runtime = pytest.mark.e2e
+skip_if_no_dashboard = pytest.mark.e2e
 
 
 def unique_id(prefix: str = "e2e") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
-def restart_runtime(timeout_s: int = 30) -> bool:
-    """Kill and restart the runtime server.
+def restart_runtime(timeout_s: int = 60) -> bool:
+    """Restart the runtime pod via kubectl.
 
-    Batch ingestion runs CPU-bound ML inference in the async event loop,
-    permanently deadlocking uvicorn. This function kills the old process
-    and starts a fresh one. Returns True if the new runtime is healthy.
+    When the runtime is deployed on k3d, use kubectl to restart the pod
+    instead of killing local processes. K8s will create a new pod automatically.
+    Returns True if the new runtime is healthy.
     """
-    import os
-    import signal
-
     try:
-        result = subprocess.run(
-            ["lsof", "-i", ":8000", "-t"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+        subprocess.run(
+            ["kubectl", "rollout", "restart", "deployment/cogniverse-runtime",
+             "-n", "cogniverse"],
+            capture_output=True, timeout=10,
         )
-        for pid_str in result.stdout.strip().split():
-            try:
-                os.kill(int(pid_str), signal.SIGKILL)
-            except (ProcessLookupError, ValueError):
-                pass
-    except subprocess.TimeoutExpired:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    _time.sleep(3)
-
-    env = {**os.environ, "BACKEND_URL": "http://localhost", "BACKEND_PORT": "8080"}
-    subprocess.Popen(
-        [
-            "uv",
-            "run",
-            "uvicorn",
-            "cogniverse_runtime.main:app",
-            "--host",
-            "0.0.0.0",
-            "--port",
-            "8000",
-            "--log-level",
-            "info",
-        ],
-        env=env,
-        stdout=open("/tmp/runtime_e2e_restart.log", "w"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-
+    # Wait for the new pod to become ready
     for _ in range(timeout_s):
         _time.sleep(1)
         try:
-            r = httpx.get(f"{RUNTIME}/health/live", timeout=3.0)
+            r = httpx.get(f"{RUNTIME}/health", timeout=3.0)
             if r.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.ReadTimeout):
             pass
     return False
+
+
+def _bootstrap_tenant_and_schemas() -> None:
+    """Create the E2E tenant and deploy schemas if not already done.
+
+    Called once per session. Idempotent — 409 (already exists) is fine.
+    """
+    # Read profile definitions from config.json
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    if not config_path.exists():
+        return
+
+    config = json.loads(config_path.read_text())
+    active_profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+    all_profiles = config.get("backend", {}).get("profiles", {})
+    profile_def = all_profiles.get(active_profile, {})
+
+    # Step 1: Create tenant (409 = already exists)
+    try:
+        resp = httpx.post(
+            f"{RUNTIME}/admin/tenants",
+            json={"tenant_id": TENANT_ID, "created_by": "e2e-test"},
+            timeout=30,
+        )
+        if resp.status_code not in (200, 201, 409):
+            print(f"Tenant creation returned {resp.status_code}: {resp.text[:200]}")
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"Tenant creation failed: {exc}")
+
+    # Step 2: Register profile and deploy schema (409 = already exists)
+    if profile_def:
+        try:
+            payload = {
+                "profile_name": active_profile,
+                "tenant_id": TENANT_ID,
+                "type": profile_def.get("type", "video"),
+                "description": profile_def.get("description", ""),
+                "schema_name": profile_def.get("schema_name", active_profile),
+                "embedding_model": profile_def.get("embedding_model", ""),
+                "pipeline_config": profile_def.get("pipeline_config", {}),
+                "strategies": profile_def.get("strategies", {}),
+                "embedding_type": profile_def.get("embedding_type", "frame_based"),
+                "schema_config": profile_def.get("schema_config", {}),
+                "model_specific": profile_def.get("model_specific"),
+                "deploy_schema": True,
+            }
+            resp = httpx.post(
+                f"{RUNTIME}/admin/profiles",
+                json=payload,
+                timeout=60,
+            )
+            if resp.status_code not in (200, 201, 409):
+                print(f"Profile registration returned {resp.status_code}: {resp.text[:200]}")
+        except (httpx.HTTPError, OSError) as exc:
+            print(f"Profile registration failed: {exc}")
+
+
+LLM_URL = "http://localhost:11434"
+LLM_MODEL = "qwen3:4b"
+
+
+def _ensure_llm_model() -> None:
+    """Pull the LLM model if not already available."""
+    try:
+        resp = httpx.get(f"{LLM_URL}/api/tags", timeout=10)
+        if resp.status_code == 200:
+            models = resp.json().get("models", [])
+            if any(LLM_MODEL in m.get("name", "") for m in models):
+                return  # Model already loaded
+        # Pull the model
+        print(f"Pulling LLM model {LLM_MODEL}...")
+        httpx.post(
+            f"{LLM_URL}/api/pull",
+            json={"name": LLM_MODEL},
+            timeout=600,
+        )
+        print(f"Model {LLM_MODEL} pulled")
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"LLM model pull failed (non-fatal): {exc}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def e2e_stack():
+    """Session fixture that ensures the stack is running and bootstrapped.
+
+    If services are already up (from a prior ``cogniverse up``), uses them.
+    Otherwise attempts to start the stack. After services are confirmed,
+    creates the E2E tenant and deploys schemas.
+    """
+    if not _ensure_stack_running():
+        pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
+
+    _bootstrap_tenant_and_schemas()
+    _ensure_llm_model()
+    yield
 
 
 @pytest.fixture(scope="session")

@@ -8,6 +8,8 @@ spec:
 
   arguments:
     parameters:
+    - name: runtime-image
+      value: "cogniverse/runtime:dev"
     - name: video-dir
       value: "/data/videos"
     - name: tenant-id
@@ -46,7 +48,7 @@ spec:
   # Validate input parameters and video directory
   - name: validate-input
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -90,7 +92,7 @@ spec:
   # Prepare videos for processing
   - name: prepare-videos
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -124,7 +126,7 @@ spec:
   # Ingest videos with multi-profile support
   - name: ingest-videos
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -169,7 +171,7 @@ spec:
   # Verify ingestion results
   - name: verify-ingestion
     container:
-      image: cogniverse/runtime:2.0.0
+      image: "{{workflow.parameters.runtime-image}}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -239,25 +241,3 @@ spec:
         limits:
           memory: "256Mi"
           cpu: "200m"
----
-# Example Workflow submission
-apiVersion: argoproj.io/v1alpha1
-kind: Workflow
-metadata:
-  generateName: video-ingestion-
-  namespace: cogniverse
-spec:
-  workflowTemplateRef:
-    name: video-ingestion
-  arguments:
-    parameters:
-    - name: video-dir
-      value: "/data/acme_corp/videos"
-    - name: tenant-id
-      value: "acme_corp"
-    - name: profiles
-      value: "video_colpali_smol500_mv_frame"
-    - name: batch-size
-      value: "20"
-    - name: max-workers
-      value: "8"

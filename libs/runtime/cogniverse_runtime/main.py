@@ -39,9 +39,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
 
+    import os
+
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
+
+    # Note: LLM_ENDPOINT, BACKEND_URL, PHOENIX_ENDPOINT env vars are read by
+    # ConfigManager.get_system_config() when no stored config exists in Vespa.
+    # This handles first-startup where defaults would otherwise be localhost.
 
     # 2. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
@@ -185,6 +191,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_synthetic.api import configure_service as configure_synthetic
 
     llm_config = config.get_llm_config()
+    # LLM api_base comes from SystemConfig.base_url which reads LLM_ENDPOINT env
     primary_lm = create_dspy_lm(llm_config.primary)
     dspy.configure(lm=primary_lm)
     logger.info(f"DSPy configured with LM: {llm_config.primary.model}")

@@ -226,7 +226,6 @@ nav:
     - Setup & Installation: operations/setup-installation.md
     - Configuration: operations/configuration.md
     - Deployment: operations/deployment.md
-    - Docker Deployment: operations/docker-deployment.md
     - Kubernetes Deployment: operations/kubernetes-deployment.md
     - Modal Deployment:
       - Deployment Guide: modal/deployment_guide.md
