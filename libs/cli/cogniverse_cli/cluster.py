@@ -12,21 +12,42 @@ CLUSTER_NAME = "cogniverse"
 NAMESPACE = "cogniverse"
 DEFAULT_PORTS = [8080, 19071, 8000, 8501, 6006, 4317, 11434, 2746]
 
-# Install commands per tool per platform
-_INSTALL_COMMANDS: dict[str, dict[str, list[str]]] = {
-    "k3d": {
-        "darwin": ["brew", "install", "k3d"],
-        "linux": ["bash", "-c", "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"],
-    },
-    "helm": {
-        "darwin": ["brew", "install", "helm"],
-        "linux": ["bash", "-c", "curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"],
-    },
-    "kubectl": {
-        "darwin": ["brew", "install", "kubectl"],
-        "linux": ["bash", "-c", "curl -LO 'https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl' && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl"],
-    },
-}
+def _get_arch() -> str:
+    """Return architecture string for download URLs (amd64/arm64)."""
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    return machine
+
+
+def _get_install_instructions(tool: str) -> dict[str, str]:
+    """Return human-readable install instructions per platform."""
+    arch = _get_arch()
+    return {
+        "k3d": {
+            "darwin": "brew install k3d",
+            "linux": "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
+        },
+        "helm": {
+            "darwin": "brew install helm",
+            "linux": "curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash",
+        },
+        "kubectl": {
+            "darwin": "brew install kubectl",
+            "linux": (
+                f"curl -LO 'https://dl.k8s.io/release/"
+                f"$(curl -sL https://dl.k8s.io/release/stable.txt)"
+                f"/bin/linux/{arch}/kubectl' && "
+                f"chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
+            ),
+        },
+        "docker": {
+            "darwin": "Install Docker Desktop: https://docs.docker.com/desktop/install/mac-install/",
+            "linux": "curl -fsSL https://get.docker.com | sh",
+        },
+    }.get(tool, {})
 
 
 def check_prerequisites(*, require_k3d: bool = True) -> list[str]:
@@ -37,30 +58,55 @@ def check_prerequisites(*, require_k3d: bool = True) -> list[str]:
     return [tool for tool in tools if shutil.which(tool) is None]
 
 
-def install_prerequisite(tool: str) -> bool:
-    """Attempt to install a missing prerequisite. Returns True on success."""
+def get_install_commands(missing: list[str]) -> list[tuple[str, str]]:
+    """Return (tool, install_command) pairs for missing prerequisites.
+
+    Does NOT run anything — just returns the commands for the user to review.
+    """
     os_name = platform.system().lower()
-    commands = _INSTALL_COMMANDS.get(tool, {})
-    cmd = commands.get(os_name)
-    if not cmd:
+    commands = []
+    for tool in missing:
+        instructions = _get_install_instructions(tool)
+        cmd = instructions.get(os_name)
+        if cmd:
+            commands.append((tool, cmd))
+        else:
+            commands.append((tool, f"Install {tool} manually for {os_name}"))
+    return commands
+
+
+def install_prerequisite(tool: str) -> bool:
+    """Attempt to install a single prerequisite. Returns True on success."""
+    os_name = platform.system().lower()
+    instructions = _get_install_instructions(tool)
+    cmd_str = instructions.get(os_name)
+    if not cmd_str:
         return False
+
+    # Use brew on macOS, shell on Linux
+    if os_name == "darwin" and shutil.which("brew"):
+        cmd = cmd_str.split()
+    else:
+        cmd = ["bash", "-c", cmd_str]
+
     try:
-        result = subprocess.run(cmd, timeout=120, check=False)
+        result = subprocess.run(cmd, timeout=300, check=False)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
-def install_missing_prerequisites(missing: list[str]) -> list[str]:
-    """Try to install missing tools. Returns list of tools that still can't be found."""
+def install_missing_prerequisites(missing: list[str], *, interactive: bool = True) -> list[str]:
+    """Install missing tools after showing what will be installed.
+
+    Returns list of tools that still can't be found after install attempts.
+    """
     still_missing = []
     for tool in missing:
         if tool == "docker":
-            # Docker must be installed manually
             still_missing.append(tool)
             continue
         if install_prerequisite(tool):
-            # Verify it's now in PATH
             if shutil.which(tool):
                 continue
         still_missing.append(tool)

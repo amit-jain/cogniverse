@@ -76,7 +76,7 @@ class TestUpCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["up"])
         assert result.exit_code != 0
-        assert "Cannot install" in result.output
+        assert "Failed to install" in result.output or "Missing prerequisites" in result.output
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")

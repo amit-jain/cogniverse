@@ -24,6 +24,7 @@ from cogniverse_cli.cluster import (
     cluster_exists,
     create_cluster,
     delete_cluster,
+    get_install_commands,
     has_existing_k8s,
     install_missing_prerequisites,
     restart_dead_port_forwards,
@@ -149,12 +150,19 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
     # 2. Check prerequisites (require k3d only if no existing K8s)
     missing = check_prerequisites(require_k3d=use_k3d)
     if missing:
-        console.print(f"[cyan]Installing missing tools: {', '.join(missing)}...[/cyan]")
+        commands = get_install_commands(missing)
+        console.print("[yellow]Missing prerequisites:[/yellow]")
+        for tool, cmd in commands:
+            console.print(f"  [bold]{tool}[/bold]: {cmd}")
+
+        if not click.confirm("\nInstall these now?", default=True):
+            console.print("[red]Cannot proceed without prerequisites.[/red]")
+            sys.exit(1)
+
         still_missing = install_missing_prerequisites(missing)
         if still_missing:
-            console.print(f"[red]Cannot install: {', '.join(still_missing)}[/red]")
-            if "docker" in still_missing:
-                console.print("[red]Docker must be installed manually: https://docs.docker.com/get-docker/[/red]")
+            console.print(f"[red]Failed to install: {', '.join(still_missing)}[/red]")
+            console.print("[red]Please install manually using the commands above.[/red]")
             sys.exit(1)
         console.print("[green]Prerequisites installed[/green]")
 

@@ -31,9 +31,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
 
     # Startup
+    import os
+    import time as _time
+
     logger.info("Starting Cogniverse Runtime...")
 
-    # 1. Load configuration
+    # 1. Wait for backend to be reachable before loading config.
+    # In k8s, the runtime pod may start before Vespa is ready.
+    from cogniverse_foundation.config.bootstrap import BootstrapConfig
+
+    bootstrap = BootstrapConfig.from_environment()
+    vespa_health_url = f"{bootstrap.backend_url}:{bootstrap.backend_port}/ApplicationStatus"
+    logger.info(f"Waiting for backend at {vespa_health_url}...")
+
+    for attempt in range(30):
+        try:
+            import httpx
+
+            resp = httpx.get(vespa_health_url, timeout=5)
+            if resp.status_code == 200:
+                logger.info("Backend is ready")
+                break
+        except (httpx.HTTPError, OSError):
+            pass
+        logger.info(f"Backend not ready, retrying ({attempt + 1}/30)...")
+        _time.sleep(10)
+    else:
+        logger.warning("Backend not ready after 5 minutes, proceeding anyway")
+
+    # 2. Load configuration
     from pathlib import Path
 
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -43,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 
-    # 2. Initialize SchemaLoader
+    # 3. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     logger.info("SchemaLoader initialized")
 
@@ -165,6 +191,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app_name=system_config.application_name
     )
     logger.info("Metadata schemas deployed via system backend")
+
+    # Store SystemConfig with env var overrides so all components
+    # (search backend, agents, dashboard) read the correct service URLs.
+    # Env vars are set by the deployment layer (Helm template).
+    updated = False
+    if os.environ.get("BACKEND_URL"):
+        system_config.backend_url = os.environ["BACKEND_URL"]
+        updated = True
+    if os.environ.get("BACKEND_PORT"):
+        system_config.backend_port = int(os.environ["BACKEND_PORT"])
+        updated = True
+    if os.environ.get("LLM_ENDPOINT"):
+        system_config.base_url = os.environ["LLM_ENDPOINT"]
+        updated = True
+    if os.environ.get("PHOENIX_ENDPOINT"):
+        system_config.telemetry_url = os.environ["PHOENIX_ENDPOINT"]
+        updated = True
+    if updated:
+        config_manager.set_system_config(system_config)
+        logger.info("SystemConfig stored with deployment env var overrides")
 
     # 8. Wire tenant manager dependencies
     tenant_manager.set_config_manager(config_manager)
