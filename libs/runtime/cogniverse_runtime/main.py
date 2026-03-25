@@ -39,15 +39,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
 
-    import os
-
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
-
-    # Note: LLM_ENDPOINT, BACKEND_URL, PHOENIX_ENDPOINT env vars are read by
-    # ConfigManager.get_system_config() when no stored config exists in Vespa.
-    # This handles first-startup where defaults would otherwise be localhost.
 
     # 2. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
