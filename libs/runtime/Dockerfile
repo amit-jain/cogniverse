@@ -35,6 +35,12 @@ RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen
 # Also install telemetry-phoenix into the same venv — agents discover it via entry points
 RUN uv pip install -e ./libs/telemetry-phoenix
 
+# Pre-download ML models so they don't need downloading at runtime.
+# This eliminates startup delays and liveness probe timeouts.
+ENV HF_HOME=/app/.cache/huggingface
+RUN python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
+    python -m spacy download en_core_web_sm
+
 # Runtime stage
 FROM python:3.12-slim
 
@@ -54,8 +60,9 @@ RUN useradd -m -u 1000 cogniverse && \
 # Set working directory
 WORKDIR /app
 
-# Copy installed virtual environment from builder
+# Copy installed virtual environment and pre-downloaded models from builder
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder --chown=cogniverse:cogniverse /app/.cache /home/cogniverse/.cache
 
 # Copy application code
 COPY --chown=cogniverse:cogniverse libs/sdk ./libs/sdk
