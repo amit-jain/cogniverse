@@ -5,6 +5,8 @@ global:
 
 vespa:
   replicaCount: 1
+  service:
+    type: NodePort
   persistence:
     storageClass: "local-path"
     size: "20Gi"
@@ -21,6 +23,8 @@ runtime:
   image:
     tag: "dev"
     pullPolicy: Never
+  service:
+    type: NodePort
   autoscaling:
     enabled: false
   # ML model loading blocks the event loop for 60-120s on first request.
@@ -54,6 +58,8 @@ dashboard:
   image:
     tag: "dev"
     pullPolicy: Never
+  service:
+    type: NodePort
   resources:
     requests:
       cpu: "500m"
@@ -64,6 +70,8 @@ dashboard:
 
 phoenix:
   replicaCount: 1
+  service:
+    type: NodePort
   persistence:
     storageClass: "local-path"
     size: "10Gi"
@@ -79,6 +87,8 @@ llm:
   builtin:
     gpu:
       enabled: false
+    service:
+      type: NodePort
     persistence:
       storageClass: "local-path"
       size: "20Gi"

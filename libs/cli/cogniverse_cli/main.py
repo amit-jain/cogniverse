@@ -27,9 +27,6 @@ from cogniverse_cli.cluster import (
     get_install_commands,
     has_existing_k8s,
     install_missing_prerequisites,
-    restart_dead_port_forwards,
-    start_port_forwards,
-    stop_port_forwards,
 )
 from cogniverse_cli.config import (
     get_chart_path,
@@ -267,40 +264,20 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
         )
         console.print(f"[yellow]Some pods not ready:[/yellow]\n{result.stdout}")
 
-    # 10. Start port-forwards AFTER all pods and Argo are ready
-    if use_k3d:
-        console.print("[cyan]Starting port-forwards...[/cyan]")
-        stop_port_forwards()  # clean up any stale ones
-        start_port_forwards(skip_llm=llm_is_external)
-        time.sleep(3)
-
-    # 11. Verify services via HTTP health checks
+    # 10. Verify services via HTTP health checks
+    # With NodePort services on k3d, ports are directly reachable via loadbalancer.
     console.print("[cyan]Verifying service health...[/cyan]")
     health_urls = {
         name: url
         for name, url in SERVICE_HEALTH_URLS.items()
         if not (llm_is_external and name == "LLM")
     }
-    all_healthy = True
     for name, url in health_urls.items():
-        ok = wait_for_url(url, timeout=30, interval=3)
+        ok = wait_for_url(url, timeout=60, interval=5)
         if ok:
             console.print(f"  [green]{name}[/green] ready")
         else:
             console.print(f"  [yellow]{name}[/yellow] not reachable")
-            all_healthy = False
-
-    # 11a. Restart dead port-forwards and retry
-    if use_k3d and not all_healthy:
-        console.print("[cyan]Retrying failed connections...[/cyan]")
-        restart_dead_port_forwards()
-        time.sleep(3)
-        for name, url in health_urls.items():
-            if check_service_health({name: url})[name]:
-                continue  # already healthy
-            ok = wait_for_url(url, timeout=15, interval=3)
-            if ok:
-                console.print(f"  [green]{name}[/green] recovered")
 
     # 12. Print final status
     console.print()
@@ -316,7 +293,6 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
 )
 def down(keep_data: bool) -> None:
     """Tear down the Cogniverse stack."""
-    stop_port_forwards()
     console.print("[cyan]Removing Helm release...[/cyan]")
     helm_uninstall()
 

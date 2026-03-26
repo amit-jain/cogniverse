@@ -146,7 +146,11 @@ def create_cluster(
     """
     if ports is None:
         ports = DEFAULT_PORTS
-    cmd = ["k3d", "cluster", "create", name]
+    cmd = [
+        "k3d", "cluster", "create", name,
+        # Allow any port as NodePort (default range is 30000-32767)
+        "--k3s-arg", "--service-node-port-range=1-65535@server:0",
+    ]
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)

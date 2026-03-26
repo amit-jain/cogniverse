@@ -126,10 +126,16 @@ spec:
     targetPort: query
     protocol: TCP
     name: query
+    {{- if eq .Values.vespa.service.type "NodePort" }}
+    nodePort: {{ .Values.vespa.service.ports.query }}
+    {{- end }}
   - port: {{ .Values.vespa.service.ports.config }}
     targetPort: config
     protocol: TCP
     name: config
+    {{- if eq .Values.vespa.service.type "NodePort" }}
+    nodePort: {{ .Values.vespa.service.ports.config }}
+    {{- end }}
   - port: {{ .Values.vespa.service.ports.metrics }}
     targetPort: metrics
     protocol: TCP
@@ -261,6 +267,9 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+    {{- if eq .Values.runtime.service.type "NodePort" }}
+    nodePort: {{ .Values.runtime.service.port }}
+    {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: runtime
@@ -361,6 +370,9 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+    {{- if eq .Values.dashboard.service.type "NodePort" }}
+    nodePort: {{ .Values.dashboard.service.port }}
+    {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: dashboard
@@ -472,10 +484,16 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+    {{- if eq .Values.phoenix.service.type "NodePort" }}
+    nodePort: {{ .Values.phoenix.service.port }}
+    {{- end }}
   - port: 4317
     targetPort: otlp-grpc
     protocol: TCP
     name: otlp-grpc
+    {{- if eq .Values.phoenix.service.type "NodePort" }}
+    nodePort: 4317
+    {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: phoenix
@@ -602,6 +620,9 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+    {{- if eq .Values.llm.builtin.service.type "NodePort" }}
+    nodePort: {{ .Values.llm.builtin.service.port }}
+    {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: llm
