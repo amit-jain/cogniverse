@@ -312,7 +312,12 @@ class AgentDispatcher:
             )
 
         deps = RoutingDeps(**deps_kwargs)
-        agent = RoutingAgent(deps=deps, registry=self._registry)
+        # RoutingAgent.__init__ loads GLiNER + spaCy models (sync, CPU-bound).
+        # Run in thread to avoid blocking the event loop and health probes.
+        import asyncio
+        agent = await asyncio.to_thread(
+            RoutingAgent, deps=deps, registry=self._registry
+        )
 
         action = context.get("action")
         if action == "optimize_routing":

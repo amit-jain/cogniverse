@@ -165,8 +165,11 @@ class CogniverseAgentExecutor(AgentExecutor):
         yielded event dict to a TaskStatusUpdateEvent on the A2A queue.
         """
         try:
-            agent, typed_input = self._dispatcher.create_streaming_agent(
-                agent_name, query, tenant_id
+            import asyncio
+
+            agent, typed_input = await asyncio.to_thread(
+                self._dispatcher.create_streaming_agent,
+                agent_name, query, tenant_id,
             )
 
             async for event in await agent.process(typed_input, stream=True):
