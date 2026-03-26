@@ -41,21 +41,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
     bootstrap = BootstrapConfig.from_environment()
-    vespa_health_url = f"{bootstrap.backend_url}:{bootstrap.backend_port}/ApplicationStatus"
-    logger.info(f"Waiting for backend at {vespa_health_url}...")
+    import httpx
 
-    for attempt in range(30):
+    vespa_base = f"{bootstrap.backend_url}:{bootstrap.backend_port}"
+    # Vespa two-port architecture: container node (GET) converges before
+    # content/distributor nodes (PUT/feed). We need feed readiness, so
+    # probe with a document GET that exercises the content node path.
+    vespa_feed_probe = f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
+    logger.info(f"Waiting for backend feed readiness at {vespa_base}...")
+
+    for attempt in range(60):
         try:
-            import httpx
-
-            resp = httpx.get(vespa_health_url, timeout=5)
-            if resp.status_code == 200:
-                logger.info("Backend is ready")
+            # First check container node is up
+            resp = httpx.get(f"{vespa_base}/ApplicationStatus", timeout=5)
+            if resp.status_code != 200:
+                raise ConnectionError("Container node not ready")
+            # Then check feed path is ready (404 = schema exists, feed works;
+            # 200 = doc exists; both mean feed is ready)
+            resp = httpx.get(vespa_feed_probe, timeout=5)
+            if resp.status_code in (200, 404):
+                logger.info("Backend feed endpoint is ready")
                 break
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError, ConnectionError):
             pass
-        logger.info(f"Backend not ready, retrying ({attempt + 1}/30)...")
-        _time.sleep(10)
+        logger.info(f"Backend not ready, retrying ({attempt + 1}/60)...")
+        _time.sleep(5)
     else:
         logger.warning("Backend not ready after 5 minutes, proceeding anyway")
 
