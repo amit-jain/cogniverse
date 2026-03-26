@@ -108,15 +108,14 @@ class SearchService:
 
         backend_registry = get_backend_registry()
 
-        import os
-
+        # Read backend URL from SystemConfig (authoritative, stored with env var
+        # overrides at startup) rather than UnifiedConfig cache (may be stale).
+        system_config = self.config_manager.get_system_config()
         backend_section = self.config.get("backend", {})
         backend_config = {
-            "url": os.environ.get("BACKEND_URL")
-            or self.config.get("backend_url")
+            "url": system_config.backend_url
             or backend_section.get("url", "http://localhost"),
-            "port": int(os.environ.get("BACKEND_PORT", "0"))
-            or self.config.get("backend_port")
+            "port": system_config.backend_port
             or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
