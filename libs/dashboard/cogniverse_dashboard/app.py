@@ -341,6 +341,17 @@ if "conversation_history" not in st.session_state:
 # Sidebar configuration
 with st.sidebar:
     st.title("🔥 Analytics Dashboard")
+
+    # Active tenant selector (persists in session state across tab switches)
+    active_tenant = st.text_input(
+        "Active Tenant",
+        value=st.session_state.get("active_tenant", "default"),
+        key="active_tenant_input",
+    )
+    if active_tenant != st.session_state.get("active_tenant"):
+        st.session_state["active_tenant"] = active_tenant
+    st.info(f"Current tenant: **{active_tenant}**")
+
     st.markdown("---")
 
     # Time range selection

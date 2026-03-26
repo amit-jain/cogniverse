@@ -71,16 +71,23 @@ class TestSidebarAndNavigation:
             "Tenant input should be present in the sidebar DOM"
         )
 
-    def test_tab_navigation_preserves_state(self, page):
-        """Verify switching tabs doesn't crash the app."""
+    def test_set_tenant_persists(self, page):
         _nav(page)
-        # Click a different tab and verify the page still renders
+        set_tenant(page, TENANT_ID)
+        # Switch tab to trigger Streamlit rerun
         tabs = page.locator('button[role="tab"]')
         if tabs.count() >= 2:
             tabs.nth(1).click()
             page.wait_for_load_state("networkidle", timeout=30000)
-        app = page.locator('[data-testid="stAppViewContainer"]')
-        expect(app).to_be_visible(timeout=INTERACTION_TIMEOUT)
+
+        # Verify tenant persisted in session state after tab switch
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        tenant_input = sidebar.locator('input[aria-label="Active Tenant"]')
+        value = tenant_input.evaluate("el => el.value || ''")
+        body_text = page.inner_text("body")
+        assert TENANT_ID in value or TENANT_ID in body_text, (
+            f"Tenant should persist after tab switch. Input value: '{value}'"
+        )
 
     def test_top_level_tabs_present(self, page):
         _nav(page)
