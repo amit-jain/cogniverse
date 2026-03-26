@@ -14,6 +14,7 @@ dependencies = [
     "cogniverse-core",
     "cogniverse-evaluation",
     "cogniverse-runtime",
+    "cogniverse-telemetry-phoenix",
 
     # Dashboard UI
     "streamlit>=1.29.0",
@@ -41,6 +42,7 @@ cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-evaluation = { workspace = true }
 cogniverse-runtime = { workspace = true }
+cogniverse-telemetry-phoenix = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

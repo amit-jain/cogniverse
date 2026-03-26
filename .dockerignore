@@ -64,8 +64,10 @@ README.md
 # Old source (not needed in new architecture)
 src/
 
-# Scripts (not needed in runtime)
-scripts/
+# Scripts (exclude non-tab scripts, keep tab modules for dashboard)
+scripts/run_*.py
+scripts/deploy_*.py
+scripts/setup_*.py
 
 # Tests (not needed in production)
 tests/

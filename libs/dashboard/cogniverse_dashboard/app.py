@@ -17,7 +17,6 @@ import os
 
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
-import importlib.util
 import json
 import sys
 import time
@@ -39,30 +38,22 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-# Import analytics module directly without going through __init__.py
-def import_module_directly(module_path):
-    """Import a module directly from file path to avoid __init__.py execution"""
-    spec = importlib.util.spec_from_file_location("module", module_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# Import only what we need
-analytics_module = import_module_directly(
-    project_root / "src/evaluation/phoenix/analytics.py"
-)
-rca_module = import_module_directly(
-    project_root / "src/evaluation/phoenix/root_cause_analysis.py"
-)
-
-Analytics = analytics_module.PhoenixAnalytics
-RootCauseAnalyzer = rca_module.RootCauseAnalyzer
-
+# Import analytics from workspace packages (migrated from old src/ path)
+# RootCauseAnalyzer already imported above
 # Import A2A client for agent communication
 import asyncio
 
 import httpx
+
+from cogniverse_evaluation.analysis.root_cause_analysis import (
+    RootCauseAnalyzer,
+)
+from cogniverse_telemetry_phoenix.evaluation.analytics import (
+    PhoenixAnalytics as Analytics,
+)
+from cogniverse_telemetry_phoenix.evaluation.analytics import (
+    TraceMetrics,
+)
 
 sys.path.append(str(project_root / "src"))
 
@@ -752,7 +743,7 @@ with main_tabs[0]:
     # Calculate statistics with operation grouping
     if not traces_df.empty:
         stats = st.session_state.analytics.calculate_statistics(
-            [analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()],
+            [TraceMetrics(**row) for _, row in traces_df.iterrows()],
             group_by="operation",
         )
     else:
@@ -1401,7 +1392,7 @@ if enable_rca and len(tabs) > 6:
         with st.spinner("Analyzing failures and performance issues..."):
             # Convert filtered DataFrame back to TraceMetrics objects
             filtered_traces = [
-                analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()
+                TraceMetrics(**row) for _, row in traces_df.iterrows()
             ]
 
             rca_results = rca.analyze_failures(

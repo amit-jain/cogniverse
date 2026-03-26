@@ -66,6 +66,7 @@ COPY --chown=cogniverse:cogniverse libs/runtime ./libs/runtime
 COPY --chown=cogniverse:cogniverse libs/dashboard ./libs/dashboard
 COPY --chown=cogniverse:cogniverse configs/schemas ./configs/schemas
 COPY --chown=cogniverse:cogniverse configs/config.json ./configs/config.json
+COPY --chown=cogniverse:cogniverse scripts ./scripts
 
 # Switch to non-root user
 USER cogniverse
@@ -83,7 +84,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/scripts
 ENV PATH="/app/.venv/bin:$PATH"
 ENV STREAMLIT_SERVER_PORT=8501
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
