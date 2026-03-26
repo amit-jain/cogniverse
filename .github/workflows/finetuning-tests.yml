@@ -1,6 +1,7 @@
 name: Finetuning Module Tests
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, develop, feature/* ]
     paths:
