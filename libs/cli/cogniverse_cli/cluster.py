@@ -5,7 +5,6 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
-import sys
 
 PREREQUISITES = ["docker", "kubectl", "helm"]
 CLUSTER_NAME = "cogniverse"
@@ -139,13 +138,19 @@ def cluster_exists(name: str = CLUSTER_NAME) -> bool:
 def create_cluster(
     name: str = CLUSTER_NAME,
     ports: list[int] | None = None,
+    *,
+    exclude_ports: list[int] | None = None,
 ) -> None:
     """Create a k3d cluster with port mappings.
 
     Each port gets a ``-p`` flag mapping it through the load balancer.
+    Use *exclude_ports* to skip ports that are already in use on the host
+    (e.g., 11434 when host Ollama is running).
     """
     if ports is None:
         ports = DEFAULT_PORTS
+    if exclude_ports:
+        ports = [p for p in ports if p not in exclude_ports]
     cmd = [
         "k3d", "cluster", "create", name,
         # Allow any port as NodePort (default range is 30000-32767)
@@ -212,7 +217,6 @@ def start_port_forwards(*, skip_llm: bool = False) -> None:
     Uses ``start_new_session=True`` so processes survive after the CLI exits.
     PIDs are written to ``PID_FILE`` for cross-process cleanup.
     """
-    import os
 
     pids: list[int] = []
 
@@ -229,7 +233,6 @@ def start_port_forwards(*, skip_llm: bool = False) -> None:
 
 def restart_dead_port_forwards() -> None:
     """Check for dead port-forward processes and restart them."""
-    import os
 
     new_pids: list[int] = []
     alive_procs: list[subprocess.Popen] = []

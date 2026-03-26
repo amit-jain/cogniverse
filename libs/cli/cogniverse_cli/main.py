@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import time
-from pathlib import Path
 
 import click
 import httpx
@@ -163,11 +161,20 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
             sys.exit(1)
         console.print("[green]Prerequisites installed[/green]")
 
-    # 3. Create k3d cluster if needed (local mode only)
+    # 3. Detect LLM BEFORE creating cluster (cluster binds port 11434)
+    host_llm_detected = False
+    if llm_mode == "auto" and use_k3d and not k3d_running:
+        host_llm_detected = _probe_host_llm()
+        if host_llm_detected:
+            console.print("[cyan]Detected host LLM, will use external mode.[/cyan]")
+
+    # 4. Create k3d cluster if needed (local mode only)
     if use_k3d:
         if not k3d_running:
             console.print("[cyan]Creating k3d cluster...[/cyan]")
-            create_cluster()
+            # Exclude LLM port if host LLM is running (avoids port conflict)
+            exclude = [11434] if host_llm_detected else None
+            create_cluster(exclude_ports=exclude)
         else:
             console.print("[cyan]Using existing k3d cluster.[/cyan]")
 
@@ -180,12 +187,12 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
             console.print("[cyan]Importing images into k3d...[/cyan]")
             import_images(CLUSTER_NAME, tags)
 
-    # 5. Detect LLM mode and build Helm set_values overrides
+    # 6. Detect LLM mode and build Helm set_values overrides
     set_values: dict[str, str] = {}
     if llm_mode == "auto":
-        if _probe_host_llm():
+        if host_llm_detected or _probe_host_llm():
             console.print(
-                "[cyan]Detected local LLM endpoint, configuring external mode.[/cyan]"
+                "[cyan]Using host LLM endpoint (external mode).[/cyan]"
             )
             external_url = (
                 "http://host.k3d.internal:11434" if use_k3d else "http://localhost:11434"
