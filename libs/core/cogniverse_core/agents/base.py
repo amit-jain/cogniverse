@@ -287,7 +287,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                     )
             return prediction or module.forward(**kwargs)
         else:
-            return module.forward(**kwargs)
+            import asyncio
+            return await asyncio.to_thread(module.forward, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
