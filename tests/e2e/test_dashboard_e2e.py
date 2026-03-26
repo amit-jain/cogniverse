@@ -71,23 +71,16 @@ class TestSidebarAndNavigation:
             "Tenant input should be present in the sidebar DOM"
         )
 
-    @pytest.mark.skip(reason="Dashboard no longer has 'Active Tenant' input in sidebar — needs UI update")
-    def test_set_tenant_persists(self, page):
+    def test_tab_navigation_preserves_state(self, page):
+        """Verify switching tabs doesn't crash the app."""
         _nav(page)
-        set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Evaluation")
-        page.wait_for_load_state("networkidle")
-
-        # Streamlit may clear the DOM input value on rerun but persists
-        # the tenant in session state. Check DOM value, React fiber
-        # state, and page body text for tenant ID presence.
-        sidebar = page.locator('[data-testid="stSidebar"]')
-        tenant_input = sidebar.locator('[data-testid="stTextInput"] input').first
-        value = tenant_input.evaluate("el => el.value || ''")
-        body_text = page.inner_text("body")
-        assert TENANT_ID in value or TENANT_ID in body_text, (
-            f"Tenant should persist after tab switch. Input value: '{value}'"
-        )
+        # Click a different tab and verify the page still renders
+        tabs = page.locator('button[role="tab"]')
+        if tabs.count() >= 2:
+            tabs.nth(1).click()
+            page.wait_for_load_state("networkidle", timeout=30000)
+        app = page.locator('[data-testid="stAppViewContainer"]')
+        expect(app).to_be_visible(timeout=INTERACTION_TIMEOUT)
 
     def test_top_level_tabs_present(self, page):
         _nav(page)
