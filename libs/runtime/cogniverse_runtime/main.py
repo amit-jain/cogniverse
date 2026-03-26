@@ -220,6 +220,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         updated = True
     if updated:
         config_manager.set_system_config(system_config)
+        # Clear cached backend instances so they pick up the new URLs
+        BackendRegistry.get_instance()._backend_instances.clear()
         logger.info("SystemConfig stored with deployment env var overrides")
 
     # 8. Wire tenant manager dependencies

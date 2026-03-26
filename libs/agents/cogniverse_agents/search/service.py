@@ -108,11 +108,15 @@ class SearchService:
 
         backend_registry = get_backend_registry()
 
+        import os
+
         backend_section = self.config.get("backend", {})
         backend_config = {
-            "url": self.config.get("backend_url")
+            "url": os.environ.get("BACKEND_URL")
+            or self.config.get("backend_url")
             or backend_section.get("url", "http://localhost"),
-            "port": self.config.get("backend_port")
+            "port": int(os.environ.get("BACKEND_PORT", "0"))
+            or self.config.get("backend_port")
             or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
