@@ -81,6 +81,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
     @patch("cogniverse_cli.main.install_argo_controller")
+    @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
@@ -107,6 +108,7 @@ class TestUpCommand:
         mock_pull: MagicMock,
         mock_helm: MagicMock,
         mock_wait: MagicMock,
+        mock_subprocess: MagicMock,
         mock_argo: MagicMock,
         mock_deploy_wf: MagicMock,
         mock_status: MagicMock,
@@ -125,6 +127,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
     @patch("cogniverse_cli.main.install_argo_controller")
+    @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
@@ -151,6 +154,7 @@ class TestUpCommand:
         mock_pull: MagicMock,
         mock_helm: MagicMock,
         mock_wait: MagicMock,
+        mock_subprocess: MagicMock,
         mock_argo: MagicMock,
         mock_deploy_wf: MagicMock,
         mock_status: MagicMock,
@@ -167,8 +171,10 @@ class TestUpCommand:
         assert "host.k3d.internal" in set_vals["llm.external.url"]
 
     @patch("cogniverse_cli.main._print_status_table")
+    @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
     @patch("cogniverse_cli.main.install_argo_controller")
+    @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
@@ -191,9 +197,11 @@ class TestUpCommand:
         mock_values: MagicMock,
         mock_helm: MagicMock,
         mock_wait: MagicMock,
+        mock_subprocess: MagicMock,
         mock_argo: MagicMock,
         mock_deploy_wf: MagicMock,
-        mock_status: MagicMock,
+        mock_print_status: MagicMock,
+        _extra: MagicMock,
     ) -> None:
         """Existing K8s uses prod values and does not require k3d."""
         runner = CliRunner()
