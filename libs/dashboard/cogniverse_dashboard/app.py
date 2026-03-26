@@ -48,6 +48,7 @@ import httpx
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_telemetry_phoenix.evaluation.analytics import (
     PhoenixAnalytics as Analytics,
 )
@@ -55,11 +56,7 @@ from cogniverse_telemetry_phoenix.evaluation.analytics import (
     TraceMetrics,
 )
 
-sys.path.append(str(project_root / "src"))
-
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-RUNTIME_URL = "http://localhost:8000"
+RUNTIME_URL = os.environ.get("RUNTIME_URL", "http://localhost:8000")
 
 
 def stream_agent_call(

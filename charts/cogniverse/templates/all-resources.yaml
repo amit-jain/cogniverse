@@ -315,8 +315,24 @@ spec:
         env:
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
         - name: PHOENIX_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        - name: OLLAMA_API_BASE
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
         {{- range $key, $value := .Values.dashboard.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
