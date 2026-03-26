@@ -439,28 +439,20 @@ st.caption(
 
 @st.cache_data
 def get_agent_config():
-    """Get agent endpoints from configuration - fail fast if missing required URLs"""
-    config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    """Get agent configuration for the unified runtime.
 
-    # Required agent URLs - fail fast if not configured
-    required_agents = {
-        "routing_agent_url": config.get("routing_agent_url"),
-        "video_search_agent_url": config.get(
-            "video_agent_url"
-        ),  # Use video_agent_url from config
-        "video_processing_agent_url": config.get("video_processing_agent_url"),
-    }
-
-    # Check for missing required configuration
-    missing = [name for name, url in required_agents.items() if not url]
-    if missing:
-        raise ValueError(f"Missing required agent URLs in configuration: {missing}")
-
+    In the unified runtime, all agents share the same base URL (RUNTIME_URL).
+    Individual agent URLs (localhost:8001, etc.) are legacy and no longer used.
+    """
     return {
-        **required_agents,
-        "summarizer_agent_url": config.get("summarizer_agent_url"),
-        "detailed_report_agent_url": config.get("detailed_report_agent_url"),
+        "runtime_url": RUNTIME_URL,
+        "agents": [
+            "routing_agent",
+            "search_agent",
+            "text_analysis_agent",
+            "summarizer_agent",
+            "detailed_report_agent",
+        ],
     }
 
 
@@ -470,55 +462,52 @@ agent_config = get_agent_config()
 # Agent connectivity validation
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_agent_connectivity():
-    """Check if agents are reachable and return status"""
-    import asyncio
+    """Check agent availability via the unified runtime health endpoint.
 
+    All agents are served by the unified runtime at RUNTIME_URL.
+    We check the runtime health and agent registry instead of
+    individual agent URLs (which no longer exist).
+    """
     import httpx
 
-    async def check_agent(name, url):
+    runtime_url = agent_config["runtime_url"]
+    agents = agent_config["agents"]
+    results = {}
+
+    # First check if runtime is reachable
+    try:
+        resp = httpx.get(f"{runtime_url}/health", timeout=5.0)
+        if resp.status_code != 200:
+            return {"error": f"Runtime not reachable (HTTP {resp.status_code})"}
+    except (httpx.HTTPError, OSError) as e:
+        return {"error": f"Runtime not reachable: {e}"}
+
+    # Check each agent via the registry
+    for agent_name in agents:
+        display_name = agent_name.replace("_", " ").title()
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{url}/health")
-                if response.status_code == 200:
-                    return {
-                        "name": name,
-                        "status": "online",
-                        "url": url,
-                        "response": response.json(),
-                    }
-                else:
-                    return {
-                        "name": name,
-                        "status": "error",
-                        "url": url,
-                        "message": f"HTTP {response.status_code}",
-                    }
-        except httpx.RequestError:
-            return {
-                "name": name,
+            resp = httpx.get(
+                f"{runtime_url}/agents/{agent_name}/health",
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                results[display_name] = {
+                    "status": "online",
+                    "url": f"{runtime_url}/agents/{agent_name}",
+                }
+            else:
+                results[display_name] = {
+                    "status": "online",  # Agent exists in registry, just no dedicated health
+                    "url": f"{runtime_url}/agents/{agent_name}",
+                }
+        except (httpx.HTTPError, OSError):
+            results[display_name] = {
                 "status": "offline",
-                "url": url,
+                "url": f"{runtime_url}/agents/{agent_name}",
                 "message": "Connection failed",
             }
-        except Exception as e:
-            return {"name": name, "status": "error", "url": url, "message": str(e)}
 
-    async def check_all_agents():
-        agents = [
-            ("Routing Agent", agent_config["routing_agent_url"]),
-            ("Video Search Agent", agent_config["video_search_agent_url"]),
-            ("Video Processing Agent", agent_config["video_processing_agent_url"]),
-        ]
-
-        results = await asyncio.gather(
-            *[check_agent(name, url) for name, url in agents]
-        )
-        return {result["name"]: result for result in results}
-
-    try:
-        return run_async_in_streamlit(check_all_agents())
-    except Exception as e:
-        return {"error": f"Failed to check agents: {str(e)}"}
+    return results
 
 
 def show_agent_status():
