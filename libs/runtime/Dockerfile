@@ -38,8 +38,8 @@ RUN uv pip install -e ./libs/telemetry-phoenix
 # Pre-download ML models so they don't need downloading at runtime.
 # This eliminates startup delays and liveness probe timeouts.
 ENV HF_HOME=/app/.cache/huggingface
-RUN python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
-    python -m spacy download en_core_web_sm
+RUN .venv/bin/python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
+    uv pip install en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
 # Runtime stage
 FROM python:3.12-slim
