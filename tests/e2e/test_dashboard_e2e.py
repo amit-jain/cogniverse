@@ -118,8 +118,7 @@ class TestInteractiveSearch:
     def test_search_and_view_results(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Interactive Search")
+        click_top_tab(page, "Interactive Search")
 
         # Verify search widgets present
         assert page.get_by_label("Enter your search query").count() > 0, (
@@ -172,8 +171,7 @@ class TestInteractiveSearch:
     def test_search_annotation(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Interactive Search")
+        click_top_tab(page, "Interactive Search")
 
         # Use Playwright's .fill() which properly triggers Streamlit's React
         # component bridge to persist the value in session state.
@@ -230,8 +228,7 @@ class TestMultiModalChat:
     def test_send_message_and_get_response(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Chat")
+        click_top_tab(page, "Chat")
 
         # Find chat input (text_area or text_input) — use JS fill for hidden elements
         chat_input = page.locator('[data-testid="stTextArea"] textarea')
@@ -269,8 +266,7 @@ class TestMultiModalChat:
     def test_multi_turn_conversation(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Chat")
+        click_top_tab(page, "Chat")
 
         # Turn 1 — use JS fill for hidden elements
         chat_input = page.locator('[data-testid="stTextArea"] textarea')
@@ -329,8 +325,7 @@ class TestOptimizationOverview:
     def test_overview_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Overview")
         page.wait_for_load_state("networkidle")
@@ -362,8 +357,7 @@ class TestOptimizationOverview:
     def test_metrics_dashboard_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Metrics Dashboard")
         page.wait_for_load_state("networkidle")
@@ -387,8 +381,7 @@ class TestAnnotationHarvesting:
     def test_fetch_and_annotate_spans(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Search Annotations")
         page.wait_for_load_state("networkidle")
@@ -432,8 +425,7 @@ class TestGoldenDataset:
     def test_golden_dataset_tab_widgets(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Golden Dataset")
         page.wait_for_load_state("networkidle")
@@ -455,8 +447,7 @@ class TestGoldenDataset:
         """
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Golden Dataset")
         page.wait_for_load_state("networkidle")
@@ -492,8 +483,7 @@ class TestSyntheticDataAndApproval:
     def test_synthetic_data_tab_widgets(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Synthetic Data")
         page.wait_for_load_state("networkidle")
@@ -518,8 +508,7 @@ class TestSyntheticDataAndApproval:
         """
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Synthetic Data")
         page.wait_for_load_state("networkidle")
@@ -556,8 +545,7 @@ class TestSyntheticDataAndApproval:
         """
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Synthetic Data")
         page.wait_for_load_state("networkidle")
@@ -593,8 +581,7 @@ class TestModuleOptimization:
     def test_module_optimization_tab_widgets(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Module Optimization")
         page.wait_for_load_state("networkidle")
@@ -635,8 +622,7 @@ class TestModuleOptimization:
         """
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Module Optimization")
         page.wait_for_load_state("networkidle")
@@ -679,8 +665,7 @@ class TestRerankingAndProfileOptimization:
     def test_reranking_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Reranking")
         page.wait_for_load_state("networkidle")
@@ -706,8 +691,7 @@ class TestRerankingAndProfileOptimization:
     def test_profile_selection_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Optimization")
+        click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Profile Selection")
         page.wait_for_load_state("networkidle")
@@ -731,8 +715,7 @@ class TestTenantLifecycleDashboard:
     def test_tenant_management_sub_tabs(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Tenant Management")
+        click_top_tab(page, "Tenant Management")
         page.wait_for_load_state("networkidle")
 
         # Verify sub-tabs exist
@@ -750,8 +733,7 @@ class TestTenantLifecycleDashboard:
 
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Tenant Management")
+        click_top_tab(page, "Tenant Management")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Create Organization")
         page.wait_for_load_state("networkidle")
@@ -820,8 +802,7 @@ class TestTenantLifecycleDashboard:
     def test_create_tenant_sub_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Tenant Management")
+        click_top_tab(page, "Tenant Management")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Create Tenant")
         page.wait_for_load_state("networkidle")
@@ -837,8 +818,7 @@ class TestTenantLifecycleDashboard:
     def test_tenants_list_sub_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Tenant Management")
+        click_top_tab(page, "Tenant Management")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Tenants")
         page.wait_for_load_state("networkidle")
@@ -868,8 +848,7 @@ class TestConfigManagement:
     def test_system_config_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
 
         # System Config is default sub-tab. Verify form elements
@@ -899,8 +878,7 @@ class TestConfigManagement:
     def test_config_import_export(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Import/Export")
         page.wait_for_load_state("networkidle")
@@ -935,8 +913,7 @@ class TestConfigManagement:
     def test_agent_configs_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Agent Configs")
         page.wait_for_load_state("networkidle")
@@ -954,8 +931,7 @@ class TestConfigManagement:
     def test_routing_config_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Routing Config")
         page.wait_for_load_state("networkidle")
@@ -971,8 +947,7 @@ class TestConfigManagement:
     def test_telemetry_config_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Telemetry Config")
         page.wait_for_load_state("networkidle")
@@ -988,8 +963,7 @@ class TestConfigManagement:
     def test_backend_profiles_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Backend Profiles")
         page.wait_for_load_state("networkidle")
@@ -1008,8 +982,7 @@ class TestConfigManagement:
     def test_config_history(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Configuration")
+        click_top_tab(page, "Configuration")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "History")
         page.wait_for_load_state("networkidle")
@@ -1041,8 +1014,7 @@ class TestMemoryLifecycle:
     def test_memory_sub_tabs_present(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Memory")
+        click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
 
         # Verify memory sub-tabs
@@ -1060,8 +1032,7 @@ class TestMemoryLifecycle:
 
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Memory")
+        click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
 
         # Add Memory
@@ -1128,8 +1099,7 @@ class TestMemoryLifecycle:
     def test_view_all_memories(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Memory")
+        click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "View All")
         page.wait_for_load_state("networkidle")
@@ -1159,8 +1129,7 @@ class TestMemoryLifecycle:
     def test_delete_memory_tab(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Memory")
+        click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
         click_sub_tab(page, "Delete Memory")
         page.wait_for_load_state("networkidle")
@@ -1184,7 +1153,7 @@ class TestMonitoringDashboard:
         # Wait for tenant to be committed and page to re-render
         page.wait_for_timeout(5_000)
         page.wait_for_load_state("networkidle")
-        click_top_tab(page, "Monitoring")
+        click_top_tab(page, "Analytics")
         # Streamlit needs time to re-render after top-tab switch
         page.wait_for_timeout(5_000)
         page.wait_for_load_state("networkidle")
@@ -1410,8 +1379,7 @@ class TestIngestionTesting:
     def _goto_ingestion(self, page):
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Ingestion")
+        click_top_tab(page, "Ingestion")
         page.wait_for_load_state("networkidle")
 
     def test_ingestion_header_and_description(self, page):
@@ -1460,8 +1428,7 @@ class TestApprovalQueueTab:
         """Navigate to Admin → Approval Queue and verify real content."""
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Admin")
-        click_sub_tab(page, "Approval Queue")
+        click_top_tab(page, "Approval Queue")
         page.wait_for_load_state("networkidle")
 
         body_text = page.inner_text("body").lower()
@@ -1624,8 +1591,7 @@ class TestSearchAnnotationToPhoenix:
         """Search results must have annotation controls (Save + relevance radio)."""
         _nav(page)
         set_tenant(page, TENANT_ID)
-        click_top_tab(page, "User")
-        click_sub_tab(page, "Interactive Search")
+        click_top_tab(page, "Interactive Search")
 
         search_input = page.get_by_label("Enter your search query")
         search_input.fill("basketball highlights")
