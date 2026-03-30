@@ -56,7 +56,17 @@ from cogniverse_telemetry_phoenix.evaluation.analytics import (
     TraceMetrics,
 )
 
-RUNTIME_URL = os.environ.get("RUNTIME_URL", "http://localhost:8000")
+_config_manager = create_default_config_manager()
+_system_config = _config_manager.get_system_config()
+RUNTIME_URL = _system_config.agent_registry_url
+
+# Propagate telemetry endpoint from SystemConfig to TelemetryManager singleton
+if _system_config.telemetry_collector_endpoint != "localhost:4317":
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    _tm = get_telemetry_manager()
+    _tm.config.otlp_endpoint = _system_config.telemetry_collector_endpoint
+    _tm._tenant_providers.clear()
 
 
 def stream_agent_call(
@@ -320,7 +330,9 @@ st.markdown(
 
 # Initialize session state
 if "analytics" not in st.session_state:
-    st.session_state.analytics = Analytics()
+    st.session_state.analytics = Analytics(
+        telemetry_url=_system_config.telemetry_url
+    )
 
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = datetime.now()
@@ -338,6 +350,12 @@ if "session_id" not in st.session_state:
 if "conversation_history" not in st.session_state:
     st.session_state.conversation_history = []
 
+# Store deployment URLs in session state for tab scripts
+st.session_state["backend_url"] = _system_config.backend_url
+st.session_state["backend_port"] = str(_system_config.backend_port)
+st.session_state["runtime_url"] = RUNTIME_URL
+st.session_state["phoenix_url"] = _system_config.telemetry_url
+
 # Sidebar configuration
 with st.sidebar:
     st.title("🔥 Analytics Dashboard")
@@ -350,6 +368,8 @@ with st.sidebar:
     )
     if active_tenant != st.session_state.get("active_tenant"):
         st.session_state["active_tenant"] = active_tenant
+    # Sync to "current_tenant" key used by config_management_tab and other scripts
+    st.session_state["current_tenant"] = active_tenant
     st.info(f"Current tenant: **{active_tenant}**")
 
     st.markdown("---")
@@ -681,6 +701,7 @@ main_tabs = st.tabs(
         "✅ Approval Queue",
         "📥 Ingestion Testing",
         "🔍 Interactive Search",
+        "💬 Chat",
         "⚙️ Configuration",
         "👥 Tenant Management",
         "🧠 Memory",
@@ -1301,9 +1322,7 @@ with tabs[5]:
 
 # Helper function to create Phoenix trace link
 def create_phoenix_link(trace_id, text="View in Phoenix"):
-    config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
-    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
+    phoenix_base_url = _system_config.telemetry_url
     # Phoenix uses project-based routing with base64 encoded project IDs
     # Default project is "Project:1" which encodes to "UHJvamVjdDox"
     import base64
@@ -2599,7 +2618,7 @@ with main_tabs[9]:
         # Check if video processing agent is available
         video_processing_agent_available = (
             "error" not in agent_status
-            and agent_status.get("Video Processing Agent", {}).get("status") == "online"
+            and agent_status.get("Search Agent", {}).get("status") == "online"
         )
         process_button_disabled = (
             not selected_profiles or not video_processing_agent_available
@@ -2607,7 +2626,7 @@ with main_tabs[9]:
 
         if not video_processing_agent_available:
             st.warning(
-                "🔧 Video Processing Agent is offline. Please start the agent to enable video processing."
+                "🔧 Search Agent is offline. Please start the agent to enable video processing."
             )
 
         if st.button(
@@ -2850,14 +2869,17 @@ with main_tabs[10]:
 
     with col2:
         # Check if video search agent is available
-        video_search_agent_available = (
+        search_agent_available = (
             "error" not in agent_status
-            and agent_status.get("Video Search Agent", {}).get("status") == "online"
+            and (
+                agent_status.get("Search Agent", {}).get("status") == "online"
+                or agent_status.get("Video Search Agent", {}).get("status") == "online"
+            )
         )
-        search_button_disabled = not search_query or not video_search_agent_available
+        search_button_disabled = not search_query or not search_agent_available
 
-        if not video_search_agent_available:
-            st.warning("🔧 Video Search Agent is offline")
+        if not search_agent_available:
+            st.warning("🔧 Search Agent is offline")
 
         search_button = st.button(
             "🔍 Search", type="primary", disabled=search_button_disabled
@@ -3207,18 +3229,88 @@ with main_tabs[10]:
     with col4:
         st.metric("Coverage Rate", "76%", "2%")
 
-# Configuration Tab
+# Chat Tab
 with main_tabs[11]:
+    st.header("💬 Multi-Modal Chat")
+    st.markdown("Chat with agents via the routing layer.")
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    # Display chat history
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    chat_input_area = st.text_area(
+        "Your message",
+        key="chat_input_area",
+        placeholder="Ask a question about your video library...",
+    )
+
+    col_send, col_clear = st.columns([1, 5])
+    with col_send:
+        send_clicked = st.button("Send", type="primary", disabled=not chat_input_area)
+    with col_clear:
+        if st.button("Clear History"):
+            st.session_state.chat_messages = []
+            st.rerun()
+
+    if send_clicked and chat_input_area:
+        st.session_state.chat_messages.append(
+            {"role": "user", "content": chat_input_area}
+        )
+        with st.chat_message("user"):
+            st.markdown(chat_input_area)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Routing query to agents..."):
+                try:
+                    resp = httpx.post(
+                        f"{RUNTIME_URL}/agents/routing_agent/process",
+                        json={
+                            "agent_name": "routing_agent",
+                            "query": chat_input_area,
+                            "context": {
+                                "tenant_id": st.session_state.get("current_tenant", "default"),
+                            },
+                        },
+                        timeout=300.0,
+                    )
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        answer = result.get("response", result.get("result", str(result)))
+                        st.markdown(answer)
+                        st.session_state.chat_messages.append(
+                            {"role": "assistant", "content": answer}
+                        )
+                    else:
+                        error_msg = f"Agent returned HTTP {resp.status_code}: {resp.text[:200]}"
+                        st.error(error_msg)
+                        st.session_state.chat_messages.append(
+                            {"role": "assistant", "content": error_msg}
+                        )
+                except Exception as e:
+                    error_msg = f"Request failed: {e}"
+                    st.error(error_msg)
+                    st.session_state.chat_messages.append(
+                        {"role": "assistant", "content": error_msg}
+                    )
+
+        st.rerun()
+
+# Configuration Tab
+with main_tabs[12]:
     st.header("⚙️ Configuration Management")
     render_config_management_tab()
 
 # Tenant Management Tab
-with main_tabs[12]:
+with main_tabs[13]:
     st.header("👥 Tenant Management")
     render_tenant_management_tab()
 
 # Memory Management Tab
-with main_tabs[13]:
+with main_tabs[14]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
 
@@ -3226,6 +3318,10 @@ with main_tabs[13]:
 if st.session_state.auto_refresh:
     time.sleep(refresh_interval)  # Fixed polling interval for dashboard auto-refresh
     st.rerun()
+
+# Sidebar message counter (outside tab blocks so it renders on any tab)
+if "chat_messages" in st.session_state and len(st.session_state.chat_messages) > 0:
+    st.sidebar.markdown(f"💬 messages: {len(st.session_state.chat_messages)}")
 
 # Footer
 st.markdown("---")

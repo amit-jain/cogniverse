@@ -38,7 +38,10 @@ def render_memory_management_tab():
     try:
         import httpx
 
-        vespa_response = httpx.get("http://localhost:8080/ApplicationStatus", timeout=2)
+        backend_url = st.session_state.get("backend_url", "http://localhost")
+        backend_port = st.session_state.get("backend_port", "8080")
+        vespa_check_url = f"{backend_url}:{backend_port}/ApplicationStatus"
+        vespa_response = httpx.get(vespa_check_url, timeout=2)
         vespa_available = vespa_response.status_code == 200
     except Exception:
         vespa_available = False
@@ -78,14 +81,16 @@ def render_memory_management_tab():
             if "/" in llm_model:
                 llm_model = llm_model.split("/", 1)[1]
 
+            llm_base_url = (
+                llm_primary.get("api_base")
+                or system_config.base_url
+            )
             manager.initialize(
                 backend_host=system_config.backend_url,
                 backend_port=system_config.backend_port,
                 llm_model=llm_model,
                 embedding_model="nomic-embed-text",
-                llm_base_url=llm_primary.get(
-                    "api_base", "http://localhost:11434"
-                ),
+                llm_base_url=llm_base_url,
                 config_manager=config_manager,
                 schema_loader=schema_loader,
             )

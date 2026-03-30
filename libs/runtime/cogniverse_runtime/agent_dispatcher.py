@@ -164,7 +164,12 @@ class AgentDispatcher:
                 SearchInput,
             )
 
-            deps = SearchAgentDeps(tenant_id=tenant_id)
+            system_config = self._config_manager.get_system_config()
+            deps = SearchAgentDeps(
+                tenant_id=tenant_id,
+                backend_url=system_config.backend_url,
+                backend_port=system_config.backend_port,
+            )
             agent = SearchAgent(
                 deps=deps,
                 schema_loader=self._schema_loader,
@@ -295,8 +300,9 @@ class AgentDispatcher:
         }
 
         if memory_enabled:
-            backend_url = config.get("backend_url", "http://localhost")
-            backend_port = config.get("backend_port", 8080)
+            _sys_cfg = self._config_manager.get_system_config()
+            backend_url = _sys_cfg.backend_url
+            backend_port = _sys_cfg.backend_port
             deps_kwargs.update(
                 {
                     "memory_backend_host": backend_url,
@@ -584,12 +590,8 @@ class AgentDispatcher:
             )
 
     def _get_vespa_endpoint(self, tenant_id: str) -> str:
-        from cogniverse_foundation.config.utils import get_config
-
-        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        url = config.get("backend_url", "http://localhost")
-        port = config.get("backend_port", 8080)
-        return f"{url}:{port}"
+        system_config = self._config_manager.get_system_config()
+        return f"{system_config.backend_url}:{system_config.backend_port}"
 
     async def _execute_summarization_task(
         self, query: str, tenant_id: str

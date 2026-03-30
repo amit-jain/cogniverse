@@ -307,32 +307,42 @@ class VespaBackend(Backend):
 
         # Wait for documents to be visible in queries (handle Vespa's eventual consistency)
         if self.config.get("wait_for_indexing", True) and success_count > 0:
-            from tests.utils.async_polling import wait_for_vespa_document_visible
+            import time as _time
+
+            import requests as _requests
 
             timeout = self.config.get("indexing_timeout", 30.0)
+            base_url = f"{self._url}:{self._port}"
 
-            # Wait for successfully fed documents to be queryable
             for doc in documents:
                 if doc.id not in [
                     fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs
                 ]:
-                    try:
-                        # Get the tenant-scoped schema name for verification
-                        target_schema = schema_name
-                        if self._tenant_id:
-                            target_schema = self.get_tenant_schema_name(
-                                self._tenant_id, schema_name
-                            )
-
-                        wait_for_vespa_document_visible(
-                            backend_url=f"{self._url}:{self._port}",
-                            schema_name=target_schema,
-                            document_id=doc.id,
-                            timeout=timeout,
+                    target_schema = schema_name
+                    if self._tenant_id:
+                        target_schema = self.get_tenant_schema_name(
+                            self._tenant_id, schema_name
                         )
-                    except Exception as e:
+                    deadline = _time.monotonic() + timeout
+                    while _time.monotonic() < deadline:
+                        try:
+                            resp = _requests.get(
+                                f"{base_url}/search/",
+                                params={
+                                    "yql": f'select * from {target_schema} where id matches "{doc.id}" limit 1',
+                                },
+                                timeout=5,
+                            )
+                            if resp.status_code == 200:
+                                total = resp.json().get("root", {}).get("fields", {}).get("totalCount", 0)
+                                if total > 0:
+                                    break
+                        except _requests.RequestException:
+                            pass
+                        _time.sleep(0.5)
+                    else:
                         logger.warning(
-                            f"Document {doc.id} fed but not immediately queryable: {e}"
+                            f"Document {doc.id} fed but not visible after {timeout}s"
                         )
 
         return {

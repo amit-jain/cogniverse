@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import BackendConfig, LLMConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+    LLMConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,9 +151,21 @@ class ConfigUtils:
                 system_backend_config.profiles
             )  # Start with system profiles
 
-            # Add/override with tenant-specific profiles
+            # Merge tenant-specific overrides into system profiles (not replace)
             for profile_name, tenant_profile in tenant_backend_config.profiles.items():
-                merged_profiles[profile_name] = tenant_profile
+                if profile_name in merged_profiles:
+                    # Merge non-empty tenant fields into system base
+                    tenant_dict = {
+                        k: v for k, v in tenant_profile.to_dict().items()
+                        if v  # Skip empty/falsy values (defaults from from_dict)
+                    }
+                    merged = merged_profiles[profile_name].to_dict()
+                    merged.update(tenant_dict)
+                    merged_profiles[profile_name] = BackendProfileConfig.from_dict(
+                        profile_name, merged
+                    )
+                else:
+                    merged_profiles[profile_name] = tenant_profile
 
             # Create merged config
             self._backend_config = BackendConfig(

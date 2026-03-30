@@ -183,6 +183,66 @@ class TestBackendConfigDataclasses:
         with pytest.raises(ValueError, match="Base profile 'nonexistent' not found"):
             config.merge_profile("nonexistent", {"embedding_model": "new/model"})
 
+    def test_backend_profile_preserves_model_loader_in_roundtrip(self):
+        """Test that model_loader survives from_dict → to_dict roundtrip"""
+        data = {
+            "type": "video",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "strategies": {"float_float": {}},
+        }
+        profile = BackendProfileConfig.from_dict("test", data)
+        assert profile.model_loader == "colpali"
+
+        serialized = profile.to_dict()
+        assert serialized["model_loader"] == "colpali"
+
+    def test_tenant_profile_merge_preserves_system_model_loader(self):
+        """Tenant profiles with empty model_loader must not overwrite system model_loader.
+
+        Regression test: tenant profiles stored via POST /admin/profiles may lack
+        model_loader. When merged with system profiles (from config.json), the
+        tenant's empty model_loader must NOT erase the system's "colpali".
+        """
+        system_profile = BackendProfileConfig.from_dict("video_profile", {
+            "type": "video",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "model_loader": "colpali",
+            "schema_name": "video_profile",
+            "strategies": {"float_float": {}},
+            "schema_config": {"embedding_dim": 128},
+        })
+
+        # Tenant profile: deployed via API, missing model_loader
+        tenant_profile = BackendProfileConfig.from_dict("video_profile", {
+            "type": "video",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "frame_based",
+            "schema_name": "video_profile",
+            "strategies": {"float_float": {}},
+        })
+
+        assert system_profile.model_loader == "colpali"
+        assert tenant_profile.model_loader == ""
+
+        # Simulate ConfigUtils._ensure_backend_config merge logic:
+        # Non-empty tenant fields overlay system base
+        tenant_dict = {
+            k: v for k, v in tenant_profile.to_dict().items() if v
+        }
+        merged = system_profile.to_dict()
+        merged.update(tenant_dict)
+        result = BackendProfileConfig.from_dict("video_profile", merged)
+
+        assert result.model_loader == "colpali", (
+            "System model_loader must survive tenant merge when tenant has empty model_loader"
+        )
+        assert result.embedding_model == "vidore/colsmol-500m"
+        assert result.schema_config == {"embedding_dim": 128}
+
 
 class TestConfigManagerBackendMethods:
     """Test ConfigManager backend configuration methods"""

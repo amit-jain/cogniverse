@@ -194,18 +194,64 @@ def _ensure_llm_model() -> None:
         print(f"LLM model pull failed (non-fatal): {exc}")
 
 
+def _ingest_sample_video() -> None:
+    """Ingest a sample video so search tests have data to query.
+
+    Uses the runtime's POST /ingestion/upload endpoint with the sample
+    ActivityNet video. Idempotent — re-ingesting the same video is harmless.
+    """
+    video_path = DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+    if not video_path.exists():
+        print(f"Sample video not found at {video_path}, skipping ingestion")
+        return
+
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    active_profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+
+    try:
+        with open(video_path, "rb") as f:
+            resp = httpx.post(
+                f"{RUNTIME}/ingestion/upload",
+                files={"file": (video_path.name, f, "video/mp4")},
+                data={
+                    "profile": active_profile,
+                    "backend": "vespa",
+                    "tenant_id": TENANT_ID,
+                },
+                timeout=600,
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            fed = data.get("documents_fed", 0)
+            chunks = data.get("chunks_created", 0)
+            print(
+                f"Sample video ingested: {chunks} chunks, {fed} documents fed"
+            )
+            if fed == 0 and chunks > 0:
+                print(
+                    "WARNING: chunks created but 0 documents fed to Vespa — "
+                    "search tests will have no data"
+                )
+        else:
+            print(f"Video ingestion returned {resp.status_code}: {resp.text[:200]}")
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"Video ingestion failed (non-fatal): {exc}")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
     """Session fixture that ensures the stack is running and bootstrapped.
 
     If services are already up (from a prior ``cogniverse up``), uses them.
     Otherwise attempts to start the stack. After services are confirmed,
-    creates the E2E tenant and deploys schemas.
+    creates the E2E tenant, deploys schemas, and ingests sample data.
     """
     if not _ensure_stack_running():
         pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
 
     _bootstrap_tenant_and_schemas()
+    _ingest_sample_video()
     _ensure_llm_model()
     yield
 
@@ -226,30 +272,79 @@ def wait_for_streamlit(page, timeout: int = 30_000):
     page.wait_for_load_state("networkidle")
 
 
+def _strip_emoji(text: str) -> str:
+    """Strip leading emoji + whitespace from tab text for clean comparison."""
+    import re
+
+    return re.sub(r"^[\U0001f300-\U0001faff\u2600-\u27bf\ufe0f\u200d]+\s*", "", text).strip()
+
+
 def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_000):
     """Click a Streamlit tab by matching its visible text (ignoring emojis).
 
-    Streamlit renders tabs as hidden DOM elements, so we use JS click
-    which bypasses visibility checks. Retries handle the case where
-    sub-tabs haven't rendered yet after a parent tab switch — complex
-    tabs (Optimization, Configuration, Monitoring) can take 5-10s to
-    render their inner st.tabs() content.
+    Prefers exact matches over substring matches to avoid ambiguity
+    (e.g., "Synthetic Data" should match the sub-tab, not
+    "Synthetic Data & Optimization").
+
+    Prefers visible tabs over hidden ones to handle duplicate sub-tab
+    labels across different parent tabs.
     """
     for attempt in range(retries):
         tabs = page.locator('button[role="tab"]')
         count = tabs.count()
+
+        # Collect tab info once per attempt
+        tab_info = []
         for i in range(count):
             tab = tabs.nth(i)
-            text = tab.text_content() or ""
-            if label.lower() in text.lower():
-                # Use force=True to click hidden elements while still
-                # triggering Playwright's full click event sequence
-                # (mousedown→mouseup→click) which properly activates
-                # React/Streamlit event handlers, unlike raw el.click()
+            raw = tab.text_content() or ""
+            clean = _strip_emoji(raw).lower()
+            visible = tab.is_visible()
+            tab_info.append((tab, raw, clean, visible))
+
+        target = label.lower()
+
+        # Pass 1: exact match on visible tabs
+        for tab, raw, clean, visible in tab_info:
+            if clean == target and visible:
+                tab.scroll_into_view_if_needed()
+                page.wait_for_timeout(500)
+                tab.click()
+                page.wait_for_timeout(1_000)
+                # Verify tab is now selected (aria-selected="true")
+                if tab.get_attribute("aria-selected") != "true":
+                    # Click didn't register — try JS dispatch
+                    tab.dispatch_event("click")
+                    page.wait_for_timeout(1_000)
+                page.wait_for_timeout(settle_ms)
+                page.wait_for_load_state("networkidle")
+                return
+
+        # Pass 2: substring match on visible tabs
+        for tab, raw, clean, visible in tab_info:
+            if target in clean and visible:
+                tab.scroll_into_view_if_needed()
+                tab.click()
+                page.wait_for_timeout(settle_ms)
+                page.wait_for_load_state("networkidle")
+                return
+
+        # Pass 3: exact match on hidden tabs (force-click)
+        for tab, raw, clean, visible in tab_info:
+            if clean == target:
                 tab.click(force=True)
                 page.wait_for_timeout(settle_ms)
                 page.wait_for_load_state("networkidle")
                 return
+
+        # Pass 4: substring match on hidden tabs (force-click)
+        for tab, raw, clean, visible in tab_info:
+            if target in clean:
+                tab.click(force=True)
+                page.wait_for_timeout(settle_ms)
+                page.wait_for_load_state("networkidle")
+                return
+
         if attempt < retries - 1:
             page.wait_for_timeout(3_000)
     tab_texts = [tabs.nth(i).text_content() or "" for i in range(tabs.count())]

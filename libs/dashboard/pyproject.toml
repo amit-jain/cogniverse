@@ -14,6 +14,7 @@ dependencies = [
     "cogniverse-core",
     "cogniverse-evaluation",
     "cogniverse-runtime",
+    "cogniverse-vespa",
     "cogniverse-telemetry-phoenix",
 
     # Dashboard UI
@@ -35,6 +36,9 @@ dependencies = [
     # Data manipulation
     "scipy>=1.10.0",
     "tabulate>=0.9.0",
+
+    # Memory management (Mem0 with Ollama embeddings)
+    "ollama>=0.4.0",
 ]
 
 [tool.uv.sources]
@@ -42,6 +46,7 @@ cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-evaluation = { workspace = true }
 cogniverse-runtime = { workspace = true }
+cogniverse-vespa = { workspace = true }
 cogniverse-telemetry-phoenix = { workspace = true }
 
 [build-system]

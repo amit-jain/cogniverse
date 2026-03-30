@@ -8,6 +8,13 @@ global:
   imagePullSecrets: []
   storageClass: ""
 
+# Development mode: mount host source code into containers.
+# Requires k3d cluster created with: --volume "$(pwd):/cogniverse-src@server:0"
+# Code changes take effect on pod restart — no Docker rebuild needed.
+devMode:
+  enabled: false
+  hostPath: /cogniverse-src
+
 # Image configuration
 image:
   registry: docker.io

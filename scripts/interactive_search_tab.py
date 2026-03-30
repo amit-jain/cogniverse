@@ -38,13 +38,13 @@ def render_interactive_search_tab(agent_status: dict):
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = str(uuid.uuid4())
 
-    # Determine runtime URL from agent_status
-    # Any registered agent's url points to the unified runtime
-    runtime_url = ""
-    for agent_info in agent_status.values():
-        if isinstance(agent_info, dict) and agent_info.get("status") == "online":
-            runtime_url = agent_info.get("url", "")
-            break
+    # Determine runtime URL from session state (set by app.py from SystemConfig)
+    runtime_url = st.session_state.get("runtime_url", "")
+    if not runtime_url:
+        for agent_info in agent_status.values():
+            if isinstance(agent_info, dict) and agent_info.get("status") == "online":
+                runtime_url = agent_info.get("url", "")
+                break
 
     runtime_available = bool(runtime_url)
 
@@ -65,8 +65,9 @@ def render_interactive_search_tab(agent_status: dict):
         else:
             st.warning("Runtime not available")
 
-        search_button = st.button(
-            "Search", type="primary", disabled=not search_query or not runtime_available
+        st.button(
+            "Search", type="primary", disabled=not search_query or not runtime_available,
+            on_click=lambda: st.session_state.update(trigger_search=True),
         )
 
     # Search Configuration
@@ -96,10 +97,11 @@ def render_interactive_search_tab(agent_status: dict):
             st.session_state["session_id"] = str(uuid.uuid4())
             st.rerun()
 
-    # Search Results
+    # Search Results — execute search and store in session state
+    search_button = st.session_state.pop("trigger_search", False)
     if search_button and search_query:
-        st.subheader("Search Results")
-
+        # Clear stale results before executing new search
+        st.session_state.pop("search_results", None)
         current_tenant = st.session_state["current_tenant"]
         session_id = st.session_state["session_id"]
 
@@ -115,6 +117,16 @@ def render_interactive_search_tab(agent_status: dict):
                 session_id=session_id,
             )
             elapsed_ms = (time.time() - start_time) * 1000
+
+        st.session_state["search_results"] = results
+        st.session_state["search_elapsed_ms"] = elapsed_ms
+        st.session_state["search_query_text"] = search_query
+
+    # Display search results from session state (survives Streamlit rerenders)
+    if "search_results" in st.session_state:
+        results = st.session_state["search_results"]
+        elapsed_ms = st.session_state.get("search_elapsed_ms", 0)
+        st.subheader("Search Results")
 
         if results is None or results.get("status") == "error":
             error_msg = (
@@ -193,7 +205,7 @@ def render_interactive_search_tab(agent_status: dict):
                                     import httpx as _httpx
 
                                     _httpx.post(
-                                        "http://localhost:8000/agents/routing_agent/process",
+                                        f"{runtime_url}/agents/routing_agent/process",
                                         json={
                                             "agent_name": "routing_agent",
                                             "query": search_query,

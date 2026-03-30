@@ -172,17 +172,23 @@ class BackendRegistry:
             metadata=backend_metadata,
         )
 
-        # Build backend initialization config - merge top-level keys with backend section
-        backend_init_config = {"tenant_id": tenant_id}
+        # Build backend initialization config - merge top-level keys with backend section.
+        # url/port must be at the top level because VespaBackend.initialize() reads
+        # config.get("url") and config.get("port") directly.
+        backend_init_config = {
+            "tenant_id": tenant_id,
+            "url": backend_url,
+            "port": backend_port,
+        }
 
         if config:
-            # Merge all top-level config keys into backend initialization config
             backend_init_config.update(config)
-
-            # Preserve nested backend section for backend-specific configuration
-            # This allows backend-specific config to override top-level
             if "backend" in config:
                 backend_init_config["backend"] = config["backend"]
+
+        # Ensure url/port aren't overwritten by the update (they came from SystemConfig)
+        backend_init_config["url"] = backend_url
+        backend_init_config["port"] = backend_port
 
         # Use factory to create backend with all dependencies properly initialized
         # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()

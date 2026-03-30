@@ -395,3 +395,104 @@ class TestComprehensiveIngestion:
 
         assert result is not None
         assert processing_time < 300  # Should complete within 5 minutes
+
+
+@pytest.mark.integration
+class TestProfileConfigPropagation:
+    """Test that profile config keys survive the full config system roundtrip.
+
+    Regression test for model_loader being lost when tenant profiles
+    (stored via POST /admin/profiles) replace system profiles (from config.json)
+    during ConfigUtils._ensure_backend_config() merge.
+    """
+
+    def test_model_loader_survives_config_roundtrip(
+        self, ingestion_vespa_backend
+    ):
+        """model_loader from config.json must reach EmbeddingGeneratorImpl.
+
+        The full path: config.json → ConfigUtils.get("backend") → profiles →
+        create_embedding_generator → EmbeddingGeneratorImpl.profile_config.
+        If model_loader is missing, embeddings silently fail to generate.
+        """
+        config_manager = create_default_config_manager()
+        from cogniverse_foundation.config.utils import get_config
+
+        config = get_config(
+            tenant_id="default", config_manager=config_manager
+        )
+        backend = config.get("backend")
+        profiles = backend.get("profiles", {})
+
+        # Check every profile that has model_loader in config.json
+        import json
+
+        config_path = Path("configs/config.json")
+        if not config_path.exists():
+            pytest.skip("configs/config.json not found")
+
+        raw_config = json.loads(config_path.read_text())
+        raw_profiles = raw_config.get("backend", {}).get("profiles", {})
+
+        for profile_name, raw_profile in raw_profiles.items():
+            raw_loader = raw_profile.get("model_loader")
+            if not raw_loader:
+                continue
+
+            merged_profile = profiles.get(profile_name, {})
+            merged_loader = merged_profile.get("model_loader")
+
+            assert merged_loader == raw_loader, (
+                f"Profile '{profile_name}': model_loader={merged_loader!r} "
+                f"after config merge, expected {raw_loader!r}. "
+                f"Tenant profile override likely erased the system value."
+            )
+
+    def test_tenant_deployed_profile_preserves_system_model_loader(
+        self, ingestion_vespa_backend
+    ):
+        """Deploying a tenant profile must not erase system model_loader.
+
+        Simulates: POST /admin/profiles → stores tenant BackendConfig → merge
+        with system config → model_loader must still be present.
+        """
+        config_manager = create_default_config_manager()
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            BackendProfileConfig,
+        )
+
+        # Store a tenant profile WITHOUT model_loader (mimics admin API)
+        tenant_profile = BackendProfileConfig(
+            profile_name="video_colpali_smol500_mv_frame",
+            type="video",
+            embedding_model="vidore/colsmol-500m",
+            embedding_type="frame_based",
+            schema_name="video_colpali_smol500_mv_frame",
+            strategies={"float_float": {}},
+        )
+        assert tenant_profile.model_loader == ""  # Empty by default
+
+        tenant_backend = BackendConfig(
+            tenant_id="merge_test_tenant",
+            profiles={"video_colpali_smol500_mv_frame": tenant_profile},
+        )
+        config_manager.set_backend_config(
+            tenant_backend, tenant_id="merge_test_tenant"
+        )
+
+        # Now get config through ConfigUtils — should merge with system
+        from cogniverse_foundation.config.utils import get_config
+
+        config = get_config(
+            tenant_id="merge_test_tenant", config_manager=config_manager
+        )
+        backend = config.get("backend")
+        merged = backend.get("profiles", {}).get(
+            "video_colpali_smol500_mv_frame", {}
+        )
+
+        assert merged.get("model_loader") == "colpali", (
+            f"model_loader lost after tenant merge: got {merged.get('model_loader')!r}. "
+            f"ConfigUtils._ensure_backend_config must merge, not replace profiles."
+        )
