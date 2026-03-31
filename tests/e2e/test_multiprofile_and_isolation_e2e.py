@@ -134,6 +134,26 @@ def _cleanup_tenant(client: httpx.Client, tenant_id: str):
     client.delete(f"/admin/organizations/{org_id}")
 
 
+def _restart_runtime_if_unhealthy():
+    """Restart runtime if it's unresponsive from accumulated model loads."""
+    try:
+        resp = httpx.get(f"{RUNTIME}/health", timeout=5)
+        if resp.status_code == 200:
+            return
+    except (httpx.ConnectError, httpx.ReadTimeout):
+        pass
+    from tests.e2e.conftest import restart_runtime
+    restart_runtime(timeout_s=120)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def fresh_runtime_for_multiprofile():
+    """Restart runtime before multiprofile tests to clear accumulated model state."""
+    from tests.e2e.conftest import restart_runtime
+    restart_runtime(timeout_s=120)
+    yield
+
+
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestMultiProfileIngestion:
@@ -702,6 +722,10 @@ class TestConcurrentMultiTenantSearch:
 @skip_if_no_runtime
 class TestLoadTesting:
     """Verify system stability under burst load."""
+
+    @pytest.fixture(autouse=True)
+    def _ensure_runtime(self):
+        _restart_runtime_if_unhealthy()
 
     def test_burst_search_requests(self):
         """Send 20 concurrent search requests to the same tenant."""
