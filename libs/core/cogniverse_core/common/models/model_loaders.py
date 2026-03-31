@@ -373,17 +373,15 @@ class ColPaliModelLoader(ModelLoader):
 
             self.logger.info(f"Using device: {device}, dtype: {dtype}")
 
-            # Load model
-            if device == "mps":
-                # For MPS, load to CPU first then move
-                model = ColIdefics3.from_pretrained(
-                    self.model_name, torch_dtype=dtype, device_map="cpu"
-                ).eval()
+            # Load model — avoid device_map parameter which uses accelerate's
+            # meta tensor dispatch and causes NotImplementedError on repeated
+            # loads in the same process.
+            model = ColIdefics3.from_pretrained(
+                self.model_name, torch_dtype=dtype
+            )
+            model.eval()  # PyTorch evaluation mode (no dropout/batchnorm)
+            if device != "cpu":
                 model = model.to(device)
-            else:
-                model = ColIdefics3.from_pretrained(
-                    self.model_name, torch_dtype=dtype, device_map=device
-                ).eval()
 
             # Load processor
             processor = ColIdefics3Processor.from_pretrained(self.model_name)
@@ -649,9 +647,30 @@ def get_or_load_model(
         cache_key = f"{model_name}@{config['remote_inference_url']}"
 
     if not force_reload and cache_key in _model_cache:
-        if logger:
-            logger.info(f"Using cached model: {cache_key}")
-        return _model_cache[cache_key]
+        cached_model, cached_processor = _model_cache[cache_key]
+        # Verify cached model is still usable (meta tensors become invalid
+        # after multiple load cycles in the same process)
+        try:
+            if hasattr(cached_model, "parameters"):
+                param = next(cached_model.parameters(), None)
+                if param is not None and param.device.type == "meta":
+                    if logger:
+                        logger.warning(
+                            f"Cached model {cache_key} has meta tensors, reloading"
+                        )
+                    del _model_cache[cache_key]
+                else:
+                    if logger:
+                        logger.info(f"Using cached model: {cache_key}")
+                    return cached_model, cached_processor
+            else:
+                if logger:
+                    logger.info(f"Using cached model: {cache_key}")
+                return cached_model, cached_processor
+        except (StopIteration, RuntimeError):
+            if logger:
+                logger.warning(f"Cached model {cache_key} invalid, reloading")
+            del _model_cache[cache_key]
 
     # Create loader and load model
     loader = ModelLoaderFactory.create_loader(model_name, config, logger)
