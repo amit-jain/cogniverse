@@ -32,6 +32,12 @@ COPY libs/runtime ./libs/runtime
 # Install dependencies with uv using the lockfile
 RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen
 
+# Install pylate for ColBERT model loading without pulling its full dep tree
+# (fast-plaid has no aarch64 wheel, and we must keep existing transformers).
+# Install missing runtime deps that --no-deps skips.
+RUN uv pip install pylate --no-deps && \
+    uv pip install datasets
+
 # Also install telemetry-phoenix into the same venv — agents discover it via entry points
 RUN uv pip install -e ./libs/telemetry-phoenix
 

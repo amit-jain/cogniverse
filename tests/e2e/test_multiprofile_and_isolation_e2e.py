@@ -180,17 +180,8 @@ class TestMultiProfileIngestion:
                 f"Same video should produce same chunk count: {chunks_1} vs {chunks_2}"
             )
 
-    @pytest.mark.skipif(
-        True,
-        reason="ColBERT loader uses local pylate; needs RemoteColBERTLoader for Docker/k3d runtime",
-    )
     def test_document_text_semantic_profile(self, real_document_path):
-        """Document profile ingests text via ColBERT embeddings.
-
-        Blocked: ColBERTModelLoader imports pylate locally instead of using
-        a remote inference service. Needs RemoteColBERTLoader (like
-        RemoteColPaliLoader) to call the infinity/TEI service.
-        """
+        """Document profile ingests text via ColBERT embeddings."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             _deploy_schema(client, "document_text_semantic", TENANT_ID)
 
@@ -201,16 +192,8 @@ class TestMultiProfileIngestion:
             assert data["status"] == "success"
             assert data["chunks_created"] >= 1
 
-    @pytest.mark.skipif(
-        True,
-        reason="CLAP/ColBERT loader uses local pylate; needs RemoteColBERTLoader for Docker/k3d runtime",
-    )
     def test_audio_clap_semantic_profile(self, extracted_audio_path):
-        """Audio profile ingests wav via CLAP + ColBERT embeddings.
-
-        Blocked: Same as document_text_semantic — ColBERT model loading
-        uses pylate locally instead of remote inference service.
-        """
+        """Audio profile ingests wav via CLAP + ColBERT embeddings."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             _deploy_schema(client, "audio_clap_semantic", TENANT_ID)
 
