@@ -145,10 +145,13 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        # Get system config for defaults
+        # Infrastructure URLs (backend_url, port) are cluster-level, not
+        # tenant-specific. Use the default tenant's SystemConfig which has the
+        # correct URLs set by the runtime startup.
         system_config = config_manager.get_system_config(tenant_id)
+        if system_config.backend_url == "http://localhost":
+            system_config = config_manager.get_system_config("default")
 
-        # Generic merge: Start with system config defaults, override with config["backend"] if provided
         backend_url = system_config.backend_url
         backend_port = system_config.backend_port
         backend_profiles = {}
