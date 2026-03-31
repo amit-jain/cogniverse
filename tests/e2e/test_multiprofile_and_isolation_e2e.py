@@ -1,9 +1,10 @@
 """
-E2E tests for multi-profile ingestion and cross-tenant data isolation.
+E2E tests for multi-profile ingestion, cross-tenant isolation, and load testing.
 
 Tests exercise the full path against the k3d cluster:
 - Ingest content with multiple profiles via API, verify search via dashboard UI
 - Create isolated tenants, verify data doesn't leak between them
+- Concurrent multi-tenant search under load
 - Verify ingestion tab UI elements and profile selection
 
 Uses API for data setup (ingestion is slow), Playwright for UI verification
@@ -14,6 +15,7 @@ Requires: k3d cluster running with Vespa, Runtime, and Ollama.
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
@@ -539,3 +541,302 @@ class TestCrossTenantIsolation:
 
             finally:
                 _cleanup_tenant(client, tenant_id)
+
+
+def _search_sync(
+    query: str, profile: str, tenant_id: str, top_k: int = 5
+) -> dict:
+    """Thread-safe search call for concurrent testing."""
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        resp = client.post(
+            "/search/",
+            json={
+                "query": query,
+                "profile": profile,
+                "top_k": top_k,
+                "tenant_id": tenant_id,
+                "strategy": "float_float",
+            },
+        )
+        return {
+            "tenant_id": tenant_id,
+            "status_code": resp.status_code,
+            "data": resp.json() if resp.status_code == 200 else {},
+            "error": resp.text if resp.status_code != 200 else None,
+        }
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestConcurrentMultiTenantSearch:
+    """Verify isolation holds under concurrent requests from multiple tenants."""
+
+    def test_concurrent_search_isolation(self, real_video_path):
+        """2 tenants search simultaneously, each sees only own data."""
+        org_id = unique_id("conc")
+        tenants = [f"{org_id}:t{i}" for i in range(2)]
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            try:
+                # Setup: create tenants, deploy schemas, ingest data
+                for t in tenants:
+                    _create_tenant(client, t)
+                    _deploy_schema(client, "video_colpali_smol500_mv_frame", t)
+
+                fed_tenants = []
+                for t in tenants:
+                    data = _upload_file(
+                        client, real_video_path,
+                        "video_colpali_smol500_mv_frame", t,
+                    )
+                    if data.get("documents_fed", 0) > 0:
+                        fed_tenants.append(t)
+
+                assert len(fed_tenants) >= 2, (
+                    f"Need at least 2 tenants with data, got {len(fed_tenants)}"
+                )
+                time.sleep(5)
+
+                # Concurrent search: all tenants search at once
+                with ThreadPoolExecutor(max_workers=len(fed_tenants)) as pool:
+                    futures = {
+                        pool.submit(
+                            _search_sync,
+                            "person throwing discus",
+                            "video_colpali_smol500_mv_frame",
+                            t,
+                        ): t
+                        for t in fed_tenants
+                    }
+
+                    results = {}
+                    for future in as_completed(futures):
+                        tenant = futures[future]
+                        results[tenant] = future.result()
+
+                # Each tenant must get results
+                for t, r in results.items():
+                    assert r["status_code"] == 200, (
+                        f"Tenant {t} search failed: {r['error']}"
+                    )
+                    assert r["data"]["results_count"] >= 1, (
+                        f"Tenant {t} must see its own data"
+                    )
+
+                # Results must reference different video_ids (isolation)
+                all_video_ids = {}
+                for t, r in results.items():
+                    ids = {
+                        hit.get("metadata", {}).get("video_id")
+                        for hit in r["data"]["results"]
+                    }
+                    all_video_ids[t] = ids
+
+                for i, t1 in enumerate(fed_tenants):
+                    for t2 in fed_tenants[i + 1:]:
+                        assert all_video_ids[t1].isdisjoint(all_video_ids[t2]), (
+                            f"Tenant {t1} and {t2} share video_ids: "
+                            f"{all_video_ids[t1] & all_video_ids[t2]}"
+                        )
+
+            finally:
+                for t in tenants:
+                    _cleanup_tenant(client, t)
+
+    def test_concurrent_search_with_empty_tenant(self, real_video_path):
+        """Concurrent search: tenant with data + tenant without data."""
+        org_id = unique_id("mix")
+        tenant_data = f"{org_id}:has_data"
+        tenant_empty = f"{org_id}:no_data"
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            try:
+                _create_tenant(client, tenant_data)
+                _create_tenant(client, tenant_empty)
+                _deploy_schema(
+                    client, "video_colpali_smol500_mv_frame", tenant_data
+                )
+                _deploy_schema(
+                    client, "video_colpali_smol500_mv_frame", tenant_empty
+                )
+
+                data = _upload_file(
+                    client, real_video_path,
+                    "video_colpali_smol500_mv_frame", tenant_data,
+                )
+                if data.get("documents_fed", 0) == 0:
+                    pytest.skip("documents_fed=0")
+
+                time.sleep(5)
+
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    f_data = pool.submit(
+                        _search_sync, "throwing discus",
+                        "video_colpali_smol500_mv_frame", tenant_data,
+                    )
+                    f_empty = pool.submit(
+                        _search_sync, "throwing discus",
+                        "video_colpali_smol500_mv_frame", tenant_empty,
+                    )
+
+                    r_data = f_data.result()
+                    r_empty = f_empty.result()
+
+                assert r_data["status_code"] == 200
+                assert r_data["data"]["results_count"] >= 1, (
+                    "Tenant with data must see results"
+                )
+
+                assert r_empty["status_code"] == 200
+                assert r_empty["data"]["results_count"] == 0, (
+                    f"Empty tenant must see 0 results, got "
+                    f"{r_empty['data']['results_count']}"
+                )
+
+            finally:
+                _cleanup_tenant(client, tenant_data)
+                _cleanup_tenant(client, tenant_empty)
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestLoadTesting:
+    """Verify system stability under burst load."""
+
+    def test_burst_search_requests(self):
+        """Send 20 concurrent search requests to the same tenant."""
+        n_requests = 20
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [
+                pool.submit(
+                    _search_sync,
+                    f"sports activity query {i}",
+                    "video_colpali_smol500_mv_frame",
+                    TENANT_ID,
+                )
+                for i in range(n_requests)
+            ]
+
+            results = [f.result() for f in as_completed(futures)]
+
+        success_count = sum(1 for r in results if r["status_code"] == 200)
+        error_count = sum(1 for r in results if r["status_code"] != 200)
+
+        assert success_count >= n_requests * 0.9, (
+            f"At least 90% of burst requests must succeed: "
+            f"{success_count}/{n_requests} succeeded, {error_count} failed"
+        )
+
+    def test_burst_routing_requests(self):
+        """Send 5 concurrent routing requests."""
+        queries = [
+            "find sports videos",
+            "summarize the game",
+            "what happened in the match",
+            "show me basketball highlights",
+            "analyze player performance",
+        ]
+        n_requests = len(queries)
+
+        def _route(query: str) -> dict:
+            with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+                resp = client.post(
+                    "/agents/routing_agent/process",
+                    json={
+                        "agent_name": "routing_agent",
+                        "query": query,
+                        "context": {"tenant_id": TENANT_ID},
+                    },
+                )
+                return {
+                    "query": query,
+                    "status_code": resp.status_code,
+                    "agent": resp.json().get("recommended_agent") if resp.status_code == 200 else None,
+                }
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [pool.submit(_route, q) for q in queries]
+            results = [f.result() for f in as_completed(futures)]
+
+        success_count = sum(1 for r in results if r["status_code"] == 200)
+        assert success_count >= n_requests * 0.8, (
+            f"At least 80% of routing requests must succeed: "
+            f"{success_count}/{n_requests}"
+        )
+
+        # All successful routes must select a valid agent
+        for r in results:
+            if r["status_code"] == 200:
+                assert r["agent"] in (
+                    "search_agent", "summarizer_agent",
+                    "text_analysis_agent", "detailed_report_agent",
+                ), f"Invalid agent for '{r['query']}': {r['agent']}"
+
+    def test_sequential_ingestion_different_tenants(self, real_video_path):
+        """2 tenants ingest sequentially, then search concurrently — isolation holds."""
+        org_id = unique_id("load")
+        tenant_a = f"{org_id}:ingest_a"
+        tenant_b = f"{org_id}:ingest_b"
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            try:
+                _create_tenant(client, tenant_a)
+                _create_tenant(client, tenant_b)
+                _deploy_schema(
+                    client, "video_colpali_smol500_mv_frame", tenant_a
+                )
+                _deploy_schema(
+                    client, "video_colpali_smol500_mv_frame", tenant_b
+                )
+
+                # Ingest sequentially with pause between
+                data_a = _upload_file(
+                    client, real_video_path,
+                    "video_colpali_smol500_mv_frame", tenant_a,
+                )
+                assert data_a["status"] == "success", (
+                    f"Tenant A ingestion failed: {data_a}"
+                )
+                time.sleep(3)
+                data_b = _upload_file(
+                    client, real_video_path,
+                    "video_colpali_smol500_mv_frame", tenant_b,
+                )
+                assert data_b["status"] == "success", (
+                    f"Tenant B ingestion failed: {data_b}"
+                )
+
+                fed_a = data_a.get("documents_fed", 0) > 0
+                fed_b = data_b.get("documents_fed", 0) > 0
+
+                if not fed_a or not fed_b:
+                    pytest.skip("Both tenants need documents_fed > 0")
+
+                time.sleep(5)
+
+                # Search concurrently — isolation must hold
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    f_a = pool.submit(
+                        _search_sync, "person throwing",
+                        "video_colpali_smol500_mv_frame", tenant_a,
+                    )
+                    f_b = pool.submit(
+                        _search_sync, "person throwing",
+                        "video_colpali_smol500_mv_frame", tenant_b,
+                    )
+                    r_a = f_a.result()
+                    r_b = f_b.result()
+
+                assert r_a["data"]["results_count"] >= 1
+                assert r_b["data"]["results_count"] >= 1
+
+                ids_a = {r.get("metadata", {}).get("video_id") for r in r_a["data"]["results"]}
+                ids_b = {r.get("metadata", {}).get("video_id") for r in r_b["data"]["results"]}
+                assert ids_a.isdisjoint(ids_b), (
+                    f"Data leaked between tenants: A={ids_a}, B={ids_b}"
+                )
+
+            finally:
+                _cleanup_tenant(client, tenant_a)
+                _cleanup_tenant(client, tenant_b)
