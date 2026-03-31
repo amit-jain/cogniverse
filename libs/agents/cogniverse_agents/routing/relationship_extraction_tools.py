@@ -38,7 +38,10 @@ class GLiNERRelationshipExtractor:
         try:
             from gliner import GLiNER
 
-            self.gliner_model = GLiNER.from_pretrained(self.model_name)
+            from cogniverse_core.common.models import model_load_lock
+
+            with model_load_lock:
+                self.gliner_model = GLiNER.from_pretrained(self.model_name)
             logger.info(f"Loaded GLiNER model: {self.model_name}")
         except ImportError:
             logger.warning("GLiNER not installed. Entity extraction will be limited.")

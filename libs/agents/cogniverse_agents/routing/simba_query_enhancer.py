@@ -185,7 +185,10 @@ class SIMBAQueryEnhancer:
                 )
                 return
 
-            self.embedding_model = SentenceTransformer(self.config.embedding_model_name)
+            from cogniverse_core.common.models import model_load_lock
+
+            with model_load_lock:
+                self.embedding_model = SentenceTransformer(self.config.embedding_model_name)
             logger.info(
                 f"Initialized embedding model: {self.config.embedding_model_name}"
             )

@@ -7,6 +7,7 @@ from .model_loaders import (
     ModelLoader,
     ModelLoaderFactory,
     VideoPrismModelLoader,
+    _model_lock as model_load_lock,
     get_or_load_model,
 )
 from .videoprism_loader import (

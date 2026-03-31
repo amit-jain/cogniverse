@@ -66,7 +66,10 @@ class AudioProcessor(BaseProcessor):
                     "whisper-tiny": "tiny",
                 }
                 whisper_model_name = model_map.get(self.model, "large-v3")
-                self._whisper = whisper.load_model(whisper_model_name)
+                from cogniverse_core.common.models import model_load_lock
+
+                with model_load_lock:
+                    self._whisper = whisper.load_model(whisper_model_name)
                 self.logger.info(f"   ✅ Whisper model loaded: {whisper_model_name}")
             except Exception as e:
                 self.logger.error(f"Failed to load Whisper model: {e}")

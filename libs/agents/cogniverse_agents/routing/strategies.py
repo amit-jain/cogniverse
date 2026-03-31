@@ -71,7 +71,10 @@ class GLiNERRoutingStrategy(RoutingStrategy):
 
             print(f"🔍 Attempting to load GLiNER model: {self.model_name}")
             logger.info(f"Loading GLiNER model: {self.model_name}")
-            self.model = GLiNER.from_pretrained(self.model_name)
+            from cogniverse_core.common.models import model_load_lock
+
+            with model_load_lock:
+                self.model = GLiNER.from_pretrained(self.model_name)
             print(f"✅ GLiNER model loaded successfully: {self.model_name}")
             logger.info("GLiNER model loaded successfully")
         except ImportError as e:

@@ -624,8 +624,13 @@ class ModelLoaderFactory:
         return loader_cls(model_name, config, logger)
 
 
-# Global model cache to avoid reloading
+# Global model cache to avoid reloading.
+# Thread lock prevents concurrent from_pretrained calls which cause
+# meta tensor corruption in accelerate's dispatch hooks.
+import threading
+
 _model_cache: Dict[str, Tuple[Any, Any]] = {}
+_model_lock = threading.Lock()
 
 
 def get_or_load_model(
@@ -637,46 +642,41 @@ def get_or_load_model(
     """
     Get model from cache or load it.
 
-    For remote inference, caching is based on model_name + remote_url to
-    allow different endpoints for the same model.
+    Thread-safe: concurrent from_pretrained calls can corrupt PyTorch/accelerate
+    global state (meta tensor dispatch hooks). The lock serializes model loads.
     """
-
-    # Create cache key that includes remote URL if present
     cache_key = model_name
     if config.get("remote_inference_url"):
         cache_key = f"{model_name}@{config['remote_inference_url']}"
 
-    if not force_reload and cache_key in _model_cache:
-        cached_model, cached_processor = _model_cache[cache_key]
-        # Verify cached model is still usable (meta tensors become invalid
-        # after multiple load cycles in the same process)
-        try:
-            if hasattr(cached_model, "parameters"):
-                param = next(cached_model.parameters(), None)
-                if param is not None and param.device.type == "meta":
-                    if logger:
-                        logger.warning(
-                            f"Cached model {cache_key} has meta tensors, reloading"
-                        )
-                    del _model_cache[cache_key]
+    with _model_lock:
+        if not force_reload and cache_key in _model_cache:
+            cached_model, cached_processor = _model_cache[cache_key]
+            try:
+                if hasattr(cached_model, "parameters"):
+                    param = next(cached_model.parameters(), None)
+                    if param is not None and param.device.type == "meta":
+                        if logger:
+                            logger.warning(
+                                f"Cached model {cache_key} has meta tensors, reloading"
+                            )
+                        del _model_cache[cache_key]
+                    else:
+                        if logger:
+                            logger.info(f"Using cached model: {cache_key}")
+                        return cached_model, cached_processor
                 else:
                     if logger:
                         logger.info(f"Using cached model: {cache_key}")
                     return cached_model, cached_processor
-            else:
+            except (StopIteration, RuntimeError):
                 if logger:
-                    logger.info(f"Using cached model: {cache_key}")
-                return cached_model, cached_processor
-        except (StopIteration, RuntimeError):
-            if logger:
-                logger.warning(f"Cached model {cache_key} invalid, reloading")
-            del _model_cache[cache_key]
+                    logger.warning(f"Cached model {cache_key} invalid, reloading")
+                del _model_cache[cache_key]
 
-    # Create loader and load model
-    loader = ModelLoaderFactory.create_loader(model_name, config, logger)
-    model, processor = loader.load_model()
+        # Load model under lock to prevent concurrent from_pretrained calls
+        loader = ModelLoaderFactory.create_loader(model_name, config, logger)
+        model, processor = loader.load_model()
 
-    # Cache the model
-    _model_cache[cache_key] = (model, processor)
-
-    return model, processor
+        _model_cache[cache_key] = (model, processor)
+        return model, processor
