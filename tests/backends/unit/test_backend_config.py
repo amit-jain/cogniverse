@@ -32,7 +32,7 @@ class TestBackendConfigDataclasses:
             embedding_model="test/model",
             pipeline_config={"extract_keyframes": True},
             strategies={"embedding": {"class": "TestStrategy"}},
-            embedding_type="frame_based",
+            embedding_type="multi_vector",
             schema_config={"embedding_dim": 128},
         )
 
@@ -66,7 +66,7 @@ class TestBackendConfigDataclasses:
             "embedding_model": "test/model",
             "pipeline_config": {"extract_keyframes": True},
             "strategies": {},
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "schema_config": {},
         }
 
@@ -188,7 +188,7 @@ class TestBackendConfigDataclasses:
         data = {
             "type": "video",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
             "schema_name": "video_colpali_smol500_mv_frame",
             "strategies": {"float_float": {}},
@@ -209,7 +209,7 @@ class TestBackendConfigDataclasses:
         system_profile = BackendProfileConfig.from_dict("video_profile", {
             "type": "video",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
             "schema_name": "video_profile",
             "strategies": {"float_float": {}},
@@ -220,7 +220,7 @@ class TestBackendConfigDataclasses:
         tenant_profile = BackendProfileConfig.from_dict("video_profile", {
             "type": "video",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "schema_name": "video_profile",
             "strategies": {"float_float": {}},
         })
@@ -397,7 +397,7 @@ class TestConfigUtilsBackendConfig:
                         "embedding_model": "system/model",
                         "pipeline_config": {"extract_keyframes": True},
                         "strategies": {},
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                         "schema_config": {},
                     }
                 },
@@ -519,7 +519,7 @@ class TestBackendConfigEdgeCases:
             profile_name="colbert_profile",
             schema_name="document_text",
             embedding_model="lightonai/Reason-ModernColBERT",
-            embedding_type="document_colbert",
+            embedding_type="multi_vector",
             model_loader="colbert",
         )
 
@@ -528,7 +528,7 @@ class TestBackendConfigEdgeCases:
 
         restored = BackendProfileConfig.from_dict("colbert_profile", data)
         assert restored.model_loader == "colbert"
-        assert restored.embedding_type == "document_colbert"
+        assert restored.embedding_type == "multi_vector"
         assert restored.embedding_model == "lightonai/Reason-ModernColBERT"
 
     def test_extra_config_round_trip(self):
@@ -536,7 +536,7 @@ class TestBackendConfigEdgeCases:
         audio_data = {
             "type": "audio",
             "embedding_model": "laion/clap-htsat-unfused",
-            "embedding_type": "audio_dual",
+            "embedding_type": "multi_vector",
             "schema_name": "audio_content",
             "semantic_model": "lightonai/Reason-ModernColBERT",
             "custom_field": 42,
@@ -554,7 +554,7 @@ class TestBackendConfigEdgeCases:
         data = profile.to_dict()
         assert data["semantic_model"] == "lightonai/Reason-ModernColBERT"
         assert data["custom_field"] == 42
-        assert data["embedding_type"] == "audio_dual"
+        assert data["embedding_type"] == "multi_vector"
         assert data["embedding_model"] == "laion/clap-htsat-unfused"
 
         # Second round-trip also works

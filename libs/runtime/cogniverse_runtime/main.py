@@ -224,11 +224,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("RUNTIME_URL"):
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]
         updated = True
-    if os.environ.get("COLPALI_INFERENCE_URL"):
-        system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
+    # Inference URLs: set from env if present, clear if absent (prevents
+    # stale URLs from previous deployments persisting in Vespa config)
+    new_colpali = os.environ.get("COLPALI_INFERENCE_URL", "")
+    new_colbert = os.environ.get("COLBERT_INFERENCE_URL", "")
+    if new_colpali != system_config.colpali_inference_url:
+        system_config.colpali_inference_url = new_colpali
         updated = True
-    if os.environ.get("COLBERT_INFERENCE_URL"):
-        system_config.colbert_inference_url = os.environ["COLBERT_INFERENCE_URL"]
+    if new_colbert != system_config.colbert_inference_url:
+        system_config.colbert_inference_url = new_colbert
         updated = True
     if updated:
         config_manager.set_system_config(system_config)

@@ -37,7 +37,7 @@ class ColBERTQueryEncoder(QueryEncoder):
 
         config = {
             "embedding_model": model_name,
-            "embedding_type": "document_colbert",
+            "embedding_type": "multi_vector",
             "model_loader": "colbert",
         }
         # Use remote inference if available (SystemConfig stores the URL)
@@ -70,7 +70,7 @@ class ColPaliQueryEncoder(QueryEncoder):
     def __init__(self, model_name: str = "vidore/colsmol-500m"):
         config = {
             "colpali_model": model_name,
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         self.model, self.processor = get_or_load_model(model_name, config, logger)
@@ -97,7 +97,7 @@ class ColQwenQueryEncoder(QueryEncoder):
     def __init__(self, model_name: str = "vidore/colqwen-omni-v0.1"):
         config = {
             "colpali_model": model_name,
-            "embedding_type": "video_chunks",
+            "embedding_type": "multi_vector",
             "model_loader": "colqwen",
         }
         self.model, self.processor = get_or_load_model(model_name, config, logger)

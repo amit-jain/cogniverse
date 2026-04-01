@@ -9,10 +9,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 # Valid embedding types - must match ProfileValidator.VALID_EMBEDDING_TYPES
-EmbeddingType = Literal[
-    "frame_based", "video_chunks", "direct_video_segment", "single_vector",
-    "document_colbert", "audio_dual",
-]
+EmbeddingType = Literal["multi_vector", "single_vector"]
 
 
 class ProfileCreateRequest(BaseModel):
@@ -88,7 +85,7 @@ class ProfileCreateRequest(BaseModel):
                         "params": {},
                     },
                 },
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "schema_config": {
                     "schema_name": "video_colpali",
                     "model_name": "ColPali",

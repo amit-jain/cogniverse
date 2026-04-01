@@ -353,7 +353,7 @@ llm:
 # Each model runs as a separate vLLM instance (vLLM = one model per process).
 inference:
   colpali:
-    enabled: true
+    enabled: false
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64

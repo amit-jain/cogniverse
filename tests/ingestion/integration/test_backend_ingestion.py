@@ -467,7 +467,7 @@ class TestProfileConfigPropagation:
             profile_name="video_colpali_smol500_mv_frame",
             type="video",
             embedding_model="vidore/colsmol-500m",
-            embedding_type="frame_based",
+            embedding_type="multi_vector",
             schema_name="video_colpali_smol500_mv_frame",
             strategies={"float_float": {}},
         )
