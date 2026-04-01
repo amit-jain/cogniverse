@@ -241,6 +241,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"TelemetryManager otlp_endpoint set to {system_config.telemetry_collector_endpoint}"
         )
 
+    # 7c. Inject remote inference URLs into profile configs so
+    # ModelLoaderFactory creates RemoteColPaliLoader/RemoteColBERTLoader
+    # instead of loading models locally.
+    colpali_url = os.environ.get("COLPALI_INFERENCE_URL")
+    colbert_url = os.environ.get("COLBERT_INFERENCE_URL")
+    if colpali_url or colbert_url:
+        import json
+
+        config_path = Path("configs/config.json")
+        if config_path.exists():
+            raw = json.loads(config_path.read_text())
+            profiles = raw.get("backend", {}).get("profiles", {})
+            for pname, pcfg in profiles.items():
+                loader = pcfg.get("model_loader", "")
+                if loader in ("colpali", "colqwen") and colpali_url:
+                    pcfg["remote_inference_url"] = colpali_url
+                elif loader == "colbert" and colbert_url:
+                    pcfg["remote_inference_url"] = colbert_url
+            config_path.write_text(json.dumps(raw, indent=2))
+            logger.info(
+                f"Injected remote inference URLs: "
+                f"colpali={colpali_url}, colbert={colbert_url}"
+            )
+
     # 8. Wire tenant manager dependencies
     tenant_manager.set_config_manager(config_manager)
     tenant_manager.set_schema_loader(schema_loader)

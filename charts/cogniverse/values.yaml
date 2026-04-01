@@ -347,6 +347,88 @@ llm:
     url: ""
 
 # ===========================================
+# vLLM Inference Service (embedding models)
+# ===========================================
+# Serves ColPali and ColBERT via /pooling endpoint for per-token embeddings.
+# Each model runs as a separate vLLM instance (vLLM = one model per process).
+inference:
+  colpali:
+    enabled: true
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    model: vidore/colsmol-500m
+    dtype: float32
+    extraArgs: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29001
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+
+  colbert:
+    enabled: true
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    model: lightonai/GTE-ModernColBERT-v1
+    dtype: float32
+    extraArgs: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29002
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+
+# ===========================================
 # Ingress Configuration
 # ===========================================
 ingress:

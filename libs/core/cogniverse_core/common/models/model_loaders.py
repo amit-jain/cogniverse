@@ -403,21 +403,28 @@ class RemoteColBERTLoader(ModelLoader):
                     payload = {
                         "input": batch,
                         "model": self.model_name,
-                        "encoding_format": "float",
                     }
-                    if is_query:
-                        payload["input_type"] = "query"
 
+                    # Use /pooling for per-token embeddings (vLLM),
+                    # fall back to /v1/embeddings for other services
                     resp = self.session.post(
-                        f"{self.endpoint_url}/v1/embeddings",
+                        f"{self.endpoint_url}/pooling",
                         json=payload,
                         timeout=120,
                     )
+                    if resp.status_code == 404:
+                        resp = self.session.post(
+                            f"{self.endpoint_url}/v1/embeddings",
+                            json=payload,
+                            timeout=120,
+                        )
                     resp.raise_for_status()
                     data = resp.json()
 
                     for item in data.get("data", []):
-                        embedding = item.get("embedding", [])
+                        # vLLM /pooling returns {"data": [...tokens...]}
+                        # /v1/embeddings returns {"embedding": [...]}
+                        embedding = item.get("data", item.get("embedding", []))
                         all_embeddings.append(embedding)
 
                 return all_embeddings

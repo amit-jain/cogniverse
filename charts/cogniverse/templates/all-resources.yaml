@@ -213,6 +213,14 @@ spec:
           {{- else }}
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
+        {{- if .Values.inference.colpali.enabled }}
+        - name: COLPALI_INFERENCE_URL
+          value: "http://{{ $fullName }}-vllm-colpali:{{ .Values.inference.colpali.service.port }}"
+        {{- end }}
+        {{- if .Values.inference.colbert.enabled }}
+        - name: COLBERT_INFERENCE_URL
+          value: "http://{{ $fullName }}-vllm-colbert:{{ .Values.inference.colbert.service.port }}"
+        {{- end }}
         {{- range $key, $value := .Values.runtime.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -686,4 +694,91 @@ spec:
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: llm
+{{- end }}
+{{- range $name, $cfg := .Values.inference }}
+{{- if $cfg.enabled }}
+---
+# vLLM Inference Deployment: {{ $name }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-vllm-{{ $name }}
+  labels:
+    {{- include "cogniverse.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: vllm-{{ $name }}
+spec:
+  replicas: {{ $cfg.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: vllm-{{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: vllm-{{ $name }}
+    spec:
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
+      containers:
+      - name: vllm
+        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
+        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: VLLM_CPU_OMP_THREADS_BIND
+          value: "all"
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        args:
+          - "serve"
+          - {{ $cfg.model | quote }}
+          - "--task"
+          - "embed"
+          - "--dtype"
+          - {{ $cfg.dtype | quote }}
+          - "--host"
+          - "0.0.0.0"
+          - "--port"
+          - "8000"
+          {{- range $cfg.extraArgs }}
+          - {{ . | quote }}
+          {{- end }}
+        livenessProbe:
+          {{- toYaml $cfg.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml $cfg.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml $cfg.resources | nindent 10 }}
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 10Gi
+---
+# vLLM Service: {{ $name }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-vllm-{{ $name }}
+  labels:
+    {{- include "cogniverse.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: vllm-{{ $name }}
+spec:
+  type: {{ $cfg.service.type }}
+  ports:
+  - port: {{ $cfg.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+    {{- if eq $cfg.service.type "NodePort" }}
+    nodePort: {{ $cfg.service.nodePort | default $cfg.service.port }}
+    {{- end }}
+  selector:
+    {{- include "cogniverse.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: vllm-{{ $name }}
+{{- end }}
 {{- end }}
