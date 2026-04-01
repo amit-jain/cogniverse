@@ -398,7 +398,9 @@ inference:
       pullPolicy: IfNotPresent
     model: lightonai/Reason-ModernColBERT
     dtype: float32
-    extraArgs: []
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
     replicaCount: 1
     service:
       type: ClusterIP

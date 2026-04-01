@@ -224,6 +224,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("RUNTIME_URL"):
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]
         updated = True
+    if os.environ.get("COLPALI_INFERENCE_URL"):
+        system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
+        updated = True
+    if os.environ.get("COLBERT_INFERENCE_URL"):
+        system_config.colbert_inference_url = os.environ["COLBERT_INFERENCE_URL"]
+        updated = True
     if updated:
         config_manager.set_system_config(system_config)
         BackendRegistry.get_instance()._backend_instances.clear()
@@ -241,9 +247,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"TelemetryManager otlp_endpoint set to {system_config.telemetry_collector_endpoint}"
         )
 
-    # 7c. Remote inference URLs (COLPALI_INFERENCE_URL, COLBERT_INFERENCE_URL)
-    # are read directly from env vars by the embedding generator factory.
-    # No config file mutation needed — env vars are the canonical source.
+    if os.environ.get("COLPALI_INFERENCE_URL"):
+        system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
+        updated = True
+    if os.environ.get("COLBERT_INFERENCE_URL"):
+        system_config.colbert_inference_url = os.environ["COLBERT_INFERENCE_URL"]
+        updated = True
+    if updated:
+        config_manager.set_system_config(system_config)
 
     # 8. Wire tenant manager dependencies
     tenant_manager.set_config_manager(config_manager)

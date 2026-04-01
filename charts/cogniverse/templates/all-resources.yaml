@@ -729,6 +729,8 @@ spec:
         env:
         - name: VLLM_CPU_OMP_THREADS_BIND
           value: "all"
+        - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+          value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
         args:

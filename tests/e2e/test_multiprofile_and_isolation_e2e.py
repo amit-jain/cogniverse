@@ -146,18 +146,14 @@ def _restart_runtime_if_unhealthy():
     restart_runtime(timeout_s=120)
 
 
-@pytest.fixture(scope="module", autouse=True)
-def fresh_runtime_for_multiprofile():
-    """Restart runtime before multiprofile tests to clear accumulated model state."""
-    from tests.e2e.conftest import restart_runtime
-    restart_runtime(timeout_s=120)
-    yield
-
-
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestMultiProfileIngestion:
     """Ingest same content with multiple profiles, verify independent results."""
+
+    @pytest.fixture(autouse=True)
+    def _ensure_runtime(self):
+        _restart_runtime_if_unhealthy()
 
     def test_video_colpali_produces_searchable_results(self, real_video_path):
         """Baseline: ColPali profile ingests video and search returns results."""

@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 # Valid embedding types - must match ProfileValidator.VALID_EMBEDDING_TYPES
 EmbeddingType = Literal[
-    "frame_based", "video_chunks", "direct_video_segment", "single_vector"
+    "frame_based", "video_chunks", "direct_video_segment", "single_vector",
+    "document_colbert", "audio_dual",
 ]
 
 

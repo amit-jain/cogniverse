@@ -29,6 +29,41 @@ class QueryEncoder(ABC):
         pass
 
 
+class ColBERTQueryEncoder(QueryEncoder):
+    """Query encoder for ColBERT models (text-only, per-token embeddings)."""
+
+    def __init__(self, model_name: str = "lightonai/Reason-ModernColBERT"):
+        import os
+
+        config = {
+            "embedding_model": model_name,
+            "embedding_type": "document_colbert",
+            "model_loader": "colbert",
+        }
+        # Use remote inference if available (SystemConfig stores the URL)
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        try:
+            cm = create_default_config_manager()
+            sc = cm.get_system_config("default")
+            if sc.colbert_inference_url:
+                config["remote_inference_url"] = sc.colbert_inference_url
+        except Exception:
+            pass
+
+        self.model, _ = get_or_load_model(model_name, config, logger)
+        self.embedding_dim = 128
+        logger.info(f"Loaded ColBERT query encoder: {model_name}")
+
+    def encode(self, query: str) -> np.ndarray:
+        """Encode query to per-token embeddings."""
+        result = self.model.encode([query], is_query=True)
+        return np.array(result[0], dtype=np.float32)
+
+    def get_embedding_dim(self) -> int:
+        return self.embedding_dim
+
+
 class ColPaliQueryEncoder(QueryEncoder):
     """Query encoder for ColPali models"""
 
@@ -232,6 +267,8 @@ class QueryEncoderFactory:
             return ColQwenQueryEncoder(model_name)
         elif "videoprism" in model_name.lower():
             return VideoPrismQueryEncoder(model_name)
+        elif "colbert" in model_name.lower():
+            return ColBERTQueryEncoder(model_name)
         else:
             # Fallback: try to infer from profile name
             if "colpali" in profile.lower():
@@ -240,6 +277,8 @@ class QueryEncoderFactory:
                 return ColQwenQueryEncoder(model_name)
             elif "videoprism" in profile.lower():
                 return VideoPrismQueryEncoder(model_name)
+            elif "colbert" in profile.lower() or "document" in profile.lower():
+                return ColBERTQueryEncoder(model_name)
             else:
                 raise ValueError(
                     f"Cannot determine encoder type for model: {model_name} in profile: {profile}"
