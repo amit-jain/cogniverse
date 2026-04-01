@@ -23,8 +23,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-RUNTIME = "http://localhost:8000"
-DASHBOARD = "http://localhost:8501"
+RUNTIME = "http://localhost:28000"
+DASHBOARD = "http://localhost:28501"
 TENANT_ID = "flywheel_org:production"
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"
@@ -70,12 +70,12 @@ def _ensure_stack_running() -> bool:
 def _skip_if_no_runtime():
     """Skip marker that checks runtime availability at test time, not import time."""
     if not runtime_available():
-        pytest.skip("Runtime not available at localhost:8000 — run 'cogniverse up' first")
+        pytest.skip("Runtime not available at localhost:28000 — run 'cogniverse up' first")
 
 def _skip_if_no_dashboard():
     """Skip marker that checks dashboard availability at test time, not import time."""
     if not dashboard_available():
-        pytest.skip("Dashboard not available at localhost:8501 — run 'cogniverse up' first")
+        pytest.skip("Dashboard not available at localhost:28501 — run 'cogniverse up' first")
 
 # Keep the old names for backward compat but make them no-ops
 # The actual check happens in e2e_stack fixture (autouse, session-scoped)
@@ -620,7 +620,7 @@ E2E_REPORT_MD = E2E_REPORT_DIR / "e2e_report.md"
 class E2EReportCollector:
     """Collects HTTP operations and test outcomes for E2E reporting.
 
-    Automatically captures every httpx call to the runtime (localhost:8000)
+    Automatically captures every httpx call to the runtime (localhost:28000)
     by monkeypatching httpx.Client.send. Groups operations by test name
     and writes JSON + markdown reports at session end.
     """
@@ -666,7 +666,7 @@ class E2EReportCollector:
     ):
         url = str(request.url)
         # Only capture calls to the runtime, not external downloads
-        if "localhost:8000" not in url and "127.0.0.1:8000" not in url:
+        if "localhost:28000" not in url and "127.0.0.1:8000" not in url:
             return
 
         # Parse request body — guard against streaming requests that

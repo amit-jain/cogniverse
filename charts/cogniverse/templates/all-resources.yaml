@@ -127,7 +127,7 @@ spec:
     protocol: TCP
     name: query
     {{- if eq .Values.vespa.service.type "NodePort" }}
-    nodePort: {{ .Values.vespa.service.ports.query }}
+    nodePort: {{ .Values.vespa.service.nodePorts.query | default .Values.vespa.service.ports.query }}
     {{- end }}
   - port: {{ .Values.vespa.service.ports.config }}
     targetPort: config
@@ -288,7 +288,7 @@ spec:
     protocol: TCP
     name: http
     {{- if eq .Values.runtime.service.type "NodePort" }}
-    nodePort: {{ .Values.runtime.service.port }}
+    nodePort: {{ .Values.runtime.service.nodePort | default .Values.runtime.service.port }}
     {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
@@ -431,7 +431,7 @@ spec:
     protocol: TCP
     name: http
     {{- if eq .Values.dashboard.service.type "NodePort" }}
-    nodePort: {{ .Values.dashboard.service.port }}
+    nodePort: {{ .Values.dashboard.service.nodePort | default .Values.dashboard.service.port }}
     {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
@@ -545,7 +545,7 @@ spec:
     protocol: TCP
     name: http
     {{- if eq .Values.phoenix.service.type "NodePort" }}
-    nodePort: {{ .Values.phoenix.service.port }}
+    nodePort: {{ .Values.phoenix.service.nodePort | default .Values.phoenix.service.port }}
     {{- end }}
   - port: 4317
     targetPort: otlp-grpc

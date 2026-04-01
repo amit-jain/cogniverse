@@ -3,7 +3,7 @@ E2E API tests exercising routing, query enhancement, entity extraction,
 orchestration, search, tenant CRUD, agent registry, A2A protocol,
 profile CRUD, ingestion, synthetic data, and event streaming.
 
-Requires live runtime at http://localhost:8000 with Ollama + Vespa + Phoenix.
+Requires live runtime at http://localhost:28000 with Ollama + Vespa + Phoenix.
 Uses flywheel_org:production tenant which has ingested data.
 
 Architecture note: Entity extraction, query enhancement, and orchestration

@@ -1,7 +1,7 @@
 """
 E2E tests for multi-turn conversation support via REST and A2A protocols.
 
-Requires live runtime at http://localhost:8000 with Ollama + Vespa.
+Requires live runtime at http://localhost:28000 with Ollama + Vespa.
 Uses flywheel_org:production tenant which has ingested data.
 
 Tests validate:
@@ -18,7 +18,7 @@ import uuid
 import httpx
 import pytest
 
-RUNTIME = "http://localhost:8000"
+RUNTIME = "http://localhost:28000"
 TENANT_ID = "flywheel_org:production"
 
 
@@ -32,7 +32,7 @@ def runtime_available() -> bool:
 
 skip_if_no_runtime = pytest.mark.skipif(
     not runtime_available(),
-    reason="Runtime not available at localhost:8000",
+    reason="Runtime not available at localhost:28000",
 )
 
 

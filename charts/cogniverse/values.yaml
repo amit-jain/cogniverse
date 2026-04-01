@@ -64,6 +64,8 @@ vespa:
       query: 8080
       config: 19071
       metrics: 19092
+    nodePorts:
+      query: 28080
     annotations: {}
 
   env:
@@ -116,6 +118,7 @@ runtime:
   service:
     type: ClusterIP
     port: 8000
+    nodePort: 28000
     annotations: {}
 
   env:
@@ -189,6 +192,7 @@ dashboard:
   service:
     type: ClusterIP
     port: 8501
+    nodePort: 28501
     annotations: {}
 
   env:
@@ -250,6 +254,7 @@ phoenix:
   service:
     type: ClusterIP
     port: 6006
+    nodePort: 26006
     annotations: {}
 
   env:

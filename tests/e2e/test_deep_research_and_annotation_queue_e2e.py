@@ -1,7 +1,7 @@
 """
 E2E tests for new features against the live runtime.
 
-Requires live runtime at http://localhost:8000 with Ollama + Vespa + Phoenix.
+Requires live runtime at http://localhost:28000 with Ollama + Vespa + Phoenix.
 Each test exercises the full HTTP round-trip through the actual ASGI app.
 
 Features tested:
