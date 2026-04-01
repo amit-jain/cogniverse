@@ -983,9 +983,9 @@ result = generator.generate_embeddings(
 | Type | Method | Use Case |
 |------|--------|----------|
 | `single_vector` | `_generate_single_vector_embeddings` | VideoPrism LVT |
-| `video_chunks` | `_generate_video_chunks_embeddings` | ColQwen, VideoPrism |
+| `multi_vector` | `_generate_video_chunks_embeddings` | ColQwen, VideoPrism |
 | `direct_video` | `_generate_direct_video_embeddings` | Direct video processing |
-| `frame_based` | `_generate_frame_based_embeddings` | ColPali frame-by-frame |
+| `multi_vector` | `_generate_frame_based_embeddings` | ColPali frame-by-frame |
 
 ### EmbeddingGeneratorFactory
 

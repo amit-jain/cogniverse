@@ -134,7 +134,7 @@ class TestSearchAgent:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             },
         }
@@ -201,7 +201,7 @@ class TestSearchAgent:
         assert agent._backend_type is not None
         assert agent._backend_config is not None
         assert agent.query_encoder == mock_query_encoder
-        assert agent.embedding_type == "frame_based"
+        assert agent.embedding_type == "multi_vector"
         assert isinstance(agent.content_processor, ContentProcessor)
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
@@ -803,7 +803,7 @@ class TestSearchAgentAdvancedFeatures:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             },
         }
@@ -975,7 +975,7 @@ class TestSearchAgentAdvancedFeatures:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             },
         }
@@ -1051,7 +1051,7 @@ class TestSearchAgentEnsembleSearch:
                 "profiles": {
                     "profile1": {
                         "embedding_model": "vidore/colsmol-500m",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                     },
                     "profile2": {
                         "embedding_model": "vidore/colqwen-omni",
@@ -1375,7 +1375,7 @@ class TestMultiQueryFusion:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             },
         }
@@ -1732,7 +1732,7 @@ class TestEnsembleVsFusionPaths:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             },
         }

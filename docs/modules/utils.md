@@ -538,7 +538,7 @@ def get_supported_ranking_strategies(profile: str) -> list:
     Get the ranking strategies supported by each profile.
 
     Profile Support Matrix:
-    - frame_based_colpali: ALL strategies (text data + visual embeddings)
+    - multi_vector_colpali: ALL strategies (text data + visual embeddings)
     - direct_video_frame*: Visual + Hybrid strategies (video_title field)
     - colqwen profiles: Visual-only strategies (no text fields)
     """
@@ -548,7 +548,7 @@ def get_supported_ranking_strategies(profile: str) -> list:
 
 | Profile | Text-Only | Visual-Only | Hybrid (with text fields) |
 |---------|-----------|-------------|---------------------------|
-| `frame_based_colpali` | ✅ bm25_only, bm25_no_description | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float (all with optional no_description variants) |
+| `multi_vector_colpali` | ✅ bm25_only, bm25_no_description | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float (all with optional no_description variants) |
 | `direct_video_frame*` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float |
 | `colqwen profiles` | ❌ | ✅ float_float, binary_binary, float_binary, phased | ❌ |
 

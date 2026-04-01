@@ -68,55 +68,53 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             self._load_model()
 
     def _should_load_model(self) -> bool:
-        """Check if model should be loaded during initialization."""
-        # Frame-based processing loads model later when processing frames
-        embedding_type = self.profile_config.get("embedding_type")
-        if not embedding_type:
+        """Check if model should be loaded during initialization.
+
+        ColPali/ColQwen models are loaded lazily when the first frame/chunk
+        is processed. All other models (ColBERT, VideoPrism) load at init.
+        """
+        model_loader = self.profile_config.get("model_loader")
+        if not model_loader:
             raise ValueError(
-                f"Profile config missing 'embedding_type'. "
+                f"Profile config missing 'model_loader'. "
                 f"Got keys: {sorted(self.profile_config.keys())}"
             )
-        return embedding_type != "frame_based"
+        return model_loader not in ("colpali", "colqwen")
 
     def _load_model(self):
-        """Load the embedding model based on configuration."""
+        """Load the embedding model based on model_loader configuration."""
         from cogniverse_core.common.models import get_or_load_model
 
-        embedding_type = self.profile_config.get("embedding_type")
-        if not embedding_type:
+        model_loader = self.profile_config.get("model_loader")
+        if not model_loader:
             raise ValueError(
-                f"Profile config missing 'embedding_type'. "
+                f"Profile config missing 'model_loader'. "
                 f"Got keys: {sorted(self.profile_config.keys())}"
             )
 
         try:
-            if embedding_type == "audio_dual":
-                semantic_model = self.profile_config.get("semantic_model")
-                if not semantic_model:
-                    raise ValueError(
-                        "audio_dual embedding_type requires 'semantic_model' in profile config."
-                    )
-                self.colbert_model, _ = get_or_load_model(
-                    semantic_model, self.profile_config, self.logger
+            if model_loader == "colbert":
+                model_name = self.profile_config.get(
+                    "semantic_model", self.model_name
                 )
-            elif embedding_type == "document_colbert":
                 self.colbert_model, _ = get_or_load_model(
-                    self.model_name, self.profile_config, self.logger
+                    model_name, self.profile_config, self.logger
                 )
-            elif embedding_type in ("direct_video_segment", "single_vector"):
+            elif model_loader == "videoprism":
                 self.videoprism_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
-            elif embedding_type in ("frame_based", "video_chunks"):
+            elif model_loader in ("colpali", "colqwen"):
                 self.model, self.processor = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
             else:
                 raise ValueError(
-                    f"Unknown embedding_type={embedding_type!r} in profile config."
+                    f"Unknown model_loader={model_loader!r} in profile config."
                 )
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
+            raise
             raise
 
     def generate_embeddings(
@@ -586,8 +584,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _generate_chunk_embeddings(self, chunk_path: Path) -> np.ndarray | None:
         """Generate embeddings for a video chunk."""
         try:
-            embedding_type = self.profile_config.get("embedding_type")
-            if embedding_type == "video_chunks":
+            model_loader = self.profile_config.get("model_loader")
+            if model_loader in ("colpali", "colqwen"):
                 # ColQwen/video-chunk model processes video chunks
                 import cv2
 

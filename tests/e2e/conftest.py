@@ -154,7 +154,7 @@ def _bootstrap_tenant_and_schemas() -> None:
                 "embedding_model": profile_def.get("embedding_model", ""),
                 "pipeline_config": profile_def.get("pipeline_config", {}),
                 "strategies": profile_def.get("strategies", {}),
-                "embedding_type": profile_def.get("embedding_type", "frame_based"),
+                "embedding_type": profile_def.get("embedding_type", "multi_vector"),
                 "schema_config": profile_def.get("schema_config", {}),
                 "model_specific": profile_def.get("model_specific"),
                 "deploy_schema": True,

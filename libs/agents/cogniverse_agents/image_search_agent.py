@@ -134,7 +134,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
             config = {
                 "colpali_model": self._colpali_model_name,
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             }
             self._colpali_model, self._colpali_processor = get_or_load_model(

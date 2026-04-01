@@ -122,7 +122,7 @@ class TestEmbeddingGenerator:
         return {
             "process_type": "frame_based",
             "embedding_model": "test_model",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
 
@@ -132,7 +132,7 @@ class TestEmbeddingGenerator:
         return {
             "process_type": "frame_based",
             "embedding_model": "test_model",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
 
@@ -159,7 +159,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "frame_based",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
 
@@ -209,7 +209,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "direct_video_global",
             "embedding_model": "custom_model",
-            "embedding_type": "direct_video_segment",
+            "embedding_type": "multi_vector",
             "model_loader": "videoprism",
         }
 
@@ -255,7 +255,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "direct_video_global",
             "embedding_model": "videoprism_large",
-            "embedding_type": "direct_video_segment",
+            "embedding_type": "multi_vector",
             "model_loader": "videoprism",
         }
 
@@ -323,7 +323,7 @@ class TestEmbeddingGenerator:
             profile_config = {
                 "process_type": process_type,
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             }
             generator = EmbeddingGenerator(
@@ -361,7 +361,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "direct_video_global",
             "embedding_model": "test_model",
-            "embedding_type": "direct_video_segment",
+            "embedding_type": "multi_vector",
             "model_loader": "videoprism",
         }
 
@@ -398,7 +398,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -436,7 +436,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -516,7 +516,7 @@ class TestEmbeddingGenerator:
         profile_config = {
             "process_type": "frame_based",
             "embedding_model": "test_model",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         generator = EmbeddingGenerator(
@@ -557,7 +557,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -652,7 +652,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -690,7 +690,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -736,7 +736,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -786,7 +786,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -823,7 +823,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -874,7 +874,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -924,7 +924,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -966,7 +966,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -1007,7 +1007,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -1064,7 +1064,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -1117,7 +1117,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -1160,7 +1160,7 @@ class TestEmbeddingGenerator:
             {
                 "process_type": "frame_based",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "model_loader": "colpali",
             },
             mock_backend_client,
@@ -1237,7 +1237,7 @@ class TestRemoteColBERTLoader:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "data": [
-                {"embedding": [[0.1, 0.2], [0.3, 0.4]]},
+                {"data": [[0.1, 0.2], [0.3, 0.4]]},
             ]
         }
         mock_response.raise_for_status = MagicMock()
@@ -1247,6 +1247,6 @@ class TestRemoteColBERTLoader:
 
         model.session.post.assert_called_once()
         call_args = model.session.post.call_args
-        assert "/v1/embeddings" in call_args[0][0]
+        assert "/pooling" in call_args[0][0]
         assert call_args[1]["json"]["input"] == ["hello world"]
         assert len(result) == 1

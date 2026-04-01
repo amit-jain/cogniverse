@@ -128,7 +128,7 @@ class TestProfileConcurrentOperations:
                         "type": "video",
                         "schema_name": "video_test",
                         "embedding_model": f"model_{thread_id}",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                     },
                 )
                 results.append(
@@ -188,7 +188,7 @@ class TestProfileConcurrentOperations:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "pipeline_config": {"initial": "value"},
             },
         )
@@ -275,7 +275,7 @@ class TestProfileConcurrentOperations:
                         "type": "video",
                         "schema_name": "video_test",
                         "embedding_model": f"model_{tenant_id}",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                     },
                 )
                 results.append(
@@ -324,7 +324,7 @@ class TestProfileConcurrentOperations:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "description": "Initial",
             },
         )
@@ -417,7 +417,7 @@ class TestProfileConcurrentOperations:
                     "type": "video",
                     "schema_name": "video_test",
                     "embedding_model": "model",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 },
             )
 
@@ -453,7 +453,7 @@ class TestProfileConcurrentOperations:
                         "type": "video",
                         "schema_name": "video_test",
                         "embedding_model": "model",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                     },
                 )
                 results.append({"type": "add", "thread_id": thread_id})
@@ -502,7 +502,7 @@ class TestProfileConcurrentOperations:
                     "type": "video",
                     "schema_name": "video_test",
                     "embedding_model": "model",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 },
             )
 

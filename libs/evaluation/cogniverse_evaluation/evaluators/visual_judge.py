@@ -47,7 +47,7 @@ class VisualRelevanceEvaluator(Evaluator):
         # Get the same model and processor for image encoding
         config = {
             "colpali_model": model_name,
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         self.model, self.processor = get_or_load_model(model_name, config, logger)

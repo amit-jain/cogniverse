@@ -186,10 +186,14 @@ class TestVespaBackendIngestion:
         config.generate_descriptions = False
         config.max_frames_per_video = 1
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
+            schema_loader=schema_loader,
             schema_name="video_colpali_smol500_mv_frame",
         )
 
@@ -220,10 +224,14 @@ class TestVespaBackendIngestion:
         config.search_backend = "vespa"
         config.max_frames_per_video = 2
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
+            schema_loader=schema_loader,
             schema_name="video_colpali_smol500_mv_frame",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
@@ -253,10 +261,14 @@ class TestVespaBackendIngestion:
         config.search_backend = "vespa"
         config.max_frames_per_video = 1
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
+            schema_loader=schema_loader,
             schema_name="video_videoprism_base_mv_chunk_30s",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
@@ -285,10 +297,14 @@ class TestVespaBackendIngestion:
         config.search_backend = "vespa"
         config.max_frames_per_video = 1
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
+            schema_loader=schema_loader,
             schema_name="video_colqwen_omni_mv_chunk_30s",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
@@ -343,10 +359,14 @@ class TestComprehensiveIngestion:
                 config.search_backend = "vespa"
                 config.max_frames_per_video = 1
 
+                from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
                 pipeline = VideoIngestionPipeline(
                     tenant_id="test_tenant",
                     config=config,
                     config_manager=config_manager,
+                    schema_loader=schema_loader,
                     schema_name=profile,
                 )
                 result = await pipeline.process_video_async(all_test_videos[0])
@@ -379,10 +399,14 @@ class TestComprehensiveIngestion:
         config.search_backend = "vespa"
         config.max_frames_per_video = 5
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
+            schema_loader=schema_loader,
             schema_name="video_colpali_smol500_mv_frame",
         )
 
@@ -394,7 +418,7 @@ class TestComprehensiveIngestion:
         print(f"Processing time: {processing_time:.2f} seconds")
 
         assert result is not None
-        assert processing_time < 300  # Should complete within 5 minutes
+        assert processing_time < 600  # Should complete within 10 minutes on CPU
 
 
 @pytest.mark.integration

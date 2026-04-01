@@ -115,7 +115,7 @@ class TestDashboardProfileIntegration:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -163,7 +163,7 @@ class TestDashboardProfileIntegration:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -206,7 +206,7 @@ class TestDashboardProfileIntegration:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -253,7 +253,7 @@ class TestDashboardProfileIntegration:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "description": "E2E test profile",
             },
         )

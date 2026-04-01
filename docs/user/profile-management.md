@@ -8,7 +8,7 @@ Backend profiles define how videos are processed and indexed in Cogniverse. Each
 
 - **Schema**: Vespa schema template for document structure
 - **Embedding Model**: Model used for generating embeddings (e.g., ColPali, VideoPrism)
-- **Embedding Type**: Processing approach (frame_based, video_chunks, direct_video_segment, single_vector)
+- **Embedding Type**: Processing approach (multi_vector, single_vector)
 - **Strategies**: Processing strategy configurations (segmentation, embedding, etc.)
 - **Pipeline Configuration**: Processing pipeline settings
 
@@ -56,9 +56,9 @@ The create form will appear with the following fields:
   - Or simple name (e.g., `videoprism-base`)
 
 - **Embedding Type**: Processing approach
-  - `frame_based`: Extract frames, embed individually
-  - `video_chunks`: Split video into chunks, embed each
-  - `direct_video_segment`: Direct video segment embedding
+  - `multi_vector`: Extract frames, embed individually
+  - `multi_vector`: Split video into chunks, embed each
+  - `multi_vector`: Direct video segment embedding
   - `single_vector`: Single embedding for entire video
 
 **Strategy Configuration (Optional):**
@@ -332,7 +332,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "vidore/colsmol-500m",
-    "embedding_type": "frame_based",
+    "embedding_type": "multi_vector",
     "pipeline_config": {},
     "strategies": {},
     "schema_config": {}

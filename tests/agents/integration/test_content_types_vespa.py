@@ -239,7 +239,7 @@ class TestContentTypeVespaSchemas:
         print("\n📦 Loading ColPali model...")
         config = {
             "colpali_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
@@ -540,7 +540,7 @@ class TestContentTypeVespaSchemas:
         print("\n📦 Loading ColPali model...")
         config = {
             "colpali_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         model, processor = get_or_load_model("vidore/colsmol-500m", config, None)

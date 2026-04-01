@@ -426,7 +426,7 @@ class TestProfileCRUD:
                         "description": "E2E get test profile",
                         "schema_name": "video_colpali_smol500_mv_frame",
                         "embedding_model": "vidore/colpali-v1.3-hf",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                         "deploy_schema": False,
                     },
                 )
@@ -477,7 +477,7 @@ class TestProfileCRUD:
                         "description": "E2E test profile",
                         "schema_name": "video_colpali_smol500_mv_frame",
                         "embedding_model": "vidore/colpali-v1.3-hf",
-                        "embedding_type": "frame_based",
+                        "embedding_type": "multi_vector",
                         "deploy_schema": False,
                     },
                 )

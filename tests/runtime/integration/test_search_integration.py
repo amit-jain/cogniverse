@@ -48,7 +48,7 @@ def colpali_model():
     """Load ColPali model once for the entire module."""
     config = {
         "colpali_model": COLPALI_MODEL_NAME,
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "model_loader": "colpali",
     }
     model, processor = get_or_load_model(COLPALI_MODEL_NAME, config, logger)

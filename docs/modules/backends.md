@@ -218,7 +218,7 @@ flowchart TD
           "segmentation": {"class": "FrameSegmentationStrategy", "params": {}},
           "embedding": {"class": "MultiVectorEmbeddingStrategy", "params": {}}
         },
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "schema_config": {
           "num_patches": 1024,
           "embedding_dim": 128,
@@ -230,7 +230,7 @@ flowchart TD
         "description": "VideoPrism for 30-second chunk embeddings",
         "schema_name": "video_videoprism_base_mv_chunk_30s",
         "embedding_model": "videoprism_public_v1_base_hf",
-        "embedding_type": "direct_video_segment",
+        "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 768,
           "binary_dim": 96
@@ -262,7 +262,7 @@ profile = BackendProfileConfig(
         "segmentation": {"class": "FrameSegmentationStrategy"},
         "embedding": {"class": "MultiVectorEmbeddingStrategy"}
     },
-    embedding_type="frame_based",
+    embedding_type="multi_vector",
     schema_config={
         "num_patches": 1024,
         "embedding_dim": 128,
@@ -279,7 +279,7 @@ profile = BackendProfileConfig(
 - `model_loader`: Loader class key (`colpali`, `colqwen`, `videoprism`, `colbert`)
 - `pipeline_config`: Video processing pipeline settings
 - `strategies`: Processing strategy classes and params
-- `embedding_type`: Type of embeddings (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`, `document_colbert`, `audio_dual`)
+- `embedding_type`: Type of embeddings (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`, `multi_vector`, `multi_vector`)
 - `schema_config`: Schema-specific metadata (dimensions, patches, etc.)
 
 #### BackendConfig Dataclass
@@ -434,7 +434,7 @@ tenant_profile = BackendProfileConfig(
     embedding_model="vidore/colsmol-500m",
     model_loader="colpali",
     pipeline_config={"keyframe_fps": 5.0},  # 5 FPS instead of 1 FPS
-    embedding_type="frame_based"
+    embedding_type="multi_vector"
 )
 
 # Set tenant backend config
@@ -594,7 +594,7 @@ flowchart TB
 A **profile** is a complete content processing configuration that defines:
 1. **Model Loader**: Which loader class to use (`colpali`, `colqwen`, `videoprism`, `colbert`) — the `model_loader` config key
 2. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen, ColBERT)
-3. **Embedding Type**: Processing mode (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`, `document_colbert`, `audio_dual`)
+3. **Embedding Type**: Processing mode (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`, `multi_vector`, `multi_vector`)
 4. **Processing Pipeline**: Keyframe extraction, transcription, description generation
 5. **Segmentation Strategy**: Frame-based, chunk-based, direct video, document segments, or audio segments
 6. **Vespa Schema**: Which schema structure to use (`document_text`, `audio_content`, or video schemas)
@@ -724,7 +724,7 @@ custom_profile = BackendProfileConfig(
         },
         "embedding": {"class": "MultiVectorEmbeddingStrategy"}
     },
-    embedding_type="frame_based"
+    embedding_type="multi_vector"
 )
 
 # Save to tenant config

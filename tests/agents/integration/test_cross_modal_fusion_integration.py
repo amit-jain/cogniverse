@@ -198,7 +198,7 @@ class TestCrossModalFusionIntegration:
         print("\n📦 Loading models...")
         colpali_config = {
             "colpali_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         colpali_model, colpali_processor = get_or_load_model(

@@ -116,7 +116,7 @@ class TestProfileMultiTenantIsolation:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "model_a",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "description": "Tenant A's profile",
         }
 
@@ -166,7 +166,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -178,7 +178,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -191,7 +191,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_b",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -232,7 +232,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "secret_model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -254,7 +254,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "description": "Original description",
             },
         )
@@ -284,7 +284,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
 
@@ -311,7 +311,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             },
         )
         # Should fail validation or use default tenant
@@ -330,7 +330,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "description": "Version 1",
             },
         )
@@ -350,7 +350,7 @@ class TestProfileMultiTenantIsolation:
                 "type": "video",
                 "schema_name": "video_test",
                 "embedding_model": "model_b",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
                 "description": "Tenant B version",
             },
         )

@@ -2929,7 +2929,7 @@ class TestVideoSearchAgent:
                     "video_processing_profiles": {
                         "video_colpali_smol500_mv_frame": {
                             "embedding_model": "vidore/colsmol-500m",
-                            "embedding_type": "frame_based",
+                            "embedding_type": "multi_vector",
                         }
                     },
                     "backend_url": "http://localhost:8080",
@@ -3024,7 +3024,7 @@ class TestVideoSearchAgent:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             }
         }
@@ -3088,7 +3088,7 @@ class TestVideoSearchAgent:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             }
         }
@@ -3150,7 +3150,7 @@ class TestVideoSearchAgent:
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
                     "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
+                    "embedding_type": "multi_vector",
                 }
             }
         }

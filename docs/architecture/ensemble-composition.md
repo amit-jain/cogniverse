@@ -298,7 +298,7 @@ Profiles are defined in `config.json`:
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings",
         "embedding_model": "vidore/colsmol-500m",
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 128
         }
@@ -307,7 +307,7 @@ Profiles are defined in `config.json`:
         "type": "video",
         "description": "VideoPrism base model for 30-second chunk embeddings with 768-dim global representations",
         "embedding_model": "videoprism_public_v1_base_hf",
-        "embedding_type": "direct_video_segment",
+        "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 768
         }
@@ -316,7 +316,7 @@ Profiles are defined in `config.json`:
         "type": "video",
         "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding",
         "embedding_model": "vidore/colqwen-omni-v0.1",
-        "embedding_type": "video_chunks",
+        "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 128
         }

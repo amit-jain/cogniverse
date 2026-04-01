@@ -668,7 +668,7 @@ Create custom profiles for specific use cases:
             "params": {}
           }
         },
-        "embedding_type": "frame_based"
+        "embedding_type": "multi_vector"
       }
     }
   }
@@ -1027,7 +1027,7 @@ Configure embedding profiles in `configs/config.json`:
             "params": {}
           }
         },
-        "embedding_type": "frame_based"
+        "embedding_type": "multi_vector"
       }
     }
   }

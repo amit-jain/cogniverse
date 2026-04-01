@@ -91,7 +91,7 @@ def valid_profile() -> BackendProfileConfig:
                 "params": {},
             },
         },
-        embedding_type="frame_based",
+        embedding_type="multi_vector",
         schema_config={"embedding_dim": 128},
         model_specific=None,
     )
@@ -229,14 +229,7 @@ class TestEmbeddingTypeValidation:
 
     def test_valid_embedding_types(self, validator: ProfileValidator):
         """Valid embedding types should pass."""
-        valid_types = [
-            "frame_based",
-            "video_chunks",
-            "direct_video_segment",
-            "single_vector",
-            "document_colbert",
-            "audio_dual",
-        ]
+        valid_types = ["multi_vector", "single_vector"]
 
         for embedding_type in valid_types:
             errors = validator._validate_embedding_type(embedding_type)
@@ -244,7 +237,10 @@ class TestEmbeddingTypeValidation:
 
     def test_invalid_embedding_types(self, validator: ProfileValidator):
         """Invalid embedding types should fail."""
-        invalid_types = ["", "unknown", "multi_vector", "chunks"]
+        invalid_types = [
+            "", "unknown", "chunks",
+            "frame_based", "video_chunks", "document_colbert", "audio_dual",
+        ]
 
         for embedding_type in invalid_types:
             errors = validator._validate_embedding_type(embedding_type)

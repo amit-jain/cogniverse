@@ -136,7 +136,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         response = test_client.post("/admin/profiles", json=profile_data)
@@ -167,7 +167,7 @@ class TestProfileAPICRUD:
                     "params": {"fps": 30.0},
                 }
             },
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "schema_config": {"embedding_dim": 128, "num_patches": 1024},
             "model_specific": {"batch_size": 32},
             "deploy_schema": False,
@@ -194,7 +194,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         response = test_client.post("/admin/profiles", json=invalid_data)
@@ -210,7 +210,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "nonexistent_schema",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         response = test_client.post("/admin/profiles", json=profile_data)
@@ -225,7 +225,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         # Create first profile
@@ -260,7 +260,7 @@ class TestProfileAPICRUD:
                 "description": f"Test profile {i}",
                 "schema_name": "video_test",
                 "embedding_model": "vidore/colsmol-500m",
-                "embedding_type": "frame_based",
+                "embedding_type": "multi_vector",
             }
             response = test_client.post("/admin/profiles", json=profile_data)
             assert response.status_code == 201
@@ -301,7 +301,7 @@ class TestProfileAPICRUD:
             "embedding_model": "vidore/colsmol-500m",
             "pipeline_config": {"keyframe_fps": 30.0},
             "strategies": {"segmentation": {"class": "FrameSegmentationStrategy"}},
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "schema_config": {"embedding_dim": 128},
         }
 
@@ -333,7 +333,7 @@ class TestProfileAPICRUD:
         assert data["strategies"] == {
             "segmentation": {"class": "FrameSegmentationStrategy"}
         }
-        assert data["embedding_type"] == "frame_based"
+        assert data["embedding_type"] == "multi_vector"
         assert data["schema_config"] == {"embedding_dim": 128}
         assert data["schema_deployed"] is False, (
             f"Expected schema_deployed=False but got {data['schema_deployed']}"
@@ -356,7 +356,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
             "pipeline_config": {"keyframe_fps": 30.0},
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -405,7 +405,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -436,7 +436,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -478,7 +478,7 @@ class TestProfileAPICRUD:
             "description": "Tenant 1 profile",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         response1 = test_client.post("/admin/profiles", json=profile_data_1)
@@ -492,7 +492,7 @@ class TestProfileAPICRUD:
             "description": "Tenant 2 profile",
             "schema_name": "video_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
         }
 
         response2 = test_client.post("/admin/profiles", json=profile_data_2)
@@ -675,7 +675,7 @@ class TestProfileAPISchemaDeployment:
             "type": "video",
             "schema_name": "video_deploy_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
 
@@ -696,7 +696,7 @@ class TestProfileAPISchemaDeployment:
             "type": "video",
             "schema_name": "video_deploy_test3",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "deploy_schema": False,
         }
 
@@ -737,7 +737,7 @@ class TestProfileAPISchemaDeployment:
             "type": "video",
             "schema_name": "video_deploy_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
 
@@ -769,7 +769,7 @@ class TestProfileAPISchemaDeployment:
             "type": "video",
             "schema_name": "video_deploy_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
 
@@ -809,7 +809,7 @@ class TestProfileAPISchemaDeployment:
             "description": "E2E test profile",
             "schema_name": "video_deploy_test",
             "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "frame_based",
+            "embedding_type": "multi_vector",
             "schema_config": {"embedding_dim": 128},
             "deploy_schema": True,
         }

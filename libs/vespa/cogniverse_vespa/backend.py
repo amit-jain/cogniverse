@@ -226,28 +226,25 @@ class VespaBackend(Backend):
             target_schema_name = self.get_tenant_schema_name(
                 self._tenant_id, schema_name
             )
-            logger.debug(
-                f"Transformed base schema '{schema_name}' to tenant schema '{target_schema_name}' "
-                f"for tenant '{self._tenant_id}'"
-            )
 
-            # Ensure tenant schema exists (auto-deploy if needed)
+        # Return cached client if it exists (skip schema deploy check)
+        if target_schema_name in self._vespa_ingestion_clients:
+            return self._vespa_ingestion_clients[target_schema_name]
+
+        # Deploy tenant schema only when creating a new client
+        if self._tenant_id:
             if not self.schema_registry:
                 raise ValueError(
-                    "schema_registry not injected - backend initialization incomplete. "
-                    "This indicates BackendFactory was not used correctly."
+                    "schema_registry not injected - backend initialization incomplete."
                 )
-
             try:
                 self.schema_registry.deploy_schema(
                     tenant_id=self._tenant_id, base_schema_name=schema_name
                 )
-                logger.debug(
-                    f"Verified tenant schema '{target_schema_name}' exists in Vespa"
-                )
             except Exception as e:
-                logger.error(f"Failed to ensure tenant schema exists: {e}")
+                logger.error(f"Failed to deploy tenant schema: {e}")
                 raise
+
         if target_schema_name not in self._vespa_ingestion_clients:
             # Create new client with config dict
             logger.info(f"Creating new VespaPyClient for schema: {target_schema_name}")

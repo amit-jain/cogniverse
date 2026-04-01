@@ -338,7 +338,7 @@ class ProfileSelector:
 
         # Optimizer-specific scoring
         if optimizer_name == "modality":
-            if "frame_based" in profile_config.get("embedding_type", ""):
+            if "multi_vector" == profile_config.get("embedding_type", ""):
                 score += 2.0
                 reasons.append("frame-based embeddings")
             if "single_vector" in profile_config.get("embedding_type", ""):

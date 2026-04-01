@@ -551,11 +551,11 @@ class SearchAgent(
                 "embedding_model", "vidore/colsmol-500m"
             )
             self.embedding_type = profiles[active_profile].get(
-                "embedding_type", "frame_based"
+                "embedding_type", "multi_vector"
             )
         else:
             model_name = deps.model_name or "vidore/colsmol-500m"
-            self.embedding_type = "frame_based"
+            self.embedding_type = "multi_vector"
 
         backend_type = deps.backend_type or self.search_config.get(
             "backend_type", "vespa"

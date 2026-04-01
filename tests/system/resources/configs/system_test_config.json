@@ -42,7 +42,7 @@
             "params": {}
           }
         },
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali_smol500_mv_frame",

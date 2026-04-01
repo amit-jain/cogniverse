@@ -547,7 +547,7 @@ def eval_colpali_model():
 
     config = {
         "colpali_model": EVAL_COLPALI_MODEL,
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "model_loader": "colpali",
     }
     model, processor = get_or_load_model(EVAL_COLPALI_MODEL, config, eval_logger)

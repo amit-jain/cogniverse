@@ -492,12 +492,12 @@ sequenceDiagram
 
 **Embedding Processing Types:**
 
-- **Frame-Based** (`frame_based`): ColPali multi-vector per frame (128×128 patches)
-- **Video Chunks** (`video_chunks`): ColQwen multi-vector per chunk
-- **Direct Video** (`direct_video_segment`): VideoPrism single global embedding
+- **Frame-Based** (`multi_vector`): ColPali multi-vector per frame (128×128 patches)
+- **Video Chunks** (`multi_vector`): ColQwen multi-vector per chunk
+- **Direct Video** (`multi_vector`): VideoPrism single global embedding
 - **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
-- **Document ColBERT** (`document_colbert`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
-- **Audio Dual** (`audio_dual`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
+- **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
+- **Audio Dual** (`multi_vector`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
 
@@ -987,7 +987,7 @@ result = generator.generate_embeddings(
 - `embedding_type` - Determines which attribute stores the result (required, raises `ValueError` if missing)
 - `embedding_model` - Model identifier for the loader (required, raises `ValueError` if missing)
 - `model_loader` - Selects the loader class in `ModelLoaderFactory` (required, raises `ValueError` if missing)
-- `semantic_model` - Secondary model for `audio_dual` embedding type (e.g., `lightonai/Reason-ModernColBERT`)
+- `semantic_model` - Secondary model for `multi_vector` embedding type (e.g., `lightonai/Reason-ModernColBERT`)
 
 ---
 

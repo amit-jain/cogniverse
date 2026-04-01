@@ -102,27 +102,27 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         )
 
     def _load_model(self):
-        """Load the appropriate model using embedding_type from profile config."""
-        embedding_type = self.profile_config.get("embedding_type")
-        if not embedding_type:
+        """Load the appropriate model using model_loader from profile config."""
+        model_loader = self.profile_config.get("model_loader")
+        if not model_loader:
             raise ValueError(
-                f"Profile config missing 'embedding_type'. "
+                f"Profile config missing 'model_loader'. "
                 f"Got keys: {sorted(self.profile_config.keys())}"
             )
 
         try:
-            if embedding_type in ("direct_video_segment", "single_vector"):
+            if model_loader == "videoprism":
                 self.videoprism_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
-            elif embedding_type in ("frame_based", "video_chunks"):
+            elif model_loader in ("colpali", "colqwen"):
                 self.model, self.processor = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
             else:
                 raise ValueError(
-                    f"EmbeddingGenerator does not handle embedding_type={embedding_type!r}. "
-                    f"Use EmbeddingGeneratorImpl for document/audio content types."
+                    f"EmbeddingGenerator does not handle model_loader={model_loader!r}. "
+                    f"Use EmbeddingGeneratorImpl for colbert content types."
                 )
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")

@@ -454,7 +454,7 @@
             "params": {}
           }
         },
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali",
@@ -495,7 +495,7 @@
             "params": {}
           }
         },
-        "embedding_type": "frame_based",
+        "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "image_colpali",
@@ -536,7 +536,7 @@
             "params": {}
           }
         },
-        "embedding_type": "audio_dual",
+        "embedding_type": "multi_vector",
         "model_loader": "colbert",
         "semantic_model": "lightonai/Reason-ModernColBERT",
         "schema_config": {
@@ -577,7 +577,7 @@
             "params": {}
           }
         },
-        "embedding_type": "document_colbert",
+        "embedding_type": "multi_vector",
         "model_loader": "colbert",
         "schema_config": {
           "schema_name": "document_text",
@@ -619,7 +619,7 @@
             "params": {}
           }
         },
-        "embedding_type": "video_chunks",
+        "embedding_type": "multi_vector",
         "model_loader": "colqwen",
         "model_specific": {
           "max_patches": 1024,
@@ -675,7 +675,7 @@
             "params": {}
           }
         },
-        "embedding_type": "direct_video_segment",
+        "embedding_type": "multi_vector",
         "model_loader": "videoprism",
         "model_specific": {
           "segment_duration": 30.0,
@@ -731,7 +731,7 @@
             "params": {}
           }
         },
-        "embedding_type": "direct_video_segment",
+        "embedding_type": "multi_vector",
         "model_loader": "videoprism",
         "model_specific": {
           "segment_duration": 30.0,
@@ -901,7 +901,7 @@
             "params": {}
           }
         },
-        "embedding_type": "code_colbert",
+        "embedding_type": "multi_vector",
         "model_loader": "colbert",
         "schema_config": {
           "schema_name": "code_lateon_mv",

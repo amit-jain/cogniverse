@@ -22,14 +22,11 @@ logger = logging.getLogger(__name__)
 class ProfileValidator:
     """Validates backend profile configurations."""
 
-    # Valid embedding types
+    # Valid embedding types — describes storage pattern only.
+    # Model loading is driven by model_loader, not embedding_type.
     VALID_EMBEDDING_TYPES = [
-        "frame_based",
-        "video_chunks",
-        "direct_video_segment",
+        "multi_vector",
         "single_vector",
-        "document_colbert",
-        "audio_dual",
     ]
 
     # Valid profile types

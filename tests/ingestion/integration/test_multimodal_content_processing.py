@@ -46,7 +46,7 @@ MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 COLBERT_MODEL_NAME = "lightonai/Reason-ModernColBERT"
 COLBERT_CONFIG = {
     "model_loader": "colbert",
-    "embedding_type": "document_colbert",
+    "embedding_type": "multi_vector",
     "embedding_model": COLBERT_MODEL_NAME,
 }
 
@@ -238,7 +238,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files):
     doc_generator = EmbeddingGeneratorImpl(
         config={
             "embedding_model": COLBERT_MODEL_NAME,
-            "embedding_type": "document_colbert",
+            "embedding_type": "multi_vector",
             "model_loader": "colbert",
             "schema_name": "document_text",
         },
@@ -269,7 +269,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files):
             config={
                 "embedding_model": CLAP_MODEL_NAME,
                 "semantic_model": COLBERT_MODEL_NAME,
-                "embedding_type": "audio_dual",
+                "embedding_type": "multi_vector",
                 "model_loader": "colbert",
                 "schema_name": "audio_content",
             },

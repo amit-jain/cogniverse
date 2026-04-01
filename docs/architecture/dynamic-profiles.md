@@ -298,7 +298,7 @@ class ProfileValidator:
 - Profile name: alphanumeric + underscore, unique within tenant
 - Schema name: must exist in schema directory
 - Embedding model: format `org/model` or `model-name`
-- Embedding type: enum (`frame_based`, `video_chunks`, `direct_video_segment`, `single_vector`)
+- Embedding type: enum (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`)
 - Strategies: valid JSON array
 - Pipeline config: valid JSON object
 
