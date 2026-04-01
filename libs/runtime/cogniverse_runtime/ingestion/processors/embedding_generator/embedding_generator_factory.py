@@ -101,6 +101,21 @@ def create_embedding_generator(
     if "schema_name" not in profile_config:
         profile_config["schema_name"] = schema_name
 
+    # Inject remote inference URL from environment if available.
+    # Env vars are set by Helm (COLPALI_INFERENCE_URL, COLBERT_INFERENCE_URL).
+    if "remote_inference_url" not in profile_config:
+        import os
+
+        loader = profile_config.get("model_loader", "")
+        if loader in ("colpali", "colqwen"):
+            url = os.environ.get("COLPALI_INFERENCE_URL")
+            if url:
+                profile_config["remote_inference_url"] = url
+        elif loader == "colbert":
+            url = os.environ.get("COLBERT_INFERENCE_URL")
+            if url:
+                profile_config["remote_inference_url"] = url
+
     # Create and return generator
     return EmbeddingGeneratorFactory.create(
         backend=backend,
