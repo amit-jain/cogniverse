@@ -732,9 +732,8 @@ spec:
         - name: HF_HOME
           value: /root/.cache/huggingface
         args:
-          - "serve"
           - {{ $cfg.model | quote }}
-          - "--task"
+          - "--convert"
           - "embed"
           - "--dtype"
           - {{ $cfg.dtype | quote }}

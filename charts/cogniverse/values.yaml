@@ -396,7 +396,7 @@ inference:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
-    model: lightonai/GTE-ModernColBERT-v1
+    model: lightonai/Reason-ModernColBERT
     dtype: float32
     extraArgs: []
     replicaCount: 1
