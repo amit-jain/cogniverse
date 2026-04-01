@@ -1192,7 +1192,7 @@ class VespaSearchBackend(SearchBackend):
             yql += f" limit {max_documents}"
 
         # Use visit API for bulk export
-        namespace = "video"  # Default namespace for video schemas
+        namespace = "content"
         visit_url = f"{self.backend_url}:{self.backend_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
 
         try:

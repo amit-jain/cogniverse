@@ -107,10 +107,8 @@ class VespaPyClient:
 
         self.logger.info(f"Feed configuration: {self.feed_config}")
 
-        # Compute namespace based on content type (schema determines namespace).
-        # Uses "video" as default for all content schemas (video, document, audio, etc.)
-        # — Vespa YQL search queries by schema type, not namespace, so the namespace
-        # is only used for document GET/PUT API paths.
+        # Namespace for Vespa document API paths (GET/PUT/visit).
+        # YQL search queries by schema type, not namespace.
         if "agent_memories" in self.schema_name:
             self.namespace = "memory_content"
         elif (
@@ -120,7 +118,7 @@ class VespaPyClient:
         ):
             self.namespace = "metadata"
         else:
-            self.namespace = "video"
+            self.namespace = "content"
 
     def _load_schema_fields(self):
         """Load the fields defined in the schema using base schema name"""
