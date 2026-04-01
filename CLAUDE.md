@@ -107,3 +107,35 @@ CODE+DOCS  → lint-and-quality → doc-verifier → quality-enforcer → commit
 - Always run the tests will full logging output to a test log file
 - Never ask permission to do what these instructions already require. If the rules say to write tests, write them. If the rules say to update docs, update them. Follow the instructions — do not ask "should I also do X?" when X is already mandated here.
 - Each implementation step is not complete until: (1) code compiles, (2) tests for that code exist and pass, (3) docs referencing the changed API are updated. All three in the same step.
+
+## Agent Directives
+
+### Forced Verification
+NEVER report a task as complete until you have:
+- Run `uv run ruff check` on changed files
+- Run `uv run pytest` on the specific tests that exercise the changed code
+- Verified the test PASSES (not just that it runs)
+- If no test exists for the change, write one FIRST
+
+Never say "Done!" or "Ready to commit" with errors outstanding. If you cannot verify, say so explicitly.
+
+### Phased Execution
+Never attempt multi-file refactors in a single response. Break work into phases of max 5 files. Complete Phase 1, run verification, get approval before Phase 2. This prevents context decay mid-refactor.
+
+### Failure Recovery
+If a fix doesn't work after two attempts, STOP. Re-read the full error message. Trace the actual code path. Find where your mental model is wrong and say so. Do not keep making random changes hoping one works. If going in circles, rethink from scratch.
+
+### Work From Raw Data
+When debugging: trace the actual error log, not a theory. Don't say "probably a timing issue" or "likely infra". Read the log. Find the line. Understand the cause. Then fix it.
+
+### Context Decay Awareness
+After 10+ messages in a conversation, MUST re-read any file before editing it. Do not trust memory of file contents. Auto-compaction may have destroyed that context. For files over 500 LOC, use offset and limit parameters to read in chunks.
+
+### Destructive Action Safety
+NEVER run `docker system prune`, `docker builder prune -a`, or `docker volume prune` while k3d cluster or tests are running. NEVER delete files without verifying nothing references them. NEVER push to shared repository unless explicitly told to.
+
+### Plan Before Architectural Changes
+For changes that affect config structure, schema design, API contracts, or cross-cutting concerns: write a plan, get approval, THEN implement. Do not make fundamental changes mid-debugging. This includes namespace changes, embedding_type refactors, config key renames, and service URL patterns.
+
+### Bug Autopsy
+After fixing a bug, explain: (1) what the root cause was, (2) why the previous approach didn't find it, (3) what prevents this category of bug in the future. Don't just fix and move on.
