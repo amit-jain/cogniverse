@@ -320,7 +320,6 @@ def shared_memory_vespa():
 
         # Set system config pointing to test Vespa
         system_config = SystemConfig(
-            tenant_id="test_tenant",
             backend_url="http://localhost",
             backend_port=MEMORY_BACKEND_PORT,
         )
@@ -332,7 +331,6 @@ def shared_memory_vespa():
         # Get backend via BackendRegistry (creates SchemaRegistry automatically)
         backend = BackendRegistry.get_instance().get_ingestion_backend(
             name="vespa",
-            tenant_id="test_tenant",
             config={
                 "backend": {
                     "url": "http://localhost",

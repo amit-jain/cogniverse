@@ -137,9 +137,11 @@ class TenantConfig:
 
 @dataclass
 class SystemConfig:
-    """System-level configuration (agent URLs, backends, etc.)"""
+    """System-level infrastructure configuration.
 
-    tenant_id: str = "default"
+    This is global — NOT per-tenant. There is one SystemConfig for the
+    entire deployment. Tenants don't decide where Vespa or Phoenix run.
+    """
 
     # Agent service URLs
     routing_agent_url: str = "http://localhost:8001"
@@ -184,7 +186,6 @@ class SystemConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
-            "tenant_id": self.tenant_id,
             "routing_agent_url": self.routing_agent_url,
             "video_agent_url": self.video_agent_url,
             "summarizer_agent_url": self.summarizer_agent_url,
@@ -211,7 +212,6 @@ class SystemConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "SystemConfig":
         """Create from dictionary"""
         return cls(
-            tenant_id=data.get("tenant_id", "default"),
             routing_agent_url=data.get("routing_agent_url", "http://localhost:8001"),
             video_agent_url=data.get("video_agent_url", "http://localhost:8002"),
             summarizer_agent_url=data.get(

@@ -47,9 +47,9 @@ class ConfigUtils:
         self._json_config = None  # Cache for JSON config (auto-discovered)
 
     def _ensure_system_config(self):
-        """Lazy load system config"""
+        """Lazy load system config (global, not per-tenant)"""
         if self._system_config is None:
-            self._system_config = self._config_manager.get_system_config(self.tenant_id)
+            self._system_config = self._config_manager.get_system_config()
 
     def _ensure_routing_config(self):
         """Lazy load routing config"""

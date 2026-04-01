@@ -99,7 +99,7 @@ class TestTenantManagerAPI:
         # Wait for Vespa to be ready and for schemas to be fully activated
         from tests.utils.vespa_health import wait_for_vespa_ready
 
-        wait_for_vespa_ready(port=vespa_backend.http_port, max_timeout=30)
+        wait_for_vespa_ready(port=vespa_backend.http_port, max_timeout=120)
 
         # Additional wait for metadata schema activation
         wait_for_vespa_indexing(delay=3, description="metadata schema activation")
@@ -109,7 +109,6 @@ class TestTenantManagerAPI:
             f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})"
         )
         system_config = SystemConfig(
-            tenant_id="system",
             backend_url="http://localhost",
             backend_port=vespa_backend.http_port,
         )

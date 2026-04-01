@@ -64,7 +64,6 @@ class TestConfigManagementUI:
 
         # Simulate UI form submission
         system_config = SystemConfig(
-            tenant_id=tenant_id,
             routing_agent_url="http://localhost:8001",
             video_agent_url="http://localhost:8002",
             summarizer_agent_url="http://localhost:8004",
@@ -83,7 +82,7 @@ class TestConfigManagementUI:
         config_manager.set_system_config(system_config)
 
         # Verify config was saved
-        retrieved = config_manager.get_system_config(tenant_id)
+        retrieved = config_manager.get_system_config()
 
         assert retrieved.tenant_id == tenant_id
         assert retrieved.llm_model == "gpt-4-turbo"
@@ -98,19 +97,18 @@ class TestConfigManagementUI:
 
         # Create initial config
         initial_config = SystemConfig(
-            tenant_id=tenant_id,
             llm_model="gpt-4",
         )
         config_manager.set_system_config(initial_config)
 
         # Update config (simulates UI edit)
-        updated_config = config_manager.get_system_config(tenant_id)
+        updated_config = config_manager.get_system_config()
         updated_config.llm_model = "gpt-4-turbo"
         updated_config.backend_port = 9090
         config_manager.set_system_config(updated_config)
 
         # Verify update
-        retrieved = config_manager.get_system_config(tenant_id)
+        retrieved = config_manager.get_system_config()
         assert retrieved.llm_model == "gpt-4-turbo"
         assert retrieved.backend_port == 9090
 
@@ -185,7 +183,6 @@ class TestConfigManagementUI:
 
         # List all agent configs (simulates UI listing)
         configs = config_manager.store.list_configs(
-            tenant_id=tenant_id,
             scope=ConfigScope.AGENT,
         )
 
@@ -201,7 +198,6 @@ class TestConfigManagementUI:
 
         # Simulate UI form submission
         routing_config = RoutingConfigUnified(
-            tenant_id=tenant_id,
             routing_mode="ensemble",
             enable_fast_path=True,
             enable_auto_optimization=True,
@@ -248,22 +244,21 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Create initial config
-        config_v1 = SystemConfig(tenant_id=tenant_id, llm_model="gpt-4")
+        config_v1 = SystemConfig(llm_model="gpt-4")
         config_manager.set_system_config(config_v1)
 
         # Update config (creates version 2)
-        config_v2 = config_manager.get_system_config(tenant_id)
+        config_v2 = config_manager.get_system_config()
         config_v2.llm_model = "gpt-4-turbo"
         config_manager.set_system_config(config_v2)
 
         # Update again (creates version 3)
-        config_v3 = config_manager.get_system_config(tenant_id)
+        config_v3 = config_manager.get_system_config()
         config_v3.llm_model = "claude-3"
         config_manager.set_system_config(config_v3)
 
         # Get history (simulates UI history viewer)
         history = config_manager.store.get_config_history(
-            tenant_id=tenant_id,
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
@@ -287,19 +282,18 @@ class TestConfigManagementUI:
 
         # Create version 1
         config_v1 = SystemConfig(
-            tenant_id=tenant_id, llm_model="gpt-4", backend_port=8080
+            llm_model="gpt-4", backend_port=8080
         )
         config_manager.set_system_config(config_v1)
 
         # Create version 2 (bad config)
-        config_v2 = config_manager.get_system_config(tenant_id)
+        config_v2 = config_manager.get_system_config()
         config_v2.llm_model = "bad-model"
         config_v2.backend_port = 9999
         config_manager.set_system_config(config_v2)
 
         # Simulate rollback in UI: get version 1 from history
         history = config_manager.store.get_config_history(
-            tenant_id=tenant_id,
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
@@ -310,7 +304,6 @@ class TestConfigManagementUI:
 
         # Rollback = set config with old values (creates version 3)
         config_manager.store.set_config(
-            tenant_id=tenant_id,
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
@@ -318,7 +311,7 @@ class TestConfigManagementUI:
         )
 
         # Verify rollback created version 3 with version 1 values
-        current_config = config_manager.get_system_config(tenant_id)
+        current_config = config_manager.get_system_config()
         assert current_config.llm_model == "gpt-4"
         assert current_config.backend_port == 8080
 
@@ -329,7 +322,6 @@ class TestConfigManagementUI:
 
         # Create configs for tenant A
         config_a = SystemConfig(
-            tenant_id=tenant_a,
             llm_model="gpt-4",
             backend_port=8080,
         )
@@ -337,15 +329,14 @@ class TestConfigManagementUI:
 
         # Create configs for tenant B
         config_b = SystemConfig(
-            tenant_id=tenant_b,
             llm_model="claude-3",
             backend_port=9090,
         )
         config_manager.set_system_config(config_b)
 
         # Verify isolation
-        retrieved_a = config_manager.get_system_config(tenant_a)
-        retrieved_b = config_manager.get_system_config(tenant_b)
+        retrieved_a = config_manager.get_system_config()
+        retrieved_b = config_manager.get_system_config()
 
         assert retrieved_a.llm_model == "gpt-4"
         assert retrieved_a.backend_port == 8080
@@ -358,7 +349,7 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Create various configs
-        system_config = SystemConfig(tenant_id=tenant_id, llm_model="gpt-4")
+        system_config = SystemConfig(llm_model="gpt-4")
         config_manager.set_system_config(system_config)
 
         agent_config = AgentConfig(
@@ -377,7 +368,6 @@ class TestConfigManagementUI:
 
         # Export (simulates UI export button)
         export_data = config_manager.store.export_configs(
-            tenant_id=tenant_id,
             include_history=False,
         )
 
@@ -427,7 +417,6 @@ class TestConfigManagementUI:
 
         # Import (simulates UI import button)
         imported_count = config_manager.store.import_configs(
-            tenant_id=tenant_id,
             configs=import_data,
         )
 
@@ -443,7 +432,7 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Create multiple configs
-        config_manager.set_system_config(SystemConfig(tenant_id=tenant_id))
+        config_manager.set_system_config(SystemConfig())
         config_manager.set_routing_config(RoutingConfigUnified(tenant_id=tenant_id))
         config_manager.set_telemetry_config(TelemetryConfig(), tenant_id=tenant_id)
 
@@ -512,14 +501,13 @@ class TestConfigManagementUI:
 
         for tenant in tenants:
             config = SystemConfig(
-                tenant_id=tenant,
                 llm_model=f"model-{tenant}",
             )
             config_manager.set_system_config(config)
 
         # Simulate switching between tenants in UI
         for tenant in tenants:
-            config = config_manager.get_system_config(tenant)
+            config = config_manager.get_system_config()
             assert config.llm_model == f"model-{tenant}"
 
     def test_config_update_preserves_other_fields(self, config_manager):
@@ -528,7 +516,6 @@ class TestConfigManagementUI:
 
         # Create full config
         config = SystemConfig(
-            tenant_id=tenant_id,
             llm_model="gpt-4",
             backend_port=8080,
             environment="production",
@@ -536,12 +523,12 @@ class TestConfigManagementUI:
         config_manager.set_system_config(config)
 
         # Update only one field
-        updated_config = config_manager.get_system_config(tenant_id)
+        updated_config = config_manager.get_system_config()
         updated_config.llm_model = "gpt-4-turbo"
         config_manager.set_system_config(updated_config)
 
         # Verify other fields preserved
-        final_config = config_manager.get_system_config(tenant_id)
+        final_config = config_manager.get_system_config()
         assert final_config.llm_model == "gpt-4-turbo"  # Updated
         assert final_config.backend_port == 8080  # Preserved
         assert final_config.environment == "production"  # Preserved
@@ -553,14 +540,12 @@ class TestConfigManagementUI:
         # Create config with multiple versions
         for i in range(3):
             config = SystemConfig(
-                tenant_id=tenant_id,
                 llm_model=f"model-v{i + 1}",
             )
             config_manager.set_system_config(config)
 
         # Export with history
         export_data = config_manager.store.export_configs(
-            tenant_id=tenant_id,
             include_history=True,
         )
 

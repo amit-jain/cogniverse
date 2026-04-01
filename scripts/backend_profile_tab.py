@@ -20,7 +20,7 @@ def get_runtime_api_url() -> str:
         return st.session_state.runtime_api_url
 
     if "config_manager" in st.session_state:
-        system_config = st.session_state.config_manager.get_system_config("default")
+        system_config = st.session_state.config_manager.get_system_config()
         return system_config.ingestion_api_url
 
     return "http://localhost:8000"

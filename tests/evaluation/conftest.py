@@ -657,7 +657,6 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     cm = ConfigManager(store=store)
     cm.set_system_config(
         SystemConfig(
-            tenant_id="default",
             backend_url="http://localhost",
             backend_port=eval_vespa_instance["http_port"],
         )
@@ -669,7 +668,6 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model=EVAL_COLPALI_MODEL,
         ),
-        tenant_id="default",
     )
 
     schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)

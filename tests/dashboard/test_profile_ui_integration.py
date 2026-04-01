@@ -79,11 +79,10 @@ class TestDashboardProfileIntegration:
         # (get_system_config falls back to defaults if tenant-specific config missing)
         for tid in ("default", "test_tenant"):
             system_config = SystemConfig(
-                tenant_id=tid,
                 backend_url="http://nonexistent",
                 backend_port=9999,
             )
-            config_manager.set_system_config(system_config, tenant_id=tid)
+            config_manager.set_system_config(system_config)
 
         # Set ConfigManager and schema directory
         schema_loader = FilesystemSchemaLoader(temp_schema_dir)

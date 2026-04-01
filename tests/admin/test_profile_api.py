@@ -99,7 +99,6 @@ class TestProfileAPICRUD:
         config_manager = ConfigManager(store=store)
 
         system_config = SystemConfig(
-            tenant_id="test_tenant",
             backend_url="http://nonexistent",
             backend_port=9999,
         )
@@ -637,7 +636,6 @@ class TestProfileAPISchemaDeployment:
         # Set system config for test tenants using isolated Vespa port
         for tenant_id in ["deploy_tenant", "e2e_tenant", "already_deployed_tenant"]:
             system_config = SystemConfig(
-                tenant_id=tenant_id,
                 backend_url="http://localhost",
                 backend_port=actual_vespa_port,
             )
@@ -833,7 +831,7 @@ class TestProfileAPISchemaDeployment:
         backend_registry = BackendRegistry.get_instance()
         vespa_backend_obj = backend_registry.get_ingestion_backend(
             "vespa",
-            tenant_id=tenant_id,
+            tenant_id,
             config_manager=admin._config_manager,
             schema_loader=admin._schema_loader,
         )

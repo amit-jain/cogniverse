@@ -45,7 +45,7 @@ class ColBERTQueryEncoder(QueryEncoder):
 
         try:
             cm = create_default_config_manager()
-            sc = cm.get_system_config("default")
+            sc = cm.get_system_config()
             if sc.colbert_inference_url:
                 config["remote_inference_url"] = sc.colbert_inference_url
         except Exception:

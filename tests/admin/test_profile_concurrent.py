@@ -81,7 +81,6 @@ class TestProfileConcurrentOperations:
         config_manager = ConfigManager(store=store)
 
         system_config = SystemConfig(
-            tenant_id="default",
             backend_url="http://nonexistent",
             backend_port=9999,
         )

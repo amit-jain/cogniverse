@@ -159,7 +159,6 @@ def config_manager(vespa_instance):
     cm = ConfigManager(store=store)
 
     system_config = SystemConfig(
-        tenant_id="default",
         backend_url="http://localhost",
         backend_port=vespa_instance["http_port"],
     )
@@ -172,7 +171,6 @@ def config_manager(vespa_instance):
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="vidore/colsmol-500m",
         ),
-        tenant_id="default",
     )
     cm.add_backend_profile(
         BackendProfileConfig(
@@ -181,15 +179,13 @@ def config_manager(vespa_instance):
             schema_name="video_videoprism_base_mv_chunk_30s",
             embedding_model="google/videoprism-base",
         ),
-        tenant_id="default",
     )
 
     tenant_b_config = SystemConfig(
-        tenant_id="tenant_b",
         backend_url="http://localhost",
         backend_port=vespa_instance["http_port"],
     )
-    cm.set_system_config(tenant_b_config, tenant_id="tenant_b")
+    # tenant_b uses same system config
 
     cm.add_backend_profile(
         BackendProfileConfig(
@@ -198,7 +194,6 @@ def config_manager(vespa_instance):
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="vidore/colsmol-500m",
         ),
-        tenant_id="tenant_b",
     )
 
     return cm

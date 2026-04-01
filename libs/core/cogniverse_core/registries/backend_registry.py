@@ -145,7 +145,7 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        system_config = config_manager.get_system_config(tenant_id)
+        system_config = config_manager.get_system_config()
 
         backend_url = system_config.backend_url
         backend_port = system_config.backend_port
@@ -262,7 +262,7 @@ class BackendRegistry:
         from cogniverse_foundation.config.unified_config import BackendConfig
 
         # Get system config for defaults (URL, port) using the default tenant
-        system_config = config_manager.get_system_config("default")
+        system_config = config_manager.get_system_config()
 
         # Generic merge: Start with system config defaults, override with config["backend"] if provided
         backend_url = system_config.backend_url

@@ -103,10 +103,10 @@ def render_system_config_ui(manager, tenant_id: str):
     st.subheader("System Configuration")
 
     try:
-        system_config = manager.get_system_config(tenant_id)
+        system_config = manager.get_system_config()
     except Exception:
-        st.warning(f"No system config found for tenant '{tenant_id}'. Create a new one below.")
-        system_config = SystemConfig(tenant_id=tenant_id)
+        st.warning("No system config found. Create a new one below.")
+        system_config = SystemConfig()
 
     with st.form("system_config_form"):
         st.markdown("### Agent Service URLs")
@@ -195,7 +195,6 @@ def render_system_config_ui(manager, tenant_id: str):
         if submitted:
             # Create updated config
             updated_config = SystemConfig(
-                tenant_id=tenant_id,
                 routing_agent_url=routing_agent_url,
                 video_agent_url=video_agent_url,
                 summarizer_agent_url=summarizer_agent_url,
@@ -457,7 +456,6 @@ def render_routing_config_ui(manager, tenant_id: str):
 
         if submitted:
             updated_config = RoutingConfigUnified(
-                tenant_id=tenant_id,
                 routing_mode=routing_mode,
                 enable_fast_path=enable_fast_path,
                 enable_auto_optimization=enable_optimization,
@@ -576,7 +574,6 @@ def render_config_history_ui(manager, tenant_id: str):
     with col2:
         # Get services for selected scope
         configs = manager.store.list_configs(
-            tenant_id=tenant_id,
             scope=ConfigScope(scope),
         )
         services = sorted(set(c.service for c in configs)) if configs else []
@@ -599,7 +596,6 @@ def render_config_history_ui(manager, tenant_id: str):
 
     # Get history
     history = manager.store.get_config_history(
-        tenant_id=tenant_id,
         scope=ConfigScope(scope),
         service=service,
         config_key=config_key,
@@ -638,7 +634,6 @@ def render_config_history_ui(manager, tenant_id: str):
             if st.button(f"🔄 Rollback to Version {selected_version}"):
                 # Rollback = create new version with old config value
                 manager.store.set_config(
-                    tenant_id=tenant_id,
                     scope=ConfigScope(scope),
                     service=service,
                     config_key=config_key,
@@ -668,7 +663,6 @@ def render_import_export_ui(manager, tenant_id: str):
     if st.button("📥 Export Configurations"):
         try:
             export_data = manager.store.export_configs(
-                tenant_id=tenant_id,
                 include_history=include_history,
             )
 
@@ -704,7 +698,6 @@ def render_import_export_ui(manager, tenant_id: str):
             # Import button
             if st.button("📤 Import Configurations"):
                 count = manager.store.import_configs(
-                    tenant_id=tenant_id,
                     configs=import_data,
                 )
                 st.success(f"✅ Imported {count} configurations successfully!")

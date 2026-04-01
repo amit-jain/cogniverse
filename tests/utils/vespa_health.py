@@ -94,9 +94,10 @@ def wait_for_vespa_ready(
             if check_fn:
                 ready = check_fn()
             else:
-                # Default: check if document API responds
-                requests.get(health_check_url, timeout=2)
-                ready = True  # Any response means API is alive
+                # Check if document API is ready for operations.
+                # 200/404 = content cluster ready; 500 = still converging.
+                resp = requests.get(health_check_url, timeout=2)
+                ready = resp.status_code < 500
 
             if ready:
                 total_wait = sum(intervals[: attempt + 1])

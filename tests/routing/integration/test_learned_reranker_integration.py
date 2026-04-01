@@ -44,7 +44,7 @@ def mock_config_manager():
     mock_cm.get_backend_config.return_value = mock_backend_config
 
     # Mock get_system_config
-    mock_system_config = SystemConfig(tenant_id="default")
+    mock_system_config = SystemConfig()
     mock_cm.get_system_config.return_value = mock_system_config
 
     # Mock get_routing_config

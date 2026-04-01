@@ -104,7 +104,7 @@ def create_embedding_generator(
     # Inject remote inference URL from SystemConfig if available.
     # URLs are stored by the runtime startup from Helm env vars.
     if "remote_inference_url" not in profile_config and config_manager is not None:
-        system_config = config_manager.get_system_config("default")
+        system_config = config_manager.get_system_config()
         loader = profile_config.get("model_loader", "")
         if loader in ("colpali", "colqwen") and system_config.colpali_inference_url:
             profile_config["remote_inference_url"] = system_config.colpali_inference_url

@@ -67,56 +67,47 @@ class ConfigManager:
 
     # ========== System Configuration ==========
 
-    def get_system_config(self, tenant_id: str = "default") -> SystemConfig:
-        """
-        Get system configuration for tenant.
+    # Fixed sentinel tenant_id for system-wide config storage.
+    # SystemConfig is global — not per-tenant.
+    _SYSTEM_TENANT_ID = "_system"
 
-        Args:
-            tenant_id: Tenant identifier
+    def get_system_config(self) -> SystemConfig:
+        """Get system-wide infrastructure configuration.
 
         Returns:
             SystemConfig instance
         """
         entry = self.store.get_config(
-            tenant_id=tenant_id,
+            tenant_id=self._SYSTEM_TENANT_ID,
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
         )
 
         if entry is None:
-            logger.warning(
-                f"No system config found for tenant {tenant_id}, using defaults"
-            )
-            return SystemConfig(tenant_id=tenant_id)
+            logger.warning("No system config found, using defaults")
+            return SystemConfig()
 
         return SystemConfig.from_dict(entry.config_value)
 
-    def set_system_config(
-        self, system_config: SystemConfig, tenant_id: Optional[str] = None
-    ) -> SystemConfig:
-        """
-        Set system configuration.
+    def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
+        """Set system-wide infrastructure configuration.
 
         Args:
             system_config: SystemConfig instance
-            tenant_id: Optional tenant override
 
         Returns:
             Updated SystemConfig
         """
-        if tenant_id:
-            system_config.tenant_id = tenant_id
-
         self.store.set_config(
-            tenant_id=system_config.tenant_id,
+            tenant_id=self._SYSTEM_TENANT_ID,
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
             config_value=system_config.to_dict(),
         )
 
-        logger.info(f"Set system config for tenant {system_config.tenant_id}")
+        logger.info("System config updated")
         return system_config
 
     # ========== Agent Configuration ==========

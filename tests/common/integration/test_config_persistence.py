@@ -83,7 +83,6 @@ class TestConfigPersistence:
         """Test system configuration persists and loads"""
         # Create system config
         system_config = SystemConfig(
-            tenant_id="test_tenant",
             routing_agent_url="http://localhost:9001",
             video_agent_url="http://localhost:9002",
             search_backend="vespa",
@@ -94,9 +93,8 @@ class TestConfigPersistence:
         config_manager.set_system_config(system_config)
 
         # Load back
-        loaded_config = config_manager.get_system_config("test_tenant")
+        loaded_config = config_manager.get_system_config()
 
-        assert loaded_config.tenant_id == "test_tenant"
         assert loaded_config.routing_agent_url == "http://localhost:9001"
         assert loaded_config.video_agent_url == "http://localhost:9002"
         assert loaded_config.llm_model == "test-model"
@@ -115,7 +113,6 @@ class TestConfigPersistence:
 
         loaded_config = config_manager.get_routing_config("test_tenant")
 
-        assert loaded_config.tenant_id == "test_tenant"
         assert loaded_config.routing_mode == "ensemble"
         assert loaded_config.enable_fast_path is False
         assert loaded_config.gliner_threshold == 0.5
@@ -176,25 +173,25 @@ class TestConfigPersistence:
     def test_config_versioning(self, config_manager):
         """Test configuration version tracking"""
         # Create initial config
-        system_config_v1 = SystemConfig(tenant_id="test_tenant", llm_model="model-v1")
+        system_config_v1 = SystemConfig(llm_model="model-v1")
         config_manager.set_system_config(system_config_v1)
 
         # Update config
-        system_config_v2 = SystemConfig(tenant_id="test_tenant", llm_model="model-v2")
+        system_config_v2 = SystemConfig(llm_model="model-v2")
         config_manager.set_system_config(system_config_v2)
 
         # Update again
-        system_config_v3 = SystemConfig(tenant_id="test_tenant", llm_model="model-v3")
+        system_config_v3 = SystemConfig(llm_model="model-v3")
         config_manager.set_system_config(system_config_v3)
 
         # Check current version
-        current = config_manager.get_system_config("test_tenant")
+        current = config_manager.get_system_config()
         assert current.llm_model == "model-v3"
 
         # Check storage has all versions
         store = config_manager.store
         entry = store.get_config(
-            tenant_id="test_tenant",
+            tenant_id="_system",
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
@@ -202,31 +199,20 @@ class TestConfigPersistence:
         # Version should be at least 3 (may be higher if previous tests ran)
         assert entry.version >= 3
 
-    def test_multi_tenant_isolation(self, config_manager):
-        """Test tenant isolation in configuration storage"""
-        # Create configs for tenant1
-        config_tenant1 = SystemConfig(tenant_id="tenant1", llm_model="tenant1-model")
-        config_manager.set_system_config(config_tenant1)
+    def test_system_config_is_global(self, config_manager):
+        """SystemConfig is system-wide — setting it overwrites the single global config."""
+        config_manager.set_system_config(SystemConfig(llm_model="first-model"))
+        config_manager.set_system_config(SystemConfig(llm_model="second-model"))
 
-        # Create configs for tenant2
-        config_tenant2 = SystemConfig(tenant_id="tenant2", llm_model="tenant2-model")
-        config_manager.set_system_config(config_tenant2)
-
-        # Verify isolation
-        loaded_tenant1 = config_manager.get_system_config("tenant1")
-        loaded_tenant2 = config_manager.get_system_config("tenant2")
-
-        assert loaded_tenant1.llm_model == "tenant1-model"
-        assert loaded_tenant2.llm_model == "tenant2-model"
+        loaded = config_manager.get_system_config()
+        assert loaded.llm_model == "second-model"
 
     def test_config_survives_manager_restart(self, vespa_instance, config_manager):
         """Test configuration survives ConfigManager restart"""
         http_port = vespa_instance["http_port"]
 
         # Use the existing config_manager to set initial config
-        system_config = SystemConfig(
-            tenant_id="restart_test_tenant", llm_model="persistent-model"
-        )
+        system_config = SystemConfig(llm_model="persistent-model")
         config_manager.set_system_config(system_config)
 
         # Simulate restart by creating new manager instance with same store
@@ -237,7 +223,7 @@ class TestConfigPersistence:
         manager2 = ConfigManager(store=store2)
 
         # Load config with new instance
-        loaded_config = manager2.get_system_config("restart_test_tenant")
+        loaded_config = manager2.get_system_config()
 
         assert loaded_config.llm_model == "persistent-model"
 
@@ -247,7 +233,7 @@ class TestConfigPersistence:
         tenant_id = "export_test_tenant"
 
         # Create multiple configs
-        system_config = SystemConfig(tenant_id=tenant_id, llm_model="test-model")
+        system_config = SystemConfig(llm_model="test-model")
         routing_config = RoutingConfigUnified(
             tenant_id=tenant_id, routing_mode="tiered"
         )
@@ -269,7 +255,8 @@ class TestConfigPersistence:
 
         assert exported["tenant_id"] == tenant_id
         assert "configs" in exported
-        assert len(exported["configs"]) == 2
+        # SystemConfig is global (not per-tenant), so only routing config is exported
+        assert len(exported["configs"]) == 1
 
     def test_get_all_configs(self, config_manager):
         """Test retrieving all configurations for a tenant"""
@@ -278,7 +265,7 @@ class TestConfigPersistence:
 
         # Create multiple configs
         config_manager.set_system_config(
-            SystemConfig(tenant_id=tenant_id, llm_model="model1")
+            SystemConfig(llm_model="model1")
         )
         config_manager.set_routing_config(
             RoutingConfigUnified(tenant_id=tenant_id, routing_mode="hybrid")
@@ -290,8 +277,8 @@ class TestConfigPersistence:
         # Get all configs
         all_configs = config_manager.get_all_configs(tenant_id)
 
-        assert len(all_configs) == 3
-        assert "system:system:system_config" in all_configs
+        # SystemConfig is global (stored under _system), not per-tenant
+        assert len(all_configs) == 2
         assert "routing:routing_agent:routing_config" in all_configs
         assert "telemetry:telemetry:telemetry_config" in all_configs
 
@@ -303,10 +290,10 @@ class TestConfigPersistence:
 
         # Create some configs
         config_manager.set_system_config(
-            SystemConfig(tenant_id=tenant1, llm_model="model1")
+            SystemConfig(llm_model="model1")
         )
         config_manager.set_system_config(
-            SystemConfig(tenant_id=tenant2, llm_model="model2")
+            SystemConfig(llm_model="model2")
         )
         config_manager.set_routing_config(
             RoutingConfigUnified(tenant_id=tenant1, routing_mode="tiered")
