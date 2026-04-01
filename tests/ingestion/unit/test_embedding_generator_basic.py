@@ -1180,3 +1180,73 @@ class TestEmbeddingGenerator:
         result = generator._feed_single_document(document)
 
         assert result is False
+
+
+class TestRemoteColBERTLoader:
+    """Test RemoteColBERTLoader wrapper."""
+
+    def test_factory_creates_remote_loader_when_url_present(self):
+        """ModelLoaderFactory returns RemoteColBERTLoader when remote_inference_url set."""
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+
+        config = {
+            "model_loader": "colbert",
+            "remote_inference_url": "http://localhost:9999",
+        }
+        loader = ModelLoaderFactory.create_loader("test-model", config)
+        from cogniverse_core.common.models import RemoteColBERTLoader
+
+        assert isinstance(loader, RemoteColBERTLoader)
+
+    def test_factory_creates_local_loader_without_url(self):
+        """ModelLoaderFactory returns ColBERTModelLoader without remote_inference_url."""
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+
+        config = {"model_loader": "colbert"}
+        loader = ModelLoaderFactory.create_loader("test-model", config)
+        from cogniverse_core.common.models import ColBERTModelLoader
+
+        assert isinstance(loader, ColBERTModelLoader)
+
+    def test_remote_wrapper_has_encode_method(self):
+        """RemoteColBERTLoader.load_model returns object with encode()."""
+        from cogniverse_core.common.models import RemoteColBERTLoader
+
+        loader = RemoteColBERTLoader(
+            model_name="test/model",
+            config={"remote_inference_url": "http://localhost:9999"},
+        )
+        model, processor = loader.load_model()
+        assert hasattr(model, "encode")
+        assert processor is None
+
+    def test_remote_wrapper_encode_calls_api(self):
+        """RemoteColBERTLoader.encode() calls the /v1/embeddings endpoint."""
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.common.models import RemoteColBERTLoader
+
+        loader = RemoteColBERTLoader(
+            model_name="test/colbert",
+            config={"remote_inference_url": "http://test:9999"},
+        )
+        model, _ = loader.load_model()
+
+        # Mock the session.post
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {"embedding": [[0.1, 0.2], [0.3, 0.4]]},
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+        model.session.post = MagicMock(return_value=mock_response)
+
+        result = model.encode(["hello world"], is_query=False)
+
+        model.session.post.assert_called_once()
+        call_args = model.session.post.call_args
+        assert "/v1/embeddings" in call_args[0][0]
+        assert call_args[1]["json"]["input"] == ["hello world"]
+        assert len(result) == 1

@@ -352,6 +352,82 @@ class RemoteVideoPrismLoader(ModelLoader):
         return wrapper, None  # No separate processor for VideoPrism
 
 
+class RemoteColBERTLoader(ModelLoader):
+    """Remote ColBERT model loader using text embedding inference endpoints.
+
+    Returns a wrapper with an .encode() method matching pylate.models.ColBERT,
+    so EmbeddingGeneratorImpl can use it interchangeably with local ColBERT.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        config: Dict[str, Any],
+        logger: Optional[logging.Logger] = None,
+    ):
+        super().__init__(model_name, config, logger)
+        self.remote_url = config.get("remote_inference_url")
+        self.api_key = config.get("remote_inference_api_key")
+        if not self.remote_url:
+            raise ValueError("remote_inference_url required for remote ColBERT loader")
+
+    def load_model(self) -> Tuple[Any, Any]:
+        """Return a ColBERT-compatible wrapper that calls the remote endpoint."""
+        self.logger.info(
+            f"Initialized remote ColBERT inference at {self.remote_url}"
+        )
+
+        class ColBERTRemoteWrapper:
+            def __init__(self, endpoint_url, api_key, model_name, logger):
+                self.endpoint_url = endpoint_url.rstrip("/")
+                self.model_name = model_name
+                self.logger = logger
+                self.session = requests.Session()
+                if api_key:
+                    self.session.headers["Authorization"] = f"Bearer {api_key}"
+
+            def encode(
+                self,
+                texts: list,
+                is_query: bool = False,
+                batch_size: int = 32,
+                **kwargs,
+            ) -> list:
+                """Encode texts via remote endpoint, returning per-token embeddings.
+
+                Matches pylate.models.ColBERT.encode() signature.
+                """
+                all_embeddings = []
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    payload = {
+                        "input": batch,
+                        "model": self.model_name,
+                        "encoding_format": "float",
+                    }
+                    if is_query:
+                        payload["input_type"] = "query"
+
+                    resp = self.session.post(
+                        f"{self.endpoint_url}/v1/embeddings",
+                        json=payload,
+                        timeout=120,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                    for item in data.get("data", []):
+                        embedding = item.get("embedding", [])
+                        all_embeddings.append(embedding)
+
+                return all_embeddings
+
+        wrapper = ColBERTRemoteWrapper(
+            self.remote_url, self.api_key, self.model_name, self.logger
+        )
+        return wrapper, None
+
+
 class ColPaliModelLoader(ModelLoader):
     """Loader for ColPali models"""
 
@@ -582,6 +658,7 @@ class ModelLoaderFactory:
         "colpali": RemoteColPaliLoader,
         "colqwen": RemoteColPaliLoader,
         "videoprism": RemoteVideoPrismLoader,
+        "colbert": RemoteColBERTLoader,
     }
 
     @staticmethod
