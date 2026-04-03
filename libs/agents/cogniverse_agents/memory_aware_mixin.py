@@ -41,7 +41,6 @@ class MemoryAwareMixin:
 
         Accepts **kwargs to work with cooperative multiple inheritance (MRO).
         """
-        # Pass kwargs to next class in MRO (cooperative inheritance)
         super().__init__(**kwargs)
 
         self.memory_manager: Optional[Mem0MemoryManager] = None
@@ -90,10 +89,8 @@ class MemoryAwareMixin:
             self._memory_agent_name = agent_name
             self._memory_tenant_id = tenant_id
 
-            # Get tenant-specific memory manager instance
             self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 
-            # Initialize if not already done
             if self.memory_manager.memory is None:
                 self.memory_manager.initialize(
                     backend_host=backend_host,
@@ -145,7 +142,6 @@ class MemoryAwareMixin:
             return None
 
         try:
-            # Search memory with Mem0
             results = self.memory_manager.search_memory(
                 query=query,
                 tenant_id=self._memory_tenant_id,
@@ -156,10 +152,8 @@ class MemoryAwareMixin:
             if not results:
                 return None
 
-            # Format context - Mem0 returns list of dicts with 'memory' key
             context_parts = []
             for i, result in enumerate(results, 1):
-                # Mem0 returns memory content in 'memory' field
                 memory_text = result.get("memory", result.get("text", str(result)))
                 context_parts.append(f"{i}. {memory_text}")
 
@@ -267,36 +261,68 @@ class MemoryAwareMixin:
             logger.error(f"Failed to clear memory: {e}")
             return False
 
+    def get_strategies(self, query: str, top_k: int = 5) -> Optional[str]:
+        """Retrieve learned strategies relevant to a query.
+
+        Performs two-level retrieval (org + user) via StrategyLearner
+        and returns formatted strategies for agent context injection.
+
+        Args:
+            query: Query to find relevant strategies for
+            top_k: Number of strategies to retrieve
+
+        Returns:
+            Formatted strategy text or None
+        """
+        if not self.is_memory_enabled():
+            return None
+
+        from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
+
+        learner = StrategyLearner(
+            memory_manager=self.memory_manager,
+            tenant_id=self._memory_tenant_id,
+        )
+        strategies = learner.get_strategies_for_agent(
+            query=query,
+            agent_name=self._memory_agent_name,
+            top_k=top_k,
+        )
+        if strategies:
+            return StrategyLearner.format_strategies_for_context(strategies)
+        return None
+
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
         """
-        Inject relevant memory context into a prompt
+        Inject relevant memory context and learned strategies into a prompt.
 
         Args:
             prompt: Base prompt
             query: Query to search memory for
 
         Returns:
-            Prompt with injected context
+            Prompt with injected context and strategies
         """
         if not self.is_memory_enabled():
             return prompt
 
         context = self.get_relevant_context(query)
+        strategies = self.get_strategies(query)
 
-        if not context:
+        if not context and not strategies:
             return prompt
 
-        # Inject context into prompt
-        enhanced_prompt = f"""{prompt}
+        parts = [prompt]
 
-## Relevant Context from Memory:
-{context}
+        if strategies:
+            parts.append(strategies)
 
-## Current Query:
-{query}
-"""
+        if context:
+            parts.append(f"## Relevant Context from Memory:\n{context}")
 
-        return enhanced_prompt
+        parts.append(f"## Current Query:\n{query}")
+
+        return "\n\n".join(parts)
 
     def remember_success(
         self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None

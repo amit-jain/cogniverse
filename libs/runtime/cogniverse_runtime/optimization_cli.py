@@ -126,51 +126,92 @@ async def run_triggered_optimization(
             logger.error(f"Optimization failed for {agent_name}: {e}")
             results[agent_name] = {"status": "failed", "error": str(e)}
 
-    # Post-optimization: run golden eval to verify improvement
+    # Strategy distillation: learn reusable strategies from the trigger dataset
     try:
-        from cogniverse_evaluation.quality_monitor import QualityMonitor
+        from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
+        from cogniverse_core.memory.manager import Mem0MemoryManager
 
-        monitor = QualityMonitor(
+        if not system_config.backend_url:
+            raise ValueError(
+                "SystemConfig.backend_url is required for strategy distillation"
+            )
+        if not system_config.backend_port:
+            raise ValueError(
+                "SystemConfig.backend_port is required for strategy distillation"
+            )
+        if not llm_endpoint.api_base:
+            raise ValueError(
+                "LLMEndpointConfig.api_base is required for strategy distillation"
+            )
+
+        mem_manager = Mem0MemoryManager(tenant_id=tenant_id)
+        if mem_manager.memory is None:
+            mem_manager.initialize(
+                backend_host=system_config.backend_url,
+                backend_port=system_config.backend_port,
+                llm_model=llm_endpoint.model,
+                embedding_model="nomic-embed-text",
+                llm_base_url=llm_endpoint.api_base,
+                config_manager=config_manager,
+                schema_loader=None,
+            )
+
+        learner = StrategyLearner(
+            memory_manager=mem_manager,
             tenant_id=tenant_id,
-            runtime_url=system_config.agent_registry_url,
-            phoenix_http_endpoint=phoenix_endpoint,
-            llm_base_url=llm_endpoint.api_base or "http://localhost:11434",
-            llm_model=llm_endpoint.model,
-            golden_dataset_path="data/testset/evaluation/sample_videos_retrieval_queries.json",
+            llm_config=llm_endpoint,
         )
-        post_eval = await monitor.evaluate_golden_set()
-        results["post_optimization_eval"] = {
-            "mrr": post_eval.mean_mrr,
-            "ndcg": post_eval.mean_ndcg,
-            "precision_at_5": post_eval.mean_precision_at_5,
-        }
-
-        # Update baseline if scores improved
-        if post_eval.mean_mrr > (monitor._last_golden_baseline_mrr or 0):
-            await monitor.update_baseline(golden_result=post_eval)
-            results["baseline_updated"] = True
-
-        # Grow golden set with high-scoring live queries
-        new_golden_candidates = []
-        for _, row in high_scoring.iterrows():
-            if row.get("score", 0) >= 0.8:
-                new_golden_candidates.append(
-                    {
-                        "query": row.get("query", ""),
-                        "expected_videos": [],
-                        "ground_truth": "",
-                        "query_type": "live_traffic",
-                        "source": "quality_monitor",
-                    }
-                )
-        if new_golden_candidates:
-            await monitor.grow_golden_set(new_golden_candidates)
-            results["golden_set_growth"] = len(new_golden_candidates)
-
-        await monitor.close()
-
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+        results["strategies_distilled"] = len(strategies)
+        logger.info(f"Distilled {len(strategies)} strategies from trigger dataset")
     except Exception as e:
-        logger.warning(f"Post-optimization eval failed: {e}")
+        logger.warning(f"Strategy distillation failed (non-fatal): {e}")
+        results["strategies_distilled"] = 0
+
+    # Post-optimization: run golden eval to verify improvement
+    if not llm_endpoint.api_base:
+        raise ValueError(
+            "LLMEndpointConfig.api_base is required for post-optimization evaluation"
+        )
+
+    from cogniverse_evaluation.quality_monitor import QualityMonitor
+
+    monitor = QualityMonitor(
+        tenant_id=tenant_id,
+        runtime_url=system_config.agent_registry_url,
+        phoenix_http_endpoint=phoenix_endpoint,
+        llm_base_url=llm_endpoint.api_base,
+        llm_model=llm_endpoint.model,
+        golden_dataset_path="data/testset/evaluation/sample_videos_retrieval_queries.json",
+    )
+    post_eval = await monitor.evaluate_golden_set()
+    results["post_optimization_eval"] = {
+        "mrr": post_eval.mean_mrr,
+        "ndcg": post_eval.mean_ndcg,
+        "precision_at_5": post_eval.mean_precision_at_5,
+    }
+
+    if post_eval.mean_mrr > (monitor._last_golden_baseline_mrr or 0):
+        await monitor.update_baseline(golden_result=post_eval)
+        results["baseline_updated"] = True
+
+    new_golden_candidates = []
+    for _, row in high_scoring.iterrows():
+        if row.get("score", 0) >= 0.8:
+            new_golden_candidates.append(
+                {
+                    "query": row.get("query", ""),
+                    "expected_videos": [],
+                    "ground_truth": "",
+                    "query_type": "live_traffic",
+                    "source": "quality_monitor",
+                }
+            )
+    if new_golden_candidates:
+        await monitor.grow_golden_set(new_golden_candidates)
+        results["golden_set_growth"] = len(new_golden_candidates)
+
+    await monitor.close()
 
     return results
 
