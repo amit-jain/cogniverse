@@ -15,6 +15,44 @@ devMode:
   enabled: false
   hostPath: /cogniverse-src
 
+# ===========================================
+# Argo Workflows (optimization scheduling)
+# ===========================================
+argo:
+  enabled: true
+  # Subchart values for argo-workflows
+  argo-workflows:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+    server:
+      enabled: false  # No UI server needed — dashboard submits via CLI
+  # Optimization schedule configuration
+  optimization:
+    weekly:
+      enabled: true
+      schedule: "0 3 * * 0"  # Sunday 3 AM UTC
+      annotationThreshold: 50
+      improvementThreshold: 5
+    daily:
+      enabled: true
+      schedule: "0 4 * * *"  # Daily 4 AM UTC
+      annotationThreshold: 20
+  maintenance:
+    backup:
+      enabled: true
+      schedule: "0 2 * * *"  # Daily 2 AM UTC
+    cleanup:
+      enabled: true
+      schedule: "0 4 * * *"  # Daily 4 AM UTC
+      logRetentionDays: 7
+      memoryRetentionDays: 30
+
 # Image configuration
 image:
   registry: docker.io

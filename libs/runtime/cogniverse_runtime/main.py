@@ -317,34 +317,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_synthetic(generator_config=synthetic_gen_config)
     logger.info("Synthetic data service configured")
 
-    # 10. Start background optimization orchestrator (if telemetry enabled)
-    try:
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        telemetry_manager = get_telemetry_manager()
-        if telemetry_manager and telemetry_manager.config.enabled:
-            from cogniverse_agents.routing.optimization_orchestrator import (
-                OptimizationOrchestrator,
-            )
-
-            telemetry_provider = telemetry_manager.get_provider(tenant_id="default")
-            optimization_orchestrator = OptimizationOrchestrator(
-                llm_config=llm_config.primary,
-                telemetry_provider=telemetry_provider,
-                tenant_id="default",
-            )
-
-            import asyncio
-
-            asyncio.get_event_loop().create_task(optimization_orchestrator.start())
-            logger.info(
-                "Background optimization orchestrator started "
-                "(span evaluation + annotation + feedback loop)"
-            )
-        else:
-            logger.info("Telemetry not enabled, skipping background optimization")
-    except Exception as e:
-        logger.warning(f"Background optimization not started: {e}")
+    # 10. Optimization runs via Argo CronWorkflows (not as background task).
+    # See: charts/cogniverse/templates/optimization-workflows.yaml
+    # CLI: python -m cogniverse_runtime.optimization_cli --mode once
 
     logger.info("Cogniverse Runtime started successfully")
 

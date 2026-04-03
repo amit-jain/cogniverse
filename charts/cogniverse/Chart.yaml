@@ -20,7 +20,11 @@ maintainers:
   - name: Cogniverse Team
     email: team@cogniverse.ai
 
-dependencies: []
+dependencies:
+  - name: argo-workflows
+    version: "0.45.x"
+    repository: "https://argoproj.github.io/argo-helm"
+    condition: argo.enabled
 
 # Minimum Kubernetes version
 kubeVersion: ">=1.24.0-0"

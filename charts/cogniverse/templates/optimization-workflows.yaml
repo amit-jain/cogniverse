@@ -1,0 +1,226 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.argo.enabled }}
+{{- if .Values.argo.optimization.daily.enabled }}
+---
+# Daily optimization check — runs OptimizationOrchestrator.run_once()
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-daily-optimization
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.daily.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: run-optimization
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: run-optimization
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "once"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: PHOENIX_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        - name: OLLAMA_API_BASE
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+{{- end }}
+{{- if .Values.argo.optimization.weekly.enabled }}
+---
+# Weekly full optimization — runs all DSPy optimizers
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-weekly-optimization
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.weekly.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: full-optimization
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: full-optimization
+      steps:
+      - - name: run-optimization
+          template: optimization-step
+      - - name: run-dspy-compile
+          template: dspy-step
+
+    - name: optimization-step
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "full"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: PHOENIX_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+
+    - name: dspy-step
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "dspy"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: PHOENIX_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+{{- end }}
+{{- if .Values.argo.maintenance.cleanup.enabled }}
+---
+# Daily cleanup — logs, temp files, expired memories
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-daily-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maintenance
+spec:
+  schedule: {{ .Values.argo.maintenance.cleanup.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  workflowSpec:
+    entrypoint: cleanup
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: cleanup
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "cleanup"
+          - "--log-retention-days"
+          - "{{ .Values.argo.maintenance.cleanup.logRetentionDays }}"
+          - "--memory-retention-days"
+          - "{{ .Values.argo.maintenance.cleanup.memoryRetentionDays }}"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        resources:
+          requests:
+            cpu: 500m
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+{{- end }}
+{{- end }}
