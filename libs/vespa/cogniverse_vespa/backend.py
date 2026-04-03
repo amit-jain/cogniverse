@@ -331,7 +331,12 @@ class VespaBackend(Backend):
                                 timeout=5,
                             )
                             if resp.status_code == 200:
-                                total = resp.json().get("root", {}).get("fields", {}).get("totalCount", 0)
+                                total = (
+                                    resp.json()
+                                    .get("root", {})
+                                    .get("fields", {})
+                                    .get("totalCount", 0)
+                                )
                                 if total > 0:
                                     break
                         except _requests.RequestException:

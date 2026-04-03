@@ -206,33 +206,37 @@ class TestBackendConfigDataclasses:
         model_loader. When merged with system profiles (from config.json), the
         tenant's empty model_loader must NOT erase the system's "colpali".
         """
-        system_profile = BackendProfileConfig.from_dict("video_profile", {
-            "type": "video",
-            "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "multi_vector",
-            "model_loader": "colpali",
-            "schema_name": "video_profile",
-            "strategies": {"float_float": {}},
-            "schema_config": {"embedding_dim": 128},
-        })
+        system_profile = BackendProfileConfig.from_dict(
+            "video_profile",
+            {
+                "type": "video",
+                "embedding_model": "vidore/colsmol-500m",
+                "embedding_type": "multi_vector",
+                "model_loader": "colpali",
+                "schema_name": "video_profile",
+                "strategies": {"float_float": {}},
+                "schema_config": {"embedding_dim": 128},
+            },
+        )
 
         # Tenant profile: deployed via API, missing model_loader
-        tenant_profile = BackendProfileConfig.from_dict("video_profile", {
-            "type": "video",
-            "embedding_model": "vidore/colsmol-500m",
-            "embedding_type": "multi_vector",
-            "schema_name": "video_profile",
-            "strategies": {"float_float": {}},
-        })
+        tenant_profile = BackendProfileConfig.from_dict(
+            "video_profile",
+            {
+                "type": "video",
+                "embedding_model": "vidore/colsmol-500m",
+                "embedding_type": "multi_vector",
+                "schema_name": "video_profile",
+                "strategies": {"float_float": {}},
+            },
+        )
 
         assert system_profile.model_loader == "colpali"
         assert tenant_profile.model_loader == ""
 
         # Simulate ConfigUtils._ensure_backend_config merge logic:
         # Non-empty tenant fields overlay system base
-        tenant_dict = {
-            k: v for k, v in tenant_profile.to_dict().items() if v
-        }
+        tenant_dict = {k: v for k, v in tenant_profile.to_dict().items() if v}
         merged = system_profile.to_dict()
         merged.update(tenant_dict)
         result = BackendProfileConfig.from_dict("video_profile", merged)

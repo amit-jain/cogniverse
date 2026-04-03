@@ -181,12 +181,6 @@ def config_manager(vespa_instance):
         ),
     )
 
-    tenant_b_config = SystemConfig(
-        backend_url="http://localhost",
-        backend_port=vespa_instance["http_port"],
-    )
-    # tenant_b uses same system config
-
     cm.add_backend_profile(
         BackendProfileConfig(
             profile_name="tenant_b_profile",
@@ -194,6 +188,7 @@ def config_manager(vespa_instance):
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="vidore/colsmol-500m",
         ),
+        tenant_id="tenant_b",
     )
 
     return cm
