@@ -36,8 +36,8 @@ def create_modality_config():
             )
         },
         agent_mappings=[
-            AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
-            AgentMappingRule(modality="DOCUMENT", agent_name="document_search_agent"),
+            AgentMappingRule(modality="VIDEO", agent_name="search_agent"),
+            AgentMappingRule(modality="DOCUMENT", agent_name="text_analysis_agent"),
         ],
     )
 
@@ -87,7 +87,7 @@ class TestModalityGeneratorIntegration:
         assert len(examples) == 10
         assert all(isinstance(ex, ModalityExampleSchema) for ex in examples)
         assert all(ex.modality == "VIDEO" for ex in examples)
-        assert all(ex.correct_agent == "video_search_agent" for ex in examples)
+        assert all(ex.correct_agent == "search_agent" for ex in examples)
         assert all(ex.is_synthetic is True for ex in examples)
 
     @pytest.mark.asyncio

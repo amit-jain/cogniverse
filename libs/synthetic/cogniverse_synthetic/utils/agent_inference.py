@@ -12,76 +12,75 @@ logger = logging.getLogger(__name__)
 
 class AgentInferrer:
     """
-    Infer correct agents for routing based on modality and content characteristics
+    Infer correct agents for routing based on modality and content characteristics.
 
-    Maps modalities, content types, and query characteristics to appropriate agents.
+    Reads agent definitions from config.json — no hardcoded agent names.
     """
 
-    # Modality → Agent mapping
-    MODALITY_TO_AGENT = {
-        "VIDEO": "video_search_agent",
-        "DOCUMENT": "document_agent",
-        "IMAGE": "image_search_agent",
-        "AUDIO": "audio_search_agent",
-    }
+    def __init__(self, agents_config: Optional[Dict[str, Any]] = None):
+        """Initialize agent inferrer from config.
 
-    # Content type → Agent mapping (for advanced routing)
-    CONTENT_TYPE_TO_AGENT = {
-        "tutorial": "video_search_agent",
-        "documentation": "document_agent",
-        "guide": "document_agent",
-        "walkthrough": "video_search_agent",
-        "demo": "video_search_agent",
-        "research": "document_agent",
-        "paper": "document_agent",
-        "article": "document_agent",
-        "podcast": "audio_search_agent",
-        "diagram": "image_search_agent",
-        "chart": "image_search_agent",
-        "visualization": "image_search_agent",
-    }
+        Args:
+            agents_config: agents section from config.json. If None, loads from default config.
+        """
+        if agents_config is None:
+            agents_config = self._load_agents_config()
 
-    # Agent capabilities (for workflow generation)
-    AGENT_CAPABILITIES = {
-        "video_search_agent": {
-            "modalities": ["VIDEO"],
-            "capabilities": ["search", "retrieval", "video_understanding"],
-            "typical_tasks": ["find videos", "search content", "locate tutorials"],
-        },
-        "document_agent": {
-            "modalities": ["DOCUMENT"],
-            "capabilities": ["search", "retrieval", "text_understanding"],
-            "typical_tasks": [
-                "find documents",
-                "search papers",
-                "locate articles",
-            ],
-        },
-        "image_search_agent": {
-            "modalities": ["IMAGE"],
-            "capabilities": ["search", "retrieval", "image_understanding"],
-            "typical_tasks": ["find images", "locate diagrams", "search charts"],
-        },
-        "audio_search_agent": {
-            "modalities": ["AUDIO"],
-            "capabilities": ["search", "retrieval", "audio_understanding"],
-            "typical_tasks": ["find podcasts", "locate audio", "search recordings"],
-        },
-        "summarizer": {
-            "modalities": ["VIDEO", "DOCUMENT", "AUDIO"],
-            "capabilities": ["summarization", "synthesis"],
-            "typical_tasks": ["summarize content", "create summary", "condense"],
-        },
-        "detailed_report": {
-            "modalities": ["VIDEO", "DOCUMENT"],
-            "capabilities": ["analysis", "reporting", "synthesis"],
-            "typical_tasks": ["create report", "analyze", "detailed analysis"],
-        },
-    }
+        # Build mappings from config
+        self.MODALITY_TO_AGENT = {}
+        self.AGENT_CAPABILITIES = {}
 
-    def __init__(self):
-        """Initialize agent inferrer"""
-        logger.info("Initialized AgentInferrer")
+        for name, cfg in agents_config.items():
+            if not cfg.get("enabled", True):
+                continue
+
+            modalities = cfg.get("modalities", [])
+            capabilities = cfg.get("capabilities", [])
+
+            self.AGENT_CAPABILITIES[name] = {
+                "modalities": modalities,
+                "capabilities": capabilities,
+            }
+
+            for modality in modalities:
+                if modality not in self.MODALITY_TO_AGENT:
+                    self.MODALITY_TO_AGENT[modality] = name
+
+        # Content type heuristic — not in config, derived from modality mappings
+        self.CONTENT_TYPE_TO_AGENT = {}
+        video_agent = self.MODALITY_TO_AGENT.get("VIDEO", "search_agent")
+        doc_agent = self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
+        audio_agent = self.MODALITY_TO_AGENT.get("AUDIO", "audio_analysis_agent")
+        image_agent = self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
+        for keyword in ("tutorial", "walkthrough", "demo"):
+            self.CONTENT_TYPE_TO_AGENT[keyword] = video_agent
+        for keyword in ("documentation", "guide", "research", "paper", "article"):
+            self.CONTENT_TYPE_TO_AGENT[keyword] = doc_agent
+        for keyword in ("podcast",):
+            self.CONTENT_TYPE_TO_AGENT[keyword] = audio_agent
+        for keyword in ("diagram", "chart", "visualization"):
+            self.CONTENT_TYPE_TO_AGENT[keyword] = image_agent
+
+        logger.info(
+            f"Initialized AgentInferrer with {len(self.AGENT_CAPABILITIES)} agents "
+            f"from config"
+        )
+
+    @staticmethod
+    def _load_agents_config() -> Dict[str, Any]:
+        """Load agents config from config.json."""
+        import json
+        from pathlib import Path
+
+        for search_path in [
+            Path("configs/config.json"),
+            Path("../configs/config.json"),
+            Path("../../configs/config.json"),
+        ]:
+            if search_path.exists():
+                with open(search_path) as f:
+                    return json.load(f).get("agents", {})
+        return {}
 
     def infer_from_modality(self, modality: str) -> str:
         """
@@ -146,9 +145,10 @@ class AgentInferrer:
                 )
                 return agent
 
-        # Default to video search (most common in our system)
-        logger.debug("Using default agent 'video_search_agent'")
-        return "video_search_agent"
+        # Default to first search-capable agent
+        default = self.MODALITY_TO_AGENT.get("VIDEO", "search_agent")
+        logger.debug(f"Using default agent '{default}'")
+        return default
 
     def infer_workflow_sequence(
         self, query_complexity: str, modality: str, task_type: Optional[str] = None

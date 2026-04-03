@@ -3,16 +3,122 @@
   "default_tenant": "flywheel_org:production",
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
-    "routing_agent": {"url": "http://localhost:8001", "enabled": true},
-    "search_agent": {"url": "http://localhost:8002", "enabled": true},
-    "text_analysis_agent": {"url": "http://localhost:8003", "enabled": true},
-    "summarizer_agent": {"url": "http://localhost:8004", "enabled": true},
-    "detailed_report_agent": {"url": "http://localhost:8005", "enabled": true},
-    "image_search_agent": {"url": "http://localhost:8006", "enabled": true},
-    "audio_analysis_agent": {"url": "http://localhost:8007", "enabled": true},
-    "document_agent": {"url": "http://localhost:8008", "enabled": true},
-    "deep_research_agent": {"url": "http://localhost:8009", "enabled": true},
-    "coding_agent": {"url": "http://localhost:8010", "enabled": true}
+    "routing_agent": {
+      "url": "http://localhost:8001",
+      "enabled": true,
+      "capabilities": [
+        "routing",
+        "query_analysis",
+        "entity_extraction",
+        "conversation_memory"
+      ],
+      "modalities": []
+    },
+    "search_agent": {
+      "url": "http://localhost:8002",
+      "enabled": true,
+      "capabilities": [
+        "search",
+        "video_search",
+        "retrieval"
+      ],
+      "modalities": [
+        "VIDEO"
+      ]
+    },
+    "text_analysis_agent": {
+      "url": "http://localhost:8003",
+      "enabled": true,
+      "capabilities": [
+        "text_analysis",
+        "sentiment",
+        "classification"
+      ],
+      "modalities": [
+        "DOCUMENT"
+      ]
+    },
+    "summarizer_agent": {
+      "url": "http://localhost:8004",
+      "enabled": true,
+      "capabilities": [
+        "summarization",
+        "text_generation"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT",
+        "AUDIO"
+      ]
+    },
+    "detailed_report_agent": {
+      "url": "http://localhost:8005",
+      "enabled": true,
+      "capabilities": [
+        "detailed_report",
+        "analysis",
+        "text_generation"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT"
+      ]
+    },
+    "image_search_agent": {
+      "url": "http://localhost:8006",
+      "enabled": true,
+      "capabilities": [
+        "image_search",
+        "visual_analysis"
+      ],
+      "modalities": [
+        "IMAGE"
+      ]
+    },
+    "audio_analysis_agent": {
+      "url": "http://localhost:8007",
+      "enabled": true,
+      "capabilities": [
+        "audio_analysis",
+        "transcription"
+      ],
+      "modalities": [
+        "AUDIO"
+      ]
+    },
+    "document_agent": {
+      "url": "http://localhost:8008",
+      "enabled": true,
+      "capabilities": [
+        "document_analysis",
+        "pdf_processing"
+      ],
+      "modalities": [
+        "DOCUMENT"
+      ]
+    },
+    "deep_research_agent": {
+      "url": "http://localhost:8009",
+      "enabled": true,
+      "capabilities": [
+        "deep_research",
+        "analysis"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT"
+      ]
+    },
+    "coding_agent": {
+      "url": "http://localhost:8010",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "code_generation",
+        "code_search"
+      ],
+      "modalities": []
+    }
   },
   "llm_config": {
     "primary": {
@@ -32,11 +138,23 @@
       "adapter_path": null
     },
     "overrides": {
-      "routing_agent": { "temperature": 0.1, "max_tokens": 1000 },
-      "summarizer_agent": { "model": "ollama/qwen3:4b" },
-      "detailed_report_agent": { "model": "ollama/qwen3:4b" },
-      "vlm_interface": { "model": "ollama/deepseek-r1:7b" },
-      "coding_agent": { "model": "ollama/qwen2.5-coder:7b-instruct", "max_tokens": 2048 },
+      "routing_agent": {
+        "temperature": 0.1,
+        "max_tokens": 1000
+      },
+      "summarizer_agent": {
+        "model": "ollama/qwen3:4b"
+      },
+      "detailed_report_agent": {
+        "model": "ollama/qwen3:4b"
+      },
+      "vlm_interface": {
+        "model": "ollama/deepseek-r1:7b"
+      },
+      "coding_agent": {
+        "model": "ollama/qwen2.5-coder:7b-instruct",
+        "max_tokens": 2048
+      },
       "query_analysis_module": null,
       "llm_auto_annotator": null
     }
@@ -88,7 +206,10 @@
     "online_evaluation": {
       "enabled": true,
       "sampling_rate": 1.0,
-      "evaluators": ["routing_outcome", "confidence_calibration"],
+      "evaluators": [
+        "routing_outcome",
+        "confidence_calibration"
+      ],
       "persist_scores": true,
       "score_annotation_name": "online_eval"
     }
@@ -99,13 +220,26 @@
       {
         "type": "topic_boundary",
         "params": {
-          "allowed_topics": ["video", "search", "document", "audio", "image", "summary", "report", "analysis"]
+          "allowed_topics": [
+            "video",
+            "search",
+            "document",
+            "audio",
+            "image",
+            "summary",
+            "report",
+            "analysis"
+          ]
         }
       },
       {
         "type": "content_safety",
         "params": {
-          "blocked_patterns": ["ignore previous instructions", "system prompt", "<script>"]
+          "blocked_patterns": [
+            "ignore previous instructions",
+            "system prompt",
+            "<script>"
+          ]
         }
       }
     ],
@@ -885,7 +1019,12 @@
           "segmentation": {
             "class": "CodeSegmentationStrategy",
             "params": {
-              "languages": ["python", "typescript", "go", "javascript"]
+              "languages": [
+                "python",
+                "typescript",
+                "go",
+                "javascript"
+              ]
             }
           },
           "transcription": {

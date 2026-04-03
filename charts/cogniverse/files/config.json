@@ -5,43 +5,119 @@
   "agents": {
     "routing_agent": {
       "url": "http://localhost:8001",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "routing",
+        "query_analysis",
+        "entity_extraction",
+        "conversation_memory"
+      ],
+      "modalities": []
     },
     "search_agent": {
       "url": "http://localhost:8002",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "search",
+        "video_search",
+        "retrieval"
+      ],
+      "modalities": [
+        "VIDEO"
+      ]
     },
     "text_analysis_agent": {
       "url": "http://localhost:8003",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "text_analysis",
+        "sentiment",
+        "classification"
+      ],
+      "modalities": [
+        "DOCUMENT"
+      ]
     },
     "summarizer_agent": {
       "url": "http://localhost:8004",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "summarization",
+        "text_generation"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT",
+        "AUDIO"
+      ]
     },
     "detailed_report_agent": {
       "url": "http://localhost:8005",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "detailed_report",
+        "analysis",
+        "text_generation"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT"
+      ]
     },
     "image_search_agent": {
       "url": "http://localhost:8006",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "image_search",
+        "visual_analysis"
+      ],
+      "modalities": [
+        "IMAGE"
+      ]
     },
     "audio_analysis_agent": {
       "url": "http://localhost:8007",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "audio_analysis",
+        "transcription"
+      ],
+      "modalities": [
+        "AUDIO"
+      ]
     },
     "document_agent": {
       "url": "http://localhost:8008",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "document_analysis",
+        "pdf_processing"
+      ],
+      "modalities": [
+        "DOCUMENT"
+      ]
     },
     "deep_research_agent": {
       "url": "http://localhost:8009",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "deep_research",
+        "analysis"
+      ],
+      "modalities": [
+        "VIDEO",
+        "DOCUMENT"
+      ]
     },
     "coding_agent": {
       "url": "http://localhost:8010",
-      "enabled": true
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "code_generation",
+        "code_search"
+      ],
+      "modalities": []
     }
   },
   "llm_config": {

@@ -14,24 +14,9 @@ from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
-# Agent capabilities mapping — what each agent can do
-AGENT_CAPABILITIES: Dict[str, List[str]] = {
-    "routing_agent": [
-        "routing",
-        "query_analysis",
-        "entity_extraction",
-        "conversation_memory",
-    ],
-    "search_agent": ["search", "video_search", "retrieval"],
-    "text_analysis_agent": ["text_analysis", "sentiment", "classification"],
-    "summarizer_agent": ["summarization", "text_generation"],
-    "detailed_report_agent": ["detailed_report", "analysis", "text_generation"],
-    "image_search_agent": ["image_search", "visual_analysis"],
-    "audio_analysis_agent": ["audio_analysis", "transcription"],
-    "document_agent": ["document_analysis", "pdf_processing"],
-    "deep_research_agent": ["deep_research", "analysis"],
-    "coding_agent": ["coding", "code_generation", "code_search"],
-}
+# Agent capabilities are read from config.json agents.{name}.capabilities
+# No hardcoded mapping — config is the single source of truth.
+AGENT_CAPABILITIES: Dict[str, List[str]] = {}
 
 
 class ConfigLoader:
@@ -160,7 +145,7 @@ class ConfigLoader:
 
                 if agent_registry is not None:
                     url = agent_config.get("url", "http://localhost:8000")
-                    capabilities = AGENT_CAPABILITIES.get(agent_name, [])
+                    capabilities = agent_config.get("capabilities", [])
 
                     success = agent_registry.register_agent_from_data(
                         {
