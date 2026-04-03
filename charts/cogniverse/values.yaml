@@ -192,6 +192,21 @@ runtime:
     timeoutSeconds: 3
     failureThreshold: 3
 
+  # Quality monitor sidecar — continuous evaluation of all agents
+  qualityMonitor:
+    enabled: true
+    goldenIntervalSeconds: 7200   # 2 hours
+    liveIntervalSeconds: 14400    # 4 hours
+    liveSampleCount: 20
+    goldenDatasetPath: "data/testset/evaluation/sample_videos_retrieval_queries.json"
+    resources:
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+
   nodeSelector: {}
   tolerations: []
   affinity:

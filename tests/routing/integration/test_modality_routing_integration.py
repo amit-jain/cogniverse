@@ -39,10 +39,10 @@ def phoenix_container():
     # TelemetryManager is a singleton that only initializes once, so we need to:
     # 1. Set the env vars first
     # 2. Reset the singleton so it re-reads the env vars
-    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    original_endpoint = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
-    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_OTLP_ENDPOINT"] = "http://localhost:14317"
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"  # Use sync export for tests
 
     # Reset TelemetryManager singleton to force re-initialization with new env var
@@ -167,9 +167,9 @@ def phoenix_container():
 
         # Restore original environment variables
         if original_endpoint:
-            os.environ["OTLP_ENDPOINT"] = original_endpoint
+            os.environ["TELEMETRY_OTLP_ENDPOINT"] = original_endpoint
         else:
-            os.environ.pop("OTLP_ENDPOINT", None)
+            os.environ.pop("TELEMETRY_OTLP_ENDPOINT", None)
 
         if original_sync_export:
             os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
@@ -195,7 +195,7 @@ def telemetry_config(test_tenant_id, phoenix_container):
     """Telemetry config for test tenant pointing to non-default Phoenix port"""
     # Depend on phoenix_container to ensure env var is set before reading config
     # Read the OTLP_ENDPOINT from environment (set by phoenix_container)
-    otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
+    otlp_endpoint = os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317")
     config = TelemetryConfig(
         otlp_endpoint=otlp_endpoint,
         provider_config={

@@ -693,7 +693,7 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     get_telemetry_registry().clear_cache()
 
     telemetry_config = TelemetryConfig(
-        otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317"),
+        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317"),
         provider_config={
             "http_endpoint": "http://localhost:16006",
             "grpc_endpoint": "http://localhost:14317",

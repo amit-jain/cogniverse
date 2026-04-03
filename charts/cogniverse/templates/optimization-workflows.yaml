@@ -34,9 +34,9 @@ spec:
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
           value: "{{ .Values.vespa.service.ports.query }}"
-        - name: PHOENIX_ENDPOINT
+        - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: OTLP_ENDPOINT
+        - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
           {{- if .Values.llm.external.enabled }}
@@ -108,7 +108,7 @@ spec:
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
           value: "{{ .Values.vespa.service.ports.query }}"
-        - name: PHOENIX_ENDPOINT
+        - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
           {{- if .Values.llm.external.enabled }}
@@ -142,7 +142,7 @@ spec:
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
           value: "{{ .Values.vespa.service.ports.query }}"
-        - name: PHOENIX_ENDPOINT
+        - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
           {{- if .Values.llm.external.enabled }}
@@ -223,4 +223,34 @@ spec:
         configMap:
           name: {{ $fullName }}-config
 {{- end }}
+---
+# RBAC: Allow the quality monitor sidecar (via the shared ServiceAccount)
+# to create Workflow resources for on-demand optimization.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-workflow-submitter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows"]
+  verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-workflow-submitter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-workflow-submitter
+subjects:
+- kind: ServiceAccount
+  name: {{ include "cogniverse.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
 {{- end }}

@@ -84,10 +84,10 @@ def phoenix_container():
     import urllib.request
 
     # Set environment variables BEFORE any TelemetryManager is created
-    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    original_endpoint = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
-    os.environ["OTLP_ENDPOINT"] = "http://localhost:24317"
+    os.environ["TELEMETRY_OTLP_ENDPOINT"] = "http://localhost:24317"
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
     # Reset TelemetryManager singleton using reset() class method
@@ -216,9 +216,9 @@ def phoenix_container():
 
         # Restore original environment variables
         if original_endpoint:
-            os.environ["OTLP_ENDPOINT"] = original_endpoint
+            os.environ["TELEMETRY_OTLP_ENDPOINT"] = original_endpoint
         else:
-            os.environ.pop("OTLP_ENDPOINT", None)
+            os.environ.pop("TELEMETRY_OTLP_ENDPOINT", None)
 
         if original_sync_export:
             os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export

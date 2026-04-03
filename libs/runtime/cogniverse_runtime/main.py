@@ -215,11 +215,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("LLM_ENDPOINT"):
         system_config.base_url = os.environ["LLM_ENDPOINT"]
         updated = True
-    if os.environ.get("PHOENIX_ENDPOINT"):
-        system_config.telemetry_url = os.environ["PHOENIX_ENDPOINT"]
+    if os.environ.get("TELEMETRY_HTTP_ENDPOINT"):
+        system_config.telemetry_url = os.environ["TELEMETRY_HTTP_ENDPOINT"]
         updated = True
-    if os.environ.get("OTLP_ENDPOINT"):
-        system_config.telemetry_collector_endpoint = os.environ["OTLP_ENDPOINT"]
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
+        system_config.telemetry_collector_endpoint = os.environ["TELEMETRY_OTLP_ENDPOINT"]
         updated = True
     if os.environ.get("RUNTIME_URL"):
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]
@@ -239,9 +239,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         BackendRegistry.get_instance()._backend_instances.clear()
         logger.info("SystemConfig stored with deployment env var overrides")
 
-    # 7b. Propagate OTLP endpoint to the TelemetryManager singleton
+    # 7b. Propagate telemetry OTLP endpoint to the TelemetryManager singleton
     # (created during load_backends/load_agents above, before env overrides)
-    if os.environ.get("OTLP_ENDPOINT"):
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tm = get_telemetry_manager()

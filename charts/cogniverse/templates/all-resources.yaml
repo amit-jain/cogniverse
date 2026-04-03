@@ -193,9 +193,9 @@ spec:
           value: "{{ .Values.vespa.service.ports.query }}"
         - name: VESPA_CONFIG_PORT
           value: "{{ .Values.vespa.service.ports.config }}"
-        - name: PHOENIX_ENDPOINT
+        - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: OTLP_ENDPOINT
+        - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: HF_HOME
           value: "/home/cogniverse/.cache/huggingface"
@@ -244,6 +244,65 @@ spec:
         - name: src-scripts
           mountPath: /app/scripts
         {{- end }}
+      {{- if .Values.runtime.qualityMonitor.enabled }}
+      - name: quality-monitor
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
+        args:
+        - "--tenant-id"
+        - "default"
+        - "--runtime-url"
+        - "http://localhost:{{ .Values.runtime.service.port }}"
+        - "--phoenix-url"
+        - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - "--llm-base-url"
+        {{- if .Values.llm.external.enabled }}
+        - {{ .Values.llm.external.url | quote }}
+        {{- else }}
+        - "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+        {{- end }}
+        - "--golden-interval"
+        - {{ .Values.runtime.qualityMonitor.goldenIntervalSeconds | quote }}
+        - "--live-interval"
+        - {{ .Values.runtime.qualityMonitor.liveIntervalSeconds | quote }}
+        - "--live-sample-count"
+        - {{ .Values.runtime.qualityMonitor.liveSampleCount | quote }}
+        - "--golden-dataset-path"
+        - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
+        {{- if .Values.argo.enabled }}
+        - "--argo-url"
+        - "http://{{ $fullName }}-argo-server:2746"
+        - "--argo-namespace"
+        - {{ .Release.Namespace | quote }}
+        {{- end }}
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+      {{- end }}
       volumes:
       - name: config
         configMap:
@@ -347,9 +406,9 @@ spec:
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
           value: "{{ .Values.vespa.service.ports.query }}"
-        - name: PHOENIX_ENDPOINT
+        - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: OTLP_ENDPOINT
+        - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
           {{- if .Values.llm.external.enabled }}

@@ -147,7 +147,7 @@ def cleanup_environment():
     """Clean up environment variables that might pollute tests"""
     # Save current environment
     saved_env = {}
-    env_vars_to_track = ["VESPA_SCHEMA", "MLFLOW_TRACKING_URI", "OTLP_ENDPOINT"]
+    env_vars_to_track = ["VESPA_SCHEMA", "MLFLOW_TRACKING_URI", "TELEMETRY_OTLP_ENDPOINT"]
     for var in env_vars_to_track:
         if var in os.environ:
             saved_env[var] = os.environ[var]
@@ -224,7 +224,7 @@ def phoenix_container():
 
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
-    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    original_endpoint = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
     # Kill any leftover phoenix_test_* containers from previous runs that
@@ -244,7 +244,7 @@ def phoenix_container():
         )
 
     # Set environment for tests
-    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_OTLP_ENDPOINT"] = "http://localhost:14317"
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
     # Reset TelemetryManager to pick up new env vars
@@ -331,9 +331,9 @@ def phoenix_container():
 
         # Restore environment
         if original_endpoint:
-            os.environ["OTLP_ENDPOINT"] = original_endpoint
+            os.environ["TELEMETRY_OTLP_ENDPOINT"] = original_endpoint
         else:
-            os.environ.pop("OTLP_ENDPOINT", None)
+            os.environ.pop("TELEMETRY_OTLP_ENDPOINT", None)
 
         if original_sync_export:
             os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
@@ -361,7 +361,7 @@ def telemetry_config_with_phoenix(phoenix_container):
         TelemetryConfig,
     )
 
-    otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
+    otlp_endpoint = os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317")
     config = TelemetryConfig(
         otlp_endpoint=otlp_endpoint,
         provider_config={

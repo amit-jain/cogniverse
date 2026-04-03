@@ -221,7 +221,7 @@ def real_telemetry(phoenix_container):
     get_telemetry_registry().clear_cache()
 
     config = TelemetryConfig(
-        otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317"),
+        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317"),
         provider_config={
             "http_endpoint": "http://localhost:16006",
             "grpc_endpoint": "http://localhost:14317",
