@@ -328,6 +328,153 @@ class TestArgoSubmission:
         assert params["tenant-id"] == "test_tenant"
 
 
+class TestGoldenEvaluation:
+    @pytest.mark.asyncio
+    async def test_evaluate_golden_set_scores_queries(self, monitor):
+        """Test golden eval with mocked HTTP responses."""
+        import httpx
+
+        def mock_handler(request):
+            body = json.loads(request.content)
+            query = body.get("query", "")
+            if "barbell" in query:
+                return httpx.Response(200, json={
+                    "results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]
+                })
+            return httpx.Response(200, json={"results": []})
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(mock_handler),
+            base_url="http://testserver",
+        )
+
+        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+            result = await monitor.evaluate_golden_set()
+
+        assert result.query_count == 2
+        assert result.mean_mrr > 0
+
+        scores = {s["query"]: s for s in result.per_query_scores}
+        assert scores["man lifting barbell"]["mrr"] == 1.0
+        assert scores["dog playing in park"]["mrr"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_golden_set_handles_http_errors(self, monitor):
+        """500 responses are skipped, not crashes."""
+        import httpx
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(500, text="error")
+            ),
+            base_url="http://testserver",
+        )
+
+        with pytest.raises(RuntimeError, match="No golden queries evaluated"):
+            with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+                await monitor.evaluate_golden_set()
+
+
+class TestStoreOperations:
+    @pytest.mark.asyncio
+    async def test_store_golden_eval_result(self, monitor):
+        """Store golden eval calls dataset store."""
+        mock_store = AsyncMock()
+        mock_store.create_dataset = AsyncMock(return_value="ds_123")
+        monitor._dataset_store = mock_store
+
+        result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            mean_mrr=0.75,
+            mean_ndcg=0.70,
+            mean_precision_at_5=0.50,
+            query_count=10,
+        )
+
+        await monitor._store_golden_eval_result(result)
+        mock_store.create_dataset.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_store_live_eval_result(self, monitor):
+        """Store live eval calls dataset store with agent data."""
+        mock_store = AsyncMock()
+        mock_store.create_dataset = AsyncMock(return_value="ds_456")
+        monitor._dataset_store = mock_store
+
+        result = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.8,
+                    baseline_score=0.85,
+                    degradation_pct=0.06,
+                    sample_count=20,
+                ),
+            },
+        )
+
+        await monitor._store_live_eval_result(result)
+        mock_store.create_dataset.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_store_trigger_dataset(self, monitor):
+        """Store trigger dataset with training examples."""
+        mock_store = AsyncMock()
+        mock_store.create_dataset = AsyncMock(return_value="ds_789")
+        monitor._dataset_store = mock_store
+
+        trigger = OptimizationTrigger(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            agents_to_optimize=[AgentType.SEARCH],
+            golden_eval=None,
+            live_eval=None,
+            low_scoring_examples={
+                AgentType.SEARCH: [{"query": "bad", "score": 0.1, "output": {}}],
+            },
+            high_scoring_examples={
+                AgentType.SEARCH: [{"query": "good", "score": 0.9, "output": {}}],
+            },
+            misrouted_queries=[],
+        )
+
+        await monitor._store_trigger_dataset(trigger)
+        mock_store.create_dataset.assert_called_once()
+
+
+class TestUpdateBaseline:
+    @pytest.mark.asyncio
+    async def test_update_baseline_stores_golden(self, monitor):
+        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock) as mock:
+            result = GoldenEvalResult(
+                timestamp=datetime.utcnow(),
+                tenant_id="test_tenant",
+                mean_mrr=0.8,
+                mean_ndcg=0.75,
+                mean_precision_at_5=0.6,
+                query_count=10,
+            )
+            await monitor.update_baseline(golden_result=result)
+            mock.assert_called_once_with(result)
+
+    @pytest.mark.asyncio
+    async def test_grow_golden_set_empty_list(self, monitor):
+        await monitor.grow_golden_set([])
+        # Should not modify file
+
+
+class TestClose:
+    @pytest.mark.asyncio
+    async def test_close_cleans_up(self, monitor):
+        mock_client = AsyncMock()
+        monitor._http_client = mock_client
+        await monitor.close()
+        mock_client.aclose.assert_called_once()
+
+
 class TestAgentTypeEnum:
     def test_all_agents_have_span_names(self):
         from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
