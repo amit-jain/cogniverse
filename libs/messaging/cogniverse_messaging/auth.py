@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
 logger = logging.getLogger(__name__)
 
 GATEWAY_AGENT_NAME = "_messaging_gateway"
@@ -29,9 +31,9 @@ class InviteTokenManager:
             datetime.utcnow() + timedelta(hours=expires_in_hours)
         ).isoformat()
 
-        self.config_manager.set_config(
-            tenant_id=tenant_id,
-            scope="messaging",
+        self.config_manager.set_config_value(
+            tenant_id="_system",
+            scope=ConfigScope.SYSTEM,
             service="messaging_gateway",
             config_key=f"invite_token_{token}",
             config_value={
@@ -49,38 +51,40 @@ class InviteTokenManager:
         """Validate an invite token and return the tenant_id if valid.
 
         Returns None if token is invalid, expired, or already used.
+        Searches the _system tenant's config store for invite tokens.
         """
         try:
-            configs = self.config_manager.get_all_configs(
-                scope="messaging",
+            entry = self.config_manager.store.get_config(
+                tenant_id="_system",
+                scope=ConfigScope.SYSTEM,
                 service="messaging_gateway",
+                config_key=f"invite_token_{token}",
             )
 
-            for config in configs:
-                value = config.get("config_value", {})
-                if isinstance(value, str):
-                    import json
+            if entry is None:
+                return None
 
-                    try:
-                        value = json.loads(value)
-                    except Exception:
-                        continue
+            value = entry.config_value
+            if isinstance(value, str):
+                import json
 
-                if value.get("token") != token:
-                    continue
-
-                if value.get("used"):
-                    logger.warning(f"Token already used: {token[:8]}...")
+                try:
+                    value = json.loads(value)
+                except Exception:
                     return None
 
-                expires_at = value.get("expires_at", "")
-                if expires_at:
-                    expiry = datetime.fromisoformat(expires_at)
-                    if datetime.utcnow() > expiry:
-                        logger.warning(f"Token expired: {token[:8]}...")
-                        return None
+            if value.get("used"):
+                logger.warning(f"Token already used: {token[:8]}...")
+                return None
 
-                return value.get("tenant_id")
+            expires_at = value.get("expires_at", "")
+            if expires_at:
+                expiry = datetime.fromisoformat(expires_at)
+                if datetime.utcnow() > expiry:
+                    logger.warning(f"Token expired: {token[:8]}...")
+                    return None
+
+            return value.get("tenant_id")
 
         except Exception as e:
             logger.error(f"Token validation failed: {e}")
@@ -90,9 +94,9 @@ class InviteTokenManager:
     def mark_token_used(self, token: str, tenant_id: str) -> None:
         """Mark a token as used after successful registration."""
         try:
-            self.config_manager.set_config(
-                tenant_id=tenant_id,
-                scope="messaging",
+            self.config_manager.set_config_value(
+                tenant_id="_system",
+                scope=ConfigScope.SYSTEM,
                 service="messaging_gateway",
                 config_key=f"invite_token_{token}",
                 config_value={

@@ -10,72 +10,66 @@ class TestInviteTokenManager:
     @pytest.fixture
     def config_manager(self):
         cm = MagicMock()
-        cm.set_config = MagicMock()
-        cm.get_all_configs = MagicMock(return_value=[])
+        cm.set_config_value = MagicMock()
+        cm.store = MagicMock()
+        cm.store.get_config = MagicMock(return_value=None)
         return cm
 
     def test_generate_token(self, config_manager):
         manager = InviteTokenManager(config_manager)
         token = manager.generate_token("acme:alice")
 
-        assert len(token) == 32  # uuid4 hex
-        config_manager.set_config.assert_called_once()
+        assert len(token) == 32
+        config_manager.set_config_value.assert_called_once()
 
-        call_kwargs = config_manager.set_config.call_args.kwargs
-        assert call_kwargs["tenant_id"] == "acme:alice"
-        assert call_kwargs["scope"] == "messaging"
+        call_kwargs = config_manager.set_config_value.call_args.kwargs
+        assert call_kwargs["tenant_id"] == "_system"
         assert "invite_token_" in call_kwargs["config_key"]
 
     def test_validate_valid_token(self, config_manager):
         token = "abc123"
-        config_manager.get_all_configs.return_value = [
-            {
-                "config_value": {
-                    "token": token,
-                    "tenant_id": "acme:alice",
-                    "used": False,
-                    "expires_at": "2099-12-31T23:59:59",
-                }
-            }
-        ]
+        mock_entry = MagicMock()
+        mock_entry.config_value = {
+            "token": token,
+            "tenant_id": "acme:alice",
+            "used": False,
+            "expires_at": "2099-12-31T23:59:59",
+        }
+        config_manager.store.get_config.return_value = mock_entry
 
         manager = InviteTokenManager(config_manager)
         result = manager.validate_token(token)
         assert result == "acme:alice"
 
     def test_validate_used_token(self, config_manager):
-        config_manager.get_all_configs.return_value = [
-            {
-                "config_value": {
-                    "token": "abc123",
-                    "tenant_id": "acme:alice",
-                    "used": True,
-                }
-            }
-        ]
+        mock_entry = MagicMock()
+        mock_entry.config_value = {
+            "token": "abc123",
+            "tenant_id": "acme:alice",
+            "used": True,
+        }
+        config_manager.store.get_config.return_value = mock_entry
 
         manager = InviteTokenManager(config_manager)
         result = manager.validate_token("abc123")
         assert result is None
 
     def test_validate_expired_token(self, config_manager):
-        config_manager.get_all_configs.return_value = [
-            {
-                "config_value": {
-                    "token": "abc123",
-                    "tenant_id": "acme:alice",
-                    "used": False,
-                    "expires_at": "2020-01-01T00:00:00",
-                }
-            }
-        ]
+        mock_entry = MagicMock()
+        mock_entry.config_value = {
+            "token": "abc123",
+            "tenant_id": "acme:alice",
+            "used": False,
+            "expires_at": "2020-01-01T00:00:00",
+        }
+        config_manager.store.get_config.return_value = mock_entry
 
         manager = InviteTokenManager(config_manager)
         result = manager.validate_token("abc123")
         assert result is None
 
     def test_validate_unknown_token(self, config_manager):
-        config_manager.get_all_configs.return_value = []
+        config_manager.store.get_config.return_value = None
 
         manager = InviteTokenManager(config_manager)
         result = manager.validate_token("nonexistent")
@@ -85,8 +79,8 @@ class TestInviteTokenManager:
         manager = InviteTokenManager(config_manager)
         manager.mark_token_used("abc123", "acme:alice")
 
-        config_manager.set_config.assert_called_once()
-        call_value = config_manager.set_config.call_args.kwargs["config_value"]
+        config_manager.set_config_value.assert_called_once()
+        call_value = config_manager.set_config_value.call_args.kwargs["config_value"]
         assert call_value["used"] is True
 
 

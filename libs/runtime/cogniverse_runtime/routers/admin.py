@@ -1,7 +1,7 @@
 """Admin endpoints - system administration and profile management."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -789,11 +789,26 @@ async def create_messaging_invite(
     Returns a token that a user sends to the Telegram bot via /start <token>
     to link their Telegram account to the specified tenant.
     """
-    from cogniverse_messaging.auth import InviteTokenManager
+    import uuid
 
-    manager = InviteTokenManager(config_manager)
-    token = manager.generate_token(
-        tenant_id=request.tenant_id,
-        expires_in_hours=request.expires_in_hours,
+    token = uuid.uuid4().hex
+    expiry = (
+        datetime.utcnow() + timedelta(hours=request.expires_in_hours)
+    ).isoformat()
+
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    config_manager.set_config_value(
+        tenant_id="_system",
+        scope=ConfigScope.SYSTEM,
+        service="messaging_gateway",
+        config_key=f"invite_token_{token}",
+        config_value={
+            "tenant_id": request.tenant_id,
+            "token": token,
+            "expires_at": expiry,
+            "used": False,
+        },
     )
+
     return {"token": token, "tenant_id": request.tenant_id}
