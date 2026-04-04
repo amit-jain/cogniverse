@@ -41,8 +41,15 @@ class Strategy:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
     def to_memory_content(self) -> str:
-        """Format for Mem0 storage — the text that gets embedded and searched."""
-        return f"[STRATEGY] {self.text} | Applies when: {self.applies_when}"
+        """Format as a clear preference statement for Mem0 LLM extraction.
+
+        Mem0's LLM extracts memories from conversational content.
+        Framing strategies as user preferences ensures they get stored.
+        """
+        return (
+            f"I prefer the following approach for {self.agent}: {self.text} "
+            f"I use this when {self.applies_when}."
+        )
 
     def to_metadata(self) -> Dict[str, Any]:
         """Metadata tags for filtering during retrieval."""
@@ -442,11 +449,10 @@ class StrategyLearner:
 
             for mem in existing:
                 mem_text = mem.get("memory", "")
-                if "[STRATEGY]" in mem_text:
-                    # Rough similarity check — if the strategy text overlaps
-                    # significantly, update confidence instead of duplicating
-                    existing_text = mem_text.replace("[STRATEGY] ", "").split(" | ")[0]
-                    overlap = _text_overlap(strategy.text, existing_text)
+                if "strategy" in mem_text.lower():
+                    overlap = _text_overlap(
+                        strategy.to_memory_content(), mem_text
+                    )
                     if overlap > DEDUP_SIMILARITY_THRESHOLD:
                         logger.debug(
                             f"Strategy dedup: '{strategy.text[:50]}...' overlaps "
@@ -485,18 +491,17 @@ class StrategyLearner:
 
         all_strategies = []
 
-        # User-level strategies
+        # User-level strategies (agent_name scoping ensures only strategies returned)
         try:
             user_results = self.memory_manager.search_memory(
-                query=f"[STRATEGY] {query}",
+                query=f"strategy for {query}",
                 tenant_id=self.tenant_id,
                 agent_name=STRATEGY_AGENT_NAME,
                 top_k=top_k,
             )
             for r in user_results:
-                if r.get("metadata", {}).get("type") == "strategy":
-                    r["_level"] = "user"
-                    all_strategies.append(r)
+                r["_level"] = "user"
+                all_strategies.append(r)
         except Exception as e:
             logger.debug(f"User strategy retrieval failed: {e}")
 
@@ -504,33 +509,18 @@ class StrategyLearner:
         if self.org_id != self.tenant_id:
             try:
                 org_results = self.memory_manager.search_memory(
-                    query=f"[STRATEGY] {query}",
+                    query=f"strategy for {query}",
                     tenant_id=self.org_id,
                     agent_name=STRATEGY_AGENT_NAME,
                     top_k=top_k,
                 )
                 for r in org_results:
-                    if r.get("metadata", {}).get("type") == "strategy":
-                        r["_level"] = "org"
-                        all_strategies.append(r)
+                    r["_level"] = "org"
+                    all_strategies.append(r)
             except Exception as e:
                 logger.debug(f"Org strategy retrieval failed: {e}")
 
-        # Filter by agent if metadata available
-        filtered = []
-        for s in all_strategies:
-            meta = s.get("metadata", {})
-            agent_match = meta.get("agent", agent_name) == agent_name
-            confidence = float(meta.get("confidence", 0))
-            if agent_match and confidence >= 0.5:
-                filtered.append(s)
-
-        # Sort by confidence descending, return top_k
-        filtered.sort(
-            key=lambda s: float(s.get("metadata", {}).get("confidence", 0)),
-            reverse=True,
-        )
-        return filtered[:top_k]
+        return all_strategies[:top_k]
 
     @staticmethod
     def format_strategies_for_context(strategies: List[Dict[str, Any]]) -> str:
@@ -541,7 +531,7 @@ class StrategyLearner:
         lines = []
         for s in strategies:
             meta = s.get("metadata", {})
-            text = s.get("memory", "").replace("[STRATEGY] ", "")
+            text = s.get("memory", "")
             confidence = float(meta.get("confidence", 0))
             trace_count = int(meta.get("trace_count", 0))
             level = s.get("_level", meta.get("level", ""))

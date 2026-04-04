@@ -19,7 +19,6 @@ import requests
 import cogniverse_vespa  # noqa: F401
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_foundation.config.utils import create_default_config_manager
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
 # Shared backend configuration for all memory tests
@@ -310,57 +309,83 @@ def shared_memory_vespa():
         # Deploy schema via BackendRegistry + SchemaRegistry (correct pattern)
         from pathlib import Path
 
+        # Deploy metadata schemas first — VespaConfigStore needs config_metadata
+        # schema to exist before set_system_config() can write to it.
+        from vespa.package import ApplicationPackage
+
         from cogniverse_core.registries.backend_registry import BackendRegistry
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
-        # Create persistent ConfigManager for session
-        # This must persist for the entire test session so SchemaRegistry state is maintained
-        config_manager = create_default_config_manager()
+        metadata_schemas = [
+            create_organization_metadata_schema(),
+            create_tenant_metadata_schema(),
+            create_config_metadata_schema(),
+            create_adapter_registry_schema(),
+        ]
 
-        # Set system config pointing to test Vespa
+        # Also include agent_memories schema for test_tenant
+        parser = JsonSchemaParser()
+        memory_schema_file = Path("configs/schemas/agent_memories_schema.json")
+        import json
+
+        with open(memory_schema_file) as f:
+            memory_schema_json = json.load(f)
+        memory_schema_json["name"] = "agent_memories_test_tenant"
+        memory_schema_json["document"]["name"] = "agent_memories_test_tenant"
+        memory_schema = parser.parse_schema(memory_schema_json)
+
+        all_schemas = metadata_schemas + [memory_schema]
+        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
+
+        schema_mgr = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=MEMORY_BACKEND_CONFIG_PORT,
+        )
+        schema_mgr._deploy_package(app_package)
+        print("✅ Deployed metadata + agent_memories schemas")
+
+        # Wait for application ready
+        import time
+
+        for _ in range(60):
+            try:
+                resp = requests.get(
+                    f"http://localhost:{MEMORY_BACKEND_PORT}/state/v1/health",
+                    timeout=2,
+                )
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+
+        # Create ConfigManager backed by the TEST Vespa
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        config_store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=MEMORY_BACKEND_PORT,
+        )
+        config_manager = ConfigManager(store=config_store)
+
         system_config = SystemConfig(
             backend_url="http://localhost",
             backend_port=MEMORY_BACKEND_PORT,
         )
         config_manager.set_system_config(system_config)
 
-        # Create schema loader
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-        # Get backend via BackendRegistry (creates SchemaRegistry automatically)
-        backend = BackendRegistry.get_instance().get_ingestion_backend(
-            name="vespa",
-            config={
-                "backend": {
-                    "url": "http://localhost",
-                    "port": MEMORY_BACKEND_PORT,
-                    "config_port": MEMORY_BACKEND_CONFIG_PORT,
-                }
-            },
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
-
-        # Deploy schema via SchemaRegistry with force=True so the application
-        # package is always pushed to the fresh test container. Without force=True
-        # the registry's schema_exists() check returns True (the schema is already
-        # registered in the main Vespa's ConfigStore from previous runs), causing
-        # deploy_schema to skip package deployment and leave port 8081 unreachable.
-        tenant_schema_name = backend.schema_registry.deploy_schema(
-            tenant_id="test_tenant", base_schema_name="agent_memories", force=True
-        )
-        print(
-            f"✅ Schema deployment completed via SchemaRegistry: {tenant_schema_name}"
-        )
-
-        # Clear backend cache AGAIN after schema deployment
-        # This ensures the memory manager gets a fresh backend WITH profiles
-        print("🔄 Clearing backend cache after schema deployment...")
+        # Schema already deployed via ApplicationPackage above.
+        tenant_schema_name = "agent_memories_test_tenant"
         BackendRegistry._backend_instances.clear()
-        print(
-            "✅ Backend cache cleared - memory manager will create fresh instance with profiles"
-        )
 
     except Exception as e:
         # Cleanup on failure

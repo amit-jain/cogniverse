@@ -110,7 +110,15 @@ def vespa_instance():
         parser = JsonSchemaParser()
         data_schema = parser.parse_schema(schema_json)
 
-        all_schemas = metadata_schemas + [data_schema]
+        # Parse agent_memories schema for Mem0 strategy storage tests.
+        memory_schema_file = SCHEMAS_DIR / "agent_memories_schema.json"
+        with open(memory_schema_file) as f:
+            memory_schema_json = json.load(f)
+        memory_schema_json["name"] = "agent_memories_default"
+        memory_schema_json["document"]["name"] = "agent_memories_default"
+        memory_schema = parser.parse_schema(memory_schema_json)
+
+        all_schemas = metadata_schemas + [data_schema, memory_schema]
         app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
 
         schema_manager = VespaSchemaManager(
@@ -198,6 +206,38 @@ def config_manager(vespa_instance):
 def schema_loader():
     """FilesystemSchemaLoader from configs/schemas/."""
     return FilesystemSchemaLoader(SCHEMAS_DIR)
+
+
+@pytest.fixture(scope="module")
+def memory_manager(vespa_instance, config_manager, schema_loader):
+    """Real Mem0MemoryManager backed by test Vespa Docker.
+
+    Follows the same pattern as tests/memory/conftest.py shared_memory_vespa.
+    Uses the same Vespa instance as search tests. Requires Ollama
+    for Mem0's LLM-based memory extraction.
+    """
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+
+    Mem0MemoryManager._instances.clear()
+    BackendRegistry._backend_instances.clear()
+
+    mm = Mem0MemoryManager(tenant_id="default")
+    mm.initialize(
+        backend_host="http://localhost",
+        backend_port=vespa_instance["http_port"],
+        backend_config_port=vespa_instance["config_port"],
+        llm_model="qwen3:4b",
+        embedding_model="nomic-embed-text",
+        llm_base_url="http://localhost:11434",
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+        auto_create_schema=False,
+    )
+
+    yield mm
+
+    Mem0MemoryManager._instances.clear()
+    BackendRegistry._backend_instances.clear()
 
 
 @pytest.fixture(scope="module")

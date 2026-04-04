@@ -174,9 +174,17 @@ class Mem0MemoryManager:
                 "strategy": "semantic_search",  # Default to semantic search for memories
             }
 
+        config_backend = config.get("backend", {})
+        # Strip url/port from config.json's backend section — the explicit
+        # backend_host/backend_port parameters are authoritative. Letting
+        # config.json values leak through causes port mismatches in tests
+        # and multi-instance deployments.
+        config_backend_clean = {
+            k: v for k, v in config_backend.items() if k not in ("url", "port")
+        }
         backend_section = {
-            "profiles": profiles,  # Profiles for VespaSearchBackend._initialize_encoders()
-            **config.get("backend", {}),  # Merge any existing backend config
+            "profiles": profiles,
+            **config_backend_clean,
         }
 
         backend_config_dict = {

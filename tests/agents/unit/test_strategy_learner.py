@@ -213,9 +213,9 @@ class TestStrategyDataclass:
             trace_count=20,
         )
         content = s.to_memory_content()
-        assert "[STRATEGY]" in content
+        assert "I prefer" in content
         assert "Use chunk search" in content
-        assert "Applies when:" in content
+        assert "I use this when" in content
 
     def test_to_metadata(self):
         s = Strategy(
@@ -256,7 +256,7 @@ class TestDeduplication:
         # Simulate existing strategy with high overlap
         mock_memory_manager.search_memory.return_value = [
             {
-                "memory": "[STRATEGY] New unique strategy here | Applies when: always",
+                "memory": "I prefer the following approach for search: New unique strategy here I use this when always.",
                 "metadata": {"type": "strategy"},
             }
         ]
@@ -290,27 +290,11 @@ class TestStrategyRetrieval:
         mock_memory_manager.search_memory.side_effect = [
             # User-level results
             [
-                {
-                    "memory": "[STRATEGY] User prefers detailed results",
-                    "metadata": {
-                        "type": "strategy",
-                        "agent": "search",
-                        "confidence": 0.8,
-                        "level": "user",
-                    },
-                }
+                {"memory": "User prefers detailed results", "score": 0.8},
             ],
             # Org-level results
             [
-                {
-                    "memory": "[STRATEGY] ColPali works best for object queries",
-                    "metadata": {
-                        "type": "strategy",
-                        "agent": "search",
-                        "confidence": 0.9,
-                        "level": "org",
-                    },
-                }
+                {"memory": "ColPali works best for object queries", "score": 0.9},
             ],
         ]
 
@@ -321,51 +305,16 @@ class TestStrategyRetrieval:
         strategies = learner.get_strategies_for_agent("find the car", "search")
 
         assert len(strategies) == 2
-        # Sorted by confidence: org (0.9) first, then user (0.8)
-        assert strategies[0]["metadata"]["confidence"] == 0.9
+        assert strategies[0]["_level"] == "user"
+        assert strategies[1]["_level"] == "org"
 
-    def test_filters_by_agent(self, mock_memory_manager):
+    def test_returns_all_from_agent_name_scope(self, mock_memory_manager):
+        """Agent filtering is done by agent_name scope in search_memory,
+        not by metadata. All results from _strategy_store are strategies."""
         mock_memory_manager.search_memory.side_effect = [
             [
-                {
-                    "memory": "[STRATEGY] strategy for search",
-                    "metadata": {
-                        "type": "strategy",
-                        "agent": "search",
-                        "confidence": 0.8,
-                    },
-                },
-                {
-                    "memory": "[STRATEGY] strategy for summary",
-                    "metadata": {
-                        "type": "strategy",
-                        "agent": "summary",
-                        "confidence": 0.8,
-                    },
-                },
-            ],
-            [],  # org-level empty
-        ]
-
-        learner = StrategyLearner(
-            memory_manager=mock_memory_manager, tenant_id="acme:alice"
-        )
-        strategies = learner.get_strategies_for_agent("query", "search")
-
-        assert len(strategies) == 1
-        assert strategies[0]["metadata"]["agent"] == "search"
-
-    def test_filters_low_confidence(self, mock_memory_manager):
-        mock_memory_manager.search_memory.side_effect = [
-            [
-                {
-                    "memory": "[STRATEGY] low confidence",
-                    "metadata": {
-                        "type": "strategy",
-                        "agent": "search",
-                        "confidence": 0.3,
-                    },
-                },
+                {"memory": "strategy about search", "score": 0.8},
+                {"memory": "strategy about summaries", "score": 0.7},
             ],
             [],
         ]
@@ -374,14 +323,31 @@ class TestStrategyRetrieval:
             memory_manager=mock_memory_manager, tenant_id="acme:alice"
         )
         strategies = learner.get_strategies_for_agent("query", "search")
-        assert len(strategies) == 0
+
+        # All results returned — no metadata filtering
+        assert len(strategies) == 2
+
+    def test_respects_top_k(self, mock_memory_manager):
+        mock_memory_manager.search_memory.side_effect = [
+            [
+                {"memory": f"strategy {i}", "score": 0.8}
+                for i in range(10)
+            ],
+            [],
+        ]
+
+        learner = StrategyLearner(
+            memory_manager=mock_memory_manager, tenant_id="acme:alice"
+        )
+        strategies = learner.get_strategies_for_agent("query", "search", top_k=3)
+        assert len(strategies) == 3
 
 
 class TestFormatStrategies:
     def test_formats_with_confidence_and_trace_count(self):
         strategies = [
             {
-                "memory": "[STRATEGY] Use chunk search for temporal queries | Applies when: temporal keywords",
+                "memory": "I prefer the following approach for search: Use chunk search for temporal queries | Applies when: temporal keywords",
                 "metadata": {"confidence": 0.87, "trace_count": 23, "level": "org"},
                 "_level": "org",
             },

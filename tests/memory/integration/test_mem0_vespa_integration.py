@@ -20,12 +20,23 @@ def memory_manager(shared_memory_vespa):
     from pathlib import Path
 
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_vespa.config.config_store import VespaConfigStore
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
-    # Create dependencies for dependency injection
-    config_manager = create_default_config_manager()
+    config_store = VespaConfigStore(
+        backend_url="http://localhost",
+        backend_port=shared_memory_vespa["http_port"],
+    )
+    config_manager = ConfigManager(store=config_store)
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=shared_memory_vespa["http_port"],
+        )
+    )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     # Initialize with shared Vespa backend using Ollama
@@ -396,11 +407,10 @@ class TestMem0MemoryAwareMixinIntegration:
 
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-        )
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.config.config_store import VespaConfigStore
 
-        # CRITICAL: Clear singletons FIRST before any initialization
         Mem0MemoryManager._instances.clear()
 
         class TestAgent(MemoryAwareMixin):
@@ -409,8 +419,17 @@ class TestMem0MemoryAwareMixinIntegration:
 
         agent = TestAgent()
 
-        # Create dependencies for dependency injection
-        config_manager = create_default_config_manager()
+        config_store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=shared_memory_vespa["http_port"],
+        )
+        config_manager = ConfigManager(store=config_store)
+        config_manager.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=shared_memory_vespa["http_port"],
+            )
+        )
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Initialize memory with shared Vespa ports
