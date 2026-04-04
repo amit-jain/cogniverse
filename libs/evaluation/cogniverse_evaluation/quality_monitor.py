@@ -286,7 +286,7 @@ class QualityMonitor:
                     f"{self.runtime_url}/search/",
                     json={
                         "query": query,
-                        "profile_name": "test_colpali",
+                        "profile": "test_colpali",
                         "top_k": 10,
                     },
                 )

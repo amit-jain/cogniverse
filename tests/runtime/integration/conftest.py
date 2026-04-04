@@ -226,7 +226,7 @@ def memory_manager(vespa_instance, config_manager, schema_loader):
         backend_host="http://localhost",
         backend_port=vespa_instance["http_port"],
         backend_config_port=vespa_instance["config_port"],
-        llm_model="qwen3:4b",
+        llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,
