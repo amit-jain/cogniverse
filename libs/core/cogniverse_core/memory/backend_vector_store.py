@@ -331,6 +331,14 @@ class BackendVectorStore(VectorStoreBase):
                 else:
                     vector = embedding
 
+            created_at = doc.metadata.get("created_at")
+            if isinstance(created_at, (int, float)):
+                from datetime import datetime
+
+                created_at = datetime.fromtimestamp(created_at).isoformat()
+            elif created_at is not None and not isinstance(created_at, str):
+                created_at = str(created_at)
+
             return BackendRecord(
                 id=doc.id,
                 vector=vector,
@@ -339,7 +347,7 @@ class BackendVectorStore(VectorStoreBase):
                     "user_id": doc.metadata.get("user_id", ""),
                     "agent_id": doc.metadata.get("agent_id", ""),
                     "metadata": doc.metadata.get("metadata_", {}),
-                    "created_at": doc.metadata.get("created_at"),
+                    "created_at": created_at,
                 },
             )
         except Exception as e:

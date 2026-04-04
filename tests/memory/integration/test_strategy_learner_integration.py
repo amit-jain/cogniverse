@@ -176,3 +176,134 @@ class TestStrategyRoundTrip:
 
         assert "You are a search agent." in result
         assert "## Learned Strategies" in result
+
+
+@pytest.mark.integration
+class TestTwoLevelScoping:
+    """Verify org:user two-level strategy scoping.
+
+    org:user scoping works via Mem0's user_id field — strategies stored with
+    user_id=org_id are retrievable by any user in that org.
+    """
+
+    @pytest.mark.asyncio
+    async def test_org_strategies_stored_with_org_tenant(
+        self, memory_manager, trigger_df
+    ):
+        """Pattern-extracted strategies use org_id as tenant_id for storage."""
+        learner = StrategyLearner(
+            memory_manager=memory_manager,
+            tenant_id="test_tenant",
+        )
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+        assert len(strategies) >= 1
+
+        # All pattern-extracted strategies should have level=org
+        # and tenant_id=org_id (which is "test_tenant" for simple tenant)
+        for s in strategies:
+            assert s.level == "org"
+            assert s.tenant_id == "test_tenant"
+
+    @pytest.mark.asyncio
+    async def test_org_id_parsed_from_colon_format(self):
+        """Verify org:user parsing extracts org correctly."""
+        from unittest.mock import MagicMock
+
+        mm = MagicMock()
+        mm.memory = MagicMock()
+
+        learner1 = StrategyLearner(memory_manager=mm, tenant_id="acme:alice")
+        assert learner1.org_id == "acme"
+        assert learner1.tenant_id == "acme:alice"
+
+        learner2 = StrategyLearner(memory_manager=mm, tenant_id="acme:bob")
+        assert learner2.org_id == "acme"
+
+        # Same org_id means both share org-level strategies
+        assert learner1.org_id == learner2.org_id
+
+        learner3 = StrategyLearner(memory_manager=mm, tenant_id="simple_tenant")
+        assert learner3.org_id == "simple_tenant"
+
+    @pytest.mark.asyncio
+    async def test_user_and_org_retrieval_paths(self):
+        """Verify get_strategies_for_agent calls search for both levels."""
+        from unittest.mock import MagicMock
+
+        mm = MagicMock()
+        mm.memory = MagicMock()
+        mm.search_memory.return_value = []
+
+        learner = StrategyLearner(
+            memory_manager=mm,
+            tenant_id="acme:alice",
+        )
+        learner.get_strategies_for_agent("test query", "search")
+
+        # Should call search_memory twice: once for user, once for org
+        assert mm.search_memory.call_count == 2
+        calls = mm.search_memory.call_args_list
+
+        # First call: user-level (tenant_id="acme:alice")
+        assert calls[0].kwargs["tenant_id"] == "acme:alice"
+
+        # Second call: org-level (tenant_id="acme")
+        assert calls[1].kwargs["tenant_id"] == "acme"
+
+
+def _is_ollama_available() -> bool:
+    import httpx
+
+    try:
+        return httpx.get("http://localhost:11434/api/tags", timeout=5.0).status_code == 200
+    except Exception:
+        return False
+
+
+skip_if_no_ollama = pytest.mark.skipif(
+    not _is_ollama_available(),
+    reason="Ollama not available for LLM distillation",
+)
+
+
+@pytest.mark.integration
+@skip_if_no_ollama
+class TestLLMDistillation:
+    """Test contrastive LLM distillation with real Ollama."""
+
+    @pytest.mark.asyncio
+    async def test_llm_distillation_produces_strategies(
+        self, memory_manager, trigger_df
+    ):
+        """Run LLM distillation with real Ollama, verify output quality."""
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        llm_config = LLMEndpointConfig(
+            model="ollama_chat/llama3.2",
+            api_base="http://localhost:11434",
+            temperature=0.1,
+            max_tokens=200,
+        )
+
+        learner = StrategyLearner(
+            memory_manager=memory_manager,
+            tenant_id="test_tenant",
+            llm_config=llm_config,
+        )
+
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+
+        # Should have both pattern-extracted AND LLM-distilled strategies
+        pattern_strategies = [s for s in strategies if s.source == "pattern_extraction"]
+        llm_strategies = [s for s in strategies if s.source == "llm_distillation"]
+
+        assert len(pattern_strategies) >= 1
+        assert len(llm_strategies) >= 1, (
+            f"LLM distillation should produce at least 1 strategy, got {len(llm_strategies)}"
+        )
+
+        for s in llm_strategies:
+            assert len(s.text) >= 10, f"Strategy text too short: '{s.text}'"
+            assert len(s.applies_when) >= 5, f"Applies_when too short: '{s.applies_when}'"
+            assert s.agent == "search"
+            assert s.confidence == 0.6  # Default for LLM-distilled
