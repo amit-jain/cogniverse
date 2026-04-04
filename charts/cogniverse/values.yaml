@@ -484,6 +484,27 @@ inference:
       failureThreshold: 5
 
 # ===========================================
+# Messaging Gateway (Telegram/Slack)
+# ===========================================
+messaging:
+  enabled: false
+  image:
+    repository: cogniverse/runtime
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  mode: polling  # polling for dev, webhook for production
+  resources:
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+  env:
+    GATEWAY_MODE: "polling"
+
+# ===========================================
 # Ingress Configuration
 # ===========================================
 ingress:

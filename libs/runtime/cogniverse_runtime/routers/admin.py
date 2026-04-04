@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
@@ -771,3 +772,28 @@ async def deploy_profile_schema(
         logger.error(f"Failed to deploy schema: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class InviteRequest(BaseModel):
+    tenant_id: str
+    expires_in_hours: int = 24
+
+
+@router.post("/messaging/invite")
+async def create_messaging_invite(
+    request: InviteRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, str]:
+    """Generate an invite token for messaging gateway registration.
+
+    Returns a token that a user sends to the Telegram bot via /start <token>
+    to link their Telegram account to the specified tenant.
+    """
+    from cogniverse_messaging.auth import InviteTokenManager
+
+    manager = InviteTokenManager(config_manager)
+    token = manager.generate_token(
+        tenant_id=request.tenant_id,
+        expires_in_hours=request.expires_in_hours,
+    )
+    return {"token": token, "tenant_id": request.tenant_id}

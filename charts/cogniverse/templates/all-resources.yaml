@@ -842,3 +842,94 @@ spec:
     app.kubernetes.io/component: vllm-{{ $name }}
 {{- end }}
 {{- end }}
+---
+# Messaging Gateway Deployment
+{{- if .Values.messaging.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-messaging
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: messaging
+spec:
+  replicas: {{ .Values.messaging.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: messaging
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: messaging
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: messaging-gateway
+        image: "{{ .Values.messaging.image.repository }}:{{ .Values.messaging.image.tag }}"
+        imagePullPolicy: {{ .Values.messaging.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_messaging.gateway"]
+        env:
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-messaging-secrets
+              key: telegram-bot-token
+              optional: true
+        - name: RUNTIME_URL
+          value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+        - name: GATEWAY_MODE
+          value: {{ .Values.messaging.mode | quote }}
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        {{- range $key, $value := .Values.messaging.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.messaging.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
+{{- end }}

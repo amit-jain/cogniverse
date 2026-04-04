@@ -1057,5 +1057,12 @@
         "strategy": "segmentation"
       }
     }
+  },
+  "messaging": {
+    "telegram": {
+      "enabled": true,
+      "max_message_length": 4096,
+      "max_results_per_message": 5
+    }
   }
 }
