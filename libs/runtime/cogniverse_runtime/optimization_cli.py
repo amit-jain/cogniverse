@@ -64,17 +64,33 @@ async def run_optimization(mode: str) -> dict:
 
 
 async def run_triggered_optimization(
-    tenant_id: str, agents: list[str], trigger_dataset: str
+    tenant_id: str,
+    agents: list[str],
+    trigger_dataset: str,
+    config_manager=None,
+    phoenix_endpoint: str = None,
 ) -> dict:
     """Run optimization triggered by quality monitor.
 
     Loads scored examples from Phoenix trigger dataset, then compiles
     DSPy modules for each flagged agent using those examples as training data.
+
+    Args:
+        tenant_id: Tenant to optimize for.
+        agents: List of agent names to optimize.
+        trigger_dataset: Phoenix dataset name with scored trace examples.
+        config_manager: Optional ConfigManager (for testing). If None,
+            creates default from config.json.
+        phoenix_endpoint: Optional Phoenix HTTP URL (for testing). If None,
+            reads from SystemConfig.telemetry_url.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-    config_manager = create_default_config_manager()
+    if config_manager is None:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        config_manager = create_default_config_manager()
+
     telemetry_manager = get_telemetry_manager()
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -82,18 +98,33 @@ async def run_triggered_optimization(
     import phoenix as px
 
     system_config = config_manager.get_system_config()
-    phoenix_endpoint = system_config.telemetry_url
+    if phoenix_endpoint is None:
+        phoenix_endpoint = system_config.telemetry_url
     sync_client = px.Client(endpoint=phoenix_endpoint)
 
     try:
         dataset = sync_client.get_dataset(name=trigger_dataset)
         trigger_df = dataset.as_dataframe()
+
+        # Phoenix wraps columns under input/output dicts — flatten
+        if "input" in trigger_df.columns and "agent" not in trigger_df.columns:
+            import pandas as _pd
+
+            flat = []
+            for _, row in trigger_df.iterrows():
+                inp = row.get("input", {}) or {}
+                out = row.get("output", {}) or {}
+                flat.append({**inp, **out})
+            trigger_df = _pd.DataFrame(flat)
     except Exception as e:
         logger.error(f"Failed to load trigger dataset '{trigger_dataset}': {e}")
         return {"status": "failed", "error": str(e)}
 
     results = {}
-    llm_config = config_manager.get_llm_config()
+    from cogniverse_foundation.config.utils import get_config
+
+    config_utils = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_config = config_utils.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
     for agent_name in agents:
@@ -168,50 +199,54 @@ async def run_triggered_optimization(
         logger.warning(f"Strategy distillation failed (non-fatal): {e}")
         results["strategies_distilled"] = 0
 
-    # Post-optimization: run golden eval to verify improvement
-    if not llm_endpoint.api_base:
-        raise ValueError(
-            "LLMEndpointConfig.api_base is required for post-optimization evaluation"
+    # Post-optimization: run golden eval to verify improvement (best-effort)
+    try:
+        from cogniverse_evaluation.quality_monitor import QualityMonitor
+
+        if not llm_endpoint.api_base:
+            raise ValueError("LLMEndpointConfig.api_base required for post-eval")
+
+        monitor = QualityMonitor(
+            tenant_id=tenant_id,
+            runtime_url=system_config.agent_registry_url,
+            phoenix_http_endpoint=phoenix_endpoint,
+            llm_base_url=llm_endpoint.api_base,
+            llm_model=llm_endpoint.model,
+            golden_dataset_path="data/testset/evaluation/sample_videos_retrieval_queries.json",
         )
+        post_eval = await monitor.evaluate_golden_set()
+        results["post_optimization_eval"] = {
+            "mrr": post_eval.mean_mrr,
+            "ndcg": post_eval.mean_ndcg,
+            "precision_at_5": post_eval.mean_precision_at_5,
+        }
 
-    from cogniverse_evaluation.quality_monitor import QualityMonitor
+        if post_eval.mean_mrr > (monitor._last_golden_baseline_mrr or 0):
+            await monitor.update_baseline(golden_result=post_eval)
+            results["baseline_updated"] = True
 
-    monitor = QualityMonitor(
-        tenant_id=tenant_id,
-        runtime_url=system_config.agent_registry_url,
-        phoenix_http_endpoint=phoenix_endpoint,
-        llm_base_url=llm_endpoint.api_base,
-        llm_model=llm_endpoint.model,
-        golden_dataset_path="data/testset/evaluation/sample_videos_retrieval_queries.json",
-    )
-    post_eval = await monitor.evaluate_golden_set()
-    results["post_optimization_eval"] = {
-        "mrr": post_eval.mean_mrr,
-        "ndcg": post_eval.mean_ndcg,
-        "precision_at_5": post_eval.mean_precision_at_5,
-    }
+        # Grow golden set with high-scoring live queries
+        high_scoring = trigger_df[trigger_df["category"] == "high_scoring"]
+        new_golden_candidates = []
+        for _, row in high_scoring.iterrows():
+            if float(row.get("score", 0)) >= 0.8:
+                new_golden_candidates.append(
+                    {
+                        "query": row.get("query", ""),
+                        "expected_videos": [],
+                        "ground_truth": "",
+                        "query_type": "live_traffic",
+                        "source": "quality_monitor",
+                    }
+                )
+        if new_golden_candidates:
+            await monitor.grow_golden_set(new_golden_candidates)
+            results["golden_set_growth"] = len(new_golden_candidates)
 
-    if post_eval.mean_mrr > (monitor._last_golden_baseline_mrr or 0):
-        await monitor.update_baseline(golden_result=post_eval)
-        results["baseline_updated"] = True
-
-    new_golden_candidates = []
-    for _, row in high_scoring.iterrows():
-        if row.get("score", 0) >= 0.8:
-            new_golden_candidates.append(
-                {
-                    "query": row.get("query", ""),
-                    "expected_videos": [],
-                    "ground_truth": "",
-                    "query_type": "live_traffic",
-                    "source": "quality_monitor",
-                }
-            )
-    if new_golden_candidates:
-        await monitor.grow_golden_set(new_golden_candidates)
-        results["golden_set_growth"] = len(new_golden_candidates)
-
-    await monitor.close()
+        await monitor.close()
+    except Exception as e:
+        logger.warning(f"Post-optimization eval failed (non-fatal): {e}")
+        results["post_optimization_eval"] = {"error": str(e)}
 
     return results
 

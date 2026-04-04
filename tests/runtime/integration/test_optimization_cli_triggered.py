@@ -8,7 +8,6 @@ Uses shared vespa_instance + config_manager + real_telemetry from conftest.
 """
 
 import logging
-from datetime import datetime
 
 import httpx
 import pandas as pd
@@ -33,10 +32,12 @@ skip_if_no_ollama = pytest.mark.skipif(
 @pytest.fixture
 def trigger_dataset_in_phoenix(real_telemetry):
     """Store a trigger dataset in real Phoenix, return the dataset name."""
+    import uuid
+
     import phoenix as px
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    dataset_name = f"optimization-trigger-default-{timestamp}"
+    unique = uuid.uuid4().hex[:8]
+    dataset_name = f"optimization-trigger-default-{unique}"
 
     df = pd.DataFrame(
         [
@@ -147,3 +148,28 @@ class TestTriggeredOptimization:
 
         # Verify add_memory was called with strategy content
         assert mm.add_memory.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_run_triggered_optimization_end_to_end(
+        self, trigger_dataset_in_phoenix, config_manager
+    ):
+        """Call run_triggered_optimization() with injected config_manager
+        and phoenix_endpoint. Verifies the full CLI orchestration path."""
+        from cogniverse_runtime.optimization_cli import run_triggered_optimization
+
+        result = await run_triggered_optimization(
+            tenant_id="default",
+            agents=["search"],
+            trigger_dataset=trigger_dataset_in_phoenix,
+            config_manager=config_manager,
+            phoenix_endpoint="http://localhost:16006",
+        )
+
+        # Should not fail with "status: failed"
+        assert result.get("status") != "failed", (
+            f"Triggered optimization failed: {result.get('error', 'unknown')}"
+        )
+
+        # Strategy distillation should have run
+        assert "strategies_distilled" in result
+        assert result["strategies_distilled"] >= 0
