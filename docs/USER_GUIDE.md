@@ -987,6 +987,21 @@ curl http://localhost:8000/wiki/index
 
 ---
 
+### RLM (Recursive Language Model)
+
+RLM enables agents to process context that exceeds normal token limits by recursively decomposing inputs using a Python REPL. Available on search, report, code, and research agents.
+
+To activate, pass `rlm` in the request:
+```bash
+curl -X POST http://localhost:28000/agents/detailed_report_agent/process \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_name": "detailed_report_agent", "query": "Analyze these results", "context": {"tenant_id": "default"}, "rlm": {"enabled": true, "max_iterations": 5}}'
+```
+
+RLM is opt-in and disabled by default. When enabled, telemetry metrics (depth, calls, tokens, latency) are included in the response for A/B testing.
+
+---
+
 ## API Reference
 
 ### REST API Endpoints

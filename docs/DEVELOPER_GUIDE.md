@@ -194,6 +194,12 @@ strategies = self.get_strategies(query="cooking tutorial", top_k=5)
 
 ---
 
+### RLM (Recursive Language Model) Architecture
+
+DetailedReportAgent, CodingAgent, DeepResearchAgent, and WikiManager now support RLM (Recursive Language Model) for near-infinite context processing. Pass `rlm=RLMOptions(enabled=True)` in the agent input to activate. WikiManager uses RLM automatically when topic content exceeds 50,000 characters during merging.
+
+---
+
 ## Development Environment
 
 ### Initial Setup
