@@ -139,6 +139,7 @@ class QualityMonitor:
         live_eval_interval_seconds: int = 14400,
         live_sample_count: int = 20,
         thresholds: Optional[QualityThresholds] = None,
+        telemetry_provider=None,
     ):
         self.tenant_id = tenant_id
         self.runtime_url = runtime_url.rstrip("/")
@@ -152,6 +153,8 @@ class QualityMonitor:
         self.live_eval_interval = live_eval_interval_seconds
         self.live_sample_count = live_sample_count
         self.thresholds = thresholds or QualityThresholds()
+        self._telemetry_provider = telemetry_provider
+        self._training_decision_model = None
 
         self._golden_queries: List[Dict[str, Any]] = []
         self._dataset_store = None
@@ -521,13 +524,13 @@ class QualityMonitor:
         golden: Optional[GoldenEvalResult],
         live: Optional[LiveEvalResult],
     ) -> Dict[AgentType, Verdict]:
-        """Compare eval results against baselines, return per-agent verdict."""
+        """Compare eval results against baselines, then consult XGBoost
+        meta-model for smarter optimization timing decisions."""
         verdicts: Dict[AgentType, Verdict] = {}
 
         # Golden set only covers search agent
         if golden:
             search_verdict = Verdict.SKIP
-            # Compare against stored baseline
             baseline_mrr = self._last_golden_baseline_mrr
             if baseline_mrr and baseline_mrr > 0:
                 drop = (baseline_mrr - golden.mean_mrr) / baseline_mrr
@@ -560,11 +563,104 @@ class QualityMonitor:
                         f"from baseline"
                     )
 
-                # Merge with golden verdict (worst wins)
                 existing = verdicts.get(agent_type, Verdict.SKIP)
                 verdicts[agent_type] = max(existing, verdict)
 
+        # Consult XGBoost meta-model for smarter timing
+        verdicts = self._apply_training_decision_model(verdicts, golden, live)
+
         return verdicts
+
+    def _apply_training_decision_model(
+        self,
+        verdicts: Dict[AgentType, Verdict],
+        golden: Optional[GoldenEvalResult],
+        live: Optional[LiveEvalResult],
+    ) -> Dict[AgentType, Verdict]:
+        """Use XGBoost TrainingDecisionModel to confirm or override verdicts.
+
+        The naive threshold check says "quality dropped." The meta-model
+        adds: "is optimization likely to help given current data volume,
+        model staleness, and recent performance?"
+        """
+        if self._telemetry_provider is None:
+            return verdicts
+
+        try:
+            model = self._get_training_decision_model()
+
+            for agent_type, verdict in list(verdicts.items()):
+                context = self._build_modeling_context(agent_type, golden, live)
+                if context is None:
+                    continue
+
+                should_train, expected_improvement = model.should_train(context)
+
+                if verdict == Verdict.OPTIMIZE and not should_train:
+                    logger.info(
+                        f"XGBoost overrides {agent_type.value} OPTIMIZE → SKIP "
+                        f"(expected improvement {expected_improvement:.3f} too low)"
+                    )
+                    verdicts[agent_type] = Verdict.SKIP
+                elif verdict == Verdict.SKIP and should_train:
+                    logger.info(
+                        f"XGBoost upgrades {agent_type.value} SKIP → OPTIMIZE "
+                        f"(expected improvement {expected_improvement:.3f})"
+                    )
+                    verdicts[agent_type] = Verdict.OPTIMIZE
+
+        except Exception as e:
+            logger.debug(f"XGBoost training decision failed (using naive verdicts): {e}")
+
+        return verdicts
+
+    def _get_training_decision_model(self):
+        """Lazy-load XGBoost TrainingDecisionModel."""
+        if self._training_decision_model is None:
+            from cogniverse_agents.routing.xgboost_meta_models import (
+                TrainingDecisionModel,
+            )
+
+            self._training_decision_model = TrainingDecisionModel(
+                telemetry_provider=self._telemetry_provider,
+                tenant_id=self.tenant_id,
+            )
+        return self._training_decision_model
+
+    def _build_modeling_context(
+        self, agent_type: AgentType, golden, live
+    ):
+        """Build ModelingContext from eval results for XGBoost."""
+        try:
+            from cogniverse_agents.routing.xgboost_meta_models import ModelingContext
+            from cogniverse_agents.search.multi_modal_reranker import QueryModality
+
+            modality_map = {
+                AgentType.SEARCH: QueryModality.VIDEO,
+                AgentType.SUMMARY: QueryModality.TEXT,
+                AgentType.REPORT: QueryModality.TEXT,
+                AgentType.ROUTING: QueryModality.MIXED,
+            }
+
+            score = 0.0
+            sample_count = 0
+            if live and agent_type in live.agent_results:
+                result = live.agent_results[agent_type]
+                score = result.score
+                sample_count = result.sample_count
+
+            return ModelingContext(
+                modality=modality_map.get(agent_type, QueryModality.MIXED),
+                real_sample_count=sample_count,
+                synthetic_sample_count=0,
+                success_rate=score,
+                avg_confidence=score,
+                days_since_last_training=7,
+                current_performance_score=score,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to build ModelingContext: {e}")
+            return None
 
     @property
     def _last_golden_baseline_mrr(self) -> Optional[float]:

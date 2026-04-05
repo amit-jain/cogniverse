@@ -546,6 +546,78 @@ class TestClose:
         mock_client.aclose.assert_called_once()
 
 
+class TestXGBoostIntegration:
+    def test_xgboost_overrides_optimize_to_skip(self, monitor):
+        """XGBoost says don't train → override OPTIMIZE to SKIP."""
+        mock_model = MagicMock()
+        mock_model.should_train.return_value = (False, 0.01)
+        monitor._training_decision_model = mock_model
+        monitor._telemetry_provider = MagicMock()
+
+        live = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.3,
+                    baseline_score=0.8,
+                    degradation_pct=0.6,
+                    sample_count=20,
+                ),
+            },
+        )
+
+        verdicts = monitor.check_thresholds(None, live)
+        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+
+    def test_xgboost_upgrades_skip_to_optimize(self, monitor):
+        """XGBoost says train is beneficial → upgrade SKIP to OPTIMIZE."""
+        mock_model = MagicMock()
+        mock_model.should_train.return_value = (True, 0.08)
+        monitor._training_decision_model = mock_model
+        monitor._telemetry_provider = MagicMock()
+
+        live = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.75,
+                    baseline_score=0.80,
+                    degradation_pct=0.06,
+                    sample_count=20,
+                ),
+            },
+        )
+
+        verdicts = monitor.check_thresholds(None, live)
+        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
+
+    def test_no_telemetry_provider_skips_xgboost(self, monitor):
+        """Without telemetry_provider, XGBoost is not consulted."""
+        assert monitor._telemetry_provider is None
+
+        live = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.3,
+                    baseline_score=0.8,
+                    degradation_pct=0.6,
+                    sample_count=20,
+                ),
+            },
+        )
+
+        verdicts = monitor.check_thresholds(None, live)
+        # Without XGBoost, naive check triggers OPTIMIZE
+        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
+
+
 class TestAgentTypeEnum:
     def test_all_agents_have_span_names(self):
         from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
