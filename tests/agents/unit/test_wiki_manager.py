@@ -1,8 +1,9 @@
 """
-Unit tests for wiki page dataclasses and slug generation.
+Unit tests for wiki page dataclasses, slug generation, and WikiManager.
 """
 
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -219,3 +220,97 @@ class TestWikiIndex:
         assert "All about ML." in md
         assert "Session 2024-01-15" in md
         assert "Notes." in md
+
+
+@pytest.mark.unit
+class TestAutoFileThreshold:
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        return WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def test_fires_for_many_entities(self):
+        mgr = self._make_manager()
+        assert mgr._should_auto_file(["A", "B", "C"], "search_agent", 1) is True
+
+    def test_fires_for_report_agent(self):
+        mgr = self._make_manager()
+        assert mgr._should_auto_file(["A"], "detailed_report_agent", 1) is True
+
+    def test_fires_for_deep_research(self):
+        mgr = self._make_manager()
+        assert mgr._should_auto_file(["A"], "deep_research_agent", 1) is True
+
+    def test_fires_for_long_conversation(self):
+        mgr = self._make_manager()
+        assert mgr._should_auto_file([], "search_agent", 4) is True
+
+    def test_skips_casual_query(self):
+        mgr = self._make_manager()
+        assert mgr._should_auto_file(["A"], "search_agent", 1) is False
+
+
+@pytest.mark.unit
+class TestSaveSession:
+    def _make_manager_with_mocks(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        # get_document returns None (no existing topic pages)
+        backend.get_document.return_value = None
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+        return mgr, backend
+
+    def test_save_session_feeds_session_and_topics(self):
+        mgr, backend = self._make_manager_with_mocks()
+
+        with (
+            patch.object(
+                mgr, "_generate_embedding", return_value=[0.1] * 768
+            ),
+            patch.object(mgr, "_rebuild_index") as mock_rebuild,
+            patch.object(mgr, "_feed_page") as mock_feed,
+        ):
+            session = mgr.save_session(
+                query="What is machine learning?",
+                response="Machine learning is a subset of AI.",
+                entities=["Machine Learning", "AI"],
+                agent_name="search_agent",
+                sources=["doc1"],
+            )
+
+        # 1 session + 2 topics = 3 feed calls
+        assert mock_feed.call_count >= 3
+        # rebuild called once
+        mock_rebuild.assert_called_once()
+        # returns a WikiPage
+        assert isinstance(session, WikiPage)
+        assert session.page_type == "session"
+        assert session.query == "What is machine learning?"
+
+    def test_save_session_cross_references_topic_ids(self):
+        mgr, backend = self._make_manager_with_mocks()
+
+        with (
+            patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
+            patch.object(mgr, "_rebuild_index"),
+            patch.object(mgr, "_feed_page"),
+        ):
+            session = mgr.save_session(
+                query="Tell me about neural networks and deep learning.",
+                response="Neural networks are the backbone of deep learning.",
+                entities=["Neural Networks", "Deep Learning"],
+                agent_name="search_agent",
+            )
+
+        # cross_references should contain the topic doc_ids
+        assert len(session.cross_references) == 2
