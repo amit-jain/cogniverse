@@ -13,10 +13,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 # Enhanced routing support
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,10 @@ class DetailedReportInput(AgentInput):
     include_recommendations: bool = Field(True, description="Include recommendations")
     max_results_to_analyze: int = Field(20, description="Maximum results to analyze")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+    rlm: Optional[RLMOptions] = Field(
+        None,
+        description="RLM configuration. None=disabled, set RLMOptions to enable RLM inference for A/B testing",
+    )
 
 
 class DetailedReportOutput(AgentOutput):
@@ -65,6 +71,13 @@ class DetailedReportOutput(AgentOutput):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
+    )
+    # RLM synthesis (when RLM is enabled via input.rlm)
+    rlm_synthesis: Optional[str] = Field(
+        None, description="RLM-synthesized answer from results (only when RLM enabled)"
+    )
+    rlm_telemetry: Optional[Dict[str, Any]] = Field(
+        None, description="RLM telemetry metrics for A/B testing"
     )
 
 
@@ -174,6 +187,7 @@ class ReportResult:
 
 
 class DetailedReportAgent(
+    RLMAwareMixin,
     MemoryAwareMixin,
     A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps],
 ):
@@ -854,6 +868,40 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         # Generate report
         result = await self._generate_report(request)
 
+        # Build results context for optional RLM synthesis
+        results_context = "\n\n".join(
+            f"Result {i + 1}: {r.get('title', r.get('video_id', 'Unknown'))} "
+            f"(score: {r.get('score', r.get('relevance', 0)):.2f})\n"
+            f"{r.get('description', r.get('text', ''))}"
+            for i, r in enumerate(input.search_results[: input.max_results_to_analyze])
+        )
+
+        rlm_synthesis = None
+        rlm_telemetry = None
+
+        if self.should_use_rlm_for_query(input.rlm, results_context):
+            self.emit_progress("rlm_synthesis", "Synthesizing answer with RLM...")
+            logger.info(f"RLM enabled for query: {input.query[:50]}...")
+            try:
+                rlm_result = self.process_with_rlm(
+                    query=input.query,
+                    context=results_context,
+                    rlm_options=input.rlm,
+                )
+                rlm_synthesis = rlm_result.answer
+                rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(results_context))
+                logger.info(
+                    f"RLM synthesis complete: depth={rlm_result.depth_reached}, "
+                    f"calls={rlm_result.total_calls}, latency={rlm_result.latency_ms:.0f}ms"
+                )
+            except Exception as e:
+                logger.error(f"RLM processing failed: {e}")
+                rlm_telemetry = {
+                    "rlm_enabled": False,
+                    "rlm_attempted": True,
+                    "rlm_error": str(e),
+                }
+
         return DetailedReportOutput(
             executive_summary=result.executive_summary,
             detailed_findings=result.detailed_findings,
@@ -870,6 +918,8 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 "reasoning": result.thinking_phase.reasoning,
             },
             metadata=result.metadata,
+            rlm_synthesis=rlm_synthesis,
+            rlm_telemetry=rlm_telemetry,
         )
 
     # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
