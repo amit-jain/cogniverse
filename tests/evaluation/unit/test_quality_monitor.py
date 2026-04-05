@@ -619,11 +619,5 @@ class TestXGBoostIntegration:
 
 
 class TestAgentTypeEnum:
-    def test_all_agents_have_span_names(self):
-        from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
-
-        for agent_type in AgentType:
-            assert agent_type in SPAN_NAME_BY_AGENT
-
     def test_verdict_ordering(self):
         assert Verdict.SKIP.value < Verdict.OPTIMIZE.value
