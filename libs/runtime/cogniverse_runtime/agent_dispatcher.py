@@ -10,6 +10,7 @@ forwarded to routing/orchestration and search paths.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -69,32 +70,71 @@ class AgentDispatcher:
         conversation_history = context.get("conversation_history", [])
 
         if "routing" in capabilities:
-            return await self._execute_routing_task(query, context, tenant_id)
+            result = await self._execute_routing_task(query, context, tenant_id)
         elif capabilities & {"search", "video_search", "retrieval"}:
-            return await self._execute_search_task(
+            result = await self._execute_search_task(
                 query, tenant_id, top_k, conversation_history=conversation_history
             )
         elif capabilities & {"image_search", "visual_analysis"}:
-            return await self._execute_image_search_task(query, tenant_id, top_k)
+            result = await self._execute_image_search_task(query, tenant_id, top_k)
         elif capabilities & {"audio_analysis", "transcription"}:
-            return await self._execute_audio_search_task(query, tenant_id, top_k)
+            result = await self._execute_audio_search_task(query, tenant_id, top_k)
         elif capabilities & {"document_analysis", "pdf_processing"}:
-            return await self._execute_document_search_task(query, tenant_id, top_k)
+            result = await self._execute_document_search_task(query, tenant_id, top_k)
         elif capabilities & {"detailed_report"}:
-            return await self._execute_detailed_report_task(query, tenant_id)
+            result = await self._execute_detailed_report_task(query, tenant_id)
         elif capabilities & {"summarization", "text_generation"}:
-            return await self._execute_summarization_task(query, tenant_id)
+            result = await self._execute_summarization_task(query, tenant_id)
         elif capabilities & {"text_analysis", "sentiment", "classification"}:
-            return await self._execute_text_analysis_task(query, context, tenant_id)
+            result = await self._execute_text_analysis_task(query, context, tenant_id)
         elif "deep_research" in capabilities:
-            return await self._execute_deep_research_task(query, tenant_id)
+            result = await self._execute_deep_research_task(query, tenant_id)
         elif "coding" in capabilities:
-            return await self._execute_coding_task(query, tenant_id, context)
+            result = await self._execute_coding_task(query, tenant_id, context)
         else:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path. "
                 f"Capabilities: {agent.capabilities}"
             )
+
+        entities = result.get("entities", [])
+        turn_count = len(conversation_history or []) // 2 + 1
+        asyncio.create_task(
+            self._maybe_auto_file_wiki(query, result, entities, agent_name, tenant_id, turn_count)
+        )
+        return result
+
+    async def _maybe_auto_file_wiki(
+        self,
+        query: str,
+        response: Dict[str, Any],
+        entities: List[str],
+        agent_name: str,
+        tenant_id: str,
+        turn_count: int,
+    ) -> None:
+        """Fire-and-forget wiki auto-filing. Non-fatal: logs and returns on any error."""
+        try:
+            from cogniverse_runtime.routers.wiki import _wiki_manager
+
+            if _wiki_manager is None:
+                return
+
+            if not _wiki_manager._should_auto_file(entities, agent_name, turn_count):
+                return
+
+            response_text = str(response.get("answer", response))
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _wiki_manager.save_session(
+                    query=query,
+                    response=response_text,
+                    entities=entities,
+                    agent_name=agent_name,
+                ),
+            )
+        except Exception:
+            logger.warning("Wiki auto-filing failed (non-fatal)", exc_info=True)
 
     def create_streaming_agent(
         self, agent_name: str, query: str, tenant_id: str

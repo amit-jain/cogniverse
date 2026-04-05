@@ -135,7 +135,7 @@ flowchart TB
 | **core** | Core | Base classes, registries, memory | agents/, common/, registries/ |
 | **evaluation** | Core | Experiments, metrics, datasets, quality monitor | core/, metrics/, evaluators/, quality_monitor.py |
 | **synthetic** | Core | Synthetic data generation | service.py, generators/ |
-| **agents** | Implementation | Routing, search, orchestration, strategy learner | routing/, search/, tools/, optimizer/ |
+| **agents** | Implementation | Routing, search, orchestration, strategy learner, wiki knowledge base | routing/, search/, tools/, optimizer/, wiki/ |
 | **vespa** | Implementation | Vespa backend, schema management | config/, registry/, workflow/ |
 | **finetuning** | Implementation | LLM fine-tuning (SFT, DPO) | training/, dataset/, registry/ |
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |

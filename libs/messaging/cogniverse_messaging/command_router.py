@@ -24,6 +24,10 @@ HELP_TEXT = """Available commands:
 /report <query> — Generate a detailed analysis report
 /research <query> — Deep research across multiple sources
 /code <query> — Code search and analysis
+/wiki save — Save the current session to the wiki
+/wiki search <query> — Search the wiki knowledge base
+/wiki topic <name> — Look up a topic page by name
+/wiki index — Show the wiki index
 /help — Show this message
 
 Or just send a message — it will be automatically routed to the best agent.
@@ -44,6 +48,8 @@ class ParsedCommand:
     has_media: bool = False
     media_type: Optional[str] = None
     media_file_id: Optional[str] = None
+    is_wiki: bool = False
+    wiki_subcommand: Optional[str] = None
 
 
 def parse_message(
@@ -101,6 +107,18 @@ def parse_message(
             query="",
             is_command=True,
             is_help=True,
+        )
+
+    if text.startswith("/wiki"):
+        parts = text.split(maxsplit=2)
+        subcmd = parts[1] if len(parts) > 1 else ""
+        wiki_query = parts[2] if len(parts) > 2 else ""
+        return ParsedCommand(
+            agent_name="",
+            query=wiki_query,
+            is_command=True,
+            is_wiki=True,
+            wiki_subcommand=subcmd,
         )
 
     for command, agent in AGENT_COMMANDS.items():

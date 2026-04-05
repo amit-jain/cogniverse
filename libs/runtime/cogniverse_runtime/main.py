@@ -20,7 +20,15 @@ from cogniverse_foundation.config.utils import get_config
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.config_loader import get_config_loader
-from cogniverse_runtime.routers import admin, agents, events, health, ingestion, search
+from cogniverse_runtime.routers import (
+    admin,
+    agents,
+    events,
+    health,
+    ingestion,
+    search,
+    wiki,
+)
 from cogniverse_synthetic.api import router as synthetic_router
 
 logger = logging.getLogger(__name__)
@@ -266,6 +274,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
 
+    # 8b. Initialize WikiManager (lazy — schema deployed on first use)
+    try:
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        from cogniverse_runtime.routers import wiki as wiki_router
+
+        wiki_backend = BackendRegistry.get_instance().get_ingestion_backend(
+            name=bootstrap.backend_type,
+            tenant_id="default",
+            config={
+                "backend": {
+                    "url": bootstrap.backend_url,
+                    "port": bootstrap.backend_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        wm = WikiManager(
+            backend=wiki_backend,
+            tenant_id="default",
+            schema_name="wiki_pages_default",
+        )
+        wiki_router.set_wiki_manager(wm)
+        logger.info("WikiManager initialized")
+    except Exception as e:
+        logger.warning(f"WikiManager init failed (non-fatal): {e}")
+
     # 9. Configure DSPy LM and synthetic data service
     import dspy
 
@@ -357,6 +392,7 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])
+app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 
 
 @app.get("/")

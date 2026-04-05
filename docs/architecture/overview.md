@@ -72,8 +72,9 @@ cogniverse/
 │   │       ├── orchestrator/     # Multi-agent orchestrator
 │   │       ├── tools/            # A2A tools
 │   │       ├── memory_aware_mixin.py  # MemoryAwareMixin with get_strategies()
-│   │       └── optimizer/        # DSPy optimizers + strategy learner
-│   │           └── strategy_learner.py  # StrategyLearner (pattern + LLM distillation)
+│   │       ├── optimizer/        # DSPy optimizers + strategy learner
+│   │       │   └── strategy_learner.py  # StrategyLearner (pattern + LLM distillation)
+│   │       └── wiki/             # Wiki knowledge base (WikiManager, WikiPage)
 │   │
 │   ├── telemetry-phoenix/        # cogniverse-telemetry-phoenix (Plugin)
 │   │   ├── pyproject.toml

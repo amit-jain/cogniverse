@@ -881,6 +881,29 @@ sequenceDiagram
     GW->>MEM: ConversationManager.store_turn()
 ```
 
+### Wiki Knowledge Base
+
+Cogniverse automatically saves agent interactions as searchable wiki pages. Pages are stored in Vespa and indexed per tenant.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/wiki/save` | POST | Persist an agent interaction as a wiki page |
+| `/wiki/search` | POST | Full-text search over wiki pages |
+| `/wiki/topic/{slug}` | GET | Retrieve a topic page by slug |
+| `/wiki/index` | GET | Return the rendered wiki index |
+
+```bash
+# Save a wiki page
+curl -X POST http://localhost:8000/wiki/save \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning basics", "response": {"answer": "ML is..."}, "entities": ["machine_learning"], "agent_name": "routing_agent", "tenant_id": "acme_corp"}'
+
+# Search wiki pages
+curl -X POST http://localhost:8000/wiki/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning", "tenant_id": "acme_corp", "top_k": 5}'
+```
+
 ---
 
 ## API Reference

@@ -1,5 +1,5 @@
 """Runtime routers - all API endpoints."""
 
-from cogniverse_runtime.routers import admin, agents, health, ingestion, search
+from cogniverse_runtime.routers import admin, agents, health, ingestion, search, wiki
 
-__all__ = ["health", "agents", "search", "ingestion", "admin"]
+__all__ = ["health", "agents", "search", "ingestion", "admin", "wiki"]

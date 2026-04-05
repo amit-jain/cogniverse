@@ -91,3 +91,31 @@ class TestCommandParsing:
     def test_none_text(self):
         result = parse_message(text=None)
         assert result.agent_name == "routing_agent"
+
+    def test_wiki_save(self):
+        result = parse_message(text="/wiki save")
+        assert result.is_wiki
+        assert result.is_command
+        assert result.wiki_subcommand == "save"
+        assert result.query == ""
+
+    def test_wiki_search(self):
+        result = parse_message(text="/wiki search machine learning")
+        assert result.is_wiki
+        assert result.is_command
+        assert result.wiki_subcommand == "search"
+        assert result.query == "machine learning"
+
+    def test_wiki_topic(self):
+        result = parse_message(text="/wiki topic transformers")
+        assert result.is_wiki
+        assert result.is_command
+        assert result.wiki_subcommand == "topic"
+        assert result.query == "transformers"
+
+    def test_wiki_index(self):
+        result = parse_message(text="/wiki index")
+        assert result.is_wiki
+        assert result.is_command
+        assert result.wiki_subcommand == "index"
+        assert result.query == ""
