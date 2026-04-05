@@ -789,13 +789,17 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 
 | Command | Agent | Example |
 |---------|-------|---------|
-| `/search <query>` | video_search_agent | `/search machine learning tutorial` |
-| `/summarize <query>` | summary_agent | `/summarize the Python basics video` |
-| `/report <query>` | report_agent | `/report Q4 content performance` |
-| `/research <query>` | orchestrator | `/research best practices for async Python` |
-| `/code <query>` | orchestrator | `/code write a FastAPI health endpoint` |
+| `/search <query>` | search_agent | `/search machine learning tutorial` |
+| `/summarize <query>` | summarizer_agent | `/summarize the Python basics video` |
+| `/report <query>` | detailed_report_agent | `/report Q4 content performance` |
+| `/research <query>` | deep_research_agent | `/research best practices for async Python` |
+| `/code <query>` | coding_agent | `/code write a FastAPI health endpoint` |
+| `/wiki save` | — | Save current session to the wiki |
+| `/wiki search <query>` | — | Search the wiki knowledge base |
+| `/wiki topic <name>` | — | Look up a topic page by name |
+| `/wiki index` | — | Show the full wiki index |
 | Plain text | routing_agent | `what videos do you have on transformers?` |
-| Photo/video | video_search_agent | Send a frame to search for similar content |
+| Photo/video | search_agent | Send a frame to search for similar content |
 | `/help` | — | Show all available commands |
 
 Conversation history is maintained via Mem0 across sessions. The gateway runs in polling mode for development (`GATEWAY_MODE=polling`) and webhook mode for production (`GATEWAY_MODE=webhook` with `TELEGRAM_WEBHOOK_URL` set).
@@ -883,7 +887,72 @@ sequenceDiagram
 
 ### Wiki Knowledge Base
 
-Cogniverse automatically saves agent interactions as searchable wiki pages. Pages are stored in Vespa and indexed per tenant.
+Cogniverse automatically saves agent interactions as searchable wiki pages. Pages are stored in Vespa using hybrid search (semantic + BM25) and indexed per tenant.
+
+#### Page Types
+
+| Type | Description |
+|------|-------------|
+| **Topic page** | Named page that grows over time — new content is appended each time the topic is mentioned. Stable `doc_id` based on the entity name slug. |
+| **Session page** | Point-in-time capture of a single agent interaction — one page per conversation. Cross-references the topic pages it touched. |
+
+A separate `wiki_index` document is maintained per tenant listing all pages and summaries.
+
+#### Auto-Filing
+
+After every agent dispatch, the system checks whether the interaction is substantial enough to auto-file as a wiki session. An interaction is filed automatically when **any** of the following is true:
+
+- 3 or more entities were extracted from the response
+- The agent is `detailed_report_agent` or `deep_research_agent`
+- The conversation has 4 or more turns
+
+Auto-filing is fire-and-forget (non-blocking). Failures are logged but never surfaced to the user.
+
+#### Auto-Filing Flow
+
+```mermaid
+flowchart TD
+    AGENT["<span style='color:#000'>Agent Interaction<br/>(any agent dispatch)</span>"]
+    CHECK["<span style='color:#000'>_should_auto_file()<br/>entities ≥ 3<br/>agent in AUTO_FILE_AGENTS<br/>turn_count ≥ 4</span>"]
+    SKIP["<span style='color:#000'>Skip<br/>(interaction too brief)</span>"]
+    WM["<span style='color:#000'>WikiManager<br/>save_session()</span>"]
+    TOPIC["<span style='color:#000'>Topic Pages<br/>(upsert per entity)</span>"]
+    SESSION["<span style='color:#000'>Session Page<br/>(point-in-time capture)</span>"]
+    INDEX["<span style='color:#000'>wiki_index<br/>(rebuilt per tenant)</span>"]
+    VESPA["<span style='color:#000'>Vespa wiki_pages schema<br/>hybrid search (semantic + BM25)</span>"]
+
+    AGENT --> CHECK
+    CHECK -->|"no"| SKIP
+    CHECK -->|"yes"| WM
+    WM --> TOPIC
+    WM --> SESSION
+    WM --> INDEX
+    TOPIC --> VESPA
+    SESSION --> VESPA
+    INDEX --> VESPA
+
+    style AGENT fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CHECK fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SKIP fill:#b0bec5,stroke:#546e7a,color:#000
+    style WM fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style TOPIC fill:#81c784,stroke:#388e3c,color:#000
+    style SESSION fill:#81c784,stroke:#388e3c,color:#000
+    style INDEX fill:#81c784,stroke:#388e3c,color:#000
+    style VESPA fill:#90caf9,stroke:#1565c0,color:#000
+```
+
+#### Telegram /wiki Commands
+
+Use these commands in Telegram to interact with the wiki directly:
+
+| Command | Description |
+|---------|-------------|
+| `/wiki save` | Save the current session to the wiki |
+| `/wiki search <query>` | Search the wiki knowledge base |
+| `/wiki topic <name>` | Look up a topic page by name |
+| `/wiki index` | Show the full wiki index |
+
+#### REST API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -896,12 +965,24 @@ Cogniverse automatically saves agent interactions as searchable wiki pages. Page
 # Save a wiki page
 curl -X POST http://localhost:8000/wiki/save \
   -H "Content-Type: application/json" \
-  -d '{"query": "machine learning basics", "response": {"answer": "ML is..."}, "entities": ["machine_learning"], "agent_name": "routing_agent", "tenant_id": "acme_corp"}'
+  -d '{
+    "query": "machine learning basics",
+    "response": {"answer": "ML is..."},
+    "entities": ["machine_learning"],
+    "agent_name": "routing_agent",
+    "tenant_id": "acme_corp"
+  }'
 
 # Search wiki pages
 curl -X POST http://localhost:8000/wiki/search \
   -H "Content-Type: application/json" \
   -d '{"query": "machine learning", "tenant_id": "acme_corp", "top_k": 5}'
+
+# Get a topic page
+curl http://localhost:8000/wiki/topic/machine_learning
+
+# Get the wiki index
+curl http://localhost:8000/wiki/index
 ```
 
 ---

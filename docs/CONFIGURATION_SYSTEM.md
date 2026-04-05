@@ -94,6 +94,52 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
   -d '{"tenant_id": "acme", "expires_in_hours": 24}'
 ```
 
+### Wiki Knowledge Base Configuration
+
+The wiki knowledge base uses a dedicated Vespa schema (`wiki_pages`) that is deployed automatically at runtime startup for the `default` tenant. No manual configuration is required.
+
+**Schema deployment** (happens automatically in `startup_event`):
+
+```python
+# Deployed via schema_registry.deploy_schema() during startup
+# Schema name follows the pattern: wiki_pages_{tenant_id}
+# e.g. wiki_pages_default, wiki_pages_acme_production
+```
+
+**Schema file**: `configs/schemas/wiki_pages_schema.json`
+
+The schema stores the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `doc_id` | string | Unique document ID (deterministic for topics, timestamped for sessions) |
+| `tenant_id` | string | Tenant the page belongs to |
+| `page_type` | string | `"topic"`, `"session"`, or `"index"` |
+| `title` | string | Page title (entity name for topics, query prefix for sessions) |
+| `content` | string | Full page content (appended for topics, snapshot for sessions) |
+| `slug` | string | URL-safe identifier derived from the title |
+| `query` | string | Original user query (sessions only) |
+| `entities` | string | JSON-serialized list of entity names |
+| `sources` | string | JSON-serialized list of source references |
+| `cross_references` | string | JSON-serialized list of related topic `doc_id`s |
+| `agent_used` | string | Agent that produced the content (sessions only) |
+| `update_count` | int | Number of times a topic page has been updated |
+| `created_at` | string | ISO-8601 UTC timestamp of first creation |
+| `updated_at` | string | ISO-8601 UTC timestamp of last update |
+| `embedding` | tensor | 768-dim float tensor (nomic-embed-text via Ollama) |
+
+**WikiManager constructor** (initialized by the runtime on startup):
+
+```python
+from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+wm = WikiManager(
+    backend=vespa_backend,      # VespaSearchBackend instance
+    tenant_id="default",        # Tenant identifier
+    schema_name="wiki_pages_default",  # Vespa schema name for this tenant
+)
+```
+
 ### Quality Monitor Configuration
 
 Sidecar configuration (Helm values under `runtime.qualityMonitor.*`):

@@ -187,6 +187,39 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 
 ---
 
+## Optional: Wiki Knowledge Base
+
+The wiki knowledge base automatically saves substantial agent interactions as searchable pages in Vespa. It requires no configuration — the `wiki_pages` schema is deployed on startup.
+
+```bash
+# Save a session manually
+curl -X POST http://localhost:8000/wiki/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "how does ColPali work?",
+    "response": {"answer": "ColPali uses patch-level embeddings..."},
+    "entities": ["ColPali", "patch_embeddings"],
+    "agent_name": "routing_agent",
+    "tenant_id": "default"
+  }'
+
+# Search the wiki
+curl -X POST http://localhost:8000/wiki/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "ColPali embeddings", "tenant_id": "default", "top_k": 5}'
+```
+
+Via Telegram (after connecting the messaging gateway):
+```text
+/wiki search ColPali
+/wiki topic ColPali
+/wiki index
+```
+
+Auto-filing triggers automatically when an interaction has 3+ extracted entities, comes from `detailed_report_agent` or `deep_research_agent`, or spans 4+ conversation turns.
+
+---
+
 ## Optional: Enable Quality Monitor
 
 The quality monitor runs as a sidecar, continuously evaluating all agents and triggering optimization when quality degrades:
