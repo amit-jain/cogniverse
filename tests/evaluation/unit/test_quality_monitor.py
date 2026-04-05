@@ -466,6 +466,77 @@ class TestUpdateBaseline:
         # Should not modify file
 
 
+class TestEvaluateLiveTraffic:
+    @pytest.mark.asyncio
+    async def test_evaluate_live_traffic_returns_results(self, monitor):
+        """Live traffic eval with mocked span evaluator."""
+        import pandas as pd
+
+        mock_spans = pd.DataFrame([
+            {"span_id": "s1", "attributes": {"query": "test"}, "outputs": {"results": []}},
+        ])
+
+        with patch("cogniverse_evaluation.span_evaluator.SpanEvaluator") as MockEval:
+            mock_eval = MagicMock()
+            mock_eval.get_recent_spans = AsyncMock(return_value=mock_spans)
+            MockEval.return_value = mock_eval
+
+            with patch.object(monitor, "_evaluate_agent_spans", new_callable=AsyncMock) as mock_agent:
+                mock_agent.return_value = AgentEvalResult(
+                    agent=AgentType.SEARCH, score=0.7, baseline_score=0.8,
+                    degradation_pct=0.12, sample_count=1,
+                )
+                with patch.object(monitor, "_store_live_eval_result", new_callable=AsyncMock):
+                    result = await monitor.evaluate_live_traffic()
+
+        assert result.tenant_id == "test_tenant"
+
+
+class TestEvaluateAgentSpans:
+    @pytest.mark.asyncio
+    async def test_evaluate_search_spans(self, monitor):
+        """Score search spans via LLM judge."""
+        import pandas as pd
+
+        spans = pd.DataFrame([{
+            "span_id": "s1",
+            "attributes": {"query": "test video"},
+            "outputs": {"results": [{"video_id": "v1", "score": 0.9}]},
+        }])
+
+        mock_judge = MagicMock()
+        mock_judge._call_llm = AsyncMock(return_value="Score: 8/10. Good results.")
+        mock_judge._extract_score_from_response = MagicMock(return_value=(0.8, "Good"))
+        monitor._llm_judge = mock_judge
+
+        with patch.object(monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=0.85):
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+
+        assert result.agent == AgentType.SEARCH
+        assert result.score == 0.8
+        assert result.sample_count == 1
+
+
+class TestGetAgentBaseline:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_baseline(self, monitor):
+        with patch("phoenix.Client") as mock_client:
+            mock_client.side_effect = Exception("no connection")
+            result = await monitor._get_agent_baseline(AgentType.SEARCH)
+        assert result is None
+
+
+class TestHTTPClient:
+    def test_lazy_init(self, monitor):
+        assert monitor._http_client is None
+        client = monitor._get_http_client()
+        assert client is not None
+
+    def test_load_golden_queries(self, monitor):
+        queries = monitor._load_golden_queries()
+        assert len(queries) == 2
+
+
 class TestClose:
     @pytest.mark.asyncio
     async def test_close_cleans_up(self, monitor):
