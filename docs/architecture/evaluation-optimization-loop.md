@@ -418,26 +418,38 @@ The Quality Monitor (`cogniverse_evaluation.quality_monitor.QualityMonitor`) run
 ### Dual Evaluation Strategy
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph "Quality Monitor (sidecar)"
         GM["<span style='color:#000'>Golden Set Eval<br/>every 2h</span>"]
         LT["<span style='color:#000'>Live Traffic Eval<br/>every 4h</span>"]
+        THR{"<span style='color:#000'>Naive threshold:<br/>MRR dropped?<br/>Score below floor?</span>"}
+        XGB{"<span style='color:#000'>XGBoost<br/>TrainingDecisionModel:<br/>is optimization<br/>worth running?</span>"}
     end
 
     PHX["<span style='color:#000'>Phoenix<br/>Telemetry</span>"]
     ARGO["<span style='color:#000'>Argo Workflow<br/>(triggered mode)</span>"]
     BASELINE["<span style='color:#000'>Phoenix Dataset<br/>Baselines</span>"]
+    SKIP["<span style='color:#000'>Skip optimization<br/>(data/timing not ready)</span>"]
 
-    GM -->|"MRR/NDCG below baseline"| ARGO
-    LT -->|"Agent score below threshold"| ARGO
-    GM -->|"Update on improvement"| BASELINE
+    GM -->|"eval results"| THR
+    LT -->|"agent scores"| THR
     PHX -->|"Sample recent spans"| LT
+    GM -->|"Update on improvement"| BASELINE
+
+    THR -- "Yes: quality dropped" --> XGB
+    THR -- "No: within threshold" --> SKIP
+
+    XGB -- "Confirms: train now" --> ARGO
+    XGB -- "Overrides: skip\n(low data / recent train)" --> SKIP
 
     style GM fill:#a5d6a7,stroke:#388e3c,color:#000
     style LT fill:#90caf9,stroke:#1565c0,color:#000
-    style PHX fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style THR fill:#ffcc80,stroke:#ef6c00,color:#000
+    style XGB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PHX fill:#81d4fa,stroke:#0288d1,color:#000
     style ARGO fill:#ffcc80,stroke:#ef6c00,color:#000
     style BASELINE fill:#b0bec5,stroke:#546e7a,color:#000
+    style SKIP fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 - **Golden set evaluation**: runs curated queries against the runtime API, scores with IR metrics (MRR, NDCG@K, Precision@5). When MRR improves, the baseline is updated in Phoenix. When quality drops, Argo is triggered.
@@ -509,5 +521,6 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **LLM Auto-Annotation** | Semi-automated labeling | Pre-screen routing decisions before human review |
 | **Temporal Decay** | Online learning | Exploration ε decays 0.995× per update (floor: 0.05) |
 | **Quality Monitor** | Continuous evaluation | Dual-strategy sidecar: golden set + live LLM judge; triggers Argo on degradation |
+| **XGBoost Training Decision Model** | Optimization gating | Meta-model confirms or overrides naive threshold verdicts based on data volume, model staleness, and expected improvement |
 | **Strategy Distillation** | Knowledge transfer | Pattern + LLM contrastive distillation from traces into Vespa-stored strategies |
 | **Two-Level Strategy Scoping** | Personalization | Org-level shared strategies + user-level personalized strategies via Mem0 |

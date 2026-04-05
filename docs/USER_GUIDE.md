@@ -800,6 +800,87 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 
 Conversation history is maintained via Mem0 across sessions. The gateway runs in polling mode for development (`GATEWAY_MODE=polling`) and webhook mode for production (`GATEWAY_MODE=webhook` with `TELEGRAM_WEBHOOK_URL` set).
 
+#### Gateway Architecture
+
+```mermaid
+flowchart TD
+    TG["<span style='color:#000'>Telegram User</span>"]
+    BOT["<span style='color:#000'>Telegram Bot API<br/>(webhook / polling)</span>"]
+    GW["<span style='color:#000'>MessagingGateway</span>"]
+    CR["<span style='color:#000'>command_router<br/>parse_message()</span>"]
+    AUTH["<span style='color:#000'>InviteTokenManager<br/>validate_token()</span>"]
+    UM["<span style='color:#000'>UserTenantMapper<br/>get_tenant_id()</span>"]
+    CM["<span style='color:#000'>ConversationManager<br/>get_history() / store_turn()</span>"]
+    RC["<span style='color:#000'>RuntimeClient<br/>POST /agents/{name}/process</span>"]
+    FMT["<span style='color:#000'>format_agent_response()<br/>chunk at 4096 chars</span>"]
+
+    TG -->|"sends message"| BOT
+    BOT -->|"Update"| GW
+    GW --> CR
+    CR -->|"ParsedCommand<br/>(agent_name, query)"| GW
+    GW --> AUTH
+    AUTH -->|"tenant_id"| UM
+    UM -->|"tenant confirmed"| GW
+    GW --> CM
+    CM -->|"conversation history"| RC
+    RC -->|"agent response"| FMT
+    FMT -->|"chunked messages"| TG
+
+    style TG fill:#81d4fa,stroke:#0288d1,color:#000
+    style BOT fill:#90caf9,stroke:#1565c0,color:#000
+    style GW fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CR fill:#a5d6a7,stroke:#388e3c,color:#000
+    style AUTH fill:#ffcc80,stroke:#ef6c00,color:#000
+    style UM fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CM fill:#b0bec5,stroke:#546e7a,color:#000
+    style RC fill:#64b5f6,stroke:#1565c0,color:#000
+    style FMT fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+#### End-to-End User Flow
+
+```mermaid
+sequenceDiagram
+    participant ADM as Admin
+    participant RT as Runtime API
+    participant USR as Telegram User
+    participant BOT as Telegram Bot API
+    participant GW as MessagingGateway
+    participant MEM as Mem0 Memory
+
+    ADM->>RT: POST /admin/messaging/invite<br/>{tenant_id, expires_in_hours}
+    RT-->>ADM: {token: "abc123..."}
+    ADM->>USR: share invite token out-of-band
+
+    USR->>BOT: /start abc123...
+    BOT->>GW: Update (start command + token)
+    GW->>GW: InviteTokenManager.validate_token()
+    GW->>MEM: UserTenantMapper.register_user()
+    GW->>GW: InviteTokenManager.mark_token_used()
+    GW-->>USR: "Registered as acme_corp."
+
+    USR->>BOT: /search machine learning tutorial
+    BOT->>GW: Update (search command)
+    GW->>GW: parse_message() → search_agent
+    GW->>MEM: ConversationManager.get_history(chat_id)
+    MEM-->>GW: prior turns
+    GW->>RT: POST /agents/search_agent/process
+    RT-->>GW: {results: [...], message: "..."}
+    GW->>GW: format_agent_response() → chunk at 4096 chars
+    GW-->>USR: search results
+    GW->>MEM: ConversationManager.store_turn(user + assistant)
+
+    USR->>BOT: what else do you have on this topic?
+    BOT->>GW: Update (plain text)
+    GW->>GW: parse_message() → routing_agent
+    GW->>MEM: ConversationManager.get_history(chat_id)
+    MEM-->>GW: prior turns (multi-turn context)
+    GW->>RT: POST /agents/routing_agent/process<br/>(with conversation_history)
+    RT-->>GW: {message: "..."}
+    GW-->>USR: routed response
+    GW->>MEM: ConversationManager.store_turn()
+```
+
 ---
 
 ## API Reference
