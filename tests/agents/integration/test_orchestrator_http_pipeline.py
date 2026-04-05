@@ -5,6 +5,17 @@ These tests start a real FastAPI stub server that serves A2A-compliant
 JSON-RPC 2.0 responses, and exercise actual TCP/HTTP round-trips
 through the official a2a-sdk A2AClient. This catches URL construction,
 JSON-RPC serialization, and A2A protocol compliance bugs.
+
+What is REAL (integration boundary):
+- A real uvicorn server running in a background thread on a unique port
+- Actual TCP socket connections from the orchestrator to the stub server
+- Real HTTP serialization/deserialization and JSON-RPC 2.0 framing
+
+What is MOCKED (deliberately, to isolate HTTP layer):
+- RoutingAgent: requires LLM — tested separately in TestConversationAwarePlanningWithLLM
+- create_workflow_intelligence: requires LLM
+- workflow_planner.forward: replaced with controllable Mock to drive specific task plans
+  (the real planner is tested in TestConversationAwarePlanningWithLLM under @skip_if_no_llm)
 """
 
 import asyncio

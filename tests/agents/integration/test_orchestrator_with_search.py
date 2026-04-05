@@ -10,6 +10,16 @@ Tests validate the COMPLETE orchestration pipeline:
 Requirements:
 - Ollama running with gemma3:4b model (orchestrator planning needs better generation quality)
 - Docker for Vespa container (for search agent)
+
+What is REAL (integration boundary):
+- Real DSPy LLM inference via Ollama (planning + per-agent inference)
+- Real Vespa Docker container (search agent hits actual Vespa)
+- Real agent instances (EntityExtractionAgent, ProfileSelectionAgent, etc.)
+
+What is MOCKED (deliberately, to allow in-process dispatch without an HTTP server):
+- httpx.AsyncClient: patched to route POST calls directly to in-process agent._process_impl()
+  instead of making real HTTP calls. This keeps the test self-contained while still exercising
+  all agent logic. The HTTP wire format is tested separately in test_orchestrator_http_pipeline.py.
 """
 
 import logging

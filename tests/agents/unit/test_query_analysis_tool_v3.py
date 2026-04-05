@@ -855,3 +855,57 @@ class TestDataClasses:
         assert QueryComplexity.SIMPLE.value == "simple"
         assert QueryComplexity.MODERATE.value == "moderate"
         assert QueryComplexity.COMPLEX.value == "complex"
+
+
+@pytest.mark.unit
+class TestQueryAnalysisMultimodalAndTemporal:
+    """Tests for multimodal detection and temporal filter extraction."""
+
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_multimodal_query_detection(self, mock_get_config, mock_config):
+        """Multimodal/visual queries set both needs_video_search and needs_visual_analysis."""
+        mock_get_config.return_value = mock_config
+
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                telemetry_provider=_make_mock_telemetry_provider(),
+                enable_agent_integration=False,
+            )
+
+        result = await analyzer.analyze(
+            "show me videos and images about neural networks with detailed visual analysis"
+        )
+
+        assert (
+            QueryIntent.MULTIMODAL in [result.primary_intent] + result.secondary_intents
+            or QueryIntent.VISUAL in [result.primary_intent] + result.secondary_intents
+        )
+        assert result.needs_video_search is True
+        assert result.needs_visual_analysis is True
+        assert result.thinking_phase["modality_hints"]["video"] is True
+
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_temporal_query_analysis(self, mock_get_config, mock_config):
+        """Temporal queries produce temporal intent and populated temporal_filters."""
+        mock_get_config.return_value = mock_config
+
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                telemetry_provider=_make_mock_telemetry_provider(),
+                enable_agent_integration=False,
+            )
+
+        result = await analyzer.analyze("show me recent AI research from last week")
+
+        assert (
+            QueryIntent.TEMPORAL == result.primary_intent
+            or QueryIntent.TEMPORAL in result.secondary_intents
+        )
+        assert len(result.temporal_filters) > 0
+        assert "start_date" in result.temporal_filters
+        assert result.temporal_filters["temporal_term"] in ["recent", "last week"]
+        assert result.thinking_phase["temporal_indicators"]
