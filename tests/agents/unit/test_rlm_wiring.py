@@ -100,3 +100,103 @@ class TestDetailedReportOutputRLMFields:
             rlm_telemetry=telemetry,
         )
         assert out.rlm_telemetry == telemetry
+
+
+class TestCodingAgentRLM:
+    def test_has_rlm_mixin(self):
+        from cogniverse_agents.coding_agent import CodingAgent
+        assert issubclass(CodingAgent, RLMAwareMixin)
+
+    def test_input_has_rlm_options(self):
+        from cogniverse_agents.coding_agent import CodingInput
+        assert "rlm" in CodingInput.model_fields
+
+    def test_output_has_rlm_fields(self):
+        from cogniverse_agents.coding_agent import CodingOutput
+        assert "rlm_synthesis" in CodingOutput.model_fields
+        assert "rlm_telemetry" in CodingOutput.model_fields
+
+    def test_rlm_mixin_precedes_a2a_agent_in_mro(self):
+        from cogniverse_agents.coding_agent import CodingAgent
+        mro_names = [cls.__name__ for cls in CodingAgent.__mro__]
+        rlm_idx = mro_names.index("RLMAwareMixin")
+        a2a_idx = mro_names.index("A2AAgent")
+        assert rlm_idx < a2a_idx
+
+    def test_rlm_field_is_optional_in_input(self):
+        from cogniverse_agents.coding_agent import CodingInput
+        field = CodingInput.model_fields["rlm"]
+        assert not field.is_required()
+
+    def test_rlm_fields_default_to_none_in_output(self):
+        from cogniverse_agents.coding_agent import CodingOutput
+        out = CodingOutput()
+        assert out.rlm_synthesis is None
+        assert out.rlm_telemetry is None
+
+
+class TestDeepResearchAgentRLM:
+    def test_has_rlm_mixin(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchAgent
+        assert issubclass(DeepResearchAgent, RLMAwareMixin)
+
+    def test_input_has_rlm_options(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchInput
+        assert "rlm" in DeepResearchInput.model_fields
+
+    def test_output_has_rlm_fields(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchOutput
+        assert "rlm_synthesis" in DeepResearchOutput.model_fields
+        assert "rlm_telemetry" in DeepResearchOutput.model_fields
+
+    def test_rlm_mixin_precedes_a2a_agent_in_mro(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchAgent
+        mro_names = [cls.__name__ for cls in DeepResearchAgent.__mro__]
+        rlm_idx = mro_names.index("RLMAwareMixin")
+        a2a_idx = mro_names.index("A2AAgent")
+        assert rlm_idx < a2a_idx
+
+    def test_rlm_field_is_optional_in_input(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchInput
+        field = DeepResearchInput.model_fields["rlm"]
+        assert not field.is_required()
+
+    def test_rlm_fields_default_to_none_in_output(self):
+        from cogniverse_agents.deep_research_agent import DeepResearchOutput
+        out = DeepResearchOutput(summary="test")
+        assert out.rlm_synthesis is None
+        assert out.rlm_telemetry is None
+
+
+class TestWikiManagerRLM:
+    def test_has_merge_threshold_method(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        assert hasattr(wm, "_should_use_rlm_for_merge")
+
+    def test_has_merge_with_rlm_method(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        assert hasattr(wm, "_merge_with_rlm")
+
+    def test_skips_rlm_for_small_content(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        assert wm._should_use_rlm_for_merge("short", "also short") is False
+
+    def test_triggers_rlm_for_large_content(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        assert wm._should_use_rlm_for_merge("x" * 40000, "y" * 20000) is True
+
+    def test_threshold_boundary_below(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        # 49999 chars combined — just under threshold
+        assert wm._should_use_rlm_for_merge("a" * 30000, "b" * 19999) is False
+
+    def test_threshold_boundary_at(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+        wm = WikiManager.__new__(WikiManager)
+        # exactly 50000 chars combined — at threshold
+        assert wm._should_use_rlm_for_merge("a" * 25000, "b" * 25000) is True

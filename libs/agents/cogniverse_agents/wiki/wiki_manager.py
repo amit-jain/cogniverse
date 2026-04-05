@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from cogniverse_agents.inference.rlm_inference import RLMInference
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +174,12 @@ class WikiManager:
         existing = self._get_document_http(doc_id)
 
         if existing is not None:
-            # Merge: append new content and bump counter.
+            # Merge: use RLM for large content, otherwise simple append.
             old_content = existing.text_content or existing.metadata.get("content", "")
-            merged_content = old_content + _CONTENT_SEPARATOR + new_content
+            if self._should_use_rlm_for_merge(old_content, new_content):
+                merged_content = self._merge_with_rlm(old_content, new_content, entity)
+            else:
+                merged_content = old_content + _CONTENT_SEPARATOR + new_content
             old_sources = existing.metadata.get("sources", "[]")
             try:
                 import json
@@ -211,6 +216,31 @@ class WikiManager:
         embedding = self._generate_embedding(page.content)
         self._feed_page(page, embedding)
         return page
+
+    def _should_use_rlm_for_merge(self, old_content: str, new_content: str) -> bool:
+        """Return True when combined content length exceeds 50,000 characters."""
+        return len(old_content) + len(new_content) >= 50_000
+
+    def _merge_with_rlm(self, old_content: str, new_content: str, entity: str) -> str:
+        """Synthesize merged topic content using RLM.
+
+        Falls back to simple append on any error so feed operations are never blocked.
+        """
+        combined_context = (
+            f"## Existing knowledge about {entity}\n\n{old_content}"
+            f"\n\n---\n\n## New information about {entity}\n\n{new_content}"
+        )
+        query = f"Synthesize a comprehensive, non-redundant summary about {entity} from the existing and new information."
+        try:
+            rlm_llm_config = LLMEndpointConfig(model="ollama/qwen3:4b")
+            rlm = RLMInference(llm_config=rlm_llm_config)
+            result = rlm.process(query=query, context=combined_context)
+            return result.answer
+        except Exception:
+            logger.warning(
+                "RLM merge failed for entity '%s'; falling back to append", entity
+            )
+            return old_content + _CONTENT_SEPARATOR + new_content
 
     def _rebuild_index(self) -> None:
         """Query all wiki pages for this tenant and rebuild the index document."""

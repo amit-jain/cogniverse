@@ -9,13 +9,15 @@ a structured research report with citations.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.rlm_options import RLMOptions
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,10 @@ class DeepResearchInput(AgentInput):
     query: str = Field(..., description="Research question")
     max_iterations: int = Field(3, description="Maximum research iterations")
     tenant_id: str = Field("default", description="Tenant identifier")
+    rlm: Optional[RLMOptions] = Field(
+        None,
+        description="RLM configuration. None=disabled, set RLMOptions to enable RLM synthesis over accumulated evidence",
+    )
 
 
 class Citation(AgentOutput):
@@ -48,6 +54,12 @@ class DeepResearchOutput(AgentOutput):
         default_factory=list, description="Unanswered sub-questions"
     )
     confidence: float = Field(0.0, description="Overall research confidence")
+    rlm_synthesis: Optional[str] = Field(
+        None, description="RLM-synthesized answer from accumulated evidence (only when RLM enabled)"
+    )
+    rlm_telemetry: Optional[Dict[str, Any]] = Field(
+        None, description="RLM telemetry metrics for A/B testing"
+    )
 
 
 class DeepResearchDeps(AgentDeps):
@@ -89,7 +101,8 @@ class SynthesisSignature(dspy.Signature):
 
 
 class DeepResearchAgent(
-    A2AAgent[DeepResearchInput, DeepResearchOutput, DeepResearchDeps]
+    RLMAwareMixin,
+    A2AAgent[DeepResearchInput, DeepResearchOutput, DeepResearchDeps],
 ):
     """
     Multi-step research agent with iterative evidence gathering.
@@ -162,6 +175,38 @@ class DeepResearchAgent(
         self.emit_progress("synthesize", "Synthesizing research report...")
         summary = await self._synthesize(input.query, all_evidence)
 
+        # Build flat evidence text for optional RLM synthesis over accumulated evidence
+        evidence_context = "\n\n".join(
+            f"## {e['question']}\n{e.get('results', 'No results')}"
+            for e in all_evidence
+        )
+
+        rlm_synthesis = None
+        rlm_telemetry = None
+
+        if self.should_use_rlm_for_query(input.rlm, evidence_context):
+            self.emit_progress("rlm_synthesis", "Synthesizing evidence with RLM...")
+            logger.info(f"RLM enabled for research query: {input.query[:50]}...")
+            try:
+                rlm_result = self.process_with_rlm(
+                    query=input.query,
+                    context=evidence_context,
+                    rlm_options=input.rlm,
+                )
+                rlm_synthesis = rlm_result.answer
+                rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(evidence_context))
+                logger.info(
+                    f"RLM synthesis complete: depth={rlm_result.depth_reached}, "
+                    f"calls={rlm_result.total_calls}, latency={rlm_result.latency_ms:.0f}ms"
+                )
+            except Exception as e:
+                logger.error(f"RLM processing failed: {e}")
+                rlm_telemetry = {
+                    "rlm_enabled": False,
+                    "rlm_attempted": True,
+                    "rlm_error": str(e),
+                }
+
         return DeepResearchOutput(
             summary=summary,
             sub_questions=sub_questions,
@@ -170,6 +215,8 @@ class DeepResearchAgent(
             iterations_used=iteration,
             gaps_remaining=gaps,
             confidence=confidence,
+            rlm_synthesis=rlm_synthesis,
+            rlm_telemetry=rlm_telemetry,
         )
 
     async def _decompose(self, query: str) -> List[str]:

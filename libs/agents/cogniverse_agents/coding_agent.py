@@ -14,8 +14,10 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.rlm_options import RLMOptions
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,10 @@ class CodingInput(AgentInput):
     tenant_id: str = Field("default", description="Tenant identifier")
     max_iterations: int = Field(5, description="Maximum plan-code-execute iterations")
     language: str = Field("python", description="Primary programming language")
+    rlm: Optional[RLMOptions] = Field(
+        None,
+        description="RLM configuration. None=disabled, set RLMOptions to enable RLM inference for large codebases",
+    )
 
 
 class CodeChange(AgentOutput):
@@ -54,6 +60,12 @@ class CodingOutput(AgentOutput):
     iterations_used: int = Field(0, description="Number of iterations used")
     files_modified: List[str] = Field(
         default_factory=list, description="List of modified file paths"
+    )
+    rlm_synthesis: Optional[str] = Field(
+        None, description="RLM-synthesized answer from codebase context (only when RLM enabled)"
+    )
+    rlm_telemetry: Optional[Dict[str, Any]] = Field(
+        None, description="RLM telemetry metrics for A/B testing"
     )
 
 
@@ -111,7 +123,7 @@ class OutputEvaluationSignature(dspy.Signature):
     )
 
 
-class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
+class CodingAgent(RLMAwareMixin, A2AAgent[CodingInput, CodingOutput, CodingDeps]):
     """
     Iterative coding agent with semantic code search and sandboxed execution.
 
@@ -216,6 +228,32 @@ class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
             else f"Planned but no code executed after {iteration} iterations."
         )
 
+        rlm_synthesis = None
+        rlm_telemetry = None
+
+        if self.should_use_rlm_for_query(input.rlm, code_context):
+            self.emit_progress("rlm_synthesis", "Synthesizing codebase context with RLM...")
+            logger.info(f"RLM enabled for coding task: {input.task[:50]}...")
+            try:
+                rlm_result = self.process_with_rlm(
+                    query=input.task,
+                    context=code_context,
+                    rlm_options=input.rlm,
+                )
+                rlm_synthesis = rlm_result.answer
+                rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(code_context))
+                logger.info(
+                    f"RLM synthesis complete: depth={rlm_result.depth_reached}, "
+                    f"calls={rlm_result.total_calls}, latency={rlm_result.latency_ms:.0f}ms"
+                )
+            except Exception as e:
+                logger.error(f"RLM processing failed: {e}")
+                rlm_telemetry = {
+                    "rlm_enabled": False,
+                    "rlm_attempted": True,
+                    "rlm_error": str(e),
+                }
+
         return CodingOutput(
             plan=plan,
             code_changes=all_code_changes,
@@ -223,6 +261,8 @@ class CodingAgent(A2AAgent[CodingInput, CodingOutput, CodingDeps]):
             summary=summary,
             iterations_used=iteration,
             files_modified=files_modified,
+            rlm_synthesis=rlm_synthesis,
+            rlm_telemetry=rlm_telemetry,
         )
 
     async def _search_code_context(self, task: str, tenant_id: str) -> str:
