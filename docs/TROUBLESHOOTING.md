@@ -295,8 +295,11 @@ Failed to export spans: Connection refused to localhost:4317
 # Check OTLP endpoint is running
 curl http://localhost:4317/v1/traces
 
-# Use HTTP endpoint instead
-export OTLP_ENDPOINT="http://localhost:6006/v1/traces"
+# Set the OTLP endpoint env var (renamed from OTLP_ENDPOINT)
+export TELEMETRY_OTLP_ENDPOINT="localhost:4317"
+
+# Or use the HTTP endpoint for Phoenix
+export TELEMETRY_HTTP_ENDPOINT="http://localhost:6006"
 
 # Or configure in code
 telemetry.register_project(

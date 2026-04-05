@@ -411,6 +411,84 @@ Routing spans capture the full context needed for offline analysis and annotatio
 
 ---
 
+## Continuous Quality Monitoring
+
+The Quality Monitor (`cogniverse_evaluation.quality_monitor.QualityMonitor`) runs as a sidecar in the runtime pod. It applies two independent evaluation strategies on a schedule and triggers Argo optimization workflows when quality falls below threshold.
+
+### Dual Evaluation Strategy
+
+```mermaid
+flowchart LR
+    subgraph "Quality Monitor (sidecar)"
+        GM["<span style='color:#000'>Golden Set Eval<br/>every 2h</span>"]
+        LT["<span style='color:#000'>Live Traffic Eval<br/>every 4h</span>"]
+    end
+
+    PHX["<span style='color:#000'>Phoenix<br/>Telemetry</span>"]
+    ARGO["<span style='color:#000'>Argo Workflow<br/>(triggered mode)</span>"]
+    BASELINE["<span style='color:#000'>Phoenix Dataset<br/>Baselines</span>"]
+
+    GM -->|"MRR/NDCG below baseline"| ARGO
+    LT -->|"Agent score below threshold"| ARGO
+    GM -->|"Update on improvement"| BASELINE
+    PHX -->|"Sample recent spans"| LT
+
+    style GM fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LT fill:#90caf9,stroke:#1565c0,color:#000
+    style PHX fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ARGO fill:#ffcc80,stroke:#ef6c00,color:#000
+    style BASELINE fill:#b0bec5,stroke:#546e7a,color:#000
+```
+
+- **Golden set evaluation**: runs curated queries against the runtime API, scores with IR metrics (MRR, NDCG@K, Precision@5). When MRR improves, the baseline is updated in Phoenix. When quality drops, Argo is triggered.
+- **Live traffic evaluation**: samples recent spans from Phoenix (default: 20 per agent), uses an LLM judge to assess quality. Triggers optimization when per-agent scores fall below 0.6.
+
+The monitor also **grows the golden set** by promoting high-scoring live queries (score ≥ 0.8) into the curated evaluation dataset.
+
+CLI: `python -m cogniverse_runtime.quality_monitor_cli`
+Helm: `runtime.qualityMonitor.enabled: true`
+
+---
+
+## Strategy Distillation
+
+When `--mode triggered` optimization runs, it invokes the `StrategyLearner` after compiling DSPy modules. The learner distills reusable workflow strategies from the scored trigger dataset and stores them in Vespa memory for runtime retrieval.
+
+### Two Distillation Paths
+
+```mermaid
+flowchart TD
+    TDS["<span style='color:#000'>Trigger Dataset<br/>(scored spans)</span>"] --> PE["<span style='color:#000'>Path A:<br/>Pattern Extraction<br/>(statistical)</span>"]
+    TDS --> LD["<span style='color:#000'>Path B:<br/>LLM Contrastive<br/>Distillation</span>"]
+
+    PE --> STR["<span style='color:#000'>Strategy objects<br/>(org-level)</span>"]
+    LD --> STR
+
+    STR --> DEDUP["<span style='color:#000'>Jaccard deduplication<br/>(threshold: 0.9)</span>"]
+    DEDUP --> MEM["<span style='color:#000'>Vespa Memory<br/>(type=strategy)</span>"]
+
+    MEM --> AGT["<span style='color:#000'>Agent prompt context<br/>via get_strategies()</span>"]
+
+    style TDS fill:#90caf9,stroke:#1565c0,color:#000
+    style PE fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LD fill:#a5d6a7,stroke:#388e3c,color:#000
+    style STR fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DEDUP fill:#b0bec5,stroke:#546e7a,color:#000
+    style MEM fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style AGT fill:#81d4fa,stroke:#0288d1,color:#000
+```
+
+- **Pattern extraction** groups spans by agent, identifies keyword categories (temporal, object, action, comparison), and produces org-level strategies without LLM calls.
+- **LLM contrastive distillation** pairs high-scoring and low-scoring traces per agent, feeds them to a DSPy `Predict` module to identify what made the difference. Requires `llm_config`.
+
+Strategies are scoped at two levels:
+- **Org-level**: shared across all users of the same org (org prefix from `tenant_id`, e.g., `"acme"` from `"acme:alice"`)
+- **User-level**: per-`tenant_id` strategies for personalized behavior
+
+Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategies(query)` in `cogniverse_agents.memory_aware_mixin`, which calls `StrategyLearner.get_strategies_for_agent()` and returns a formatted Markdown string for prompt injection.
+
+---
+
 ## Key Techniques Summary
 
 | Technique | Category | Role in System |
@@ -430,3 +508,6 @@ Routing spans capture the full context needed for offline analysis and annotatio
 | **Phoenix Telemetry** | Observability | Span-level routing instrumentation with annotation support |
 | **LLM Auto-Annotation** | Semi-automated labeling | Pre-screen routing decisions before human review |
 | **Temporal Decay** | Online learning | Exploration ε decays 0.995× per update (floor: 0.05) |
+| **Quality Monitor** | Continuous evaluation | Dual-strategy sidecar: golden set + live LLM judge; triggers Argo on degradation |
+| **Strategy Distillation** | Knowledge transfer | Pattern + LLM contrastive distillation from traces into Vespa-stored strategies |
+| **Two-Level Strategy Scoping** | Personalization | Org-level shared strategies + user-level personalized strategies via Mem0 |

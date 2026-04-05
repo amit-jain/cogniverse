@@ -70,8 +70,9 @@ Cogniverse uses a **UV workspace** with a layered architecture:
 ```mermaid
 flowchart TB
     subgraph APP["<span style='color:#000'><b>APPLICATION LAYER</b></span>"]
-        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI Server</span>"]
+        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI Server · Quality Monitor</span>"]
         dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI</span>"]
+        messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway</span>"]
     end
 
     subgraph IMPL["<span style='color:#000'><b>IMPLEMENTATION LAYER</b></span>"]
@@ -114,6 +115,7 @@ flowchart TB
     %% Styling - Application Layer (blue)
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
     style dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style messaging fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ### Key Principles
@@ -131,14 +133,64 @@ flowchart TB
 | **sdk** | Foundation | Backend interfaces, Document model | interfaces/, document.py |
 | **foundation** | Foundation | Config base, telemetry interfaces | config/, telemetry/ |
 | **core** | Core | Base classes, registries, memory | agents/, common/, registries/ |
-| **evaluation** | Core | Experiments, metrics, datasets | core/, metrics/, evaluators/ |
+| **evaluation** | Core | Experiments, metrics, datasets, quality monitor | core/, metrics/, evaluators/, quality_monitor.py |
 | **synthetic** | Core | Synthetic data generation | service.py, generators/ |
-| **agents** | Implementation | Routing, search, orchestration | routing/, search/, tools/ |
+| **agents** | Implementation | Routing, search, orchestration, strategy learner | routing/, search/, tools/, optimizer/ |
 | **vespa** | Implementation | Vespa backend, schema management | config/, registry/, workflow/ |
 | **finetuning** | Implementation | LLM fine-tuning (SFT, DPO) | training/, dataset/, registry/ |
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |
-| **runtime** | Application | FastAPI server, ingestion | routers/, ingestion/, admin/ |
+| **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |
+| **messaging** | Application | Telegram messaging gateway | gateway.py, auth.py, command_router.py |
 | **dashboard** | Application | Streamlit UI, analytics | tabs/, utils/ |
+
+---
+
+### Quality Monitor Architecture
+
+The quality monitor is a continuous evaluation sidecar deployed alongside the runtime pod. It applies two independent scoring strategies:
+
+- **Golden set evaluation** (every 2h by default): runs a curated set of queries against the runtime API and scores results using IR metrics (MRR, NDCG, Precision@5). Baselines are stored as Phoenix datasets.
+- **Live traffic evaluation** (every 4h by default): samples recent spans from Phoenix, uses an LLM judge to score response quality, and detects drift from the stored baseline.
+
+When either strategy finds quality below threshold, the monitor submits an Argo workflow to trigger the optimization CLI (`--mode triggered`) with the degraded agents and a scored trigger dataset.
+
+```
+cogniverse_evaluation.quality_monitor.QualityMonitor
+  ├── evaluate_golden_set() → GoldenEvalResult (MRR, NDCG, Precision@5)
+  ├── evaluate_live_traffic() → LiveEvalResult (per-agent scores)
+  ├── update_baseline() → stores new baseline in Phoenix dataset
+  ├── grow_golden_set() → adds high-scoring live queries to golden set
+  └── run() → async loop: golden every goldenIntervalSeconds, live every liveIntervalSeconds
+```
+
+CLI entry point: `python -m cogniverse_runtime.quality_monitor_cli`
+Helm: `runtime.qualityMonitor.enabled: true`
+
+---
+
+### Strategy Learner Architecture
+
+The strategy learner (`cogniverse_agents.optimizer.strategy_learner.StrategyLearner`) distills execution traces into reusable agent strategies stored in Vespa memory via Mem0. It runs as part of the `--mode triggered` optimization flow.
+
+Two distillation paths run in sequence:
+
+1. **Pattern extraction** (no LLM): statistical analysis of scored traces grouped by agent. Identifies keyword categories (temporal, object, action, comparison) that correlate with high or low scores. Produces org-level `Strategy` objects.
+2. **LLM contrastive distillation** (optional, needs `llm_config`): pairs a high-scoring and low-scoring trace per agent, feeds them to a DSPy `Predict` module to identify what made the difference.
+
+Strategies are stored in Vespa memory with `type=strategy` metadata under a reserved agent name `_strategy_store`. Deduplication uses Jaccard similarity (threshold: 0.9) to avoid storing redundant strategies.
+
+**Two-level scoping:**
+
+- Org-level strategies: stored under `org_id` (prefix of `tenant_id` before `:`)
+- User-level strategies: stored under `tenant_id`
+
+**Runtime retrieval** via `MemoryAwareMixin.get_strategies(query, top_k)` in `cogniverse_agents.memory_aware_mixin`:
+
+```python
+# Inside any agent that extends MemoryAwareMixin:
+strategies = self.get_strategies(query="cooking tutorial", top_k=5)
+# Returns formatted Markdown string for prompt injection, or None
+```
 
 ---
 
@@ -565,6 +617,21 @@ uv run python scripts/run_experiments_with_visualization.py \
 # Deploy schema
 uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
+
+# Optimization CLI — standard modes
+python -m cogniverse_runtime.optimization_cli --mode once
+python -m cogniverse_runtime.optimization_cli --mode full
+python -m cogniverse_runtime.optimization_cli --mode dspy
+python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+
+# Optimization CLI — triggered mode (called by Argo when quality degrades)
+# Loads scored examples from a Phoenix trigger dataset, compiles DSPy modules
+# for each flagged agent, then runs strategy distillation.
+python -m cogniverse_runtime.optimization_cli \
+  --mode triggered \
+  --tenant-id default \
+  --agents search,summary \
+  --trigger-dataset optimization-trigger-default-20260403_040000
 ```
 
 ---

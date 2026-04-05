@@ -162,6 +162,47 @@ open http://localhost:8501
 
 ---
 
+## Optional: Enable Messaging Gateway
+
+Allow users to interact with Cogniverse via Telegram:
+
+```bash
+# Start with Telegram bot enabled
+cogniverse up --messaging
+
+# Or set in Helm values (production):
+# messaging.enabled: true
+# messaging.mode: webhook  # polling for dev
+```
+
+```bash
+# Generate an invite token for a user
+curl -X POST http://localhost:8000/admin/messaging/invite \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "default", "expires_in_hours": 24}'
+
+# Returns: {"token": "abc123...", "tenant_id": "default"}
+# User sends: /start abc123... to the bot to register
+```
+
+---
+
+## Optional: Enable Quality Monitor
+
+The quality monitor runs as a sidecar, continuously evaluating all agents and triggering optimization when quality degrades:
+
+```bash
+# Run directly
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id default \
+  --runtime-url http://localhost:8000 \
+  --phoenix-url http://localhost:6006
+
+# Enabled by default in Helm (runtime.qualityMonitor.enabled: true)
+```
+
+---
+
 ## What's Next?
 
 | Goal | Documentation |
@@ -179,17 +220,18 @@ open http://localhost:8501
 
 ```text
 cogniverse/
-├── libs/                    # 11-package workspace
+├── libs/                    # 12-package workspace
 │   ├── sdk/                 # Pure interfaces
 │   ├── foundation/          # Config + telemetry
 │   ├── core/                # Agent base, orchestration, caching
-│   ├── agents/              # Agent implementations
+│   ├── agents/              # Agent implementations + strategy learner
 │   ├── vespa/               # Vespa backend
-│   ├── evaluation/          # Metrics, experiments
+│   ├── evaluation/          # Metrics, experiments, quality monitor
 │   ├── finetuning/          # LLM fine-tuning (SFT, DPO)
 │   ├── telemetry-phoenix/   # Phoenix telemetry provider
 │   ├── synthetic/           # Training data generation
-│   ├── runtime/             # FastAPI server
+│   ├── runtime/             # FastAPI server + quality monitor CLI
+│   ├── messaging/           # Telegram messaging gateway
 │   └── dashboard/           # Streamlit UI
 ├── configs/                 # Configuration files
 │   ├── config.json          # Main config

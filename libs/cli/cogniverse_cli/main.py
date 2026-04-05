@@ -6,6 +6,7 @@ deploying and managing the multi-agent RAG stack.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -132,7 +133,12 @@ def cli() -> None:
     default=None,
     help="Override image source (directory with workspace source).",
 )
-def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
+@click.option(
+    "--messaging/--no-messaging",
+    default=False,
+    help="Enable Telegram messaging gateway (requires TELEGRAM_BOT_TOKEN env var).",
+)
+def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: bool) -> None:
     """Deploy the full Cogniverse stack."""
     # 1. Detect environment — a running k3d cluster counts as local, not prod
     k3d_running = cluster_exists()
@@ -217,6 +223,17 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None) -> None:
         set_values["llm.external.enabled"] = "true"
         set_values["llm.external.url"] = resolved_url
     # llm_mode == "builtin" requires no overrides (chart defaults)
+
+    # Messaging gateway
+    if messaging:
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if not bot_token:
+            console.print(
+                "[red]--messaging requires TELEGRAM_BOT_TOKEN env var.[/red]"
+            )
+            sys.exit(1)
+        set_values["messaging.enabled"] = "true"
+        console.print("[cyan]Messaging gateway enabled (Telegram).[/cyan]")
 
     # 5a. Resolve chart and values file
     llm_is_external = set_values.get("llm.external.enabled") == "true"

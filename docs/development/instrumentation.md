@@ -708,8 +708,8 @@ export TELEMETRY_SYNC_EXPORT=true
 # Or force flush manually (in Python)
 # telemetry.force_flush(timeout_millis=10000)
 
-# Check OTLP collector endpoint
-export OTLP_ENDPOINT=localhost:4317
+# Check OTLP collector endpoint (env var renamed from OTLP_ENDPOINT)
+export TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
 # Verify telemetry backend is running (e.g., Phoenix)
 curl http://localhost:6006

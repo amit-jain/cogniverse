@@ -52,7 +52,8 @@ cogniverse/
 │   │       ├── evaluators/       # LLM judges, visual evaluators
 │   │       ├── metrics/          # Provider-agnostic metrics
 │   │       ├── data/             # Dataset handling and storage
-│   │       └── providers/        # Evaluation provider registry
+│   │       ├── providers/        # Evaluation provider registry
+│   │       └── quality_monitor.py  # QualityMonitor (golden set + live traffic)
 │   │
 │   ├── synthetic/                # cogniverse-synthetic
 │   │   ├── pyproject.toml
@@ -69,7 +70,10 @@ cogniverse/
 │   │       ├── routing/          # Routing agents & DSPy optimization
 │   │       ├── search/           # Search service, base classes, rerankers
 │   │       ├── orchestrator/     # Multi-agent orchestrator
-│   │       └── tools/            # A2A tools
+│   │       ├── tools/            # A2A tools
+│   │       ├── memory_aware_mixin.py  # MemoryAwareMixin with get_strategies()
+│   │       └── optimizer/        # DSPy optimizers + strategy learner
+│   │           └── strategy_learner.py  # StrategyLearner (pattern + LLM distillation)
 │   │
 │   ├── telemetry-phoenix/        # cogniverse-telemetry-phoenix (Plugin)
 │   │   ├── pyproject.toml
@@ -100,11 +104,24 @@ cogniverse/
 │   │   ├── pyproject.toml
 │   │   ├── Dockerfile
 │   │   └── cogniverse_runtime/
-│   │       ├── main.py           # FastAPI app
-│   │       ├── routers/          # API endpoints
-│   │       ├── ingestion/        # Video processing
-│   │       ├── search/           # Search service
-│   │       └── admin/            # Admin functionality
+│   │       ├── main.py                # FastAPI app
+│   │       ├── routers/               # API endpoints
+│   │       ├── ingestion/             # Video processing
+│   │       ├── search/                # Search service
+│   │       ├── admin/                 # Admin functionality
+│   │       ├── optimization_cli.py    # Argo-triggered optimization
+│   │       └── quality_monitor_cli.py # Continuous evaluation sidecar
+│   │
+│   ├── messaging/                # cogniverse-messaging (Telegram gateway)
+│   │   ├── pyproject.toml
+│   │   ├── Dockerfile
+│   │   └── cogniverse_messaging/
+│   │       ├── gateway.py        # MessagingGateway (polling or webhook)
+│   │       ├── auth.py           # InviteTokenManager, UserTenantMapper
+│   │       ├── command_router.py # Command parsing (/search, /report, etc.)
+│   │       ├── conversation.py   # Conversation history via Mem0
+│   │       ├── runtime_client.py # Async client for runtime API
+│   │       └── telegram_handler.py # Response formatting
 │   │
 │   └── dashboard/                # cogniverse-dashboard
 │       ├── pyproject.toml
@@ -139,7 +156,8 @@ flowchart TB
     subgraph Application["<span style='color:#000'><b>Application Layer</b></span>"]
         direction LR
         dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI · Phoenix Analytics</span>"]
-        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · Tenant Middleware</span>"]
+        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · Tenant Middleware · Quality Monitor</span>"]
+        messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway · Invite Auth</span>"]
     end
 
     subgraph Implementation["<span style='color:#000'><b>Implementation Layer</b></span>"]
@@ -166,6 +184,7 @@ flowchart TB
     dashboard --> runtime
     dashboard --> evaluation
     runtime --> core
+    messaging --> foundation
 
     agents --> core
     agents --> synthetic
@@ -188,6 +207,7 @@ flowchart TB
 
     style dashboard fill:#64b5f6,stroke:#1565c0,color:#000
     style runtime fill:#64b5f6,stroke:#1565c0,color:#000
+    style messaging fill:#64b5f6,stroke:#1565c0,color:#000
 
     style agents fill:#ffb74d,stroke:#ef6c00,color:#000
     style vespa fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -200,11 +220,6 @@ flowchart TB
 
     style foundation fill:#81c784,stroke:#388e3c,color:#000
     style sdk fill:#81c784,stroke:#388e3c,color:#000
-
-    linkStyle 0,1,2 stroke:#1565c0,stroke-width:2px
-    linkStyle 3,4,5,6,7,8,9 stroke:#ef6c00,stroke-width:2px
-    linkStyle 10,11,12,13 stroke:#7b1fa2,stroke-width:2px
-    linkStyle 14 stroke:#388e3c,stroke-width:2px
 ```
 
 ### Package Responsibilities
@@ -216,11 +231,12 @@ flowchart TB
 | **Core** | **cogniverse_core** | Core functionality, base classes, and registries | • `agents/` — Base agent classes, mixins (MemoryAwareMixin, HealthCheckMixin)<br>• `common/` — Shared utilities (tenant utils, caching, VLM interface)<br>• `registries/` — Agent, backend, and DSPy module registries<br>• `memory/` — Memory management (Mem0MemoryManager) | sdk, foundation, evaluation |
 | **Core** | **cogniverse_evaluation** | Provider-agnostic evaluation framework | • `core/` — Experiment tracking, scorers, solvers<br>• `evaluators/` — LLM judges, visual evaluators<br>• `metrics/` — Provider-agnostic metrics (accuracy, relevance)<br>• `data/` — Dataset handling and storage | sdk, foundation |
 | **Implementation** | **cogniverse_telemetry_phoenix** | Phoenix-specific telemetry provider (plugin architecture) | • `provider.py` — Phoenix telemetry provider implementation<br>• `evaluation/` — Evaluation, analytics, and monitoring providers | core, evaluation |
-| **Implementation** | **cogniverse_agents** | Agent implementations and routing logic | • `routing/` — Routing agent, strategies, evaluators<br>• `search/` — Search service, base classes, rerankers<br>• `orchestrator/` — Multi-agent orchestrator<br>• `tools/` — Agent tools and A2A protocol | sdk, core, synthetic |
+| **Implementation** | **cogniverse_agents** | Agent implementations, routing logic, and strategy learning | • `routing/` — Routing agent, strategies, evaluators<br>• `search/` — Search service, base classes, rerankers<br>• `orchestrator/` — Multi-agent orchestrator<br>• `tools/` — Agent tools and A2A protocol<br>• `memory_aware_mixin.py` — `MemoryAwareMixin` with `get_strategies()`<br>• `optimizer/strategy_learner.py` — `StrategyLearner` (pattern + LLM distillation) | sdk, core, synthetic |
 | **Implementation** | **cogniverse_vespa** | Backend integration and tenant management | • `config/` — Configuration store and profile mapping<br>• `registry/` — Backend registry for Vespa<br>• `workflow/` — Deployment workflows<br>• Core modules: `vespa_schema_manager.py`, `vespa_search_client.py`, `ingestion_client.py` | sdk, core |
 | **Core** | **cogniverse_synthetic** | Synthetic data generation for optimizer training | • `service.py` — Main SyntheticDataService<br>• `generators/` — Optimizer-specific generators (GEPA, MIPRO, etc.)<br>• `profile_selector.py` — LLM-based profile selection<br>• `backend_querier.py` — Backend content sampling | sdk |
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
-| **Application** | **cogniverse_runtime** | Production runtime and APIs | • `routers/` — FastAPI route handlers (search, ingestion, admin)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Administrative endpoints<br>• `search/` — Search service layer | sdk, core (optional: vespa, agents) |
+| **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Administrative endpoints including `POST /messaging/invite`<br>• `search/` — Search service layer<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |
+| **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | foundation, sdk |
 | **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `utils/` — Utility functions (phoenix_launcher, etc.) | sdk, core, evaluation, runtime |
 
 ---

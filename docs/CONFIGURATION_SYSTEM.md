@@ -68,6 +68,56 @@ Observability settings:
 - Metric collection intervals
 - Dashboard customization
 
+**Environment variables** (read at startup boundary in `runtime/main.py`):
+
+| Variable | Purpose |
+|----------|---------|
+| `TELEMETRY_HTTP_ENDPOINT` | Phoenix HTTP endpoint (renamed from `PHOENIX_ENDPOINT`) |
+| `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint (renamed from `OTLP_ENDPOINT`) |
+
+### Messaging Gateway Configuration
+
+Telegram bot settings (Helm values under `messaging.*`):
+
+- `messaging.enabled` — enable/disable the messaging service (default: `false`)
+- `messaging.mode` — `polling` (development) or `webhook` (production)
+- `TELEGRAM_BOT_TOKEN` — bot token from BotFather (required, set as env var)
+- `TELEGRAM_WEBHOOK_URL` — public HTTPS URL for webhook mode
+- `RUNTIME_URL` — runtime API URL the gateway dispatches to
+
+Invite tokens (stored in ConfigStore under `_system` tenant, `messaging_gateway` service):
+
+```bash
+# Generate an invite token for a tenant
+curl -X POST http://localhost:8000/admin/messaging/invite \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme", "expires_in_hours": 24}'
+```
+
+### Quality Monitor Configuration
+
+Sidecar configuration (Helm values under `runtime.qualityMonitor.*`):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Enable/disable the quality monitor sidecar |
+| `goldenIntervalSeconds` | `7200` | Seconds between golden set evaluations (2h) |
+| `liveIntervalSeconds` | `14400` | Seconds between live traffic evaluations (4h) |
+| `liveSampleCount` | `20` | Number of spans sampled per agent for live eval |
+| `goldenDatasetPath` | (configured path) | Path to golden evaluation dataset JSON |
+
+CLI equivalent:
+
+```bash
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id default \
+  --golden-interval 7200 \
+  --live-interval 14400 \
+  --live-sample-count 20 \
+  --argo-url http://argo-server:2746 \
+  --argo-namespace cogniverse
+```
+
 ### Backend Configuration
 
 Backend-specific settings for video processing and storage:

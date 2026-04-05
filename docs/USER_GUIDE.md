@@ -769,6 +769,37 @@ curl -X POST http://localhost:8000/search/ \
 
 **Note:** Tenant isolation provides logical separation of data. API key authentication is planned for future releases.
 
+### Telegram Messaging Gateway
+
+Users can interact with Cogniverse via Telegram after receiving an invite token:
+
+**Admin: generate an invite token**
+```bash
+curl -X POST http://localhost:8000/admin/messaging/invite \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme_corp", "expires_in_hours": 24}'
+
+# Returns: {"token": "abc123def456...", "tenant_id": "acme_corp"}
+```
+
+**User: register and use the bot**
+
+1. Send `/start abc123def456...` to the bot to link your account
+2. Use commands to interact with agents:
+
+| Command | Agent | Example |
+|---------|-------|---------|
+| `/search <query>` | video_search_agent | `/search machine learning tutorial` |
+| `/summarize <query>` | summary_agent | `/summarize the Python basics video` |
+| `/report <query>` | report_agent | `/report Q4 content performance` |
+| `/research <query>` | orchestrator | `/research best practices for async Python` |
+| `/code <query>` | orchestrator | `/code write a FastAPI health endpoint` |
+| Plain text | routing_agent | `what videos do you have on transformers?` |
+| Photo/video | video_search_agent | Send a frame to search for similar content |
+| `/help` | — | Show all available commands |
+
+Conversation history is maintained via Mem0 across sessions. The gateway runs in polling mode for development (`GATEWAY_MODE=polling`) and webhook mode for production (`GATEWAY_MODE=webhook` with `TELEGRAM_WEBHOOK_URL` set).
+
 ---
 
 ## API Reference
