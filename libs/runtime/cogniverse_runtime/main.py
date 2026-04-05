@@ -274,7 +274,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
 
-    # 8b. Initialize WikiManager (lazy — schema deployed on first use)
+    # 8b. Deploy wiki schema and initialize WikiManager
     try:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
         from cogniverse_runtime.routers import wiki as wiki_router
@@ -291,6 +291,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
+
+        # Deploy wiki_pages schema for the default tenant
+        try:
+            wiki_backend.schema_registry.deploy_schema(
+                tenant_id="default", base_schema_name="wiki_pages"
+            )
+            logger.info("Wiki schema deployed for default tenant")
+        except Exception as schema_err:
+            logger.warning(f"Wiki schema deploy skipped: {schema_err}")
+
         wm = WikiManager(
             backend=wiki_backend,
             tenant_id="default",

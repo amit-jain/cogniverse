@@ -131,11 +131,11 @@ class WikiManager:
         """
         safe = self._tenant_id.replace(":", "_")
         doc_id = f"wiki_topic_{safe}_{slug}"
-        doc = self._backend.get_document(doc_id)
+        doc = self._get_document_http(doc_id)
         if doc is None:
             return None
         return {
-            "doc_id": doc.metadata.get("doc_id", doc.id),
+            "doc_id": doc.metadata.get("doc_id", doc_id),
             "title": doc.metadata.get("title", ""),
             "content": doc.text_content or "",
             "page_type": doc.metadata.get("page_type", "topic"),
@@ -148,7 +148,7 @@ class WikiManager:
         """Return the rendered markdown of the wiki index document, or None."""
         safe = self._tenant_id.replace(":", "_")
         doc_id = f"wiki_index_{safe}"
-        doc = self._backend.get_document(doc_id)
+        doc = self._get_document_http(doc_id)
         if doc is None:
             return None
         return doc.text_content or doc.metadata.get("content", "")
@@ -169,7 +169,7 @@ class WikiManager:
         safe = self._tenant_id.replace(":", "_")
         doc_id = f"wiki_topic_{safe}_{slug}"
 
-        existing = self._backend.get_document(doc_id)
+        existing = self._get_document_http(doc_id)
 
         if existing is not None:
             # Merge: append new content and bump counter.
@@ -240,7 +240,7 @@ class WikiManager:
 
         index_content = index.render_markdown()
         index_doc_id = f"wiki_index_{safe}"
-        url = f"{self._backend.backend_url}:{self._backend.backend_port}"
+        url = f"{self._backend._url}:{self._backend._port}"
         feed_url = (
             f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{index_doc_id}"
         )
@@ -269,9 +269,37 @@ class WikiManager:
         except Exception:
             logger.exception("Failed to feed wiki index document")
 
+    def _get_document_http(self, doc_id: str) -> Optional[Any]:
+        """Fetch a wiki document from Vespa via HTTP GET.
+
+        Returns a simple object with text_content and metadata attributes,
+        or None if not found. Uses direct HTTP instead of backend.get_document
+        to avoid schema configuration requirements.
+        """
+        url = f"{self._backend._url}:{self._backend._port}"
+        get_url = (
+            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
+        )
+        try:
+            resp = requests.get(get_url, timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            fields = data.get("fields", {})
+
+            class _Doc:
+                pass
+
+            doc = _Doc()
+            doc.text_content = fields.get("content", "")
+            doc.metadata = fields
+            return doc
+        except Exception:
+            return None
+
     def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
         """Feed *page* to Vespa via the Document v1 HTTP API."""
-        url = f"{self._backend.backend_url}:{self._backend.backend_port}"
+        url = f"{self._backend._url}:{self._backend._port}"
         feed_url = (
             f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{page.doc_id}"
         )
