@@ -1,0 +1,136 @@
+{
+  "name": "wiki_pages",
+  "document": {
+    "name": "wiki_pages",
+    "fields": [
+      {
+        "name": "doc_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "page_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "slug",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "query",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "agent_used",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "entities",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "sources",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "cross_references",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "update_count",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "updated_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<float>(d0[768])",
+        "indexing": ["summary", "attribute", "index"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["title", "content"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "semantic_search",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "closeness(field, embedding)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "distance(field, embedding)"
+      ]
+    },
+    {
+      "name": "bm25",
+      "first_phase": {
+        "expression": "bm25(title) + bm25(content)"
+      }
+    },
+    {
+      "name": "hybrid",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "0.6 * closeness(field, embedding) + 0.2 * bm25(title) + 0.2 * bm25(content)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "bm25(title)",
+        "bm25(content)"
+      ]
+    }
+  ]
+}
