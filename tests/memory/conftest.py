@@ -157,12 +157,49 @@ def _namespace_for_schema(schema_name: str) -> str:
     """
     if "agent_memories" in schema_name:
         return "memory_content"
+    if "wiki_pages" in schema_name:
+        return "wiki_content"
     if any(
         k in schema_name
         for k in ("config_metadata", "tenant_metadata", "organization_metadata")
     ):
         return "metadata"
     return "video"
+
+
+def _readiness_doc_for_namespace(namespace: str) -> dict:
+    """Return a minimal valid document body for the given Vespa namespace."""
+    real_embedding = _get_real_embedding()
+    if namespace == "wiki_content":
+        return {
+            "fields": {
+                "doc_id": "readiness_check",
+                "tenant_id": "test",
+                "page_type": "topic",
+                "title": "readiness check",
+                "content": "test",
+                "slug": "readiness_check",
+                "entities": "[]",
+                "sources": "[]",
+                "cross_references": "[]",
+                "update_count": 1,
+                "created_at": "2024-01-01T00:00:00+00:00",
+                "updated_at": "2024-01-01T00:00:00+00:00",
+                "embedding": real_embedding,
+            }
+        }
+    # Default: memory schema fields
+    return {
+        "fields": {
+            "id": "readiness_check",
+            "text": "test",
+            "user_id": "test",
+            "agent_id": "test",
+            "embedding": real_embedding,
+            "metadata_": "{}",
+            "created_at": 1234567890,
+        }
+    }
 
 
 def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) -> bool:
@@ -177,18 +214,7 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) 
         f"to be ready on port {data_port}..."
     )
 
-    real_embedding = _get_real_embedding()
-    test_doc = {
-        "fields": {
-            "id": "readiness_check",
-            "text": "test",
-            "user_id": "test",
-            "agent_id": "test",
-            "embedding": real_embedding,
-            "metadata_": "{}",
-            "created_at": 1234567890,
-        }
-    }
+    test_doc = _readiness_doc_for_namespace(namespace)
 
     for i in range(timeout):
         try:
@@ -342,7 +368,15 @@ def shared_memory_vespa():
         memory_schema_json["document"]["name"] = "agent_memories_test_tenant"
         memory_schema = parser.parse_schema(memory_schema_json)
 
-        all_schemas = metadata_schemas + [memory_schema]
+        # Include wiki_pages schema for test_tenant
+        wiki_schema_file = Path("configs/schemas/wiki_pages_schema.json")
+        with open(wiki_schema_file) as f:
+            wiki_schema_json = json.load(f)
+        wiki_schema_json["name"] = "wiki_pages_test_tenant"
+        wiki_schema_json["document"]["name"] = "wiki_pages_test_tenant"
+        wiki_schema = parser.parse_schema(wiki_schema_json)
+
+        all_schemas = metadata_schemas + [memory_schema, wiki_schema]
         app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
 
         schema_mgr = VespaSchemaManager(
@@ -383,8 +417,9 @@ def shared_memory_vespa():
         )
         config_manager.set_system_config(system_config)
 
-        # Schema already deployed via ApplicationPackage above.
+        # Schemas already deployed via ApplicationPackage above.
         tenant_schema_name = "agent_memories_test_tenant"
+        wiki_schema_name = "wiki_pages_test_tenant"
         BackendRegistry._backend_instances.clear()
 
     except Exception as e:
@@ -407,7 +442,7 @@ def shared_memory_vespa():
             "120 seconds after schema deployment."
         )
 
-    # Wait for schema to be fully ready — fail hard if readiness times out.
+    # Wait for schemas to be fully ready — fail hard if readiness times out.
     # Tests depend on Vespa being able to accept document operations; silently
     # continuing with an unready backend causes cascading test failures.
     if not wait_for_schema_ready(MEMORY_BACKEND_PORT, tenant_schema_name, timeout=120):
@@ -417,6 +452,16 @@ def shared_memory_vespa():
         subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
         pytest.fail(
             f"Schema {tenant_schema_name} not ready within 120 seconds — "
+            "data port did not converge after schema deployment."
+        )
+
+    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, wiki_schema_name, timeout=120):
+        subprocess.run(
+            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+        )
+        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        pytest.fail(
+            f"Schema {wiki_schema_name} not ready within 120 seconds — "
             "data port did not converge after schema deployment."
         )
 
@@ -430,6 +475,7 @@ def shared_memory_vespa():
         "container_name": MEMORY_BACKEND_CONTAINER,
         "base_url": f"http://localhost:{MEMORY_BACKEND_PORT}",
         "tenant_schema_name": tenant_schema_name,
+        "wiki_schema_name": wiki_schema_name,
     }
 
     yield backend_config
