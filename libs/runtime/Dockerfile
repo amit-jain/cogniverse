@@ -56,7 +56,13 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Deno for DSPy RLM sandboxed code execution
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV DENO_DIR=/app/.deno
+ENV PATH="/root/.deno/bin:${PATH}"
 
 # Create non-root user
 RUN useradd -m -u 1000 cogniverse && \

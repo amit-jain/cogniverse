@@ -9,6 +9,7 @@ Get started with Cogniverse in 5 minutes.
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Docker (for Vespa and Phoenix)
+- [Deno](https://deno.land/) 2.0+ (required for RLM sandboxed code execution: `curl -fsSL https://deno.land/install.sh | sh`)
 
 ---
 
