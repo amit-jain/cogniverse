@@ -29,6 +29,13 @@ HELP_TEXT = """Available commands:
 /wiki topic <name> — Look up a topic page by name
 /wiki index — Show the wiki index
 /wiki lint — Check wiki for orphan, stale, or empty pages
+/instructions set <text> — Set custom agent instructions for your tenant
+/instructions show — Show current tenant instructions
+/memories list — List memories (add agent=<name> to filter)
+/memories clear strategies — Clear strategy learner memories
+/jobs list — List scheduled agent jobs
+/jobs create "<cron>" <query> — Create a new scheduled job
+/jobs delete <job_id> — Delete a scheduled job
 /help — Show this message
 
 Or just send a message — it will be automatically routed to the best agent.
@@ -51,6 +58,12 @@ class ParsedCommand:
     media_file_id: Optional[str] = None
     is_wiki: bool = False
     wiki_subcommand: Optional[str] = None
+    is_instructions: bool = False
+    instructions_subcommand: Optional[str] = None
+    is_memories: bool = False
+    memories_subcommand: Optional[str] = None
+    is_jobs: bool = False
+    jobs_subcommand: Optional[str] = None
 
 
 def parse_message(
@@ -120,6 +133,42 @@ def parse_message(
             is_command=True,
             is_wiki=True,
             wiki_subcommand=subcmd,
+        )
+
+    if text.startswith("/instructions"):
+        parts = text.split(maxsplit=2)
+        subcmd = parts[1] if len(parts) > 1 else ""
+        instructions_text = parts[2] if len(parts) > 2 else ""
+        return ParsedCommand(
+            agent_name="",
+            query=instructions_text,
+            is_command=True,
+            is_instructions=True,
+            instructions_subcommand=subcmd,
+        )
+
+    if text.startswith("/memories"):
+        parts = text.split(maxsplit=2)
+        subcmd = parts[1] if len(parts) > 1 else ""
+        mem_arg = parts[2] if len(parts) > 2 else ""
+        return ParsedCommand(
+            agent_name="",
+            query=mem_arg,
+            is_command=True,
+            is_memories=True,
+            memories_subcommand=subcmd,
+        )
+
+    if text.startswith("/jobs"):
+        parts = text.split(maxsplit=2)
+        subcmd = parts[1] if len(parts) > 1 else ""
+        jobs_arg = parts[2] if len(parts) > 2 else ""
+        return ParsedCommand(
+            agent_name="",
+            query=jobs_arg,
+            is_command=True,
+            is_jobs=True,
+            jobs_subcommand=subcmd,
         )
 
     for command, agent in AGENT_COMMANDS.items():

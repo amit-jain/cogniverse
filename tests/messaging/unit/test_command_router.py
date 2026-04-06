@@ -119,3 +119,59 @@ class TestCommandParsing:
         assert result.is_command
         assert result.wiki_subcommand == "index"
         assert result.query == ""
+
+    def test_instructions_set(self):
+        result = parse_message(text="/instructions set Always respond in bullet points")
+        assert result.is_instructions
+        assert result.is_command
+        assert result.instructions_subcommand == "set"
+        assert result.query == "Always respond in bullet points"
+
+    def test_instructions_show(self):
+        result = parse_message(text="/instructions show")
+        assert result.is_instructions
+        assert result.is_command
+        assert result.instructions_subcommand == "show"
+        assert result.query == ""
+
+    def test_memories_list(self):
+        result = parse_message(text="/memories list")
+        assert result.is_memories
+        assert result.is_command
+        assert result.memories_subcommand == "list"
+        assert result.query == ""
+
+    def test_memories_clear_strategies(self):
+        result = parse_message(text="/memories clear strategies")
+        assert result.is_memories
+        assert result.is_command
+        assert result.memories_subcommand == "clear"
+        assert result.query == "strategies"
+
+    def test_jobs_list(self):
+        result = parse_message(text="/jobs list")
+        assert result.is_jobs
+        assert result.is_command
+        assert result.jobs_subcommand == "list"
+        assert result.query == ""
+
+    def test_jobs_create(self):
+        result = parse_message(text='/jobs create "0 9 * * 1" search for new AI papers')
+        assert result.is_jobs
+        assert result.is_command
+        assert result.jobs_subcommand == "create"
+        assert result.query == '"0 9 * * 1" search for new AI papers'
+
+    def test_jobs_delete(self):
+        result = parse_message(text="/jobs delete abc12345")
+        assert result.is_jobs
+        assert result.is_command
+        assert result.jobs_subcommand == "delete"
+        assert result.query == "abc12345"
+
+    def test_jobs_no_subcommand(self):
+        result = parse_message(text="/jobs")
+        assert result.is_jobs
+        assert result.is_command
+        assert result.jobs_subcommand == ""
+        assert result.query == ""
