@@ -158,17 +158,61 @@ async def delete_instructions(tenant_id: str):
 def _get_memory_manager(tenant_id: str):
     """Return an initialised Mem0MemoryManager for the given tenant.
 
-    Raises HTTPException(503) if the manager is not yet initialised (no
-    memory backend wired at runtime — this is expected in unit tests with
-    mocked managers).
+    Lazily initializes Mem0 from the system config if the singleton
+    exists but was never initialized (common on k3d where memory isn't
+    wired at startup).
     """
     mgr = Mem0MemoryManager(tenant_id)
+    if not mgr.memory:
+        _lazy_init_memory(mgr, tenant_id)
     if not mgr.memory:
         raise HTTPException(
             status_code=503,
             detail="Memory backend not initialised for this tenant",
         )
     return mgr
+
+
+def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
+    """Attempt to initialize Mem0 from the ConfigManager's system config."""
+    import os
+    from pathlib import Path
+
+    try:
+        cm = _require_config_manager()
+        sc = cm.get_system_config()
+        if not sc:
+            return
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.utils import get_config
+
+        config = get_config(tenant_id="default", config_manager=cm)
+        llm_cfg = config.get("llm_config", {}).get("primary", {})
+        model = llm_cfg.get("model", "qwen3:4b")
+        if "/" in model:
+            model = model.split("/", 1)[1]
+
+        llm_base_url = os.environ.get(
+            "LLM_ENDPOINT",
+            llm_cfg.get("api_base") or "http://localhost:11434",
+        )
+
+        mgr.initialize(
+            backend_host=sc.backend_url,
+            backend_port=sc.backend_port,
+            backend_config_port=int(os.environ.get("VESPA_CONFIG_PORT", "19071")),
+            base_schema_name="agent_memories",
+            llm_model=model,
+            embedding_model="nomic-embed-text",
+            llm_base_url=llm_base_url,
+            auto_create_schema=True,
+            config_manager=cm,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        )
+        logger.info("Lazily initialized Mem0 for tenant %s", tenant_id)
+    except Exception as exc:
+        logger.warning("Failed to lazy-init Mem0 for tenant %s: %s", tenant_id, exc)
 
 
 _USER_MEMORY_AGENT = "_user_memories"
