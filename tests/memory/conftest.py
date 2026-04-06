@@ -417,9 +417,34 @@ def shared_memory_vespa():
         )
         config_manager.set_system_config(system_config)
 
-        # Schemas already deployed via ApplicationPackage above.
+        # Register deployed schemas in ConfigStore so any new SchemaRegistry
+        # created by downstream fixtures (e.g., Mem0's get_ingestion_backend)
+        # finds them and doesn't attempt redeployment.
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
         tenant_schema_name = "agent_memories_test_tenant"
         wiki_schema_name = "wiki_pages_test_tenant"
+
+        for schema_name, base_name in [
+            (tenant_schema_name, "agent_memories"),
+            (wiki_schema_name, "wiki_pages"),
+        ]:
+            config_manager.set_config_value(
+                tenant_id="test_tenant",
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+                config_key=schema_name,
+                config_value={
+                    "tenant_id": "test_tenant",
+                    "base_schema_name": base_name,
+                    "full_schema_name": schema_name,
+                    "schema_definition": "{}",
+                    "config": {},
+                    "deployment_time": "2026-04-06T00:00:00",
+                    "deleted": False,
+                },
+            )
+
         BackendRegistry._backend_instances.clear()
 
     except Exception as e:

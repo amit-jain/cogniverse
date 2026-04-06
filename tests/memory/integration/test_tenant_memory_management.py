@@ -52,26 +52,6 @@ def tenant_mem_manager(shared_memory_vespa):
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
     )
 
-    # Pre-register schemas so _get_or_create_ingestion_client skips redeployment
-    backend = mm.memory.vector_store.backend
-    if backend.schema_registry:
-        from cogniverse_core.registries.schema_registry import SchemaInfo
-
-        for schema_name, base_name in [
-            ("agent_memories_test_tenant", "agent_memories"),
-            ("wiki_pages_test_tenant", "wiki_pages"),
-        ]:
-            key = ("test_tenant", base_name)
-            if key not in backend.schema_registry._schemas:
-                backend.schema_registry._schemas[key] = SchemaInfo(
-                    tenant_id="test_tenant",
-                    base_schema_name=base_name,
-                    full_schema_name=schema_name,
-                    schema_definition="{}",
-                    config={},
-                    deployment_time="2026-04-06T00:00:00",
-                )
-
     yield mm
 
     try:

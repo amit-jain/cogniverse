@@ -55,29 +55,6 @@ def memory_manager(shared_memory_vespa):
         schema_loader=schema_loader,
     )
 
-    # Pre-register schemas in the backend's SchemaRegistry so
-    # _get_or_create_ingestion_client skips redeployment.
-    # Without this, the first add_memory triggers deploy_schema which
-    # creates a package without wiki_pages_test_tenant, and Vespa rejects it.
-    backend = manager.memory.vector_store.backend
-    if backend.schema_registry:
-        from cogniverse_core.registries.schema_registry import SchemaInfo
-
-        for schema_name, base_name in [
-            ("agent_memories_test_tenant", "agent_memories"),
-            ("wiki_pages_test_tenant", "wiki_pages"),
-        ]:
-            key = ("test_tenant", base_name)
-            if key not in backend.schema_registry._schemas:
-                backend.schema_registry._schemas[key] = SchemaInfo(
-                    tenant_id="test_tenant",
-                    base_schema_name=base_name,
-                    full_schema_name=schema_name,
-                    schema_definition="{}",
-                    config={},
-                    deployment_time="2026-04-06T00:00:00",
-                )
-
     yield manager
 
     # Cleanup: Clear test memories (not schemas!)
