@@ -227,22 +227,37 @@ class TestMemoryManagementRealMem0:
     correct port) and the clear_agent_memory path.
     """
 
-    def test_add_memory_stores_successfully(self, memory_manager):
-        """add_memory completes without error and returns an ID."""
-        mm = memory_manager
-        result = mm.add_memory(
-            content="Tenant extensibility test: user prefers markdown tables",
-            tenant_id="default",
-            agent_name="_test_tenant_ext_add",
-        )
-        assert result is not None, "add_memory should return a memory ID"
-
-    def test_clear_agent_memory_returns_success(self, memory_manager):
-        """clear_agent_memory completes without error."""
+    def test_add_then_search_round_trip(self, memory_manager):
+        """Add memory via Mem0, search it back from real Vespa."""
         mm = memory_manager
 
         mm.add_memory(
-            content="Data to be cleared in tenant extensibility test",
+            content="I always prefer using ColPali model for video searches",
+            tenant_id="default",
+            agent_name="_test_tenant_ext_rt",
+        )
+
+        results = mm.search_memory(
+            query="ColPali video search preference",
+            tenant_id="default",
+            agent_name="_test_tenant_ext_rt",
+            top_k=5,
+        )
+
+        assert len(results) >= 1, (
+            "Should find the memory we just added via real Vespa search"
+        )
+        all_text = " ".join(r.get("memory", "") for r in results).lower()
+        assert "colpali" in all_text or "video" in all_text or "search" in all_text, (
+            f"Memory should reference ColPali/video/search, got: {all_text}"
+        )
+
+    def test_clear_agent_memory_removes_all(self, memory_manager):
+        """clear_agent_memory removes all memories for that namespace."""
+        mm = memory_manager
+
+        mm.add_memory(
+            content="Temporary data for clear test",
             tenant_id="default",
             agent_name="_test_tenant_ext_clear",
         )
@@ -252,6 +267,16 @@ class TestMemoryManagementRealMem0:
             agent_name="_test_tenant_ext_clear",
         )
         assert success is True
+
+        results = mm.search_memory(
+            query="temporary data clear test",
+            tenant_id="default",
+            agent_name="_test_tenant_ext_clear",
+            top_k=5,
+        )
+        assert len(results) == 0, (
+            f"After clear, should find 0 memories, got {len(results)}"
+        )
 
 
 @pytest.mark.integration
