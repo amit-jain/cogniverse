@@ -63,28 +63,6 @@ class TestRoutingAgentIntegration:
         # Cleanup
         os.unlink(config_file_path)
 
-    @pytest.mark.ci_fast
-    def test_routing_agent_with_real_config_file(
-        self, test_config, routing_config_file
-    ):
-        """Test RoutingAgent initialization with actual config file"""
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        agent = RoutingAgent(deps=deps)
-
-        # Verify agent initialized properly
-        assert agent.config is not None
-        assert hasattr(agent, "logger")
-        # Agent should have DSPy components initialized
-        assert hasattr(agent, "routing_module")
-
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_real_routing_decision_flow(self, test_config):

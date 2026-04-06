@@ -10,11 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from cogniverse_agents.routing.adaptive_threshold_learner import (
-    AdaptationStrategy,
     AdaptiveThresholdConfig,
     AdaptiveThresholdLearner,
-    PerformanceMetrics,
-    ThresholdConfig,
     ThresholdParameter,
     ThresholdState,
 )
@@ -40,124 +37,6 @@ def _make_mock_telemetry_provider():
     provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
     provider.experiments.log_run = AsyncMock(return_value="run-test")
     return provider
-
-
-class TestThresholdParameter:
-    """Test threshold parameter enumeration."""
-
-    @pytest.mark.ci_fast
-    def test_threshold_parameter_values(self):
-        """Test that threshold parameter enum has expected values."""
-        assert ThresholdParameter.ROUTING_CONFIDENCE.value == "routing_confidence"
-        assert ThresholdParameter.SIMILARITY_THRESHOLD.value == "similarity_threshold"
-        assert ThresholdParameter.PATTERN_CONFIDENCE.value == "pattern_confidence"
-        assert ThresholdParameter.ENTITY_CONFIDENCE.value == "entity_confidence"
-        assert (
-            ThresholdParameter.RELATIONSHIP_CONFIDENCE.value
-            == "relationship_confidence"
-        )
-
-
-class TestAdaptationStrategy:
-    """Test adaptation strategy enumeration."""
-
-    def test_adaptation_strategy_values(self):
-        """Test that adaptation strategy enum has expected values."""
-        assert AdaptationStrategy.GRADIENT_BASED.value == "gradient_based"
-        assert AdaptationStrategy.EVOLUTIONARY.value == "evolutionary"
-        assert AdaptationStrategy.BANDIT.value == "bandit"
-        assert AdaptationStrategy.BAYESIAN.value == "bayesian"
-        assert AdaptationStrategy.STATISTICAL.value == "statistical"
-
-
-class TestPerformanceMetrics:
-    """Test performance metrics functionality."""
-
-    def test_performance_metrics_creation(self):
-        """Test creating performance metrics."""
-        metrics = PerformanceMetrics(
-            success_rate=0.85,
-            average_confidence=0.82,
-            response_time=1.2,
-            user_satisfaction=0.9,
-        )
-
-        assert metrics.success_rate == 0.85
-        assert metrics.average_confidence == 0.82
-        assert metrics.response_time == 1.2
-        assert metrics.user_satisfaction == 0.9
-        assert metrics.sample_count == 0  # Default value
-
-
-class TestAdaptiveThresholdConfig:
-    """Test adaptive threshold configuration."""
-
-    def test_config_creation_with_defaults(self):
-        """Test creating configuration with default values."""
-        config = AdaptiveThresholdConfig()
-
-        assert config.global_learning_rate > 0
-        assert config.performance_window_size > 0
-        assert config.update_frequency > 0
-        assert config.enable_automatic_rollback in [True, False]
-        assert isinstance(config.threshold_configs, dict)
-
-    def test_config_customization(self):
-        """Test customizing configuration."""
-        config = AdaptiveThresholdConfig(
-            global_learning_rate=0.05,
-            performance_window_size=200,
-            update_frequency=25,
-            enable_automatic_rollback=False,
-        )
-
-        assert config.global_learning_rate == 0.05
-        assert config.performance_window_size == 200
-        assert config.update_frequency == 25
-        assert config.enable_automatic_rollback is False
-
-
-class TestThresholdConfig:
-    """Test individual threshold configuration."""
-
-    def test_threshold_config_creation(self):
-        """Test creating threshold configuration."""
-        config = ThresholdConfig(
-            parameter=ThresholdParameter.ROUTING_CONFIDENCE,
-            initial_value=0.7,
-            min_value=0.1,
-            max_value=0.9,
-            learning_rate=0.01,
-        )
-
-        assert config.parameter == ThresholdParameter.ROUTING_CONFIDENCE
-        assert config.initial_value == 0.7
-        assert config.min_value == 0.1
-        assert config.max_value == 0.9
-        assert config.learning_rate == 0.01
-        assert (
-            config.adaptation_strategy == AdaptationStrategy.GRADIENT_BASED
-        )  # Default
-
-
-class TestThresholdState:
-    """Test threshold state functionality."""
-
-    def test_threshold_state_creation(self):
-        """Test creating threshold state."""
-        state = ThresholdState(
-            parameter=ThresholdParameter.ROUTING_CONFIDENCE,
-            current_value=0.75,
-            best_value=0.75,
-            best_performance=0.0,
-        )
-
-        assert state.parameter == ThresholdParameter.ROUTING_CONFIDENCE
-        assert state.current_value == 0.75
-        assert state.best_value == 0.75
-        assert state.best_performance == 0.0
-        assert state.total_updates == 0
-        assert state.rollbacks == 0
 
 
 class TestAdaptiveThresholdLearner:

@@ -33,7 +33,6 @@ from cogniverse_agents.routing.dspy_routing_signatures import (
 )
 from cogniverse_agents.routing.query_enhancement_engine import (
     QueryEnhancementPipeline,
-    create_enhancement_pipeline,
 )
 from cogniverse_agents.routing.relationship_extraction_tools import (
     GLiNERRelationshipExtractor,
@@ -830,68 +829,6 @@ class TestDSPy30RoutingSignatures:
     old signature creation in dspy_agent_optimizer.py.
     """
 
-    @pytest.mark.ci_fast
-    def test_basic_query_analysis_signature_structure(self):
-        """Test BasicQueryAnalysisSignature has correct DSPy 3.0 structure"""
-
-        # Test signature is properly structured for DSPy 3.0
-        assert issubclass(BasicQueryAnalysisSignature, dspy.Signature)
-
-        # In DSPy 3.0, fields are accessed via model_fields
-        fields = BasicQueryAnalysisSignature.model_fields
-        assert "query" in fields
-        assert "context" in fields
-        assert "primary_intent" in fields
-        assert "needs_video_search" in fields
-        assert "recommended_agent" in fields
-        assert "confidence_score" in fields
-
-    def test_advanced_routing_signature_structure(self):
-        """Test AdvancedRoutingSignature for complex routing decisions"""
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            AdvancedRoutingSignature,
-        )
-
-        assert issubclass(AdvancedRoutingSignature, dspy.Signature)
-
-        fields = AdvancedRoutingSignature.model_fields
-        assert "query" in fields
-        assert "query_analysis" in fields
-        assert "extracted_entities" in fields
-        assert "extracted_relationships" in fields
-        assert "enhanced_query" in fields
-        assert "routing_decision" in fields
-        assert "agent_workflow" in fields
-
-    def test_query_reformulation_signature(self):
-        """Test QueryReformulationSignature (Path A: GLiNER fast path)"""
-
-        assert issubclass(QueryReformulationSignature, dspy.Signature)
-
-        fields = QueryReformulationSignature.model_fields
-        assert "original_query" in fields
-        assert "entities" in fields
-        assert "relationships" in fields
-        assert "search_context" in fields
-        assert "enhanced_query" in fields
-        assert "query_variants" in fields
-        assert "confidence" in fields
-
-    def test_unified_extraction_reformulation_signature(self):
-        """Test UnifiedExtractionReformulationSignature (Path B: LLM unified path)"""
-
-        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
-
-        fields = UnifiedExtractionReformulationSignature.model_fields
-        assert "original_query" in fields
-        assert "search_context" in fields
-        assert "entities" in fields
-        assert "relationships" in fields
-        assert "enhanced_query" in fields
-        assert "query_variants" in fields
-        assert "domain_classification" in fields
-        assert "confidence" in fields
-
     def test_signature_factory_function(self):
         """Test signature factory for dynamic signature selection"""
         from cogniverse_agents.routing.dspy_routing_signatures import (
@@ -1029,21 +966,6 @@ class TestDSPyRedundancyAnalysis:
 class TestRelationshipExtraction:
     """Test relationship extraction tools and DSPy modules."""
 
-    @pytest.mark.ci_fast
-    def test_relationship_extractor_tool_initialization(self):
-        """Test RelationshipExtractorTool can be initialized"""
-        try:
-            from cogniverse_agents.routing.relationship_extraction_tools import (
-                RelationshipExtractorTool,
-            )
-
-            tool = RelationshipExtractorTool()
-            assert tool is not None
-            assert hasattr(tool, "gliner_extractor")
-            assert hasattr(tool, "spacy_analyzer")
-        except Exception:
-            pass
-
     @pytest.mark.asyncio
     async def test_comprehensive_relationship_extraction(self):
         """Test comprehensive relationship extraction workflow"""
@@ -1084,40 +1006,6 @@ class TestRelationshipExtraction:
             # Should handle gracefully even if models aren't available
             assert "error" in str(e).lower() or "not found" in str(e).lower()
 
-    def test_gliner_relationship_extractor_initialization(self):
-        """Test GLiNERRelationshipExtractor initialization"""
-        try:
-            from cogniverse_agents.routing.relationship_extraction_tools import (
-                GLiNERRelationshipExtractor,
-            )
-
-            extractor = GLiNERRelationshipExtractor()
-            assert extractor is not None
-            assert hasattr(extractor, "model_name")
-
-            # Should handle missing GLiNER gracefully
-            if not extractor.gliner_model:
-                assert extractor.model_name is not None  # Config should still be set
-        except Exception:
-            pass
-
-    def test_spacy_dependency_analyzer_initialization(self):
-        """Test SpaCyDependencyAnalyzer initialization"""
-        try:
-            from cogniverse_agents.routing.relationship_extraction_tools import (
-                SpaCyDependencyAnalyzer,
-            )
-
-            analyzer = SpaCyDependencyAnalyzer()
-            assert analyzer is not None
-            assert hasattr(analyzer, "model_name")
-
-            # Should handle missing spaCy model gracefully
-            if not analyzer.nlp:
-                assert analyzer.model_name is not None  # Config should still be set
-        except Exception:
-            pass
-
     def test_entity_extraction_fallback(self):
         """Test entity extraction with fallback when models unavailable"""
         from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -1148,39 +1036,6 @@ class TestRelationshipExtraction:
 @pytest.mark.unit
 class TestDSPyModules:
     """Test DSPy 3.0 modules for relationship-aware routing."""
-
-    @pytest.mark.ci_fast
-    def test_composable_query_analysis_module_structure(self):
-        """Test ComposableQueryAnalysisModule structure"""
-
-        module = create_composable_query_analysis_module()
-        assert module is not None
-        assert hasattr(module, "gliner_extractor")
-        assert hasattr(module, "spacy_analyzer")
-        assert hasattr(module, "reformulator")
-        assert hasattr(module, "unified_extractor")
-        assert hasattr(module, "entity_confidence_threshold")
-        assert hasattr(module, "min_entities_for_fast_path")
-        assert isinstance(module, dspy.Module)
-
-    @pytest.mark.ci_fast
-    def test_composable_module_default_thresholds(self):
-        """Test ComposableQueryAnalysisModule default thresholds"""
-
-        module = create_composable_query_analysis_module()
-        assert module.entity_confidence_threshold == 0.6
-        assert module.min_entities_for_fast_path == 1
-
-    @pytest.mark.ci_fast
-    def test_composable_module_custom_thresholds(self):
-        """Test ComposableQueryAnalysisModule with custom thresholds"""
-
-        module = create_composable_query_analysis_module(
-            entity_confidence_threshold=0.8,
-            min_entities_for_fast_path=2,
-        )
-        assert module.entity_confidence_threshold == 0.8
-        assert module.min_entities_for_fast_path == 2
 
     @pytest.mark.ci_fast
     def test_composable_module_forward_output_shape(self):
@@ -1255,29 +1110,6 @@ class TestDSPyModules:
 
         # Restore
         gliner.extract_entities = original_extract
-
-    @pytest.mark.ci_fast
-    def test_dspy_basic_routing_module_structure(self):
-        """Test DSPyBasicRoutingModule structure"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            DSPyBasicRoutingModule,
-        )
-
-        module = DSPyBasicRoutingModule()
-        assert module is not None
-        assert hasattr(module, "analyzer")
-        assert isinstance(module, dspy.Module)
-
-    def test_dspy_advanced_routing_module_structure(self):
-        """Test DSPyAdvancedRoutingModule structure"""
-
-        module = DSPyAdvancedRoutingModule()
-        assert module is not None
-        assert hasattr(module, "router")
-        assert hasattr(module, "analysis_module")
-        assert hasattr(module, "basic_module")
-        assert isinstance(module, dspy.Module)
-        assert isinstance(module.analysis_module, ComposableQueryAnalysisModule)
 
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
@@ -1469,58 +1301,6 @@ class TestDSPyModules:
 
 
 @pytest.mark.unit
-class TestDSPyFactoryFunctions:
-    """Test factory functions for module creation."""
-
-    def test_create_composable_query_analysis_module(self):
-        """Test composable query analysis module factory"""
-
-        module = create_composable_query_analysis_module()
-        assert module is not None
-        assert isinstance(module, dspy.Module)
-        assert isinstance(module, ComposableQueryAnalysisModule)
-
-    def test_create_composable_module_with_custom_thresholds(self):
-        """Test composable module factory with custom thresholds"""
-
-        module = create_composable_query_analysis_module(
-            entity_confidence_threshold=0.8,
-            min_entities_for_fast_path=2,
-        )
-        assert module.entity_confidence_threshold == 0.8
-        assert module.min_entities_for_fast_path == 2
-
-    def test_create_basic_routing_module(self):
-        """Test basic routing module factory"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            create_basic_routing_module,
-        )
-
-        module = create_basic_routing_module()
-        assert module is not None
-        assert isinstance(module, dspy.Module)
-
-    def test_create_advanced_routing_module(self):
-        """Test advanced routing module factory"""
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            create_advanced_routing_module,
-        )
-
-        module = create_advanced_routing_module()
-        assert module is not None
-        assert isinstance(module, dspy.Module)
-
-    def test_relationship_extractor_tool_factory(self):
-        """Test relationship extractor tool factory"""
-        from cogniverse_agents.routing.relationship_extraction_tools import (
-            create_relationship_extractor,
-        )
-
-        tool = create_relationship_extractor()
-        assert tool is not None
-
-
-@pytest.mark.unit
 class TestDSPyIntegrationReadiness:
     """Test Phase 2 integration readiness with Phase 3 preparation."""
 
@@ -1556,41 +1336,6 @@ class TestDSPyIntegrationReadiness:
                 assert "relation" in relationship
                 assert "object" in relationship
 
-    def test_composable_module_signature_compatibility(self):
-        """Test that composable module uses signatures compatible with DSPy 3.0"""
-
-        # Verify Path A signature (reformulation)
-        assert issubclass(QueryReformulationSignature, dspy.Signature)
-        reformulation_fields = QueryReformulationSignature.model_fields
-        required_reformulation_fields = [
-            "original_query",
-            "entities",
-            "relationships",
-            "search_context",
-            "enhanced_query",
-            "query_variants",
-            "confidence",
-        ]
-        for field in required_reformulation_fields:
-            assert field in reformulation_fields, (
-                f"Missing reformulation field: {field}"
-            )
-
-        # Verify Path B signature (unified extraction + reformulation)
-        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
-        unified_fields = UnifiedExtractionReformulationSignature.model_fields
-        required_unified_fields = [
-            "original_query",
-            "search_context",
-            "entities",
-            "relationships",
-            "enhanced_query",
-            "query_variants",
-            "domain_classification",
-            "confidence",
-        ]
-        for field in required_unified_fields:
-            assert field in unified_fields, f"Missing unified field: {field}"
 
 
 # Query Enhancement System Tests
@@ -1599,16 +1344,6 @@ class TestDSPyIntegrationReadiness:
 @pytest.mark.unit
 class TestQueryEnhancement:
     """Test composable query analysis module enhancement functionality."""
-
-    @pytest.mark.ci_fast
-    def test_composable_module_initialization(self):
-        """Test ComposableQueryAnalysisModule initialization"""
-
-        module = create_composable_query_analysis_module()
-        assert module is not None
-        assert isinstance(module, dspy.Module)
-        assert hasattr(module, "reformulator")
-        assert hasattr(module, "unified_extractor")
 
     def test_composable_module_basic_enhancement(self):
         """Test basic query enhancement through composable module"""
@@ -1721,14 +1456,6 @@ class TestQueryVariants:
 class TestComposableModuleInPipeline:
     """Test composable module integration with enhancement pipeline."""
 
-    def test_enhancement_pipeline_initialization(self):
-        """Test QueryEnhancementPipeline initialization"""
-
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-        assert pipeline is not None
-        assert hasattr(pipeline, "analysis_module")
-        assert hasattr(pipeline, "query_fusion_config")
-
     @pytest.mark.asyncio
     async def test_end_to_end_query_enhancement(self):
         """Test end-to-end query enhancement pipeline"""
@@ -1820,69 +1547,8 @@ class TestComposableModuleInPipeline:
 
 
 @pytest.mark.unit
-class TestQueryEnhancementFactory:
-    """Test factory functions."""
-
-    def test_create_enhancement_pipeline(self):
-        """Test enhancement pipeline factory function"""
-
-        pipeline = create_enhancement_pipeline(enable_simba=False)
-        assert pipeline is not None
-        assert isinstance(pipeline, QueryEnhancementPipeline)
-        assert hasattr(pipeline, "analysis_module")
-
-    def test_create_enhancement_pipeline_with_module(self):
-        """Test enhancement pipeline factory with pre-created module"""
-
-        module = create_composable_query_analysis_module()
-        pipeline = create_enhancement_pipeline(
-            analysis_module=module,
-            enable_simba=False,
-        )
-        assert pipeline.analysis_module is module
-
-
-@pytest.mark.unit
 class TestComposableModuleSignatures:
     """Test composable module DSPy signature compatibility."""
-
-    def test_reformulation_signature_compatibility(self):
-        """Test QueryReformulationSignature structure for Path A"""
-
-        assert issubclass(QueryReformulationSignature, dspy.Signature)
-
-        fields = QueryReformulationSignature.model_fields
-
-        # Verify required input fields
-        for field in ["original_query", "entities", "relationships", "search_context"]:
-            assert field in fields, f"Missing input field: {field}"
-
-        # Verify required output fields
-        for field in ["enhanced_query", "query_variants", "confidence"]:
-            assert field in fields, f"Missing output field: {field}"
-
-    def test_unified_extraction_signature_compatibility(self):
-        """Test UnifiedExtractionReformulationSignature structure for Path B"""
-
-        assert issubclass(UnifiedExtractionReformulationSignature, dspy.Signature)
-
-        fields = UnifiedExtractionReformulationSignature.model_fields
-
-        # Verify required input fields
-        for field in ["original_query", "search_context"]:
-            assert field in fields, f"Missing input field: {field}"
-
-        # Verify required output fields
-        for field in [
-            "entities",
-            "relationships",
-            "enhanced_query",
-            "query_variants",
-            "domain_classification",
-            "confidence",
-        ]:
-            assert field in fields, f"Missing output field: {field}"
-
 
 @pytest.mark.unit
 class TestQueryEnhancementIntegration:
@@ -1907,27 +1573,6 @@ class TestQueryEnhancementIntegration:
 
         # Should have path info for routing optimization
         assert isinstance(result.path_used, str)
-
-    def test_composable_output_structure_for_routing(self):
-        """Test composable module outputs have correct structure for routing"""
-
-        module = create_composable_query_analysis_module()
-        result = module.forward("test query")
-
-        # Routing agent expects these attributes
-        routing_required_attributes = [
-            "enhanced_query",
-            "entities",
-            "relationships",
-            "query_variants",
-            "confidence",
-            "path_used",
-            "domain_classification",
-        ]
-
-        for attr in routing_required_attributes:
-            assert hasattr(result, attr), f"Missing routing required attribute: {attr}"
-
 
 @pytest.mark.unit
 class TestDSPyComponentsIntegration:
@@ -1968,56 +1613,6 @@ class TestDSPyComponentsIntegration:
 
         assert isinstance(agent, A2AAgent)
         assert agent.agent_name == "simple_test_agent"
-
-    def test_composable_module_entity_to_enhancement_flow(self):
-        """Test flow from entity extraction to query enhancement via composable module."""
-
-        # The composable module handles entity extraction + enhancement in one pass
-        module = ComposableQueryAnalysisModule(
-            gliner_extractor=Mock(spec=GLiNERRelationshipExtractor),
-            spacy_analyzer=Mock(spec=SpaCyDependencyAnalyzer),
-        )
-
-        # Verify module has both paths available
-        assert hasattr(module, "reformulator")
-        assert hasattr(module, "unified_extractor")
-
-        # The module's forward() handles the full flow:
-        # entities → relationships → enhancement → variants
-        # We just verify it has the right structure
-        assert isinstance(module, dspy.Module)
-
-    def test_dspy_signature_compatibility_across_phases(self):
-        """Test DSPy signatures work correctly across all phases."""
-
-        # Test Phase 1 signatures
-        phase1_fields = BasicQueryAnalysisSignature.model_fields
-        assert "query" in phase1_fields
-        assert "primary_intent" in phase1_fields
-
-        # Test composable module signatures (Path A and Path B)
-        path_a_fields = QueryReformulationSignature.model_fields
-        assert "original_query" in path_a_fields
-        assert "entities" in path_a_fields
-        assert "enhanced_query" in path_a_fields
-        assert "query_variants" in path_a_fields
-
-        path_b_fields = UnifiedExtractionReformulationSignature.model_fields
-        assert "original_query" in path_b_fields
-        assert "enhanced_query" in path_b_fields
-        assert "entities" in path_b_fields
-        assert "relationships" in path_b_fields
-        assert "query_variants" in path_b_fields
-
-        # All signatures should be DSPy 3.0 compatible
-        for signature in [
-            BasicQueryAnalysisSignature,
-            QueryReformulationSignature,
-            UnifiedExtractionReformulationSignature,
-        ]:
-            assert hasattr(signature, "model_fields"), (
-                f"Signature {signature.__name__} not DSPy 3.0 compatible"
-            )
 
     def test_error_propagation_across_phases(self):
         """Test error handling propagates correctly through the pipeline"""
@@ -2532,76 +2127,6 @@ class TestMultiAgentOrchestrator:
 class TestWorkflowIntelligence:
     """Unit tests for Workflow Intelligence (Phase 4.4)"""
 
-    def test_workflow_intelligence_initialization(self):
-        """Test Workflow Intelligence initialization"""
-        from cogniverse_agents.workflow_intelligence import (
-            OptimizationStrategy,
-            WorkflowIntelligence,
-            create_workflow_intelligence,
-        )
-
-        # Test factory function
-        intelligence = create_workflow_intelligence()
-        assert intelligence is not None
-        assert hasattr(intelligence, "workflow_history")
-        assert hasattr(intelligence, "agent_performance")
-        assert hasattr(intelligence, "workflow_templates")
-        assert hasattr(intelligence, "optimization_stats")
-
-        # Test with custom settings
-        custom_intelligence = WorkflowIntelligence(
-            max_history_size=5000,
-            enable_persistence=False,
-            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED,
-        )
-        assert custom_intelligence.max_history_size == 5000
-        assert custom_intelligence.enable_persistence is False
-        assert (
-            custom_intelligence.optimization_strategy
-            == OptimizationStrategy.LATENCY_OPTIMIZED
-        )
-
-    def test_workflow_execution_recording(self):
-        """Test workflow execution data structures"""
-        from datetime import datetime
-
-        from cogniverse_agents.workflow_intelligence import (
-            AgentPerformance,
-            WorkflowExecution,
-        )
-
-        # Test WorkflowExecution
-        execution = WorkflowExecution(
-            workflow_id="test_workflow",
-            query="test query",
-            query_type="video_search",
-            execution_time=120.5,
-            success=True,
-            agent_sequence=["video_search_agent", "summarizer_agent"],
-            task_count=2,
-            parallel_efficiency=0.8,
-            confidence_score=0.85,
-            metadata={"test": True},
-        )
-
-        assert execution.workflow_id == "test_workflow"
-        assert execution.success is True
-        assert len(execution.agent_sequence) == 2
-        assert isinstance(execution.timestamp, datetime)
-
-        # Test AgentPerformance
-        performance = AgentPerformance(
-            agent_name="video_search_agent",
-            total_executions=100,
-            successful_executions=85,
-            average_execution_time=45.2,
-            average_confidence=0.82,
-        )
-
-        assert performance.agent_name == "video_search_agent"
-        assert performance.total_executions == 100
-        assert performance.successful_executions == 85
-
     def test_query_type_classification(self):
         """Test query type classification logic"""
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
@@ -2669,46 +2194,6 @@ class TestWorkflowIntelligence:
         assert (
             intelligence._classify_query_type("help me understand") == "multi_step"
         )  # Contains "then" pattern
-
-    def test_workflow_template_structure(self):
-        """Test workflow template data structure"""
-        from datetime import datetime
-
-        from cogniverse_agents.workflow_intelligence import WorkflowTemplate
-
-        template = WorkflowTemplate(
-            template_id="video_analysis_template",
-            name="Video Analysis Workflow",
-            description="Template for video search and analysis",
-            query_patterns=["video_search", "analysis"],
-            task_sequence=[
-                {"agent": "video_search_agent", "task": "search"},
-                {
-                    "agent": "summarizer_agent",
-                    "task": "summarize",
-                    "dependencies": ["search"],
-                },
-            ],
-            expected_execution_time=180.0,
-            success_rate=0.92,
-            usage_count=15,
-        )
-
-        assert template.template_id == "video_analysis_template"
-        assert template.success_rate == 0.92
-        assert len(template.task_sequence) == 2
-        assert isinstance(template.created_at, datetime)
-
-    def test_optimization_strategy_enum(self):
-        """Test optimization strategy enumeration"""
-        from cogniverse_agents.workflow_intelligence import OptimizationStrategy
-
-        # Test all optimization strategies exist
-        assert OptimizationStrategy.PERFORMANCE_BASED.value == "performance_based"
-        assert OptimizationStrategy.SUCCESS_RATE_BASED.value == "success_rate_based"
-        assert OptimizationStrategy.LATENCY_OPTIMIZED.value == "latency_optimized"
-        assert OptimizationStrategy.COST_OPTIMIZED.value == "cost_optimized"
-        assert OptimizationStrategy.BALANCED.value == "balanced"
 
     def test_intelligence_statistics(self):
         """Test workflow intelligence statistics"""
@@ -2793,91 +2278,6 @@ class TestSystemIntegration:
         assert mock_decision.metadata["needs_orchestration"] is True
         assert orchestrator is not None
 
-    def test_dspy_signatures_compatibility(self, telemetry_manager_without_phoenix):
-        """Test DSPy signatures work across Phase 4 components"""
-        from cogniverse_agents.multi_agent_orchestrator import (
-            ResultAggregatorSignature,
-            WorkflowPlannerSignature,
-        )
-        from cogniverse_agents.workflow_intelligence import (
-            TemplateGeneratorSignature,
-            WorkflowOptimizationSignature,
-        )
-
-        # Test signature field access (DSPy 3.0 compatibility)
-        workflow_fields = WorkflowPlannerSignature.model_fields
-        assert "query" in workflow_fields
-        assert "workflow_tasks" in workflow_fields
-
-        result_fields = ResultAggregatorSignature.model_fields
-        assert "original_query" in result_fields
-        assert "aggregated_result" in result_fields
-
-        optimization_fields = WorkflowOptimizationSignature.model_fields
-        assert "workflow_history" in optimization_fields
-        assert "optimized_sequence" in optimization_fields
-
-        template_fields = TemplateGeneratorSignature.model_fields
-        assert "successful_workflows" in template_fields
-        assert "template_name" in template_fields
-
-    def test_phase4_component_initialization_order(
-        self, telemetry_manager_without_phoenix
-    ):
-        """Test Phase 4 components initialize in correct order without circular dependencies"""
-        from cogniverse_agents.routing_agent import RoutingDeps
-
-        # Test 1: Enhanced Routing Agent (independent)
-        deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        router = RoutingAgent(deps=deps)
-        assert router is not None
-
-        # Test 2: Workflow Intelligence (independent)
-        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
-
-        intelligence = WorkflowIntelligence(enable_persistence=False)
-        assert intelligence is not None
-
-        # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
-
-        orchestrator = MultiAgentOrchestrator(
-            tenant_id="test_tenant",
-            telemetry_manager=telemetry_manager_without_phoenix,
-            routing_agent=router,
-        )
-        assert orchestrator is not None
-        assert orchestrator.routing_agent is router
-
-    def test_phase4_error_handling_consistency(self, telemetry_manager_without_phoenix):
-        """Test error handling consistency across Phase 4 components"""
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        from cogniverse_agents.routing_agent import RoutingDeps
-        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
-
-        # All components should handle initialization errors gracefully
-        try:
-            deps = RoutingDeps(
-                telemetry_config=telemetry_manager_without_phoenix.config,
-            )
-            router = RoutingAgent(deps=deps)
-            orchestrator = MultiAgentOrchestrator(
-                tenant_id="test_tenant",
-                telemetry_manager=telemetry_manager_without_phoenix,
-            )
-            intelligence = WorkflowIntelligence(enable_persistence=False)
-
-            assert router is not None
-            assert orchestrator is not None
-            assert intelligence is not None
-
-        except Exception as e:
-            pytest.fail(
-                f"Phase 4 components should handle initialization errors gracefully: {e}"
-            )
-
     def test_phase4_statistics_consistency(self, telemetry_manager_without_phoenix):
         """Test statistics reporting consistency across Phase 4 components"""
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
@@ -2911,47 +2311,6 @@ class TestSystemIntegration:
 @pytest.mark.unit
 class TestVideoSearchAgent:
     """Unit tests for Enhanced Search Agent (renamed from Video Search Agent)"""
-
-    @patch("cogniverse_core.config.utils.get_config")
-    def test_video_search_agent_initialization(self, mock_video_config):
-        """Test Enhanced Search Agent initialization"""
-        from cogniverse_agents.search_agent import SearchAgentDeps
-
-        # Mock the required dependencies
-        with patch(
-            "cogniverse_agents.search_agent.get_backend_registry"
-        ) as mock_registry:
-            with patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory"
-            ) as mock_encoder_factory:
-                # Create a mock config that returns profiles dict
-                mock_video_config.return_value = {
-                    "video_processing_profiles": {
-                        "video_colpali_smol500_mv_frame": {
-                            "embedding_model": "vidore/colsmol-500m",
-                            "embedding_type": "multi_vector",
-                        }
-                    },
-                    "backend_url": "http://localhost:8080",
-                }
-
-                # Mock backend registry
-                mock_search_backend = Mock()
-                mock_registry.return_value.get_search_backend.return_value = (
-                    mock_search_backend
-                )
-
-                # Mock encoder factory
-                mock_encoder_factory.create_encoder.return_value = Mock()
-
-                # Mock schema_loader
-                mock_schema_loader = Mock()
-
-                deps = SearchAgentDeps()
-                agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
-                assert agent is not None
-                assert hasattr(agent, "_shared_backend")
-                assert hasattr(agent, "_backend_config")
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""

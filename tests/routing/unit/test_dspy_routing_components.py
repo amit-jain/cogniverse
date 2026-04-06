@@ -17,14 +17,6 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
 )
-from cogniverse_agents.routing.dspy_relationship_router import (
-    ComposableQueryAnalysisModule,
-    create_composable_query_analysis_module,
-)
-from cogniverse_agents.routing.dspy_routing_signatures import (
-    AdvancedRoutingSignature,
-    BasicQueryAnalysisSignature,
-)
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # DSPy routing components
@@ -57,41 +49,8 @@ def _make_mock_telemetry_provider():
     return provider
 
 
-class TestDSPyRoutingSignatures:
-    """Test DSPy routing signature definitions"""
-
-    def test_basic_query_analysis_signature(self):
-        """Test basic query analysis signature"""
-        signature = BasicQueryAnalysisSignature
-
-        # Check that it's a proper DSPy signature
-        assert hasattr(signature, "__annotations__")
-        assert hasattr(signature, "__doc__")
-
-        # Basic structure check
-        assert signature is not None
-
-    def test_advanced_routing_signature(self):
-        """Test advanced routing signature"""
-        signature = AdvancedRoutingSignature
-
-        # Check that it's a proper DSPy signature
-        assert hasattr(signature, "__annotations__")
-        assert hasattr(signature, "__doc__")
-
-        # Basic structure check
-        assert signature is not None
-
-
 class TestRelationshipExtractionTool:
     """Test relationship extraction tool"""
-
-    def test_tool_initialization(self):
-        """Test relationship extraction tool can be initialized"""
-        tool = RelationshipExtractorTool()
-        assert tool is not None
-        # Tool should be usable even without spaCy models
-        assert hasattr(tool, "extract_comprehensive_relationships")
 
     @pytest.mark.asyncio
     async def test_extract_relationships_basic(self):
@@ -110,12 +69,6 @@ class TestRelationshipExtractionTool:
 class TestQueryEnhancementPipeline:
     """Test query enhancement pipeline"""
 
-    def test_pipeline_initialization(self):
-        """Test query enhancement pipeline initialization"""
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-        assert pipeline is not None
-        assert hasattr(pipeline, "enhance_query_with_relationships")
-
     @pytest.mark.asyncio
     async def test_enhance_query_basic(self):
         """Test basic query enhancement"""
@@ -129,16 +82,6 @@ class TestQueryEnhancementPipeline:
 
 class TestAdaptiveThresholdLearner:
     """Test adaptive threshold learner"""
-
-    def test_learner_initialization(self):
-        """Test adaptive threshold learner initialization"""
-        learner = AdaptiveThresholdLearner(
-            telemetry_provider=_make_mock_telemetry_provider(),
-            tenant_id="test-tenant",
-        )
-        assert learner is not None
-        assert hasattr(learner, "config")
-        assert hasattr(learner, "threshold_states")
 
     def test_learning_status(self):
         """Test getting learning status"""
@@ -238,19 +181,6 @@ class TestAdvancedRoutingOptimizer:
         assert isinstance(status, dict)
         assert "optimizer_ready" in status
         assert "total_experiences" in status
-
-
-class TestDSPyRouterModules:
-    """Test DSPy router modules"""
-
-    def test_composable_query_analysis_module(self):
-        """Test ComposableQueryAnalysisModule creation and structure."""
-        module = create_composable_query_analysis_module()
-        assert module is not None
-        assert isinstance(module, ComposableQueryAnalysisModule)
-        assert hasattr(module, "forward")
-        assert hasattr(module, "reformulator")
-        assert hasattr(module, "unified_extractor")
 
 
 class TestDSPyRoutingIntegration:

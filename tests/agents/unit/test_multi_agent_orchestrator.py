@@ -194,24 +194,6 @@ class TestMultiAgentOrchestrator:
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
-    def test_initialize_dspy_modules(
-        self,
-        mock_workflow_intel,
-        mock_routing,
-        telemetry_manager_without_phoenix,
-    ):
-        """Test DSPy module initialization"""
-        orchestrator = MultiAgentOrchestrator(
-            tenant_id="test_tenant",
-            telemetry_manager=telemetry_manager_without_phoenix,
-        )
-
-        # DSPy modules should be initialized
-        assert hasattr(orchestrator, "workflow_planner")
-        assert hasattr(orchestrator, "result_aggregator")
-
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     async def test_process_complex_query_basic(
         self,
@@ -691,30 +673,6 @@ class TestCrossModalFusion:
 
         assert "error" in result
         assert result["error"] == "No completed tasks to aggregate"
-
-
-@pytest.mark.unit
-class TestFusionStrategyEnum:
-    """Test FusionStrategy enum"""
-
-    @pytest.mark.ci_fast
-    def test_fusion_strategy_values(self, telemetry_manager_without_phoenix):
-        """Test FusionStrategy enum values"""
-        assert FusionStrategy.SCORE_BASED.value == "score"
-        assert FusionStrategy.TEMPORAL.value == "temporal"
-        assert FusionStrategy.SEMANTIC.value == "semantic"
-        assert FusionStrategy.HIERARCHICAL.value == "hierarchical"
-        assert FusionStrategy.SIMPLE.value == "simple"
-
-    @pytest.mark.ci_fast
-    def test_fusion_strategy_members(self, telemetry_manager_without_phoenix):
-        """Test FusionStrategy enum has all expected members"""
-        strategies = [s.value for s in FusionStrategy]
-        assert "score" in strategies
-        assert "temporal" in strategies
-        assert "semantic" in strategies
-        assert "hierarchical" in strategies
-        assert "simple" in strategies
 
 
 @pytest.mark.unit

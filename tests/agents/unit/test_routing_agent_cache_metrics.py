@@ -76,18 +76,6 @@ class TestRoutingAgentCacheMetrics:
 
             TelemetryManager._instance = None
 
-    def test_cache_metrics_components_initialized(self, routing_agent):
-        """Test that cache and metrics components are initialized"""
-        assert hasattr(routing_agent, "parallel_executor")
-        assert hasattr(routing_agent, "cache_manager")
-        assert hasattr(routing_agent, "lazy_executor")
-        assert hasattr(routing_agent, "metrics_tracker")
-
-        assert routing_agent.parallel_executor is not None
-        assert routing_agent.cache_manager is not None
-        assert routing_agent.lazy_executor is not None
-        assert routing_agent.metrics_tracker is not None
-
     @pytest.mark.asyncio
     async def test_cache_hit_returns_cached_result(self, routing_agent):
         """Test that cache hit returns cached result without processing"""

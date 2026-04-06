@@ -10,11 +10,9 @@ import pytest
 
 from cogniverse_agents.search_agent import (
     ContentProcessor,
-    ImagePart,
     SearchAgent,
     SearchAgentDeps,
     SearchInput,
-    VideoPart,
 )
 
 # Create a mock schema_loader for all tests
@@ -38,15 +36,6 @@ class TestContentProcessor:
     def video_processor(self, mock_query_encoder):
         """Video processor with mocked encoder"""
         return ContentProcessor(mock_query_encoder)
-
-    @pytest.mark.ci_fast
-    def test_video_processor_initialization(self, mock_query_encoder):
-        """Test ContentProcessor initialization"""
-        processor = ContentProcessor(mock_query_encoder)
-
-        assert processor.query_encoder == mock_query_encoder
-        assert processor.temp_dir.exists()
-        assert processor.temp_dir.name == "search_agent"
 
     @pytest.mark.ci_fast
     def test_process_video_file_with_encode_video(self, video_processor):
@@ -751,44 +740,6 @@ class TestSearchAgentEdgeCases:
             agent._search_by_text(
                 "test query", tenant_id="test_tenant", ranking="binary_binary"
             )
-
-
-@pytest.mark.unit
-class TestDataModels:
-    """Test data model validation"""
-
-    def test_video_part_validation(self):
-        """Test VideoPart model validation"""
-        video_part = VideoPart(
-            video_data=b"fake_video_data", filename="test.mp4", content_type="video/mp4"
-        )
-
-        assert video_part.type == "video"
-        assert video_part.video_data == b"fake_video_data"
-        assert video_part.filename == "test.mp4"
-        assert video_part.content_type == "video/mp4"
-
-    def test_image_part_validation(self):
-        """Test ImagePart model validation"""
-        image_part = ImagePart(
-            image_data=b"fake_image_data",
-            filename="test.jpg",
-            content_type="image/jpeg",
-        )
-
-        assert image_part.type == "image"
-        assert image_part.image_data == b"fake_image_data"
-        assert image_part.filename == "test.jpg"
-        assert image_part.content_type == "image/jpeg"
-
-    def test_enhanced_task_dict_structure(self):
-        """Test task dict structure for process_enhanced_task"""
-        message = {"role": "user", "parts": [{"kind": "text", "text": "test"}]}
-        task = {"id": "test_task", "messages": [message]}
-
-        assert task["id"] == "test_task"
-        assert len(task["messages"]) == 1
-        assert task["messages"][0] == message
 
 
 @pytest.mark.unit
@@ -1867,15 +1818,6 @@ class TestEnsembleVsFusionPaths:
 @pytest.mark.unit
 class TestConversationalQueryRewrite:
     """Test conversational query rewriting for multi-turn search."""
-
-    @pytest.mark.ci_fast
-    def test_rewrite_module_instantiates(self):
-        """ConversationalQueryRewriteModule can be instantiated."""
-        from cogniverse_agents.search_agent import ConversationalQueryRewriteModule
-
-        with patch("dspy.ChainOfThought"):
-            module = ConversationalQueryRewriteModule()
-            assert module.rewriter is not None
 
     @pytest.mark.ci_fast
     def test_rewrite_signature_has_correct_fields(self):

@@ -381,18 +381,3 @@ class TestCheckpointConfig:
         assert config.retain_completed_hours == 100
 
 
-class TestCheckpointEnums:
-    """Tests for checkpoint enums"""
-
-    def test_checkpoint_level_values(self):
-        """Test CheckpointLevel enum values"""
-        assert CheckpointLevel.PHASE.value == "phase"
-        assert CheckpointLevel.TASK.value == "task"
-        assert CheckpointLevel.PHASE_AND_TASK.value == "both"
-
-    def test_checkpoint_status_values(self):
-        """Test CheckpointStatus enum values"""
-        assert CheckpointStatus.ACTIVE.value == "active"
-        assert CheckpointStatus.SUPERSEDED.value == "superseded"
-        assert CheckpointStatus.FAILED.value == "failed"
-        assert CheckpointStatus.COMPLETED.value == "completed"

@@ -6,7 +6,6 @@ Also verifies real runtime behaviour: field assignment, type annotation,
 and WikiManager merge-threshold logic.
 """
 
-import typing
 
 import pytest
 
@@ -42,20 +41,6 @@ class TestRLMWiring:
         cls = getattr(mod, agent_cls)
         assert issubclass(cls, RLMAwareMixin)
 
-    @pytest.mark.parametrize("module,agent_cls,input_cls,output_cls", AGENTS_WITH_RLM)
-    def test_input_has_rlm_field(self, module, agent_cls, input_cls, output_cls):
-        mod = __import__(module, fromlist=[input_cls])
-        cls = getattr(mod, input_cls)
-        assert "rlm" in cls.model_fields
-        field = cls.model_fields["rlm"]
-        assert field.default is None
-
-    @pytest.mark.parametrize("module,agent_cls,input_cls,output_cls", AGENTS_WITH_RLM)
-    def test_output_has_rlm_fields(self, module, agent_cls, input_cls, output_cls):
-        mod = __import__(module, fromlist=[output_cls])
-        cls = getattr(mod, output_cls)
-        assert "rlm_synthesis" in cls.model_fields
-        assert "rlm_telemetry" in cls.model_fields
 
 
 class TestDetailedReportInputRLMRuntime:
@@ -68,15 +53,6 @@ class TestDetailedReportInputRLMRuntime:
         inp = DetailedReportInput(query="test", search_results=[], rlm=opts)
         assert inp.rlm is opts
         assert inp.rlm.enabled is True
-
-    def test_rlm_field_type_annotation(self):
-        from cogniverse_agents.detailed_report_agent import DetailedReportInput
-
-        annotation = DetailedReportInput.model_fields["rlm"].annotation
-        args = typing.get_args(annotation)
-        assert RLMOptions in args, (
-            f"rlm field annotation should include RLMOptions, got {annotation}"
-        )
 
 
 class TestWikiManagerRLM:

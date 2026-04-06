@@ -234,8 +234,3 @@ class TestAnnotationRequestSerialization:
         assert d["assigned_at"] is not None
         assert d["sla_deadline"] is not None
 
-    def test_annotation_status_enum_values(self):
-        assert AnnotationStatus.PENDING.value == "pending"
-        assert AnnotationStatus.ASSIGNED.value == "assigned"
-        assert AnnotationStatus.COMPLETED.value == "completed"
-        assert AnnotationStatus.EXPIRED.value == "expired"

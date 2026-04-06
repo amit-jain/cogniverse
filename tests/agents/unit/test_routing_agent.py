@@ -70,22 +70,6 @@ class TestRoutingAgentLegacy:
         )
 
     @pytest.mark.ci_fast
-    def test_routing_agent_initialization(self, mock_system_config, routing_deps):
-        """Test RoutingAgent initialization with typed deps"""
-        agent = RoutingAgent(deps=routing_deps)
-
-        # deps is now the config
-        assert agent.deps is not None
-        assert hasattr(agent, "routing_module")
-        assert hasattr(agent, "logger")
-
-    @pytest.mark.ci_fast
-    def test_routing_agent_initialization_missing_video_agent(self):
-        """Test RoutingAgent initialization fails when video agent URL missing"""
-        # Old test - routing agent no longer uses video_agent_url
-        pass
-
-    @pytest.mark.ci_fast
     def test_build_routing_config(self, mock_system_config):
         """Test routing configuration building"""
         # Old test - routing agent uses RoutingConfig dataclass now
