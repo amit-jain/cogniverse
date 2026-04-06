@@ -218,6 +218,49 @@ class AgentDispatcher:
             typed_input = SearchInput(query=query, tenant_id=tenant_id)
             return agent, typed_input
 
+        if capabilities & {"coding"}:
+            import dspy
+
+            from cogniverse_agents.coding_agent import (
+                CodingAgent,
+                CodingDeps,
+                CodingInput,
+            )
+            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+            from cogniverse_foundation.config.utils import get_config
+
+            config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            )
+            coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
+            dspy.configure(lm=coding_lm)
+
+            deps = CodingDeps(
+                tenant_id=tenant_id,
+                sandbox_manager=self._sandbox_manager,
+            )
+
+            async def search_fn(q: str, tid: str):
+                from cogniverse_agents.search.service import SearchService
+
+                cfg = get_config(tenant_id=tid, config_manager=self._config_manager)
+                svc = SearchService(
+                    config=cfg,
+                    config_manager=self._config_manager,
+                    schema_loader=self._schema_loader,
+                )
+                return [r.to_dict() for r in svc.search(
+                    query=q, profile="code_lateon_mv", tenant_id=tid, top_k=10,
+                )]
+
+            agent = CodingAgent(
+                deps=deps,
+                search_fn=search_fn,
+                sandbox_manager=self._sandbox_manager,
+            )
+            typed_input = CodingInput(task=query, tenant_id=tenant_id)
+            return agent, typed_input
+
         raise ValueError(
             f"Agent '{agent_name}' streaming not configured. "
             f"Capabilities: {agent_entry.capabilities}"

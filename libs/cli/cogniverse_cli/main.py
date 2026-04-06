@@ -352,6 +352,53 @@ def status() -> None:
 
 
 @cli.command()
+@click.option("--tenant", default=None, help="Tenant ID.")
+@click.option("--language", "-l", default="python", help="Primary language.")
+@click.option("--iterations", "-n", default=5, type=int, help="Max iterations.")
+@click.option("--codebase", "-c", default="", help="Indexed codebase path for context.")
+def code(tenant: str | None, language: str, iterations: int, codebase: str) -> None:
+    """Interactive coding agent REPL."""
+    from cogniverse_cli.code import run_repl
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    run_repl(
+        tenant_id=tenant_id,
+        language=language,
+        max_iterations=iterations,
+        codebase_path=codebase,
+    )
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--type", "content_type",
+    type=click.Choice(["code", "docs", "video"]),
+    default="code",
+    help="Content type to index.",
+)
+@click.option("--tenant", default=None, help="Tenant ID.")
+@click.option("--profile", default=None, help="Override Vespa profile.")
+def index(path: str, content_type: str, tenant: str | None, profile: str | None) -> None:
+    """Index a directory into Vespa for agent context search."""
+    from pathlib import Path as P
+
+    from cogniverse_cli.index import index_files
+
+    if content_type != "code":
+        console.print(f"[yellow]--type {content_type} is not yet implemented. Only 'code' is supported.[/yellow]")
+        return
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    index_files(
+        root=P(path).resolve(),
+        content_type=content_type,
+        tenant_id=tenant_id,
+        profile=profile,
+    )
+
+
+@cli.command()
 @click.argument(
     "service",
     type=click.Choice(

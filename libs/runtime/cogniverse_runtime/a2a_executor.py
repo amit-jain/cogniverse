@@ -46,6 +46,7 @@ _STREAMING_CAPABILITIES = frozenset(
         "transcription",
         "document_analysis",
         "pdf_processing",
+        "coding",
     }
 )
 
