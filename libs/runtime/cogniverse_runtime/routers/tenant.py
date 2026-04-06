@@ -353,7 +353,7 @@ async def list_jobs(tenant_id: str):
     jobs: List[JobResponse] = []
     for entry in entries or []:
         v = entry.config_value if hasattr(entry, "config_value") else entry
-        if not isinstance(v, dict) or "job_id" not in v:
+        if not isinstance(v, dict) or "job_id" not in v or v.get("deleted"):
             continue
         jobs.append(
             JobResponse(
@@ -383,11 +383,12 @@ async def delete_job(tenant_id: str, job_id: str):
     if entry is None or not entry.config_value:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
-    cm.delete_config_value(
+    cm.set_config_value(
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
         config_key=f"job_{job_id}",
+        config_value={"deleted": True},
     )
     logger.info("Deleted job %s for tenant %s", job_id, tenant_id)
     return {"status": "deleted", "job_id": job_id}

@@ -292,6 +292,34 @@ class MemoryAwareMixin:
             return StrategyLearner.format_strategies_for_context(strategies)
         return None
 
+    def _get_tenant_instructions(self) -> Optional[str]:
+        """Load tenant instructions from ConfigStore."""
+        try:
+            import json
+
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+            cm = create_default_config_manager()
+            entry = cm.store.get_config(
+                tenant_id=self._memory_tenant_id,
+                scope=ConfigScope.SYSTEM,
+                service="tenant_instructions",
+                config_key="system_prompt",
+            )
+            if entry and entry.config_value:
+                value = entry.config_value
+                if isinstance(value, dict):
+                    return value.get("text", "") or None
+                if isinstance(value, str):
+                    try:
+                        return json.loads(value).get("text", "") or None
+                    except (json.JSONDecodeError, AttributeError):
+                        return value or None
+        except Exception:
+            pass
+        return None
+
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
         """
         Inject relevant memory context and learned strategies into a prompt.
@@ -308,11 +336,15 @@ class MemoryAwareMixin:
 
         context = self.get_relevant_context(query)
         strategies = self.get_strategies(query)
+        instructions = self._get_tenant_instructions()
 
-        if not context and not strategies:
+        if not context and not strategies and not instructions:
             return prompt
 
         parts = [prompt]
+
+        if instructions:
+            parts.append(f"## Tenant Instructions\n{instructions}")
 
         if strategies:
             parts.append(strategies)

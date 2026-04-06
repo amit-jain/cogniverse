@@ -27,6 +27,7 @@ from cogniverse_runtime.routers import (
     health,
     ingestion,
     search,
+    tenant,
     wiki,
 )
 from cogniverse_synthetic.api import router as synthetic_router
@@ -94,6 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 3. Set dependencies on routers
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
+    tenant.set_config_manager(config_manager)
 
     # Wire ingestion and search routers via FastAPI dependency overrides
     app.dependency_overrides[ingestion.get_config_manager_dependency] = (
@@ -403,6 +405,7 @@ app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-managem
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])
 app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
+app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 
 
 @app.get("/")
