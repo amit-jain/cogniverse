@@ -329,14 +329,13 @@ class TestJobExecution:
             slug = data["slug"]
             assert slug
 
-    def test_job_create_execute_verify(self):
-        """Create job via API → execute via job_executor → verify routing agent called.
+    def test_job_execute_with_wiki_delivery(self):
+        """Create job → execute → verify wiki save actually happened.
 
-        This tests the full path: tenant creates a scheduled job, the executor
-        reads it from ConfigStore, sends the query to routing_agent, and routes
-        each post_action. HTTP transport to routing_agent is mocked since we
-        can't trigger a real Argo workflow from the test, but ConfigStore
-        read is against real Vespa.
+        The job executor reads config from real Vespa, calls routing_agent
+        for the main query (mocked), then dispatches "save to wiki" which
+        should call POST /wiki/save (not routing_agent). We intercept HTTP
+        calls to verify the wiki endpoint was called with the right content.
         """
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -345,10 +344,10 @@ class TestJobExecution:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/jobs",
                 json={
-                    "name": "e2e_execution_test",
+                    "name": "e2e_wiki_delivery_test",
                     "schedule": "0 12 * * *",
                     "query": "latest research on video retrieval with ColPali",
-                    "post_actions": ["save to wiki", "send summary on Telegram"],
+                    "post_actions": ["save to wiki"],
                 },
             )
             assert resp.status_code == 200
@@ -356,12 +355,26 @@ class TestJobExecution:
 
         from cogniverse_runtime.job_executor import run_job
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "Found 5 ColPali papers on video retrieval"}
-        mock_response.raise_for_status = MagicMock()
+        agent_response = MagicMock()
+        agent_response.json.return_value = {"response": "Found 5 ColPali papers on video retrieval"}
+        agent_response.raise_for_status = MagicMock()
+        agent_response.status_code = 200
+
+        wiki_response = MagicMock()
+        wiki_response.json.return_value = {"status": "saved", "doc_id": "wiki_test", "slug": "test_slug"}
+        wiki_response.raise_for_status = MagicMock()
+        wiki_response.status_code = 200
+
+        call_log = []
+
+        async def mock_post(url, **kwargs):
+            call_log.append({"url": url, "payload": kwargs.get("json", {})})
+            if "/wiki/save" in url:
+                return wiki_response
+            return agent_response
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.post = AsyncMock(side_effect=mock_post)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -379,22 +392,98 @@ class TestJobExecution:
                 run_job(job_id, TENANT_ID, RUNTIME)
             )
 
-        calls = mock_client.post.call_args_list
-        assert len(calls) == 3, (
-            f"Expected 3 routing_agent calls (1 query + 2 post_actions), got {len(calls)}"
+        urls_called = [c["url"] for c in call_log]
+
+        agent_calls = [c for c in call_log if "/agents/routing_agent/process" in c["url"]]
+        assert len(agent_calls) == 1, (
+            f"Expected 1 routing_agent call (main query only), got {len(agent_calls)}: {urls_called}"
+        )
+        assert agent_calls[0]["payload"]["query"] == "latest research on video retrieval with ColPali"
+
+        wiki_calls = [c for c in call_log if "/wiki/save" in c["url"]]
+        assert len(wiki_calls) == 1, (
+            f"Expected 1 wiki/save call, got {len(wiki_calls)}: {urls_called}"
+        )
+        wiki_payload = wiki_calls[0]["payload"]
+        assert wiki_payload["response"]["answer"] == "Found 5 ColPali papers on video retrieval"
+        assert wiki_payload["tenant_id"] == TENANT_ID
+
+        with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
+            client.delete(f"/admin/tenant/{TENANT_ID}/jobs/{job_id}")
+
+    def test_job_execute_with_summarize_and_telegram(self):
+        """Post_action "summarize and send on Telegram" should process then deliver.
+
+        "summarize and send on Telegram" has processing intent (summarize) +
+        delivery (Telegram). The executor should call routing_agent to summarize,
+        then POST /messaging/send with the summary.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.post(
+                f"/admin/tenant/{TENANT_ID}/jobs",
+                json={
+                    "name": "e2e_telegram_delivery_test",
+                    "schedule": "0 8 * * *",
+                    "query": "find papers on ColPali retrieval",
+                    "post_actions": ["summarize and send me a summary on Telegram"],
+                },
+            )
+            assert resp.status_code == 200
+            job_id = resp.json()["job_id"]
+
+        from cogniverse_runtime.job_executor import run_job
+
+        agent_response = MagicMock()
+        agent_response.json.return_value = {"response": "ColPali achieves SOTA on video retrieval"}
+        agent_response.raise_for_status = MagicMock()
+        agent_response.status_code = 200
+
+        telegram_response = MagicMock()
+        telegram_response.status_code = 200
+        telegram_response.raise_for_status = MagicMock()
+
+        call_log = []
+
+        async def mock_post(url, **kwargs):
+            call_log.append({"url": url, "payload": kwargs.get("json", {})})
+            if "/messaging/send" in url:
+                return telegram_response
+            return agent_response
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "cogniverse_foundation.config.utils.create_default_config_manager",
+                return_value=_get_runtime_config_manager(),
+            ),
+            patch(
+                "cogniverse_runtime.job_executor.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+        ):
+            asyncio.get_event_loop().run_until_complete(
+                run_job(job_id, TENANT_ID, RUNTIME)
+            )
+
+        urls_called = [c["url"] for c in call_log]
+
+        agent_calls = [c for c in call_log if "/agents/routing_agent/process" in c["url"]]
+        assert len(agent_calls) == 2, (
+            f"Expected 2 agent calls (main query + summarize), got {len(agent_calls)}: {urls_called}"
         )
 
-        query_payload = calls[0][1]["json"]
-        assert query_payload["query"] == "latest research on video retrieval with ColPali"
-        assert query_payload["tenant_id"] == TENANT_ID
-
-        wiki_payload = calls[1][1]["json"]
-        assert wiki_payload["query"] == "save to wiki"
-        assert wiki_payload["context"] == "Found 5 ColPali papers on video retrieval"
-
-        telegram_payload = calls[2][1]["json"]
-        assert telegram_payload["query"] == "send summary on Telegram"
-        assert telegram_payload["context"] == "Found 5 ColPali papers on video retrieval"
+        telegram_calls = [c for c in call_log if "/messaging/send" in c["url"]]
+        assert len(telegram_calls) == 1, (
+            f"Expected 1 messaging/send call, got {len(telegram_calls)}: {urls_called}"
+        )
+        assert telegram_calls[0]["payload"]["tenant_id"] == TENANT_ID
 
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             client.delete(f"/admin/tenant/{TENANT_ID}/jobs/{job_id}")

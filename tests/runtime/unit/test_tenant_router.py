@@ -677,7 +677,7 @@ class TestJobExecutor:
         from cogniverse_runtime.job_executor import _call_agent
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "saved to wiki"}
+        mock_response.json.return_value = {"response": "summarized results"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -688,10 +688,21 @@ class TestJobExecutor:
                 mock_client,
                 "http://localhost:28000",
                 "acme",
-                "save to wiki",
+                "summarize this",
                 context="previous result text",
             )
         )
 
         payload = mock_client.post.call_args[1]["json"]
         assert payload["context"] == "previous result text"
+
+    def test_pure_delivery_detected(self):
+        """Pure delivery actions skip agent processing."""
+        from cogniverse_runtime.job_executor import _is_pure_delivery
+
+        assert _is_pure_delivery("save to wiki") is True
+        assert _is_pure_delivery("send on telegram") is True
+        assert _is_pure_delivery("notify me") is True
+        assert _is_pure_delivery("summarize and save to wiki") is False
+        assert _is_pure_delivery("create a report and send on telegram") is False
+        assert _is_pure_delivery("analyze trends") is False
