@@ -50,6 +50,10 @@ class MemoryAwareMixin:
         self._memory_tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
 
+    def set_tenant_for_context(self, tenant_id: str) -> None:
+        """Set tenant_id for instruction injection without full memory init."""
+        self._memory_tenant_id = tenant_id
+
     def initialize_memory(
         self,
         agent_name: str,
@@ -322,21 +326,19 @@ class MemoryAwareMixin:
 
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
         """
-        Inject relevant memory context and learned strategies into a prompt.
+        Inject tenant instructions, learned strategies, and memory context
+        into a prompt.
 
-        Args:
-            prompt: Base prompt
-            query: Query to search memory for
-
-        Returns:
-            Prompt with injected context and strategies
+        Instructions are always loaded (from ConfigStore, no memory needed).
+        Strategies and memory context require memory to be initialized.
         """
-        if not self.is_memory_enabled():
-            return prompt
-
-        context = self.get_relevant_context(query)
-        strategies = self.get_strategies(query)
         instructions = self._get_tenant_instructions()
+
+        context = None
+        strategies = None
+        if self.is_memory_enabled():
+            context = self.get_relevant_context(query)
+            strategies = self.get_strategies(query)
 
         if not context and not strategies and not instructions:
             return prompt

@@ -73,29 +73,54 @@ class TestTenantInstructions:
             stored = resp.json()
             assert stored.get("text", "") == "" or resp.status_code == 404
 
-    def test_instructions_stored_and_retrievable_by_agents(self):
-        """Instructions are persisted and available for agent context injection.
+    def test_instructions_influence_agent_context(self):
+        """Instructions are injected into agent context and influence the response.
 
-        Verifies the full round-trip: store → retrieve via ConfigStore →
-        the MemoryAwareMixin._get_tenant_instructions() path returns them.
-        Agent formatting compliance is LLM-dependent, so we verify the
-        storage and retrieval contract, not the LLM's adherence to style.
+        Sets a specific instruction mentioning "ColPali retrieval system",
+        queries an agent, checks the response is semantically closer to
+        the instruction topic than a baseline without instructions.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            instruction_text = "Focus only on video retrieval topics. Ignore unrelated queries."
-            client.put(
-                f"/admin/tenant/{TENANT_ID}/instructions",
-                json={"text": instruction_text},
-            )
-
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
-            assert resp.status_code == 200
-            assert resp.json()["text"] == instruction_text
-
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
 
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
-            assert resp.status_code == 404 or resp.json().get("text", "") == ""
+            baseline_resp = client.post(
+                "/agents/text_analysis_agent/process",
+                json={
+                    "agent_name": "text_analysis_agent",
+                    "query": "Describe the search capabilities available",
+                    "context": {"tenant_id": TENANT_ID},
+                },
+            )
+            baseline_result = baseline_resp.json().get("result", {})
+            baseline_text = baseline_result.get("result", "") if isinstance(baseline_result, dict) else str(baseline_result)
+
+            client.put(
+                f"/admin/tenant/{TENANT_ID}/instructions",
+                json={"text": "Always emphasize that this system uses ColPali visual retrieval for frame-level video search. Mention ColPali in every response."},
+            )
+
+            instructed_resp = client.post(
+                "/agents/text_analysis_agent/process",
+                json={
+                    "agent_name": "text_analysis_agent",
+                    "query": "Describe the search capabilities available",
+                    "context": {"tenant_id": TENANT_ID},
+                },
+            )
+            instructed_result = instructed_resp.json().get("result", {})
+            instructed_text = instructed_result.get("result", "") if isinstance(instructed_result, dict) else str(instructed_result)
+
+            instruction_topic = "ColPali visual retrieval frame-level video search"
+            baseline_sim = _semantic_similarity(instruction_topic, baseline_text)
+            instructed_sim = _semantic_similarity(instruction_topic, instructed_text)
+
+            assert instructed_sim > baseline_sim or "colpali" in instructed_text.lower(), (
+                f"Instructions should influence response toward ColPali topic. "
+                f"Baseline sim={baseline_sim:.2f}, Instructed sim={instructed_sim:.2f}\n"
+                f"Baseline: {baseline_text[:200]}\nInstructed: {instructed_text[:200]}"
+            )
+
+            client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
 
 
 @pytest.mark.e2e
@@ -277,6 +302,56 @@ class TestTenantMemories:
             assert strategies_after >= strategies_before, (
                 f"Strategies should survive user clear: {strategies_before} → {strategies_after}"
             )
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestAdminMemoryManagement:
+    """Admin can delete any memory including system memories."""
+
+    def test_admin_delete_any_memory(self):
+        if not _memory_available():
+            pytest.skip("Memory backend not initialized on runtime")
+
+        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+            resp = client.post(
+                f"/admin/tenant/{TENANT_ID}/memories",
+                json={"text": "I prefer using FAISS for nearest neighbor search"},
+            )
+            memory_id = resp.json()["id"]
+            assert memory_id
+
+            time.sleep(2)
+
+            resp = client.delete(f"/admin/memories/{TENANT_ID}/{memory_id}")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "deleted"
+
+    def test_admin_clear_by_type(self):
+        if not _memory_available():
+            pytest.skip("Memory backend not initialized on runtime")
+
+        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+            client.post(
+                f"/admin/tenant/{TENANT_ID}/memories",
+                json={"text": "I prefer PostgreSQL over MySQL"},
+            )
+            time.sleep(2)
+
+            resp = client.delete(
+                f"/admin/memories/{TENANT_ID}",
+                params={"type": "preference"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["type"] == "preference"
+
+            time.sleep(2)
+
+            resp = client.get(
+                f"/admin/tenant/{TENANT_ID}/memories",
+                params={"type": "preference"},
+            )
+            assert resp.json()["count"] == 0
 
 
 @pytest.mark.e2e

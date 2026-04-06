@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 class SummarizerInput(AgentInput):
     """Type-safe input for summarization"""
 
+    tenant_id: str = Field(..., description="Tenant identifier")
     query: str = Field(..., description="Query for summarization")
     search_results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Results to summarize"
@@ -820,8 +821,11 @@ and structure summary based on identified themes and content categories.
             SummarizerOutput with summary, key_points, visual_insights, etc.
         """
         # Create summary request from typed input
+        self.set_tenant_for_context(input.tenant_id)
+        enriched_query = self.inject_context_into_prompt(input.query, input.query)
+
         request = SummaryRequest(
-            query=input.query,
+            query=enriched_query,
             search_results=input.search_results,
             context=input.context or {},
             summary_type=input.summary_type,

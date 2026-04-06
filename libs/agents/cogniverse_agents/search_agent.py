@@ -1750,7 +1750,8 @@ class SearchAgent(
         modality = input.modality
         top_k = input.top_k
 
-        # Track search mode and profile info for output
+        self.set_tenant_for_context(tenant_id)
+
         search_mode = "single_profile"
         profile = self.active_profile
         profiles_used = None
@@ -1799,11 +1800,12 @@ class SearchAgent(
             # Text-based search with optional DSPy optimization
             self.emit_progress("query_optimization", "Optimizing query with DSPy...")
             search_query = query
+            enriched_query = self.inject_context_into_prompt(query, query)
             try:
                 dspy_result = await self.call_dspy(
                     self.search_module,
                     output_field="enhanced_query",
-                    query=query,
+                    query=enriched_query,
                     modality=modality,
                     top_k=top_k,
                 )

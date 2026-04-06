@@ -12,6 +12,8 @@ from fastapi import FastAPI
 
 from cogniverse_core.agents.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_foundation.config.agent_config import (
@@ -44,6 +46,7 @@ class TextAnalysisAgent(
     ConfigAPIMixin,
     HealthCheckMixin,
     TenantAwareAgentMixin,
+    MemoryAwareMixin,
 ):
     """
     Text analysis agent with runtime-configurable DSPy modules.
@@ -64,6 +67,8 @@ class TextAnalysisAgent(
         # Initialize tenant support via TenantAwareAgentMixin
         # This validates tenant_id and stores it (eliminates duplication)
         TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+        MemoryAwareMixin.__init__(self)
+        self.set_tenant_for_context(tenant_id)
 
         logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
         self.config_manager = config_manager
@@ -156,7 +161,7 @@ class TextAnalysisAgent(
         # Get or create module (will use cached if available)
         module = self.get_or_create_module("text_analysis")
 
-        # Execute analysis
+        text = self.inject_context_into_prompt(text, text)
         result = module(text=text, analysis_type=analysis_type)
 
         return {

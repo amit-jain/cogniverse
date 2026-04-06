@@ -807,7 +807,8 @@ class RoutingAgent(
                 "Tenant isolation is mandatory - cannot default to 'unknown'."
             )
 
-        # Create telemetry span context manager if available
+        self.set_tenant_for_context(tenant_id)
+
         span_context = None
         if hasattr(self, "telemetry_manager") and self.telemetry_manager:
             self.logger.info(f"Creating telemetry span for tenant: {tenant_id}")
@@ -1111,11 +1112,12 @@ class RoutingAgent(
             routing_context = self._prepare_routing_context(
                 context, entities, relationships
             )
+            tenant_instructions = self._get_tenant_instructions()
+            if tenant_instructions:
+                routing_context = f"{routing_context}\nTenant preferences: {tenant_instructions}"
 
-            # Get available agents from registry
             available_agents = self.registry.list_agents() if self.registry else None
 
-            # DSPy routing decision (scoped LM via context)
             with dspy.context(lm=self._dspy_lm):
                 dspy_result = await self.call_dspy(
                     self.routing_module,

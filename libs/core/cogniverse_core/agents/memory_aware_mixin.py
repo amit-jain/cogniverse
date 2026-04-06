@@ -51,6 +51,10 @@ class MemoryAwareMixin:
         self._memory_tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
 
+    def set_tenant_for_context(self, tenant_id: str) -> None:
+        """Set tenant_id for instruction injection without full memory init."""
+        self._memory_tenant_id = tenant_id
+
     def initialize_memory(
         self,
         agent_name: str,
@@ -271,36 +275,58 @@ class MemoryAwareMixin:
             logger.error(f"Failed to clear memory: {e}")
             return False
 
+    def _get_tenant_instructions(self) -> Optional[str]:
+        """Load tenant instructions from ConfigStore."""
+        if not self._memory_tenant_id:
+            return None
+        try:
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+            cm = create_default_config_manager()
+            entry = cm.store.get_config(
+                tenant_id=self._memory_tenant_id,
+                scope=ConfigScope.SYSTEM,
+                service="tenant_instructions",
+                config_key="system_prompt",
+            )
+            if entry and entry.config_value:
+                value = entry.config_value
+                if isinstance(value, dict):
+                    return value.get("text", "") or None
+                if isinstance(value, str):
+                    return value or None
+        except Exception:
+            pass
+        return None
+
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
         """
-        Inject relevant memory context into a prompt
+        Inject tenant instructions and memory context into a prompt.
 
-        Args:
-            prompt: Base prompt
-            query: Query to search memory for
-
-        Returns:
-            Prompt with injected context
+        Instructions are always loaded (from ConfigStore, no memory needed).
+        Memory context requires memory to be initialized.
         """
-        if not self.is_memory_enabled():
+        instructions = self._get_tenant_instructions()
+
+        context = None
+        if self.is_memory_enabled():
+            context = self.get_relevant_context(query)
+
+        if not context and not instructions:
             return prompt
 
-        context = self.get_relevant_context(query)
+        parts = [prompt]
 
-        if not context:
-            return prompt
+        if instructions:
+            parts.append(f"## Tenant Instructions\n{instructions}")
 
-        # Inject context into prompt
-        enhanced_prompt = f"""{prompt}
+        if context:
+            parts.append(f"## Relevant Context from Memory:\n{context}")
 
-## Relevant Context from Memory:
-{context}
+        parts.append(f"## Current Query:\n{query}")
 
-## Current Query:
-{query}
-"""
-
-        return enhanced_prompt
+        return "\n\n".join(parts)
 
     def remember_success(
         self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None
