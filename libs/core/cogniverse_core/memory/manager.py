@@ -228,18 +228,19 @@ class Mem0MemoryManager:
             "model": embedding_model,
         }
 
-        # Provider-specific endpoint key
+        # Ollama exposes an OpenAI-compatible API at /v1. Using Mem0's
+        # "openai" provider avoids requiring the `ollama` pip package —
+        # the host Ollama install is just an HTTP endpoint.
         if provider == "ollama":
-            # The mem0 Ollama provider uses the native Ollama SDK Client(host=...),
-            # which expects the base URL without the OpenAI-compat /v1 path suffix.
-            # Strip /v1 if present so callers can pass OpenAI-style URLs without breaking.
-            ollama_base_url = llm_base_url.rstrip("/")
-            if ollama_base_url.endswith("/v1"):
-                ollama_base_url = ollama_base_url[:-3]
-            llm_provider_config["ollama_base_url"] = ollama_base_url
-            embedder_provider_config["ollama_base_url"] = ollama_base_url
+            provider = "openai"
+            base_url = llm_base_url.rstrip("/")
+            if not base_url.endswith("/v1"):
+                base_url = f"{base_url}/v1"
+            llm_provider_config["openai_base_url"] = base_url
+            llm_provider_config["api_key"] = "ollama"
+            embedder_provider_config["openai_base_url"] = base_url
+            embedder_provider_config["api_key"] = "ollama"
         else:
-            # OpenAI-compatible providers (modal, openai, etc.)
             llm_provider_config["api_base"] = llm_base_url
             embedder_provider_config["api_base"] = llm_base_url
 
