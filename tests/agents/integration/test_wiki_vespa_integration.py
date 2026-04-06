@@ -13,7 +13,7 @@ import platform
 import subprocess
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -237,17 +237,20 @@ def wiki_vespa():
 def wiki_manager(wiki_vespa):
     """WikiManager wired to the real test Vespa instance.
 
-    backend.get_document returns None (topics do not pre-exist) and
-    backend.search returns [] so that _rebuild_index doesn't error.
-    _generate_embedding is patched to return a fixed vector so Ollama
-    is not required for these tests.
+    backend._url/_port are set so _get_document_http and _rebuild_index can
+    construct the Vespa Document v1 URL.  backend.search returns [] so
+    _rebuild_index gracefully skips index population (full-text search over
+    wiki_content is not the focus of these tests).
+
+    _generate_embedding uses the real Ollama nomic-embed-text model when
+    available, or the built-in zero-vector fallback otherwise — no mock
+    needed.
     """
     http_port = wiki_vespa["http_port"]
 
     backend = MagicMock()
-    backend.backend_url = "http://localhost"
-    backend.backend_port = http_port
-    backend.get_document.return_value = None
+    backend._url = "http://localhost"
+    backend._port = http_port
     backend.search.return_value = []
 
     manager = WikiManager(
@@ -256,8 +259,7 @@ def wiki_manager(wiki_vespa):
         schema_name=WIKI_SCHEMA,
     )
 
-    with patch.object(manager, "_generate_embedding", return_value=[0.1] * 768):
-        yield manager, http_port
+    yield manager, http_port
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +317,11 @@ class TestWikiVespaIntegration:
             assert fields.get("tenant_id") == TENANT_ID
 
     def test_topic_update_merges_content(self, wiki_manager):
-        """Saving two sessions with the same entity merges content on the topic page."""
+        """Saving two sessions with the same entity merges content on the topic page.
+
+        _get_or_create_topic uses _get_document_http (real Vespa HTTP GET) to
+        detect the existing topic — no mock needed for the merge path.
+        """
         manager, port = wiki_manager
 
         entity = "transformer_architecture"
@@ -335,26 +341,14 @@ class TestWikiVespaIntegration:
         assert first_doc is not None, f"Topic page {doc_id} not found after first save."
         first_update_count = first_doc.get("fields", {}).get("update_count", 0)
 
-        # Simulate the existing document being returned by get_document on the
-        # second call, so the manager takes the merge code path.
-        existing_fields = first_doc.get("fields", {})
-        existing_mock = MagicMock()
-        existing_mock.text_content = existing_fields.get("content", "")
-        existing_mock.metadata = {
-            k: v for k, v in existing_fields.items() if k != "content"
-        }
-
-        manager._backend.get_document.return_value = existing_mock
-
+        # Second session — _get_or_create_topic fetches the existing doc via HTTP,
+        # then merges and re-feeds.  No mock needed here.
         manager.save_session(
             query="How do transformers handle long sequences?",
             response="Transformers use positional encoding for sequence order.",
             entities=[entity],
             agent_name="search_agent",
         )
-
-        # Reset mock so later tests see fresh state.
-        manager._backend.get_document.return_value = None
 
         updated_doc = _get_vespa_doc(port, doc_id)
         assert updated_doc is not None, f"Topic page {doc_id} not found after second save."

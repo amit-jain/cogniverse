@@ -103,13 +103,12 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_strategy_distillation_from_trigger_dataset(
-        self, trigger_dataset_in_phoenix
+        self, trigger_dataset_in_phoenix, memory_manager
     ):
-        """Load trigger dataset from Phoenix, verify StrategyLearner
-        can distill strategies from it (pattern extraction only — no Vespa store).
+        """Load trigger dataset from Phoenix and distill strategies into real Vespa memory.
 
-        Full store+retrieve round-trip tested in tests/memory/integration/
-        test_strategy_learner_integration.py with the memory fixtures.
+        Uses the module-scoped memory_manager fixture (real Mem0MemoryManager backed
+        by the shared Vespa Docker instance) so add_memory calls hit real storage.
         """
         import phoenix as px
 
@@ -128,16 +127,8 @@ class TestTriggeredOptimization:
                 flat.append({**inp, **out})
             trigger_df = pd.DataFrame(flat)
 
-        # Use mock memory manager — store/retrieve tested separately
-        from unittest.mock import MagicMock
-
-        mm = MagicMock()
-        mm.memory = MagicMock()
-        mm.add_memory.return_value = "mem_123"
-        mm.search_memory.return_value = []
-
         learner = StrategyLearner(
-            memory_manager=mm,
+            memory_manager=memory_manager,
             tenant_id="default",
         )
         strategies = await learner.learn_from_trigger_dataset(trigger_df)
@@ -145,9 +136,6 @@ class TestTriggeredOptimization:
         assert len(strategies) >= 1, (
             f"Should distill strategies from Phoenix trigger dataset, got {len(strategies)}"
         )
-
-        # Verify add_memory was called with strategy content
-        assert mm.add_memory.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
