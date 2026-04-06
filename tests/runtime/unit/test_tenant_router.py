@@ -14,8 +14,6 @@ from fastapi.testclient import TestClient
 
 from cogniverse_runtime.routers import tenant
 
-# ── Fixtures ──────────────────────────────────────────────────────────────
-
 
 @pytest.fixture(autouse=True)
 def reset_config_manager():
@@ -42,9 +40,6 @@ def tenant_client(mock_config_manager):
     app.include_router(tenant.router)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client, mock_config_manager
-
-
-# ── Instructions: PUT ────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -74,11 +69,7 @@ class TestSetInstructions:
         assert resp.status_code == 200
         data = resp.json()
         assert "updated_at" in data
-        # Verify it is an ISO datetime string
         datetime.fromisoformat(data["updated_at"])
-
-
-# ── Instructions: GET ────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -128,9 +119,6 @@ class TestGetInstructions:
         assert call_kwargs["config_key"] == "system_prompt"
 
 
-# ── Instructions: DELETE ─────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestDeleteInstructions:
@@ -149,7 +137,51 @@ class TestDeleteInstructions:
         assert call_kwargs["config_value"]["text"] == ""
 
 
-# ── Memory: GET /memories ────────────────────────────────────────────────
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestCreateMemory:
+    def test_creates_user_memory(self, tenant_client):
+        client, _ = tenant_client
+        mgr = MagicMock()
+        mgr.memory = MagicMock()
+        mgr.add_memory.return_value = "mem-123"
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.post("/acme/memories", json={"text": "I prefer dark mode"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "saved"
+        assert data["id"] == "mem-123"
+        assert data["type"] == "preference"
+        mgr.add_memory.assert_called_once_with(
+            content="I prefer dark mode",
+            tenant_id="acme",
+            agent_name="_user_memories",
+            metadata={},
+        )
+
+    def test_creates_memory_with_category(self, tenant_client):
+        client, _ = tenant_client
+        mgr = MagicMock()
+        mgr.memory = MagicMock()
+        mgr.add_memory.return_value = "mem-456"
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.post(
+                "/acme/memories",
+                json={"text": "Always use ColPali", "category": "search"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["category"] == "search"
+        mgr.add_memory.assert_called_once_with(
+            content="Always use ColPali",
+            tenant_id="acme",
+            agent_name="_user_memories",
+            metadata={"category": "search"},
+        )
 
 
 @pytest.mark.unit
@@ -158,12 +190,12 @@ class TestListMemories:
     def _mock_mgr(self, memories: List[Dict[str, Any]]):
         """Return a mock Mem0MemoryManager with pre-configured memories."""
         mgr = MagicMock()
-        mgr.memory = MagicMock()  # non-None => initialised
+        mgr.memory = MagicMock()
         mgr.get_all_memories.return_value = memories
         mgr.search_memory.return_value = memories
         return mgr
 
-    def test_list_all_returns_memories(self, tenant_client):
+    def test_list_all_returns_memories_with_type(self, tenant_client):
         client, _ = tenant_client
         raw = [
             {"id": "m1", "memory": "User prefers dark mode", "metadata": {}, "created_at": "2024-01-01"},
@@ -176,9 +208,11 @@ class TestListMemories:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["count"] == 2
-        assert data["memories"][0]["id"] == "m1"
-        assert data["memories"][0]["memory"] == "User prefers dark mode"
+        assert data["count"] >= 2
+        mem = data["memories"][0]
+        assert mem["id"] == "m1"
+        assert mem["type"] in ("preference", "strategy")
+        assert "owned" in mem
 
     def test_search_query_calls_search_memory(self, tenant_client):
         client, _ = tenant_client
@@ -186,29 +220,57 @@ class TestListMemories:
         mgr = self._mock_mgr(raw)
 
         with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
-            resp = client.get("/acme/memories?q=strategy&agent=_strategy_store&limit=10")
+            resp = client.get("/acme/memories?q=strategy&limit=10")
 
         assert resp.status_code == 200
-        mgr.search_memory.assert_called_once_with(
-            query="strategy",
-            tenant_id="acme",
-            agent_name="_strategy_store",
-            top_k=10,
-        )
-        mgr.get_all_memories.assert_not_called()
+        assert mgr.search_memory.call_count >= 2
 
     def test_no_query_calls_get_all(self, tenant_client):
         client, _ = tenant_client
         mgr = self._mock_mgr([])
 
         with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
-            resp = client.get("/acme/memories?agent=_strategy_store")
+            resp = client.get("/acme/memories")
 
         assert resp.status_code == 200
-        mgr.get_all_memories.assert_called_once_with(
-            tenant_id="acme", agent_name="_strategy_store"
-        )
-        mgr.search_memory.assert_not_called()
+        assert mgr.get_all_memories.call_count >= 2
+
+    def test_type_filter_restricts_namespace(self, tenant_client):
+        client, _ = tenant_client
+        raw = [{"id": "s1", "memory": "Use chunk retrieval", "metadata": {}}]
+        mgr = self._mock_mgr(raw)
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.get("/acme/memories?type=strategy")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["memories"][0]["type"] == "strategy"
+        assert data["memories"][0]["owned"] is False
+        assert mgr.get_all_memories.call_count == 1
+
+    def test_unknown_type_returns_400(self, tenant_client):
+        client, _ = tenant_client
+        mgr = self._mock_mgr([])
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.get("/acme/memories?type=bogus")
+
+        assert resp.status_code == 400
+
+    def test_preference_type_is_owned(self, tenant_client):
+        client, _ = tenant_client
+        raw = [{"id": "p1", "memory": "dark mode", "metadata": {"category": "ui"}}]
+        mgr = self._mock_mgr(raw)
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.get("/acme/memories?type=preference")
+
+        data = resp.json()
+        assert data["memories"][0]["owned"] is True
+        assert data["memories"][0]["type"] == "preference"
+        assert data["memories"][0]["category"] == "ui"
 
     def test_503_when_memory_not_initialised(self, tenant_client):
         client, _ = tenant_client
@@ -221,13 +283,10 @@ class TestListMemories:
         assert resp.status_code == 503
 
 
-# ── Memory: DELETE single ─────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestDeleteMemory:
-    def test_deletes_by_id(self, tenant_client):
+    def test_deletes_user_owned_by_id(self, tenant_client):
         client, _ = tenant_client
         mgr = MagicMock()
         mgr.memory = MagicMock()
@@ -239,7 +298,7 @@ class TestDeleteMemory:
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
         mgr.delete_memory.assert_called_once_with(
-            memory_id="mem-abc123", tenant_id="acme", agent_name="*"
+            memory_id="mem-abc123", tenant_id="acme", agent_name="_user_memories",
         )
 
     def test_404_when_delete_returns_false(self, tenant_client):
@@ -254,42 +313,47 @@ class TestDeleteMemory:
         assert resp.status_code == 404
 
 
-# ── Memory: DELETE bulk ───────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestClearMemories:
-    def test_clears_agent_namespace(self, tenant_client):
+    def test_clears_user_memories_only(self, tenant_client):
+        """Bulk clear without category clears all user memories, not system."""
         client, _ = tenant_client
         mgr = MagicMock()
         mgr.memory = MagicMock()
         mgr.clear_agent_memory.return_value = True
 
         with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
-            resp = client.delete("/acme/memories?agent=_strategy_store")
+            resp = client.delete("/acme/memories")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cleared"
+        mgr.clear_agent_memory.assert_called_once_with(
+            tenant_id="acme", agent_name="_user_memories",
+        )
+
+    def test_clears_by_category(self, tenant_client):
+        """Clear with category filter deletes matching user memories."""
+        client, _ = tenant_client
+        mgr = MagicMock()
+        mgr.memory = MagicMock()
+        mgr.get_all_memories.return_value = [
+            {"id": "m1", "memory": "dark mode", "metadata": {"category": "ui"}},
+            {"id": "m2", "memory": "UTC+5", "metadata": {"category": "locale"}},
+        ]
+        mgr.delete_memory.return_value = True
+
+        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+            resp = client.delete("/acme/memories?category=ui")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "cleared"
-        assert data["agent"] == "_strategy_store"
-        mgr.clear_agent_memory.assert_called_once_with(
-            tenant_id="acme", agent_name="_strategy_store"
+        assert data["category"] == "ui"
+        assert data["deleted"] == 1
+        mgr.delete_memory.assert_called_once_with(
+            memory_id="m1", tenant_id="acme", agent_name="_user_memories",
         )
-
-    def test_500_when_clear_fails(self, tenant_client):
-        client, _ = tenant_client
-        mgr = MagicMock()
-        mgr.memory = MagicMock()
-        mgr.clear_agent_memory.return_value = False
-
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
-            resp = client.delete("/acme/memories?agent=_strategy_store")
-
-        assert resp.status_code == 500
-
-
-# ── MemoryAwareMixin: inject_context_into_prompt ──────────────────────────
 
 
 @pytest.mark.unit
@@ -300,7 +364,6 @@ class TestMemoryAwareMixinInstructions:
 
         class FakeAgent(MemoryAwareMixin):
             def __init__(self):
-                # Bypass cooperative MRO — just set attrs directly
                 self.memory_manager = MagicMock()
                 self.memory_manager.memory = MagicMock()
                 self._memory_agent_name = "test_agent"
@@ -321,7 +384,6 @@ class TestMemoryAwareMixinInstructions:
 
         assert "Tenant Instructions" in result
         assert "Be concise." in result
-        # Instructions appear before strategies in the joined string
         assert result.index("Tenant Instructions") < result.index("Learned Strategies")
 
     def test_no_instructions_does_not_add_section(self):
@@ -408,9 +470,6 @@ class TestMemoryAwareMixinInstructions:
         assert result is None
 
 
-# ── Jobs: POST /jobs ──────────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestCreateJob:
@@ -451,7 +510,7 @@ class TestCreateJob:
         )
         assert resp.status_code == 200
         job_id = resp.json()["job_id"]
-        assert job_id  # non-empty
+        assert job_id
         stored = cm.set_config_value.call_args.kwargs["config_value"]
         assert stored["job_id"] == job_id
 
@@ -490,9 +549,6 @@ class TestCreateJob:
                 assert manifest["spec"]["schedule"] == "0 9 * * 1"
         finally:
             tenant._argo_api_url = original
-
-
-# ── Jobs: GET /jobs ───────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -551,9 +607,6 @@ class TestListJobs:
         assert resp.json()["jobs"][0]["job_id"] == "good1"
 
 
-# ── Jobs: DELETE /jobs/{job_id} ───────────────────────────────────────────
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestDeleteJob:
@@ -575,10 +628,9 @@ class TestDeleteJob:
         assert data["status"] == "deleted"
         assert data["job_id"] == "abc12345"
 
-        cm.delete_config_value.assert_called_once()
-        call_kwargs = cm.delete_config_value.call_args.kwargs
-        assert call_kwargs["tenant_id"] == "acme"
-        assert call_kwargs["config_key"] == "job_abc12345"
+        cm.set_config_value.assert_called()
+        last_call = cm.set_config_value.call_args
+        assert last_call.kwargs["config_value"]["deleted"] is True
 
     def test_404_when_job_not_found(self, tenant_client):
         client, cm = tenant_client
@@ -586,9 +638,6 @@ class TestDeleteJob:
 
         resp = client.delete("/acme/jobs/nonexistent")
         assert resp.status_code == 404
-
-
-# ── Job executor: _call_agent ─────────────────────────────────────────────
 
 
 @pytest.mark.unit

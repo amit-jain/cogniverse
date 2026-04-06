@@ -29,13 +29,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Module-level instances for dependency injection (can be set by tests)
 _config_manager: ConfigManager | None = None
 _schema_loader: SchemaLoader | None = None
 _profile_validator_schema_dir = None  # Path or None
 
 
-# Test helper methods for dependency injection
 def set_config_manager(config_manager: ConfigManager) -> None:
     """Set ConfigManager for this module (for tests)."""
     global _config_manager
@@ -64,7 +62,6 @@ def reset_dependencies() -> None:
     _profile_validator_schema_dir = None
 
 
-# FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
 def get_config_manager_dependency() -> ConfigManager:
     """
     FastAPI dependency for ConfigManager.
@@ -423,7 +420,6 @@ async def get_profile(
         except Exception as e:
             logger.warning(f"Failed to check schema status: {e}")
 
-        # Get actual version from the config store
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
@@ -812,3 +808,54 @@ async def create_messaging_invite(
     )
 
     return {"token": token, "tenant_id": request.tenant_id}
+
+
+_ADMIN_TYPE_TO_NAMESPACE: Dict[str, str] = {
+    "preference": "_user_memories",
+    "strategy": "_strategy_store",
+}
+
+_ADMIN_ALL_NAMESPACES = ["_user_memories", "_strategy_store"]
+
+
+@router.delete("/memories/{tenant_id}/{memory_id}")
+async def admin_delete_memory(tenant_id: str, memory_id: str):
+    """Admin: delete any memory by ID, regardless of namespace."""
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+
+    mgr = Mem0MemoryManager(tenant_id)
+    if not mgr.memory:
+        raise HTTPException(status_code=503, detail="Memory backend not initialised")
+
+    for ns in _ADMIN_ALL_NAMESPACES:
+        if mgr.delete_memory(memory_id=memory_id, tenant_id=tenant_id, agent_name=ns):
+            logger.info("Admin deleted memory %s (ns=%s) for tenant %s", memory_id, ns, tenant_id)
+            return {"status": "deleted", "memory_id": memory_id}
+
+    raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+
+
+@router.delete("/memories/{tenant_id}")
+async def admin_clear_memories(
+    tenant_id: str,
+    type: Optional[str] = Query(default=None, description="Memory type to clear: preference, strategy, or all"),
+):
+    """Admin: clear memories by type. Can clear system memories (strategies)."""
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+
+    mgr = Mem0MemoryManager(tenant_id)
+    if not mgr.memory:
+        raise HTTPException(status_code=503, detail="Memory backend not initialised")
+
+    if type and type != "all":
+        ns = _ADMIN_TYPE_TO_NAMESPACE.get(type)
+        if ns is None:
+            raise HTTPException(status_code=400, detail=f"Unknown memory type: {type}")
+        mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=ns)
+        logger.info("Admin cleared '%s' memories for tenant %s", type, tenant_id)
+        return {"status": "cleared", "type": type}
+
+    for ns in _ADMIN_ALL_NAMESPACES:
+        mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=ns)
+    logger.info("Admin cleared all memories for tenant %s", tenant_id)
+    return {"status": "cleared", "type": "all"}

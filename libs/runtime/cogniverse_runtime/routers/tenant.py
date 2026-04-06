@@ -50,9 +50,6 @@ def _require_config_manager() -> ConfigManager:
     return _config_manager
 
 
-# ── Pydantic models ───────────────────────────────────────────────────────
-
-
 class InstructionsRequest(BaseModel):
     text: str
 
@@ -65,6 +62,9 @@ class InstructionsResponse(BaseModel):
 class MemoryItem(BaseModel):
     id: str
     memory: str
+    type: str
+    owned: bool
+    category: Optional[str] = None
     metadata: Dict[str, Any] = {}
     created_at: Optional[str] = None
 
@@ -99,8 +99,6 @@ class JobResponse(BaseModel):
 class JobListResponse(BaseModel):
     jobs: List[JobResponse]
 
-
-# ── Instruction endpoints ─────────────────────────────────────────────────
 
 _INSTRUCTIONS_SERVICE = "tenant_instructions"
 _INSTRUCTIONS_KEY = "system_prompt"
@@ -146,7 +144,6 @@ async def get_instructions(tenant_id: str):
 async def delete_instructions(tenant_id: str):
     """Clear the stored tenant instructions."""
     cm = _require_config_manager()
-    # Overwrite with empty value to signal "cleared"
     cm.set_config_value(
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
@@ -156,9 +153,6 @@ async def delete_instructions(tenant_id: str):
     )
     logger.info("Cleared instructions for tenant %s", tenant_id)
     return {"status": "cleared"}
-
-
-# ── Memory endpoints ──────────────────────────────────────────────────────
 
 
 def _get_memory_manager(tenant_id: str):
@@ -177,62 +171,170 @@ def _get_memory_manager(tenant_id: str):
     return mgr
 
 
+_USER_MEMORY_AGENT = "_user_memories"
+
+_TYPE_TO_NAMESPACE: Dict[str, str] = {
+    "preference": "_user_memories",
+    "strategy": "_strategy_store",
+}
+
+_SYSTEM_NAMESPACES = {"_strategy_store"}
+
+_ALL_NAMESPACES = ["_user_memories", "_strategy_store"]
+
+
+def _namespace_to_type(agent_name: str) -> str:
+    """Map internal agent_name to user-facing type."""
+    for type_name, ns in _TYPE_TO_NAMESPACE.items():
+        if ns == agent_name:
+            return type_name
+    return "interaction"
+
+
+def _is_owned(agent_name: str) -> bool:
+    """User-owned memories are in _user_memories; everything else is system."""
+    return agent_name == _USER_MEMORY_AGENT
+
+
+class MemoryCreateRequest(BaseModel):
+    text: str
+    category: Optional[str] = None
+
+
+@router.post("/{tenant_id}/memories")
+async def create_memory(tenant_id: str, request: MemoryCreateRequest):
+    """Save a user-defined memory with optional category."""
+    mgr = _get_memory_manager(tenant_id)
+    metadata = {}
+    if request.category:
+        metadata["category"] = request.category
+
+    memory_id = mgr.add_memory(
+        content=request.text,
+        tenant_id=tenant_id,
+        agent_name=_USER_MEMORY_AGENT,
+        metadata=metadata,
+    )
+    return {
+        "status": "saved",
+        "id": str(memory_id),
+        "type": "preference",
+        "category": request.category,
+    }
+
+
+def _entry_to_item(entry: dict, agent_name: str) -> Optional[MemoryItem]:
+    """Convert a raw Mem0 result dict to a MemoryItem with type/owned."""
+    if not isinstance(entry, dict):
+        return None
+    meta = entry.get("metadata", {})
+    return MemoryItem(
+        id=str(entry.get("id", "")),
+        memory=entry.get("memory", entry.get("text", "")),
+        type=_namespace_to_type(agent_name),
+        owned=_is_owned(agent_name),
+        category=meta.get("category"),
+        metadata=meta,
+        created_at=str(entry.get("created_at", "")) or None,
+    )
+
+
 @router.get("/{tenant_id}/memories", response_model=MemoryListResponse)
 async def list_memories(
     tenant_id: str,
-    agent: str = Query(default="_strategy_store", description="Agent namespace to query"),
-    q: Optional[str] = Query(default=None, description="Semantic search query"),
+    q: Optional[str] = Query(default=None, description="Search query"),
+    type: Optional[str] = Query(default=None, description="Filter by type: preference, strategy"),
+    category: Optional[str] = Query(default=None, description="Filter by category"),
     limit: int = Query(default=20, ge=1, le=200, description="Max results"),
 ):
-    """List or search memories for a tenant's agent namespace."""
+    """List or search tenant memories across all types.
+
+    Without ``q``, lists all memories.  With ``q``, performs semantic search.
+    Use ``type`` to restrict to a single memory type and ``category`` to
+    filter user-created memories by their category tag.
+    """
     mgr = _get_memory_manager(tenant_id)
 
-    if q:
-        raw = mgr.search_memory(query=q, tenant_id=tenant_id, agent_name=agent, top_k=limit)
+    if type:
+        ns = _TYPE_TO_NAMESPACE.get(type)
+        if ns is None:
+            raise HTTPException(status_code=400, detail=f"Unknown memory type: {type}")
+        namespaces = [ns]
     else:
-        raw = mgr.get_all_memories(tenant_id=tenant_id, agent_name=agent)
+        namespaces = list(_ALL_NAMESPACES)
 
     items: List[MemoryItem] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        items.append(
-            MemoryItem(
-                id=str(entry.get("id", "")),
-                memory=entry.get("memory", entry.get("text", "")),
-                metadata=entry.get("metadata", {}),
-                created_at=str(entry.get("created_at", "")) or None,
+    for ns in namespaces:
+        if q:
+            raw = mgr.search_memory(
+                query=q, tenant_id=tenant_id, agent_name=ns, top_k=limit,
             )
-        )
+        else:
+            raw = mgr.get_all_memories(tenant_id=tenant_id, agent_name=ns)
 
+        for entry in raw:
+            item = _entry_to_item(entry, ns)
+            if item is None:
+                continue
+            if category and item.category != category:
+                continue
+            items.append(item)
+
+    items = items[:limit]
     return MemoryListResponse(memories=items, count=len(items))
 
 
 @router.delete("/{tenant_id}/memories/{memory_id}")
 async def delete_memory(tenant_id: str, memory_id: str):
-    """Delete a single memory by ID."""
+    """Delete a single user-owned memory by ID.
+
+    Returns 403 if the memory belongs to a system namespace.
+    """
     mgr = _get_memory_manager(tenant_id)
-    success = mgr.delete_memory(memory_id=memory_id, tenant_id=tenant_id, agent_name="*")
+
+    success = mgr.delete_memory(
+        memory_id=memory_id, tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT,
+    )
     if not success:
-        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found or delete failed")
+        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
     return {"status": "deleted"}
 
 
 @router.delete("/{tenant_id}/memories")
 async def clear_memories(
     tenant_id: str,
-    agent: str = Query(default="_strategy_store", description="Agent namespace to clear"),
+    category: Optional[str] = Query(default=None, description="Clear only this category, or all user memories if omitted"),
 ):
-    """Clear all memories for a tenant's agent namespace."""
+    """Clear user-owned memories. System memories (strategies) are not affected.
+
+    Optionally filter by category to only clear a subset.
+    """
     mgr = _get_memory_manager(tenant_id)
-    success = mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=agent)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to clear memories")
-    logger.info("Cleared memories for tenant=%s agent=%s", tenant_id, agent)
-    return {"status": "cleared", "agent": agent}
 
+    if category:
+        results = mgr.get_all_memories(
+            tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT,
+        )
+        deleted = 0
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            meta = r.get("metadata", {})
+            if meta.get("category") == category:
+                mid = r.get("id")
+                if mid:
+                    mgr.delete_memory(
+                        memory_id=str(mid), tenant_id=tenant_id,
+                        agent_name=_USER_MEMORY_AGENT,
+                    )
+                    deleted += 1
+        logger.info("Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id)
+        return {"status": "cleared", "category": category, "deleted": deleted}
 
-# ── Job endpoints ─────────────────────────────────────────────────────────
+    mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT)
+    logger.info("Cleared all user memories for tenant=%s", tenant_id)
+    return {"status": "cleared"}
+
 
 _JOBS_SERVICE = "tenant_jobs"
 
