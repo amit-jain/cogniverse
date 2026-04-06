@@ -8,31 +8,21 @@ where the scorer function receives the model output and target directly.
 import logging
 from typing import Any
 
-from inspect_ai.scorer import Score, mean, scorer
-
 logger = logging.getLogger(__name__)
 
 
 def get_configured_scorers(config: dict[str, Any]) -> list:
-    """Get list of simplified scorers.
+    """Get list of configured scorers.
 
-    For now, returns basic scorers that always work.
+    Returns empty list — simple_relevance_scorer was a stub.
+    Use inspect_scorers.get_configured_scorers for real scoring.
     """
-    return [simple_relevance_scorer()]
+    return []
 
 
-@scorer(metrics=[mean()])
 def simple_relevance_scorer():
-    """
-    Simple scorer that always returns 0.5 for testing.
-    """
-
-    async def score(state, target) -> Score:
-        # For now, just return a fixed score to get tests passing
-        return Score(
-            value=0.5,
-            explanation="Simplified scorer for testing",
-            metadata={"scorer": "simple_relevance"},
-        )
-
-    return score
+    """Stub — not implemented."""
+    raise NotImplementedError(
+        "simple_relevance_scorer is a stub — implement actual relevance scoring "
+        "or use inspect_scorers.get_configured_scorers instead"
+    )

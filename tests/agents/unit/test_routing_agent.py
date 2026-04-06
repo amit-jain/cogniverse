@@ -41,56 +41,6 @@ def _make_mock_telemetry_provider():
 
 
 @pytest.mark.unit
-class TestRoutingAgentLegacy:
-    """Test cases for RoutingAgent with typed interface"""
-
-    @pytest.fixture
-    def mock_system_config(self):
-        """Mock system configuration"""
-        return {
-            "video_agent_url": "http://localhost:8002",
-        }
-
-    @pytest.fixture
-    def mock_routing_decision(self):
-        """Mock routing decision"""
-        return {
-            "query": "test query",
-            "recommended_agent": "video_search",
-            "confidence": 0.85,
-            "reasoning": "Detected video content request",
-        }
-
-    @pytest.fixture
-    def routing_deps(self):
-        """Create RoutingDeps for testing"""
-        telemetry_config = TelemetryConfig(enabled=False)
-        return RoutingDeps(
-            telemetry_config=telemetry_config,
-        )
-
-    @pytest.mark.ci_fast
-    def test_build_routing_config(self, mock_system_config):
-        """Test routing configuration building"""
-        # Old test - routing agent uses RoutingConfig dataclass now
-        pass
-
-    @pytest.mark.asyncio
-    @pytest.mark.ci_fast
-    async def test_analyze_and_route_video_query(
-        self,
-        mock_system_config,
-        mock_routing_decision,
-    ):
-        """Test query analysis and routing for video queries"""
-        # Old test - analyze_and_route no longer exists, use route_query instead
-        pass
-
-    # All remaining tests are skipped - they test the old interface
-    pass
-
-
-@pytest.mark.unit
 class TestRoutingConfigLoading:
     """Test RoutingConfig loads query_fusion_config from file/dict/env."""
 

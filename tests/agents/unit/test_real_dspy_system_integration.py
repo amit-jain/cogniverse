@@ -18,7 +18,6 @@ from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
@@ -91,41 +90,6 @@ class TestDSPySystemIntegration:
             except Exception as e:
                 # Should gracefully handle missing dependencies
                 assert "spacy" in str(e).lower() or "model" in str(e).lower()
-
-    def test_query_enhancement_pipeline(self):
-        """Test query enhancement pipeline functionality"""
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        test_query = "Find videos of autonomous robots"
-        test_context = {
-            "entities": [{"text": "robots", "label": "ENTITY"}],
-            "relationships": [
-                {"subject": "robots", "relation": "type", "object": "autonomous"}
-            ],
-        }
-
-        try:
-            # Test real enhancement using the actual method
-            result = asyncio.run(
-                pipeline.enhance_query_with_relationships(
-                    test_query,
-                    entities=test_context["entities"],
-                    relationships=test_context["relationships"],
-                )
-            )
-
-            enhanced_query = result.get("enhanced_query", test_query)
-            metadata = result.get("metadata", {})
-
-            # Should return enhanced query and metadata
-            assert isinstance(enhanced_query, str)
-            assert isinstance(metadata, dict)
-            assert len(enhanced_query) > 0
-
-            # Enhanced query should be different or same length as original
-            assert len(enhanced_query) >= len(test_query)
-        except Exception:
-            pass
 
     @pytest.mark.ci_fast
     def test_advanced_optimizer_initialization(self):
@@ -215,36 +179,6 @@ class TestDSPySystemIntegration:
         except Exception as e:
             # Should handle gracefully if external services not available
             assert "connection" in str(e).lower() or "timeout" in str(e).lower()
-
-    @pytest.mark.ci_fast
-    def test_dspy_components_integration(self):
-        """Test DSPy components integration"""
-        # Test component creation and basic functionality
-        components = {}
-
-        try:
-            components["extractor"] = RelationshipExtractorTool()
-            components["pipeline"] = QueryEnhancementPipeline(enable_simba=False)
-            components["optimizer"] = AdvancedRoutingOptimizer(
-                tenant_id="test_tenant",
-                llm_config=LLMEndpointConfig(model="ollama/test-model"),
-                telemetry_provider=_make_mock_telemetry_provider(),
-            )
-            components["learner"] = AdaptiveThresholdLearner(tenant_id="test_tenant")
-
-            # All components should initialize successfully
-            for name, component in components.items():
-                assert component is not None, f"{name} failed to initialize"
-
-            # Components should have expected interfaces
-            assert hasattr(
-                components["extractor"], "extract_comprehensive_relationships"
-            )
-            assert hasattr(components["pipeline"], "enhance_query_with_relationships")
-            assert hasattr(components["optimizer"], "optimize_routing_decision")
-            assert hasattr(components["learner"], "record_performance_sample")
-        except Exception:
-            pass
 
 
 @pytest.mark.unit

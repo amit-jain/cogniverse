@@ -309,8 +309,3 @@ class TestKeyframeProcessorHelperMethods:
                 diff = processor._calculate_histogram_difference(hist1, hist2)
                 assert diff == 0.3  # 1 - 0.7
 
-    def test_frame_extraction_timing(self, processor):
-        """Test that frame timing calculations are correct."""
-        # This would test timestamp calculations in extraction methods
-        # Implementation depends on the specific private methods available
-        pass

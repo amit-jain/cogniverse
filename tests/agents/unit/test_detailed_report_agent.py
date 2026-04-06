@@ -79,15 +79,6 @@ def mock_config():
 
 
 @pytest.mark.unit
-class TestDetailedVisualAnalysisSignature:
-    """Test DSPy signature for detailed visual analysis"""
-
-    @pytest.mark.ci_fast
-    def test_signature_structure(self):
-        """Test that the signature has correct fields"""
-
-
-@pytest.mark.unit
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 

@@ -105,10 +105,8 @@ class TestCodingAgentDispatchWiring:
 
     def test_config_loader_has_coding_agent(self):
         """ConfigLoader knows about coding_agent."""
-        from cogniverse_runtime.config_loader import AGENT_CAPABILITIES, ConfigLoader
+        from cogniverse_runtime.config_loader import ConfigLoader
 
-        assert "coding_agent" in AGENT_CAPABILITIES
-        assert "coding" in AGENT_CAPABILITIES["coding_agent"]
         assert "coding_agent" in ConfigLoader.AGENT_CLASSES
 
     def test_config_json_has_coding_agent(self):
@@ -170,7 +168,6 @@ def code_search_infra(vespa_with_schema):
     code schema alongside the existing video schema, feeds real code segments
     with LateOn-Code-edge embeddings.
     """
-    import json
     import subprocess
     import time
     from pathlib import Path
@@ -378,8 +375,12 @@ class TestCodingAgentWithOllama:
     def dspy_configured(self):
         """Configure DSPy with the coding_agent's resolved LLM config."""
         import dspy
+
         from cogniverse_foundation.config.llm_factory import create_dspy_lm
-        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
 
         cm = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=cm)

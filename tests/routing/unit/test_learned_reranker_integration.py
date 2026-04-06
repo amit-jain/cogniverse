@@ -89,7 +89,7 @@ def sample_results():
     ]
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestLearnedRerankingIntegration:
     """Integration tests with real LiteLLM (if available)"""
 
@@ -161,7 +161,7 @@ class TestLearnedRerankingIntegration:
             assert scores == sorted(scores, reverse=True)
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestHybridRerankingIntegration:
     """Integration tests for hybrid reranking"""
 
@@ -273,7 +273,7 @@ class TestHybridRerankingIntegration:
             assert all(r.metadata["fusion_strategy"] == "consensus" for r in reranked)
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestOllamaReranking:
     """Test Ollama reranking via OpenAI-compatible API"""
 
@@ -317,7 +317,7 @@ class TestOllamaReranking:
             assert reranked[0].metadata["reranking_score"] == 0.92
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 class TestConfigurableMultiModalReranker:
     """Test ConfigurableMultiModalReranker with real components"""
 

@@ -179,19 +179,3 @@ class TestRoutingAgentIntegration:
             # Confidence and reasoning should be present and non-trivial
             assert result.confidence > 0
             assert result.reasoning is not None
-
-
-class TestRoutingAgentErrorHandling:
-    """Test error handling in integration scenarios - needs refactoring for DSPy interface"""
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_routing_failure_propagation(self):
-        """Test that routing failures are properly handled and propagated"""
-        # Old test - routing agent interface changed
-        pass
-
-    def test_invalid_configuration_handling(self):
-        """Test handling of invalid configurations"""
-        # Old test - routing agent interface changed
-        pass

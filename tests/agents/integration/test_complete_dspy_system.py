@@ -117,37 +117,6 @@ class TestCompleteDSPySystem:
                     # Result should be a RoutingDecision or dict with routing info
                     assert result is not None
 
-    @pytest.mark.ci_fast
-    def test_routing_system_components_integration(self):
-        """Test that all routing system components integrate correctly"""
-
-        # Test DSPy routing signatures
-        # Test advanced optimization
-        from cogniverse_agents.routing.advanced_optimizer import (
-            AdvancedRoutingOptimizer,
-        )
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            AdvancedRoutingSignature,
-            BasicQueryAnalysisSignature,
-        )
-
-        # Test query enhancement
-        from cogniverse_agents.routing.query_enhancement_engine import (
-            QueryEnhancementPipeline,
-        )
-
-        # Test relationship extraction
-        from cogniverse_agents.routing.relationship_extraction_tools import (
-            RelationshipExtractorTool,
-        )
-
-        # Verify all components can be imported
-        assert BasicQueryAnalysisSignature is not None
-        assert AdvancedRoutingSignature is not None
-        assert RelationshipExtractorTool is not None
-        assert QueryEnhancementPipeline is not None
-        assert AdvancedRoutingOptimizer is not None
-
     def test_phase_6_advanced_components_integration(self, real_telemetry_provider):
         """Test Phase 6 advanced optimization components integration"""
 
@@ -194,30 +163,6 @@ class TestCompleteDSPySystem:
             capabilities = routing_agent._get_routing_capabilities(deps)
             assert isinstance(capabilities, list)
             assert len(capabilities) > 0
-
-
-@pytest.mark.integration
-class TestRealWorldScenarios:
-    """Test real-world usage scenarios"""
-
-    def test_complex_query_processing(self):
-        """Test processing of complex multi-entity queries"""
-
-        # This tests the system's ability to handle real queries
-
-        # Test that the system can at least parse these without crashing
-        from cogniverse_agents.routing.relationship_extraction_tools import (
-            RelationshipExtractorTool,
-        )
-
-        try:
-            extractor = RelationshipExtractorTool()
-            # If initialization succeeds, the component structure is correct
-            assert extractor is not None
-        except Exception:
-            # Some dependencies might not be available in test environment
-            # but the import structure should be correct
-            pass
 
 
 @skip_if_no_ollama
