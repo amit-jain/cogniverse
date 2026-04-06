@@ -12,6 +12,7 @@ import pytest
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from tests.utils.async_polling import wait_for_vespa_indexing
+from tests.utils.llm_config import get_llm_model
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +39,7 @@ def memory_manager(shared_memory_vespa):
         backend_port=shared_memory_vespa["http_port"],
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
-        llm_model="llama3.2",
+        llm_model=get_llm_model(),
         embedding_model="nomic-embed-text",
         llm_base_url="http://localhost:11434/v1",
         auto_create_schema=False,  # Schema already deployed
@@ -401,7 +402,7 @@ class TestMemorySystemCompleteE2E:
             tenant_id="test_tenant",  # Same tenant = reuses manager singleton
             backend_host="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
-            llm_model="llama3.2",
+            llm_model=get_llm_model(),
             embedding_model="nomic-embed-text",
             llm_base_url="http://localhost:11434/v1",
             config_manager=create_default_config_manager(),

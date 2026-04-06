@@ -28,6 +28,7 @@ from cogniverse_evaluation.quality_monitor import (
     QualityMonitor,
     Verdict,
 )
+from tests.utils.llm_config import get_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ def monitor_with_real_search(search_client, real_telemetry, tmp_path):
         runtime_url="http://testserver",
         phoenix_http_endpoint="http://localhost:16006",
         llm_base_url="http://localhost:11434",
-        llm_model="llama3.2",
+        llm_model=get_llm_model(),
         golden_dataset_path=str(golden_path),
     )
 

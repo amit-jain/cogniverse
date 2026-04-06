@@ -41,6 +41,7 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from tests.utils.llm_config import get_llm_model
 from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
@@ -226,7 +227,7 @@ def memory_manager(vespa_instance, config_manager, schema_loader):
         backend_host="http://localhost",
         backend_port=vespa_instance["http_port"],
         backend_config_port=vespa_instance["config_port"],
-        llm_model="llama3.2",
+        llm_model=get_llm_model(),
         embedding_model="nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,

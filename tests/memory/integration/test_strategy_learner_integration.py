@@ -12,6 +12,7 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
+from tests.utils.llm_config import get_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def memory_manager(shared_memory_vespa):
         backend_port=shared_memory_vespa["http_port"],
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
-        llm_model="llama3.2",
+        llm_model=get_llm_model(),
         embedding_model="nomic-embed-text",
         llm_base_url="http://localhost:11434",
         auto_create_schema=False,
