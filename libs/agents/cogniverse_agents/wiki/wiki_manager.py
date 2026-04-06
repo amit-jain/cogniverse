@@ -155,6 +155,124 @@ class WikiManager:
             return None
         return doc.text_content or doc.metadata.get("content", "")
 
+    def lint(self) -> Dict[str, Any]:
+        """Analyse all wiki pages and report quality issues.
+
+        Returns a dict with:
+            orphan_pages  — topic pages with zero cross-references from any session
+            stale_pages   — pages not updated in 30+ days
+            empty_pages   — pages with content shorter than 50 chars
+            total_pages   — total page count examined
+            issues_found  — sum of all issues
+        """
+        import json as _json
+        from datetime import timedelta
+
+        try:
+            results = self._backend.search(
+                {
+                    "query": f"tenant_id:{self._tenant_id}",
+                    "type": "wiki",
+                    "top_k": 500,
+                    "schema": self._schema_name,
+                }
+            )
+        except Exception:
+            logger.exception("Wiki lint: backend search failed")
+            results = []
+
+        # Collect all doc_ids referenced as cross_references in session pages.
+        referenced_ids: set = set()
+        all_pages = []
+        for r in results:
+            doc = r.document
+            page_type = doc.metadata.get("page_type", "")
+            if page_type == "session":
+                raw = doc.metadata.get("cross_references", "[]")
+                try:
+                    refs = _json.loads(raw) if isinstance(raw, str) else raw
+                except Exception:
+                    refs = []
+                referenced_ids.update(refs)
+            all_pages.append(doc)
+
+        now = datetime.now(timezone.utc)
+        stale_threshold = timedelta(days=30)
+
+        orphan_pages = []
+        stale_pages = []
+        empty_pages = []
+
+        for doc in all_pages:
+            page_type = doc.metadata.get("page_type", "")
+            doc_id = doc.metadata.get("doc_id", "")
+            title = doc.metadata.get("title", "")
+            content = doc.text_content or doc.metadata.get("content", "")
+
+            # Skip index and session pages for orphan/empty checks.
+            if page_type in ("index", "session"):
+                continue
+
+            # Orphan: topic page not referenced by any session.
+            if page_type == "topic" and doc_id not in referenced_ids:
+                orphan_pages.append({"doc_id": doc_id, "title": title})
+
+            # Empty: content shorter than 50 chars.
+            if len(content) < 50:
+                empty_pages.append(
+                    {"doc_id": doc_id, "title": title, "content_length": len(content)}
+                )
+
+            # Stale: updated_at older than 30 days.
+            updated_at_raw = doc.metadata.get("updated_at", "")
+            if updated_at_raw:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_raw)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    delta = now - updated_at
+                    if delta > stale_threshold:
+                        stale_pages.append(
+                            {
+                                "doc_id": doc_id,
+                                "title": title,
+                                "days_since_update": delta.days,
+                            }
+                        )
+                except Exception:
+                    pass
+
+        issues_found = len(orphan_pages) + len(stale_pages) + len(empty_pages)
+        return {
+            "orphan_pages": orphan_pages,
+            "stale_pages": stale_pages,
+            "empty_pages": empty_pages,
+            "total_pages": len(all_pages),
+            "issues_found": issues_found,
+        }
+
+    def delete_page(self, doc_id: str) -> None:
+        """Delete a wiki document from Vespa by doc_id and rebuild the index.
+
+        Raises RuntimeError if the Vespa DELETE request fails.
+        """
+        url = f"{self._backend._url}:{self._backend._port}"
+        delete_url = (
+            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
+        )
+        try:
+            resp = requests.delete(delete_url, timeout=10)
+            if not resp.ok:
+                raise RuntimeError(
+                    f"Vespa DELETE returned {resp.status_code}: {resp.text[:200]}"
+                )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"Failed to delete wiki page {doc_id}: {exc}") from exc
+
+        self._rebuild_index()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

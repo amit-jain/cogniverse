@@ -28,6 +28,7 @@ HELP_TEXT = """Available commands:
 /wiki search <query> — Search the wiki knowledge base
 /wiki topic <name> — Look up a topic page by name
 /wiki index — Show the wiki index
+/wiki lint — Check wiki for orphan, stale, or empty pages
 /help — Show this message
 
 Or just send a message — it will be automatically routed to the best agent.

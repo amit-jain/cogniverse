@@ -314,3 +314,194 @@ class TestSaveSession:
 
         # cross_references should contain the topic doc_ids
         assert len(session.cross_references) == 2
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by TestWikiLint
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_result(
+    doc_id: str,
+    title: str,
+    content: str,
+    page_type: str = "topic",
+    updated_at: str = "2026-04-05T00:00:00+00:00",
+    cross_references: str = "[]",
+) -> MagicMock:
+    """Build a mock backend search result."""
+    result = MagicMock()
+    doc = MagicMock()
+    doc.text_content = content
+    doc.metadata = {
+        "doc_id": doc_id,
+        "title": title,
+        "page_type": page_type,
+        "updated_at": updated_at,
+        "cross_references": cross_references,
+    }
+    result.document = doc
+    return result
+
+
+@pytest.mark.unit
+class TestWikiLint:
+    def _make_manager(self, search_results):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend.search.return_value = search_results
+        return WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def test_detects_empty_pages(self):
+        results = [
+            _make_mock_result("doc1", "Short", "Too short"),  # 9 chars < 50
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        assert report["issues_found"] >= 1
+        empty_ids = [p["doc_id"] for p in report["empty_pages"]]
+        assert "doc1" in empty_ids
+
+    def test_detects_stale_pages(self):
+        results = [
+            _make_mock_result(
+                "doc_stale",
+                "Old Topic",
+                "This is some content that is long enough to pass the empty check.",
+                updated_at="2020-01-01T00:00:00+00:00",
+            )
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        stale_ids = [p["doc_id"] for p in report["stale_pages"]]
+        assert "doc_stale" in stale_ids
+        stale_entry = next(p for p in report["stale_pages"] if p["doc_id"] == "doc_stale")
+        assert stale_entry["days_since_update"] > 30
+
+    def test_detects_orphan_pages(self):
+        # A topic page with no session referencing it.
+        results = [
+            _make_mock_result(
+                "wiki_topic_acme_production_machine_learning",
+                "Machine Learning",
+                "Content about machine learning for testing purposes.",
+            )
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        orphan_ids = [p["doc_id"] for p in report["orphan_pages"]]
+        assert "wiki_topic_acme_production_machine_learning" in orphan_ids
+
+    def test_referenced_topic_not_orphan(self):
+        topic_id = "wiki_topic_acme_production_ml"
+        results = [
+            _make_mock_result(
+                topic_id,
+                "ML",
+                "Content about machine learning for testing purposes.",
+                page_type="topic",
+            ),
+            _make_mock_result(
+                "session_001",
+                "Session",
+                "Session content here is long enough to pass the check.",
+                page_type="session",
+                cross_references=f'["{topic_id}"]',
+            ),
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        orphan_ids = [p["doc_id"] for p in report["orphan_pages"]]
+        assert topic_id not in orphan_ids
+
+    def test_clean_wiki_returns_zero_issues(self):
+        # Fresh page, referenced, long content, recent timestamp.
+        topic_id = "wiki_topic_acme_production_healthy"
+        results = [
+            _make_mock_result(
+                topic_id,
+                "Healthy Topic",
+                "This page has plenty of content and is nicely up to date.",
+                page_type="topic",
+                updated_at="2026-04-04T00:00:00+00:00",
+            ),
+            _make_mock_result(
+                "session_001",
+                "Session",
+                "Session content here is long enough to pass the check.",
+                page_type="session",
+                cross_references=f'["{topic_id}"]',
+            ),
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        assert report["issues_found"] == 0
+        assert report["total_pages"] == 2
+
+    def test_total_pages_counts_all_types(self):
+        results = [
+            _make_mock_result("t1", "Topic", "x" * 60, page_type="topic"),
+            _make_mock_result("s1", "Session", "x" * 60, page_type="session"),
+        ]
+        mgr = self._make_manager(results)
+        report = mgr.lint()
+
+        assert report["total_pages"] == 2
+
+
+@pytest.mark.unit
+class TestWikiDelete:
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend._url = "http://localhost"
+        backend._port = 8080
+        backend.search.return_value = []
+        return WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def test_delete_calls_vespa_http(self):
+        mgr = self._make_manager()
+        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
+            mock_del.return_value = MagicMock(ok=True, status_code=200)
+            with patch.object(mgr, "_rebuild_index"):
+                mgr.delete_page("wiki_topic_acme_production_ml")
+
+        mock_del.assert_called_once()
+        call_url = mock_del.call_args[0][0]
+        assert "wiki_topic_acme_production_ml" in call_url
+        assert "wiki_pages_acme_production" in call_url
+
+    def test_delete_rebuilds_index(self):
+        mgr = self._make_manager()
+        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
+            mock_del.return_value = MagicMock(ok=True, status_code=200)
+            with patch.object(mgr, "_rebuild_index") as mock_rebuild:
+                mgr.delete_page("wiki_topic_acme_production_ml")
+
+        mock_rebuild.assert_called_once()
+
+    def test_delete_raises_on_vespa_error(self):
+        import pytest
+
+        mgr = self._make_manager()
+        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
+            mock_del.return_value = MagicMock(
+                ok=False, status_code=404, text="Not Found"
+            )
+            with pytest.raises(RuntimeError, match="404"):
+                mgr.delete_page("nonexistent_doc")

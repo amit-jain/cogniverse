@@ -81,3 +81,23 @@ async def get_wiki_index() -> Dict[str, Any]:
     wm = get_wiki_manager()
     index_content = wm.get_index()
     return {"content": index_content or ""}
+
+
+@router.get("/lint")
+async def lint_wiki() -> Dict[str, Any]:
+    """Run lint checks and return a report of quality issues."""
+    wm = get_wiki_manager()
+    return wm.lint()
+
+
+@router.delete("/topic/{slug}")
+async def delete_wiki_topic(slug: str) -> Dict[str, Any]:
+    """Delete a topic page by slug."""
+    wm = get_wiki_manager()
+    safe = wm._tenant_id.replace(":", "_")
+    doc_id = f"wiki_topic_{safe}_{slug}"
+    try:
+        wm.delete_page(doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"status": "deleted", "doc_id": doc_id, "slug": slug}

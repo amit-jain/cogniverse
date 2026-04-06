@@ -798,6 +798,7 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 | `/wiki search <query>` | — | Search the wiki knowledge base |
 | `/wiki topic <name>` | — | Look up a topic page by name |
 | `/wiki index` | — | Show the full wiki index |
+| `/wiki lint` | — | Check wiki for orphan, stale, or empty pages |
 | Plain text | routing_agent | `what videos do you have on transformers?` |
 | Photo/video | search_agent | Send a frame to search for similar content |
 | `/help` | — | Show all available commands |
@@ -951,6 +952,7 @@ Use these commands in Telegram to interact with the wiki directly:
 | `/wiki search <query>` | Search the wiki knowledge base |
 | `/wiki topic <name>` | Look up a topic page by name |
 | `/wiki index` | Show the full wiki index |
+| `/wiki lint` | Check wiki for orphan, stale, or empty pages |
 
 #### REST API
 
@@ -960,6 +962,8 @@ Use these commands in Telegram to interact with the wiki directly:
 | `/wiki/search` | POST | Full-text search over wiki pages |
 | `/wiki/topic/{slug}` | GET | Retrieve a topic page by slug |
 | `/wiki/index` | GET | Return the rendered wiki index |
+| `/wiki/lint` | GET | Report orphan, stale, and empty pages |
+| `/wiki/topic/{slug}` | DELETE | Delete a topic page by slug |
 
 ```bash
 # Save a wiki page
@@ -983,6 +987,12 @@ curl http://localhost:8000/wiki/topic/machine_learning
 
 # Get the wiki index
 curl http://localhost:8000/wiki/index
+
+# Run lint checks
+curl http://localhost:8000/wiki/lint
+
+# Delete a topic page
+curl -X DELETE http://localhost:8000/wiki/topic/machine_learning
 ```
 
 ---

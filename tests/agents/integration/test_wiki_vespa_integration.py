@@ -365,3 +365,40 @@ class TestWikiVespaIntegration:
             f"update_count did not increment: was {first_update_count}, "
             f"now {updated_update_count}"
         )
+
+    def test_delete_page_removes_from_vespa(self, wiki_manager):
+        """delete_page removes the document from Vespa so it is no longer retrievable."""
+        manager, port = wiki_manager
+
+        manager.save_session(
+            query="What is attention mechanism?",
+            response="Attention mechanism weights token importance.",
+            entities=["attention_mechanism_delete_test"],
+            agent_name="search_agent",
+        )
+
+        safe = TENANT_ID.replace(":", "_")
+        slug = generate_slug("attention_mechanism_delete_test")
+        topic_doc_id = f"wiki_topic_{safe}_{slug}"
+
+        # Confirm the topic page exists before deletion.
+        doc_before = _get_vespa_doc(port, topic_doc_id)
+        assert doc_before is not None, (
+            f"Topic page {topic_doc_id} not found in Vespa before delete."
+        )
+
+        manager.delete_page(topic_doc_id)
+
+        # After deletion, Vespa should return 404 — poll briefly for convergence.
+        for _ in range(10):
+            try:
+                resp = requests.get(_doc_url(port, topic_doc_id), timeout=5)
+                if resp.status_code == 404:
+                    return
+            except Exception:
+                pass
+            time.sleep(1)
+
+        pytest.fail(
+            f"Document {topic_doc_id} still retrievable from Vespa after delete_page()."
+        )
