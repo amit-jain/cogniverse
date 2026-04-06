@@ -112,6 +112,15 @@ class InMemoryEventQueue(BaseEventQueue):
                         # Just loop back to check conditions
                         pass
 
+            # Drain any events buffered before close() was called.
+            # Without this, events enqueued just before close() are lost
+            # because the outer `while not self._closed` exits immediately.
+            async with self._condition:
+                while current_offset < len(self._events):
+                    event = self._events[current_offset]
+                    current_offset += 1
+                    yield event
+
         finally:
             self._subscriber_count -= 1
             logger.info(

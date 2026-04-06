@@ -883,11 +883,22 @@ class RoutingAgent(
                     optimized_routing_result or baseline_routing_result
                 )
 
+                # Merge entities/relationships: the routing module may have extracted
+                # them via GLiNER even when the enhancement pipeline fell back to empty.
+                # Use the pipeline's extraction if non-empty; otherwise fall back to
+                # what the routing module found.
+                final_entities = entities or final_routing_result.get(
+                    "extracted_entities", []
+                )
+                final_relationships = relationships or final_routing_result.get(
+                    "extracted_relationships", []
+                )
+
                 # Determine if orchestration is needed
                 needs_orchestration = self._assess_orchestration_need(
                     query,
-                    entities,
-                    relationships,
+                    final_entities,
+                    final_relationships,
                     final_routing_result,
                     require_orchestration,
                 )
@@ -906,8 +917,8 @@ class RoutingAgent(
                         final_routing_result.get("recommended_agent")
                     ),
                     enhanced_query=enhanced_query,
-                    entities=entities,
-                    relationships=relationships,
+                    entities=final_entities,
+                    relationships=final_relationships,
                     metadata={
                         **enhancement_metadata,
                         "processing_time_ms": (
@@ -920,7 +931,7 @@ class RoutingAgent(
                         "tenant_id": tenant_id,
                         "needs_orchestration": needs_orchestration,
                         "orchestration_signals": self._get_orchestration_signals(
-                            query, entities, relationships
+                            query, final_entities, final_relationships
                         ),
                     },
                     query_variants=enhancement_metadata.get("query_variants", []),
@@ -1116,7 +1127,8 @@ class RoutingAgent(
 
             # Extract routing information from DSPy result.
             # DSPyAdvancedRoutingModule returns: routing_decision (dict),
-            # reasoning_chain (str), overall_confidence (float).
+            # reasoning_chain (str), overall_confidence (float),
+            # extracted_entities (list), extracted_relationships (list).
             # DSPyBasicRoutingModule returns: recommended_agent, confidence, reasoning.
             routing_decision = getattr(dspy_result, "routing_decision", {})
             routing_info = {
@@ -1133,6 +1145,10 @@ class RoutingAgent(
                 "reasoning": self._extract_reasoning(dspy_result),
                 "primary_intent": getattr(dspy_result, "primary_intent", "search"),
                 "complexity_score": getattr(dspy_result, "complexity_score", 0.5),
+                # Propagate entities/relationships extracted by the routing module
+                # so callers see them even when the enhancement pipeline falls back.
+                "extracted_entities": getattr(dspy_result, "extracted_entities", []),
+                "extracted_relationships": getattr(dspy_result, "extracted_relationships", []),
             }
 
             # Apply confidence calibration if enabled
