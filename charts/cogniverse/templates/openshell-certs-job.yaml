@@ -1,0 +1,125 @@
+{{- if .Values.runtime.sandbox.inCluster.enabled }}
+# Pre-install job that generates mTLS certs for the in-cluster OpenShell
+# gateway and stores them as k8s Secrets. Runs before openshell starts
+# (helm pre-install,pre-upgrade hook) so the gateway can mount them.
+#
+# Three secrets are created:
+#   - openshell-server-tls      (TLS type: server cert + key)
+#   - openshell-server-client-ca (Generic: CA for verifying clients)
+#   - openshell-client-tls       (TLS type: client cert + key for sandbox pods)
+#
+# The cogniverse-runtime container reads openshell-client-tls + the CA to
+# authenticate against the gateway.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 2
+  template:
+    metadata:
+      name: openshell-cert-gen
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+      containers:
+      - name: cert-gen
+        image: alpine/openssl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          cd /tmp
+          # Generate CA
+          openssl genrsa -out ca.key 4096
+          openssl req -new -x509 -key ca.key -sha256 -subj "/CN=openshell-ca" -days 3650 -out ca.crt
+
+          # Generate server cert (for openshell gateway)
+          openssl genrsa -out server.key 4096
+          openssl req -new -key server.key -subj "/CN=openshell" -out server.csr
+          cat > server.ext << 'EOF'
+          subjectAltName = DNS:openshell,DNS:openshell.openshell.svc.cluster.local,DNS:openshell.{{ .Release.Namespace }}.svc.cluster.local,DNS:localhost,IP:127.0.0.1
+          extendedKeyUsage = serverAuth,clientAuth
+          EOF
+          openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365 -sha256 -extfile server.ext
+
+          # Generate client cert (for runtime and sandbox pods)
+          openssl genrsa -out client.key 4096
+          openssl req -new -key client.key -subj "/CN=openshell-client" -out client.csr
+          cat > client.ext << 'EOF'
+          extendedKeyUsage = clientAuth
+          EOF
+          openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365 -sha256 -extfile client.ext
+
+          NAMESPACE="{{ .Release.Namespace }}"
+
+          apk add --no-cache curl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          mv kubectl /usr/local/bin/
+
+          kubectl create secret tls openshell-server-tls \
+            --cert=server.crt --key=server.key -n "$NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic openshell-server-client-ca \
+            --from-file=ca.crt=ca.crt -n "$NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret tls openshell-client-tls \
+            --cert=client.crt --key=client.key -n "$NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic openshell-client-ca \
+            --from-file=ca.crt=ca.crt -n "$NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "OpenShell mTLS certs generated and stored as k8s Secrets"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+- kind: ServiceAccount
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

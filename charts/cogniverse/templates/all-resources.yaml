@@ -214,8 +214,14 @@ spec:
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
         {{- if .Values.runtime.sandbox.enabled }}
+        - name: COGNIVERSE_SANDBOX_ENABLED
+          value: "true"
         - name: OPENSHELL_GATEWAY_ENDPOINT
+          {{- if .Values.runtime.sandbox.inCluster.enabled }}
+          value: "openshell.{{ .Release.Namespace }}.svc.cluster.local:8080"
+          {{- else }}
           value: {{ .Values.runtime.sandbox.gatewayEndpoint | quote }}
+          {{- end }}
         {{- end }}
         {{- if .Values.inference.colpali.enabled }}
         - name: COLPALI_INFERENCE_URL
@@ -243,9 +249,24 @@ spec:
         - name: model-cache
           mountPath: /home/cogniverse/.cache
         {{- if .Values.runtime.sandbox.enabled }}
+        {{- if .Values.runtime.sandbox.inCluster.enabled }}
+        - name: openshell-client-tls
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.crt
+          subPath: tls.crt
+          readOnly: true
+        - name: openshell-client-tls
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.key
+          subPath: tls.key
+          readOnly: true
+        - name: openshell-client-ca
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/ca.crt
+          subPath: ca.crt
+          readOnly: true
+        {{- else }}
         - name: openshell-config
           mountPath: /home/cogniverse/.config/openshell
           readOnly: true
+        {{- end }}
         {{- end }}
         {{- if .Values.devMode.enabled }}
         - name: src-libs
@@ -320,10 +341,19 @@ spec:
         emptyDir:
           sizeLimit: 20Gi
       {{- if .Values.runtime.sandbox.enabled }}
+      {{- if .Values.runtime.sandbox.inCluster.enabled }}
+      - name: openshell-client-tls
+        secret:
+          secretName: openshell-client-tls
+      - name: openshell-client-ca
+        secret:
+          secretName: openshell-client-ca
+      {{- else }}
       - name: openshell-config
         hostPath:
           path: {{ .Values.runtime.sandbox.hostConfigPath }}
           type: Directory
+      {{- end }}
       {{- end }}
       {{- if .Values.devMode.enabled }}
       - name: src-libs

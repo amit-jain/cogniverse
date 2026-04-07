@@ -25,6 +25,12 @@ dependencies:
     version: "0.45.x"
     repository: "https://argoproj.github.io/argo-helm"
     condition: argo.enabled
+  # openshell is vendored as an unpacked subchart at charts/openshell — Helm
+  # picks it up automatically without a repository URL. Gated on the
+  # `runtime.sandbox.inCluster.enabled` value at the parent level.
+  - name: openshell
+    version: "0.1.0"
+    condition: runtime.sandbox.inCluster.enabled
 
 # Minimum Kubernetes version
 kubeVersion: ">=1.24.0-0"
