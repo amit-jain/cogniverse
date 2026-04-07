@@ -117,6 +117,7 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 - **View Results**: Open Phoenix dashboard at http://localhost:8501
 - **Try API**: Use the REST API at http://localhost:8000/docs
 - **Configure**: Customize profiles in `configs/config.json`
+- **Coding Agent**: Run `cogniverse code` to start an interactive coding REPL with streaming — see [Coding Agent CLI](user/coding-agent-cli.md)
 - **Learn More**: Continue reading this guide
 
 ---
