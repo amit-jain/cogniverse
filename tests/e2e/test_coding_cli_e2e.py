@@ -168,20 +168,19 @@ class TestCodingAgentDispatch:
         assert data["name"] == "coding_agent"
         assert "coding" in data["capabilities"]
 
-    def test_coding_agent_dispatch_path_reaches_agent(self):
-        """POST to coding_agent/process is dispatched to CodingAgent.
+    def test_coding_agent_full_execution_with_sandbox(self):
+        """Full plan → code → sandbox execute → evaluate loop.
 
-        Without an OpenShell sandbox, the CodingAgent raises RuntimeError
-        during execution, which returns 500. This assertion proves the
-        wiring works: HTTP → router → dispatcher → _execute_coding_task
-        → CodingAgent. A 404 or 400 would indicate the wiring is broken.
+        Requires the OpenShell gateway running on the host with the runtime
+        pod configured to reach it via host.docker.internal. The sandbox
+        actually executes the generated code and returns stdout/stderr/exit.
         """
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=400.0) as client:
             resp = client.post(
                 CODING_AGENT_URL,
                 json={
                     "agent_name": "coding_agent",
-                    "query": "write a hello world function",
+                    "query": "write a python function that returns the string hello world",
                     "context": {
                         "tenant_id": TENANT_ID,
                         "max_iterations": 1,
@@ -190,14 +189,27 @@ class TestCodingAgentDispatch:
                 },
             )
 
-        assert resp.status_code in (200, 500), (
-            f"Expected 200 (sandbox available) or 500 (sandbox missing), got {resp.status_code}: {resp.text[:200]}"
+        assert resp.status_code == 200, (
+            f"Coding agent failed: {resp.status_code}: {resp.text[:300]}"
         )
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["agent"] == "coding_agent"
 
-        if resp.status_code == 200:
-            data = resp.json()
-            assert data["status"] == "success"
-            assert data["agent"] == "coding_agent"
+        result = data["result"]
+        assert "plan" in result
+        assert result["plan"], "Plan should not be empty"
+        assert len(result["code_changes"]) >= 1, "Should generate at least 1 code change"
+        assert result["iterations_used"] >= 1
+
+        exec_results = result.get("execution_results", [])
+        assert len(exec_results) >= 1, (
+            "Execution results should exist (sandbox executed the code)"
+        )
+        first_exec = exec_results[0]
+        assert "exit_code" in first_exec
+        assert "stdout" in first_exec
+        assert "stderr" in first_exec
 
 
 @pytest.mark.e2e

@@ -213,6 +213,10 @@ spec:
           {{- else }}
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
+        {{- if .Values.runtime.sandbox.enabled }}
+        - name: OPENSHELL_GATEWAY_ENDPOINT
+          value: {{ .Values.runtime.sandbox.gatewayEndpoint | quote }}
+        {{- end }}
         {{- if .Values.inference.colpali.enabled }}
         - name: COLPALI_INFERENCE_URL
           value: "http://{{ $fullName }}-vllm-colpali:{{ .Values.inference.colpali.service.port }}"
@@ -238,6 +242,11 @@ spec:
           readOnly: true
         - name: model-cache
           mountPath: /home/cogniverse/.cache
+        {{- if .Values.runtime.sandbox.enabled }}
+        - name: openshell-config
+          mountPath: /home/cogniverse/.config/openshell
+          readOnly: true
+        {{- end }}
         {{- if .Values.devMode.enabled }}
         - name: src-libs
           mountPath: /app/libs
@@ -310,6 +319,12 @@ spec:
       - name: model-cache
         emptyDir:
           sizeLimit: 20Gi
+      {{- if .Values.runtime.sandbox.enabled }}
+      - name: openshell-config
+        hostPath:
+          path: {{ .Values.runtime.sandbox.hostConfigPath }}
+          type: Directory
+      {{- end }}
       {{- if .Values.devMode.enabled }}
       - name: src-libs
         hostPath:

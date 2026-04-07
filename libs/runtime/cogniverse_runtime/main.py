@@ -120,7 +120,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 5. Initialize SandboxManager (optional — gracefully degrades)
     from cogniverse_runtime.sandbox_manager import SandboxManager
 
-    sandbox_enabled = config.get("sandbox", {}).get("enabled", False)
+    sandbox_enabled = (
+        config.get("sandbox", {}).get("enabled", False)
+        or os.environ.get("COGNIVERSE_SANDBOX_ENABLED", "").lower() in ("true", "1", "yes")
+        or bool(os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"))
+    )
     sandbox_manager = SandboxManager(enabled=sandbox_enabled)
 
     # 5a. Wire agent registry and dependencies to agents router + A2A

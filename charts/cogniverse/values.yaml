@@ -192,6 +192,17 @@ runtime:
     timeoutSeconds: 3
     failureThreshold: 3
 
+  # OpenShell sandbox — enables coding agent code execution in isolated containers.
+  # The gateway runs on the host (via `openshell gateway start`) and the runtime
+  # pod reaches it via host.docker.internal. The host's openshell config dir is
+  # mounted into the pod so the Python client can find the gateway metadata/mTLS.
+  sandbox:
+    enabled: false
+    # Endpoint reachable from inside k3d. Override metadata.json's 127.0.0.1:19091.
+    gatewayEndpoint: "host.docker.internal:19091"
+    # Host path to the openshell config directory (~/.config/openshell).
+    hostConfigPath: ""
+
   # Quality monitor sidecar — continuous evaluation of all agents
   qualityMonitor:
     enabled: true

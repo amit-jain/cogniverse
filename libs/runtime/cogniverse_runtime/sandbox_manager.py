@@ -63,17 +63,29 @@ class SandboxManager:
         logger.info(f"Loaded {len(self._policies)} agent policies")
 
     def _connect(self) -> None:
-        """Connect to the OpenShell gateway."""
+        """Connect to the OpenShell gateway.
+
+        Prefers `OPENSHELL_GATEWAY_ENDPOINT` env var when set (for
+        containerized deployments where the host gateway is reachable
+        via host.docker.internal or similar). Falls back to the active
+        cluster metadata (~/.config/openshell/gateways/<name>/metadata.json).
+        """
+        import os
+
         try:
             from openshell import SandboxClient
 
-            self._client = SandboxClient.from_active_cluster(cluster=self._cluster)
-            health = self._client.health()
+            override_endpoint = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT")
+            if override_endpoint:
+                self._client = SandboxClient(endpoint=override_endpoint)
+                logger.info(f"Connected to OpenShell gateway at {override_endpoint}")
+            else:
+                self._client = SandboxClient.from_active_cluster(cluster=self._cluster)
+                logger.info(
+                    f"Connected to OpenShell gateway "
+                    f"(cluster={self._cluster or 'active'})"
+                )
             self._available = True
-            logger.info(
-                f"Connected to OpenShell gateway "
-                f"(cluster={self._cluster or 'active'}, health={health})"
-            )
         except Exception as e:
             logger.warning(
                 f"OpenShell gateway unavailable: {e}. "
@@ -83,7 +95,20 @@ class SandboxManager:
 
     @property
     def available(self) -> bool:
-        """Whether the OpenShell gateway is reachable."""
+        """Whether the OpenShell gateway is reachable.
+
+        If not currently available, attempts a fresh connection — this
+        lets the manager recover from transient failures or from the
+        openshell package becoming importable after startup.
+        """
+        if not self._available and self._enabled:
+            self._connect()
+        return self._available
+
+    def reconnect(self) -> bool:
+        """Force a reconnection attempt. Returns True if available."""
+        if self._enabled:
+            self._connect()
         return self._available
 
     def get_policy(self, agent_type: str) -> Optional[Dict[str, Any]]:
