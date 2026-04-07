@@ -438,12 +438,17 @@ class StrategyLearner:
             logger.warning("Memory manager not initialized, skipping strategy storage")
             return False
 
+        # Use an agent-specific Mem0 namespace so Vespa's agent_id field isolates
+        # strategies at the storage layer. All strategies share the STRATEGY_AGENT_NAME
+        # prefix so they're easy to identify, but each agent gets its own suffix.
+        agent_namespace = f"{STRATEGY_AGENT_NAME}_{strategy.agent}"
+
         # Deduplication: search for similar existing strategies
         try:
             existing = self.memory_manager.search_memory(
                 query=strategy.to_memory_content(),
                 tenant_id=strategy.tenant_id,
-                agent_name=STRATEGY_AGENT_NAME,
+                agent_name=agent_namespace,
                 top_k=3,
             )
 
@@ -462,11 +467,11 @@ class StrategyLearner:
         except Exception as e:
             logger.debug(f"Dedup search failed (non-fatal): {e}")
 
-        # Store the strategy
+        # Store the strategy under the agent-specific namespace
         self.memory_manager.add_memory(
             content=strategy.to_memory_content(),
             tenant_id=strategy.tenant_id,
-            agent_name=STRATEGY_AGENT_NAME,
+            agent_name=agent_namespace,
             metadata=strategy.to_metadata(),
         )
         logger.info(
@@ -478,25 +483,46 @@ class StrategyLearner:
     def get_strategies_for_agent(
         self,
         query: str,
-        agent_name: str,
+        agent_name: Optional[str],
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
         """Retrieve relevant strategies for an agent and query.
 
-        Two-level retrieval: user strategies + org strategies.
-        Filters by type=strategy metadata and ranks by relevance.
+        Two-level retrieval: user strategies + org strategies. Strategies
+        are stored in a single shared namespace (``STRATEGY_AGENT_NAME``)
+        and tagged with ``metadata.agent`` at write time. Audit fix #6 —
+        the previous version accepted ``agent_name`` but never used it,
+        so every agent received every strategy regardless of which agent
+        the strategy was learned for. Now retrieval filters by the
+        ``agent`` metadata tag so each agent only sees its own strategies.
+
+        Args:
+            query: Free-text query to find relevant strategies for.
+            agent_name: Filter to strategies tagged for this agent. Pass
+                ``None`` or ``"*"`` to return strategies for all agents
+                (used by debugging tools).
+            top_k: Maximum strategies to return after over-fetching and
+                filtering by metadata.
         """
         if not self.memory_manager or self.memory_manager.memory is None:
             return []
 
-        all_strategies = []
+        all_strategies: List[Dict[str, Any]] = []
 
-        # User-level strategies (agent_name scoping ensures only strategies returned)
+        # Strategies are stored under agent-specific Mem0 namespaces:
+        #   "_strategy_store_{agent_name}"
+        # Wildcard ("*") and None fall back to the bare prefix so debugging
+        # tools can retrieve all strategies across agents.
+        if agent_name and agent_name != "*":
+            lookup_namespace = f"{STRATEGY_AGENT_NAME}_{agent_name}"
+        else:
+            lookup_namespace = STRATEGY_AGENT_NAME
+
         try:
             user_results = self.memory_manager.search_memory(
                 query=f"strategy for {query}",
                 tenant_id=self.tenant_id,
-                agent_name=STRATEGY_AGENT_NAME,
+                agent_name=lookup_namespace,
                 top_k=top_k,
             )
             for r in user_results:
@@ -505,13 +531,12 @@ class StrategyLearner:
         except Exception as e:
             logger.debug(f"User strategy retrieval failed: {e}")
 
-        # Org-level strategies (if org differs from user)
         if self.org_id != self.tenant_id:
             try:
                 org_results = self.memory_manager.search_memory(
                     query=f"strategy for {query}",
                     tenant_id=self.org_id,
-                    agent_name=STRATEGY_AGENT_NAME,
+                    agent_name=lookup_namespace,
                     top_k=top_k,
                 )
                 for r in org_results:

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -123,9 +124,18 @@ class OutputEvaluationSignature(dspy.Signature):
     )
 
 
-class CodingAgent(RLMAwareMixin, A2AAgent[CodingInput, CodingOutput, CodingDeps]):
+class CodingAgent(
+    MemoryAwareMixin,
+    RLMAwareMixin,
+    A2AAgent[CodingInput, CodingOutput, CodingDeps],
+):
     """
     Iterative coding agent with semantic code search and sandboxed execution.
+
+    Inherits MemoryAwareMixin (audit fix #9) so coding tasks receive learned
+    strategies, tenant memories, and tenant instructions via
+    inject_context_into_prompt() — same pattern as SearchAgent and
+    SummarizerAgent.
 
     Flow:
     1. Search code context via SearchService (code_lateon_mv profile)
@@ -159,13 +169,21 @@ class CodingAgent(RLMAwareMixin, A2AAgent[CodingInput, CodingOutput, CodingDeps]
         self._evaluator = dspy.ChainOfThought(OutputEvaluationSignature)
 
     async def _process_impl(self, input: CodingInput) -> CodingOutput:
+        # Audit fix #9 — set tenant for memory/instructions injection and
+        # enrich the task with the FULL context stack (instructions +
+        # learned strategies + tenant memories) before planning. Matches the
+        # SearchAgent / SummarizerAgent pattern. Gracefully no-ops when
+        # memory isn't initialized.
+        self.set_tenant_for_context(input.tenant_id)
+        enriched_task = self.inject_context_into_prompt(input.task, input.task)
+
         # 1. Search for relevant code context
         self.emit_progress("search", "Searching for relevant code context...")
         code_context = await self._search_code_context(input.task, input.tenant_id)
 
         # 2. Plan implementation
         self.emit_progress("plan", "Planning implementation...")
-        plan = await self._plan(input.task, code_context, input.language)
+        plan = await self._plan(enriched_task, code_context, input.language)
 
         # 3. Iterative code-execute-evaluate loop
         all_code_changes: List[Dict[str, str]] = []

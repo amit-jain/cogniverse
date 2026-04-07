@@ -14,9 +14,58 @@ Usage:
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from typing import Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
+    """Construct a PhoenixProvider for the QualityMonitor's XGBoost gate.
+
+    Audit fix #15 — without injecting a real provider, the
+    XGBoost training-decision block in
+    ``QualityMonitor._apply_training_decision_model`` is unreachable
+    (gated on ``self._telemetry_provider is None``). This helper
+    constructs a provider from the HTTP endpoint and an env-var-overridable
+    gRPC endpoint, then initializes it. On failure it logs a warning and
+    returns ``None`` so the monitor degrades to naive verdicts rather
+    than crashing the sidecar.
+    """
+    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT")
+    if not grpc_endpoint:
+        # Default: same host as http_endpoint, OTLP gRPC port 4317.
+        try:
+            parsed = urlparse(http_endpoint)
+            host = parsed.hostname or "localhost"
+            grpc_endpoint = f"{host}:4317"
+        except Exception:
+            grpc_endpoint = "localhost:4317"
+
+    try:
+        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+        provider = PhoenixProvider()
+        provider.initialize(
+            {
+                "tenant_id": tenant_id,
+                "http_endpoint": http_endpoint,
+                "grpc_endpoint": grpc_endpoint,
+            }
+        )
+        logger.info(
+            f"PhoenixProvider initialized for QualityMonitor "
+            f"(tenant={tenant_id}, http={http_endpoint}, grpc={grpc_endpoint})"
+        )
+        return provider
+    except Exception as exc:
+        logger.warning(
+            f"Failed to build PhoenixProvider for QualityMonitor: {exc}. "
+            "XGBoost gate will be skipped — naive verdicts only."
+        )
+        return None
 
 
 def main():
@@ -77,6 +126,15 @@ def main():
         default=20,
         help="Number of spans to sample per agent for live eval",
     )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help=(
+            "Run a single forced optimization cycle and exit (audit fix #7). "
+            "Used by Argo CronWorkflows for scheduled distillation. Bypasses "
+            "the threshold check so distillation runs even when quality is stable."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -85,6 +143,17 @@ def main():
     )
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
+
+    # Audit fix #15 — construct a real PhoenixProvider so the XGBoost
+    # training-decision gating block in QualityMonitor.check_thresholds is
+    # actually reachable. Without injecting a provider the gate is dead
+    # code 100% of the time. The grpc endpoint defaults to port 4317 on
+    # the same host as the HTTP endpoint, matching the standard Phoenix
+    # deployment in the Helm chart.
+    telemetry_provider = _build_phoenix_provider(
+        tenant_id=args.tenant_id,
+        http_endpoint=args.phoenix_url,
+    )
 
     monitor = QualityMonitor(
         tenant_id=args.tenant_id,
@@ -98,7 +167,24 @@ def main():
         golden_eval_interval_seconds=args.golden_interval,
         live_eval_interval_seconds=args.live_interval,
         live_sample_count=args.live_sample_count,
+        telemetry_provider=telemetry_provider,
     )
+
+    if args.once:
+        # Audit fix #7 — one-shot scheduled distillation. Used by Argo
+        # CronWorkflows. Force-builds a trigger from the current eval and
+        # submits it regardless of thresholds, then exits cleanly so the
+        # CronWorkflow run completes.
+        logger.info(
+            f"Running forced optimization cycle for tenant={args.tenant_id}"
+        )
+        try:
+            result = asyncio.run(monitor.force_optimization_cycle())
+            logger.info(f"Forced cycle result: {result}")
+            exit_code = 0 if result.get("status") == "ok" else 1
+        finally:
+            asyncio.run(monitor.close())
+        sys.exit(exit_code)
 
     logger.info(
         f"Starting quality monitor for tenant={args.tenant_id} "

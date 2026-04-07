@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -334,25 +334,7 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail=detail)
 
 
-@router.post("/{agent_name}/upload")
-async def upload_file_to_agent(
-    agent_name: str,
-    file: UploadFile = File(...),
-    top_k: int = 10,
-) -> Dict[str, Any]:
-    """
-    Upload a file for agent processing (e.g., video/image search).
-
-    Note: This endpoint is for routing to agents. For direct agent execution,
-    agents should expose their own upload endpoints.
-    """
-    registry = get_registry()
-
-    agent = registry.get_agent(agent_name)
-    if not agent:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-
-    raise HTTPException(
-        status_code=501,
-        detail=f"Direct file upload not supported. Call agent at {agent.url}/upload",
-    )
+# Audit fix #13 — POST /agents/{name}/upload was a 501 stub that had no
+# implementation path and tested only its own 501 response. File uploads
+# already have a real home at POST /ingestion/upload, so the stub has been
+# removed entirely. Tests that targeted /agents/upload now expect 404.

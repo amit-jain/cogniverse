@@ -3,6 +3,7 @@ Shared fixtures and utilities for agent integration tests.
 """
 
 import logging
+import os
 
 import dspy
 import httpx
@@ -246,3 +247,40 @@ def vespa_with_schema():
             logger.info("✅ Cleared singleton state after teardown")
         except Exception as e:
             logger.warning(f"⚠️  Error clearing singleton state: {e}")
+
+
+@pytest.fixture(scope="module")
+def real_telemetry(phoenix_container):
+    """Module-scoped real TelemetryManager backed by Phoenix Docker.
+
+    Depends on the root-conftest phoenix_container fixture which starts
+    Phoenix on ports 16006 (HTTP) and 14317 (gRPC). Exposes a live
+    TelemetryManager so agent telemetry span tests can emit and query
+    real spans.
+    """
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    config = TelemetryConfig(
+        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317"),
+        provider_config={
+            "http_endpoint": "http://localhost:16006",
+            "grpc_endpoint": "http://localhost:14317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    manager = TelemetryManager(config=config)
+    telemetry_manager_module._telemetry_manager = manager
+
+    yield manager
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()

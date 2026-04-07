@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 # DSPy 3.0 imports
 import dspy
 
+# Production features from RoutingAgent
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+
 # Advanced optimization
 from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
@@ -68,9 +71,6 @@ from cogniverse_agents.search.multi_modal_reranker import (
 # Type-safe agent base
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-
-# Production features from RoutingAgent
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 
 # Centralized LLM config
@@ -1108,13 +1108,19 @@ class RoutingAgent(
                 enhanced_query if enhanced_query != original_query else original_query
             )
 
-            # Prepare context with relationship information
+            # Prepare context with relationship information.
             routing_context = self._prepare_routing_context(
                 context, entities, relationships
             )
-            tenant_instructions = self._get_tenant_instructions()
-            if tenant_instructions:
-                routing_context = f"{routing_context}\nTenant preferences: {tenant_instructions}"
+            # Audit fix #8 — wire the FULL context stack (instructions +
+            # learned strategies + tenant memories) into the routing decision.
+            # Previously this only injected raw _get_tenant_instructions(), so
+            # learned strategies never reached the router. inject_context_into_prompt
+            # gracefully no-ops when memory isn't initialized, so this is safe
+            # to call unconditionally.
+            routing_context = self.inject_context_into_prompt(
+                prompt=routing_context, query=routing_query
+            )
 
             available_agents = self.registry.list_agents() if self.registry else None
 

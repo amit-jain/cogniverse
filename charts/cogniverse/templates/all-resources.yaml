@@ -223,6 +223,15 @@ spec:
           value: {{ .Values.runtime.sandbox.gatewayEndpoint | quote }}
           {{- end }}
         {{- end }}
+        {{- if .Values.argo.enabled }}
+        # Audit fix #3 — wire Argo so the runtime can submit CronWorkflows
+        # for scheduled jobs. Without these vars, _argo_api_url stays None
+        # and POST /{tenant}/jobs persists configs that never trigger.
+        - name: ARGO_API_URL
+          value: "http://{{ $fullName }}-argo-server:2746"
+        - name: ARGO_NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        {{- end }}
         {{- if .Values.inference.colpali.enabled }}
         - name: COLPALI_INFERENCE_URL
           value: "http://{{ $fullName }}-vllm-colpali:{{ .Values.inference.colpali.service.port }}"
@@ -328,6 +337,13 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
+        # Audit fix #1 — mount the bundled golden dataset so the sidecar
+        # can find the path passed via --golden-dataset-path. Without this
+        # mount the sidecar crash-loops on startup with FileNotFoundError.
+        - name: quality-monitor-data
+          mountPath: /app/data/quality-monitor/golden_dataset.json
+          subPath: golden_dataset.json
+          readOnly: true
         {{- if .Values.devMode.enabled }}
         - name: src-libs
           mountPath: /app/libs
@@ -342,6 +358,14 @@ spec:
       - name: model-cache
         emptyDir:
           sizeLimit: 20Gi
+      {{- if .Values.runtime.qualityMonitor.enabled }}
+      # Audit fix #1 — golden dataset for QualityMonitor sidecar.
+      # ConfigMap is built by templates/configmap.yaml from
+      # files/quality-monitor/golden_dataset.json.
+      - name: quality-monitor-data
+        configMap:
+          name: {{ $fullName }}-quality-monitor-data
+      {{- end }}
       {{- if .Values.runtime.sandbox.enabled }}
       {{- if .Values.runtime.sandbox.inCluster.enabled }}
       - name: openshell-client-tls

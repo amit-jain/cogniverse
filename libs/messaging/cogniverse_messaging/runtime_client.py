@@ -120,6 +120,178 @@ class RuntimeClient:
             return resp.json().get("token")
         return None
 
+    # ------------------------------------------------------------------
+    # Audit fix #5 — wiki / instructions / memories / jobs CRUD methods
+    # ------------------------------------------------------------------
+    # Before this fix the gateway parsed /wiki, /instructions, /memories,
+    # /jobs commands but had no client to call. Each method below maps
+    # one-to-one to an existing /wiki/* or /admin/tenant/* endpoint.
+
+    async def save_wiki_session(
+        self,
+        tenant_id: str,
+        query: str,
+        response: Dict[str, Any],
+        agent_name: str = "routing_agent",
+        entities: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Save an agent interaction as a wiki page (POST /wiki/save)."""
+        client = await self._get_client()
+        resp = await client.post(
+            "/wiki/save",
+            json={
+                "query": query,
+                "response": response,
+                "entities": entities or [],
+                "agent_name": agent_name,
+                "tenant_id": tenant_id,
+            },
+        )
+        return self._json_or_error(resp)
+
+    async def search_wiki(
+        self, tenant_id: str, query: str, top_k: int = 5
+    ) -> Dict[str, Any]:
+        """Full-text search over wiki pages (POST /wiki/search)."""
+        client = await self._get_client()
+        resp = await client.post(
+            "/wiki/search",
+            json={"query": query, "tenant_id": tenant_id, "top_k": top_k},
+        )
+        return self._json_or_error(resp)
+
+    async def get_wiki_topic(
+        self, tenant_id: str, slug: str
+    ) -> Dict[str, Any]:
+        """Retrieve a topic page by slug (GET /wiki/topic/{slug})."""
+        client = await self._get_client()
+        resp = await client.get(
+            f"/wiki/topic/{slug}", params={"tenant_id": tenant_id}
+        )
+        return self._json_or_error(resp)
+
+    async def get_wiki_index(self, tenant_id: str) -> Dict[str, Any]:
+        """Return the rendered wiki index (GET /wiki/index)."""
+        client = await self._get_client()
+        resp = await client.get(
+            "/wiki/index", params={"tenant_id": tenant_id}
+        )
+        return self._json_or_error(resp)
+
+    async def lint_wiki(self, tenant_id: str) -> Dict[str, Any]:
+        """Run lint checks on the wiki (GET /wiki/lint)."""
+        client = await self._get_client()
+        resp = await client.get(
+            "/wiki/lint", params={"tenant_id": tenant_id}
+        )
+        return self._json_or_error(resp)
+
+    async def delete_wiki_topic(
+        self, tenant_id: str, slug: str
+    ) -> Dict[str, Any]:
+        """Delete a topic page by slug (DELETE /wiki/topic/{slug})."""
+        client = await self._get_client()
+        resp = await client.delete(
+            f"/wiki/topic/{slug}", params={"tenant_id": tenant_id}
+        )
+        return self._json_or_error(resp)
+
+    async def set_instructions(
+        self, tenant_id: str, text: str
+    ) -> Dict[str, Any]:
+        """Set per-tenant system instructions (PUT /admin/tenant/{tenant}/instructions)."""
+        client = await self._get_client()
+        resp = await client.put(
+            f"/admin/tenant/{tenant_id}/instructions",
+            json={"text": text},
+        )
+        return self._json_or_error(resp)
+
+    async def get_instructions(self, tenant_id: str) -> Dict[str, Any]:
+        """Get per-tenant system instructions (GET /admin/tenant/{tenant}/instructions)."""
+        client = await self._get_client()
+        resp = await client.get(f"/admin/tenant/{tenant_id}/instructions")
+        return self._json_or_error(resp)
+
+    async def list_memories(
+        self, tenant_id: str, agent_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """List per-tenant memories (GET /admin/tenant/{tenant}/memories)."""
+        client = await self._get_client()
+        params: Dict[str, Any] = {}
+        if agent_name:
+            params["agent_name"] = agent_name
+        resp = await client.get(
+            f"/admin/tenant/{tenant_id}/memories", params=params
+        )
+        return self._json_or_error(resp)
+
+    async def clear_memories(
+        self, tenant_id: str, agent_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Clear per-tenant memories (DELETE /admin/tenant/{tenant}/memories)."""
+        client = await self._get_client()
+        params: Dict[str, Any] = {}
+        if agent_name:
+            params["agent_name"] = agent_name
+        resp = await client.delete(
+            f"/admin/tenant/{tenant_id}/memories", params=params
+        )
+        return self._json_or_error(resp)
+
+    async def list_jobs(self, tenant_id: str) -> Dict[str, Any]:
+        """List per-tenant scheduled jobs (GET /admin/tenant/{tenant}/jobs)."""
+        client = await self._get_client()
+        resp = await client.get(f"/admin/tenant/{tenant_id}/jobs")
+        return self._json_or_error(resp)
+
+    async def create_job(
+        self,
+        tenant_id: str,
+        name: str,
+        schedule: str,
+        query: str,
+        post_actions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Create a per-tenant scheduled job (POST /admin/tenant/{tenant}/jobs)."""
+        client = await self._get_client()
+        resp = await client.post(
+            f"/admin/tenant/{tenant_id}/jobs",
+            json={
+                "name": name,
+                "schedule": schedule,
+                "query": query,
+                "post_actions": post_actions or [],
+            },
+        )
+        return self._json_or_error(resp)
+
+    async def delete_job(self, tenant_id: str, job_id: str) -> Dict[str, Any]:
+        """Delete a per-tenant scheduled job (DELETE /admin/tenant/{tenant}/jobs/{job_id})."""
+        client = await self._get_client()
+        resp = await client.delete(
+            f"/admin/tenant/{tenant_id}/jobs/{job_id}"
+        )
+        return self._json_or_error(resp)
+
+    @staticmethod
+    def _json_or_error(resp: httpx.Response) -> Dict[str, Any]:
+        """Return parsed JSON on 2xx, else a structured error dict.
+
+        Centralised so all CRUD wrappers above handle non-2xx responses
+        the same way and the gateway can format errors uniformly.
+        """
+        if 200 <= resp.status_code < 300:
+            try:
+                return resp.json()
+            except ValueError:
+                return {"status": "ok"}
+        return {
+            "status": "error",
+            "status_code": resp.status_code,
+            "message": resp.text[:500] if resp.text else "no response body",
+        }
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()

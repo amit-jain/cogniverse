@@ -55,16 +55,11 @@ class VespaDockerManager:
         Raises:
             RuntimeError: If container fails to start
         """
-        # Generate unique ports (explicit ports take precedence)
-        if http_port is not None and config_port is not None:
-            # Use explicitly provided ports
-            pass
-        elif use_module_ports:
+        # Always derive ports from the ephemeral range via generate_unique_ports
+        # unless the caller passed both explicitly. Never default to a fixed
+        # port like 8081 — that collides with anything else running on the host.
+        if http_port is None or config_port is None:
             http_port, config_port = generate_unique_ports(module_name)
-        else:
-            # Sequential ports for system tests
-            http_port = 8081
-            config_port = 19072
 
         container_name = f"vespa-test-{http_port}"
 

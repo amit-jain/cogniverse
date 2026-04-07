@@ -43,6 +43,13 @@ argo:
       enabled: true
       schedule: "0 4 * * *"  # Daily 4 AM UTC
       annotationThreshold: 20
+    # Audit fix #7 — scheduled distillation runs ``quality_monitor_cli --once``
+    # to force a strategy distillation pass independent of the quality-drop
+    # threshold check. Without this cron, distillation only fired on
+    # degradation, leaving long stable periods without learning.
+    scheduledDistillation:
+      enabled: true
+      schedule: "0 5 * * *"  # Daily 5 AM UTC (after the optimization cycle)
   maintenance:
     backup:
       enabled: true
@@ -225,7 +232,11 @@ runtime:
     goldenIntervalSeconds: 7200   # 2 hours
     liveIntervalSeconds: 14400    # 4 hours
     liveSampleCount: 20
-    goldenDatasetPath: "data/testset/evaluation/sample_videos_retrieval_queries.json"
+    # Audit fix #1 — absolute path inside the sidecar container. The dataset
+    # is mounted from a ConfigMap built from
+    # charts/cogniverse/files/quality-monitor/golden_dataset.json (a copy
+    # of data/testset/evaluation/sample_videos_retrieval_queries.json).
+    goldenDatasetPath: "/app/data/quality-monitor/golden_dataset.json"
     resources:
       limits:
         cpu: "1"

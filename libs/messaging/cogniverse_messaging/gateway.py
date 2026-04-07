@@ -154,6 +154,23 @@ class MessagingGateway:
             await update.message.reply_text(format_help())
             return
 
+        # Audit fix #4 — dispatch the four custom command families that
+        # were previously parsed but silently dropped. Each handler talks
+        # to the corresponding /wiki/* or /admin/tenant/* endpoint via
+        # runtime_client and replies with a formatted result.
+        if parsed.is_wiki:
+            await self._handle_wiki_command(update, parsed, tenant_id)
+            return
+        if parsed.is_instructions:
+            await self._handle_instructions_command(update, parsed, tenant_id)
+            return
+        if parsed.is_memories:
+            await self._handle_memories_command(update, parsed, tenant_id)
+            return
+        if parsed.is_jobs:
+            await self._handle_jobs_command(update, parsed, tenant_id)
+            return
+
         if not parsed.query:
             await update.message.reply_text(
                 "Please provide a query. Send /help for usage."
@@ -190,6 +207,240 @@ class MessagingGateway:
             assistant_text = response.get("message", "")
             if assistant_text:
                 conv_manager.store_turn(chat_id, "assistant", assistant_text)
+
+    async def _handle_wiki_command(
+        self, update: Update, parsed, tenant_id: str
+    ) -> None:
+        """Handle ``/wiki <subcommand> [args]`` — search/topic/index/lint/save/delete.
+
+        Audit fix #4 — previously this whole command family was parsed but
+        silently dropped. The handler dispatches to the matching
+        runtime_client method and replies with a short formatted result.
+        """
+        subcmd = (parsed.wiki_subcommand or "").lower()
+        if subcmd == "search":
+            if not parsed.query:
+                await update.message.reply_text("Usage: /wiki search <query>")
+                return
+            result = await self.runtime_client.search_wiki(
+                tenant_id=tenant_id, query=parsed.query
+            )
+            count = result.get("count", 0)
+            await update.message.reply_text(
+                f"Found {count} wiki result(s) for '{parsed.query}'."
+            )
+        elif subcmd == "topic":
+            if not parsed.query:
+                await update.message.reply_text("Usage: /wiki topic <slug>")
+                return
+            result = await self.runtime_client.get_wiki_topic(
+                tenant_id=tenant_id, slug=parsed.query
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    f"Topic '{parsed.query}' not found."
+                )
+            else:
+                await update.message.reply_text(
+                    str(result.get("content", result))[:3500]
+                )
+        elif subcmd == "index":
+            result = await self.runtime_client.get_wiki_index(tenant_id=tenant_id)
+            await update.message.reply_text(
+                str(result.get("content", "(empty wiki)"))[:3500]
+            )
+        elif subcmd == "lint":
+            result = await self.runtime_client.lint_wiki(tenant_id=tenant_id)
+            issues = result.get("issues", [])
+            await update.message.reply_text(
+                f"Wiki lint: {len(issues)} issue(s) found."
+                if issues
+                else "Wiki lint: no issues."
+            )
+        elif subcmd == "delete":
+            if not parsed.query:
+                await update.message.reply_text("Usage: /wiki delete <slug>")
+                return
+            result = await self.runtime_client.delete_wiki_topic(
+                tenant_id=tenant_id, slug=parsed.query
+            )
+            await update.message.reply_text(
+                f"Deleted wiki topic '{parsed.query}'."
+                if result.get("status") == "deleted"
+                else f"Delete failed: {result.get('message', 'unknown error')}"
+            )
+        elif subcmd == "save":
+            await update.message.reply_text(
+                "Wiki auto-saves agent sessions in the background. "
+                "Use /wiki search <query> to find what's been saved."
+            )
+        else:
+            await update.message.reply_text(
+                "Unknown /wiki subcommand. Try: search, topic, index, lint, delete."
+            )
+
+    async def _handle_instructions_command(
+        self, update: Update, parsed, tenant_id: str
+    ) -> None:
+        """Handle ``/instructions <set|show> [text]``."""
+        subcmd = (parsed.instructions_subcommand or "").lower()
+        if subcmd == "set":
+            if not parsed.query:
+                await update.message.reply_text(
+                    "Usage: /instructions set <text>"
+                )
+                return
+            result = await self.runtime_client.set_instructions(
+                tenant_id=tenant_id, text=parsed.query
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    f"Failed to set instructions: {result.get('message', '')}"
+                )
+            else:
+                await update.message.reply_text("Instructions updated.")
+        elif subcmd == "show":
+            result = await self.runtime_client.get_instructions(
+                tenant_id=tenant_id
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    "No instructions set for this tenant."
+                )
+            else:
+                text = result.get("text", "")
+                await update.message.reply_text(
+                    f"Current instructions:\n\n{text}" if text else "(empty)"
+                )
+        else:
+            await update.message.reply_text(
+                "Unknown /instructions subcommand. Try: set, show."
+            )
+
+    async def _handle_memories_command(
+        self, update: Update, parsed, tenant_id: str
+    ) -> None:
+        """Handle ``/memories <list|clear> [filter]``."""
+        subcmd = (parsed.memories_subcommand or "").lower()
+        if subcmd == "list":
+            # Optional "agent=<name>" filter
+            agent_name = None
+            if parsed.query and parsed.query.startswith("agent="):
+                agent_name = parsed.query[len("agent="):].strip() or None
+            result = await self.runtime_client.list_memories(
+                tenant_id=tenant_id, agent_name=agent_name
+            )
+            count = result.get("count", 0)
+            await update.message.reply_text(
+                f"Found {count} memorie(s) for tenant {tenant_id}"
+                + (f" (agent={agent_name})" if agent_name else "")
+                + "."
+            )
+        elif subcmd == "clear":
+            agent_name = parsed.query.strip() or None
+            result = await self.runtime_client.clear_memories(
+                tenant_id=tenant_id, agent_name=agent_name
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    f"Clear failed: {result.get('message', '')}"
+                )
+            else:
+                suffix = f" for agent {agent_name}" if agent_name else ""
+                await update.message.reply_text(f"Cleared memories{suffix}.")
+        else:
+            await update.message.reply_text(
+                "Unknown /memories subcommand. Try: list, clear."
+            )
+
+    async def _handle_jobs_command(
+        self, update: Update, parsed, tenant_id: str
+    ) -> None:
+        """Handle ``/jobs <list|create|delete> [args]``.
+
+        ``/jobs create`` parses ``"<cron schedule>" <query>`` from
+        ``parsed.query`` — the schedule must be quoted because cron strings
+        contain spaces.
+        """
+        subcmd = (parsed.jobs_subcommand or "").lower()
+        if subcmd == "list":
+            result = await self.runtime_client.list_jobs(tenant_id=tenant_id)
+            jobs = result.get("jobs", [])
+            if not jobs:
+                await update.message.reply_text("No jobs scheduled.")
+                return
+            lines = [
+                f"- {j.get('name', '?')} ({j.get('schedule', '?')}) "
+                f"[{j.get('job_id', '?')}]"
+                for j in jobs
+            ]
+            await update.message.reply_text(
+                f"Scheduled jobs ({len(jobs)}):\n" + "\n".join(lines)
+            )
+        elif subcmd == "create":
+            schedule, name, query = self._parse_jobs_create_args(parsed.query)
+            if not schedule or not query:
+                await update.message.reply_text(
+                    'Usage: /jobs create "<cron>" <query>\n'
+                    'Example: /jobs create "0 9 * * 1" weekly AI news'
+                )
+                return
+            result = await self.runtime_client.create_job(
+                tenant_id=tenant_id,
+                name=name,
+                schedule=schedule,
+                query=query,
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    f"Job create failed: {result.get('message', '')}"
+                )
+            else:
+                await update.message.reply_text(
+                    f"Created job '{result.get('name')}' "
+                    f"({result.get('job_id')}) on schedule '{schedule}'."
+                )
+        elif subcmd == "delete":
+            job_id = parsed.query.strip()
+            if not job_id:
+                await update.message.reply_text("Usage: /jobs delete <job_id>")
+                return
+            result = await self.runtime_client.delete_job(
+                tenant_id=tenant_id, job_id=job_id
+            )
+            if result.get("status") == "error":
+                await update.message.reply_text(
+                    f"Delete failed: {result.get('message', '')}"
+                )
+            else:
+                await update.message.reply_text(f"Deleted job {job_id}.")
+        else:
+            await update.message.reply_text(
+                "Unknown /jobs subcommand. Try: list, create, delete."
+            )
+
+    @staticmethod
+    def _parse_jobs_create_args(text: str) -> tuple:
+        """Parse ``"<cron>" <query>`` into (schedule, name, query).
+
+        The schedule MUST be wrapped in double quotes because cron strings
+        contain spaces. ``name`` is derived from the first 30 chars of the
+        query for convenience. Returns (None, None, None) on parse failure.
+        """
+        if not text:
+            return None, None, None
+        text = text.strip()
+        if not text.startswith('"'):
+            return None, None, None
+        end_quote = text.find('"', 1)
+        if end_quote < 0:
+            return None, None, None
+        schedule = text[1:end_quote].strip()
+        query = text[end_quote + 1 :].strip()
+        if not schedule or not query:
+            return None, None, None
+        name = query[:30].strip()
+        return schedule, name, query
 
     def build_app(self) -> Application:
         """Build the Telegram Application with handlers."""

@@ -39,11 +39,18 @@ class Verdict(int, Enum):
     FULL = 2
 
 
+# Span names match the convention emitted by AgentBase._process_span():
+#   f"{ClassName}.process"
+# Audit fix #2 — the previous values (search_service.search, etc.) never
+# matched what the runtime actually emits, so live-traffic eval queries
+# returned zero spans for every agent. After audit fix #10 wraps every
+# AgentBase subclass in a span, these names are stable and discoverable
+# from the agent class name alone.
 SPAN_NAME_BY_AGENT = {
-    AgentType.SEARCH: "search_service.search",
-    AgentType.SUMMARY: "summarizer_agent.process",
-    AgentType.REPORT: "detailed_report_agent.process",
-    AgentType.ROUTING: "routing_agent.route",
+    AgentType.SEARCH: "SearchAgent.process",
+    AgentType.SUMMARY: "SummarizerAgent.process",
+    AgentType.REPORT: "DetailedReportAgent.process",
+    AgentType.ROUTING: "RoutingAgent.process",
 }
 
 
@@ -205,6 +212,60 @@ class QualityMonitor:
 
         logger.info(f"Loaded {len(self._golden_queries)} golden queries")
         return self._golden_queries
+
+    async def force_optimization_cycle(self) -> Dict[str, Any]:
+        """Run one full eval + trigger + submit cycle, regardless of thresholds.
+
+        Audit fix #7 — provides a scheduled distillation path independent of
+        the quality-drop threshold check. Argo CronWorkflows call this via
+        ``quality_monitor_cli --once`` so the system continues learning from
+        live traces even when quality is stable. The continuous ``run()``
+        loop only triggers on degradation, which left long stable periods
+        with no learning happening at all.
+
+        Returns a dict with the cycle outcome so cron jobs can log/alert.
+        """
+        golden_result: Optional[GoldenEvalResult] = None
+        live_result: Optional[LiveEvalResult] = None
+
+        try:
+            golden_result = await self.evaluate_golden_set()
+            logger.info(
+                f"Forced golden eval: MRR={golden_result.mean_mrr:.3f}, "
+                f"nDCG={golden_result.mean_ndcg:.3f}"
+            )
+        except Exception as e:
+            logger.warning(f"Forced golden eval failed: {e}")
+
+        try:
+            live_result = await self.evaluate_live_traffic()
+        except Exception as e:
+            logger.warning(f"Forced live eval failed: {e}")
+
+        if not golden_result and not live_result:
+            logger.warning(
+                "Force cycle: no eval data available — skipping trigger build"
+            )
+            return {"status": "no_data", "submitted_to_argo": False}
+
+        # Build a trigger covering ALL agents, not just those with verdicts.
+        all_agents = list(AgentType)
+        trigger = self._build_trigger(all_agents, golden_result, live_result)
+        await self._store_trigger_dataset(trigger)
+
+        submitted = False
+        if self.argo_api_url:
+            try:
+                await self.submit_optimization(trigger)
+                submitted = True
+            except Exception as e:
+                logger.error(f"Force cycle: Argo submission failed: {e}")
+
+        return {
+            "status": "ok",
+            "agents_triggered": [a.value for a in all_agents],
+            "submitted_to_argo": submitted,
+        }
 
     async def run(self):
         """Main monitoring loop. Runs golden and live evals on different cadences."""

@@ -35,11 +35,13 @@ Usage:
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
     ClassVar,
+    ContextManager,
     Dict,
     Generic,
     Literal,
@@ -207,7 +209,64 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self._input_rails: Optional["RailChain"] = None
         self._output_rails: Optional["RailChain"] = None
 
+        # Telemetry: auto-initialized from deps.telemetry_config if present.
+        # Subclasses (e.g. RoutingAgent) may set self.telemetry_manager before
+        # calling super().__init__(); in that case we leave it alone.
+        if not hasattr(self, "telemetry_manager"):
+            self.telemetry_manager: Optional[Any] = None
+            self._auto_init_telemetry_manager()
+
         logger.debug(f"Initialized {self.__class__.__name__}")
+
+    def _auto_init_telemetry_manager(self) -> None:
+        """Lazily build a TelemetryManager from ``deps.telemetry_config``.
+
+        Most agents do not need to know anything about telemetry plumbing —
+        they just declare ``telemetry_config`` in their deps (or inherit it)
+        and AgentBase wires the manager. If telemetry is disabled, missing,
+        or fails to initialize, this is a no-op and ``telemetry_manager``
+        stays ``None`` so the wrap in ``process()`` falls back to nullcontext.
+        """
+        config = getattr(self.deps, "telemetry_config", None)
+        if config is None or not getattr(config, "enabled", False):
+            return
+        try:
+            from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+            self.telemetry_manager = TelemetryManager(config=config)
+        except Exception as exc:
+            logger.warning(
+                "AgentBase failed to initialize telemetry_manager from deps: %s",
+                exc,
+            )
+            self.telemetry_manager = None
+
+    def set_telemetry_manager(self, telemetry_manager: Any) -> None:
+        """Inject a telemetry manager. Overrides any auto-init from deps.
+
+        Use this when the runtime constructs the manager outside the agent
+        (e.g., a shared instance owned by the dispatcher) and wants to attach
+        it to an existing agent instance.
+        """
+        self.telemetry_manager = telemetry_manager
+
+    def _process_span(
+        self, typed_input: Any
+    ) -> ContextManager[Any]:
+        """Return a context manager that wraps ``_process_impl`` in a span.
+
+        Span name is ``f"{ClassName}.process"`` so QualityMonitor and other
+        consumers can look up an agent's processing span by class name. The
+        ``tenant_id`` is pulled from the input model when present, otherwise
+        defaults to ``"default"`` because TelemetryManager.span() rejects
+        empty tenant_ids. If no telemetry manager is attached, this returns
+        a ``nullcontext`` so the wrap is a zero-cost no-op.
+        """
+        if self.telemetry_manager is None:
+            return nullcontext()
+        tenant_id = getattr(typed_input, "tenant_id", None) or "default"
+        span_name = f"{self.__class__.__name__}.process"
+        return self.telemetry_manager.span(span_name, tenant_id=tenant_id)
 
     def set_rails(
         self,
@@ -372,7 +431,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         if stream:
             return self._stream_with_progress(typed_input)
 
-        result = await self._process_impl(typed_input)
+        with self._process_span(typed_input):
+            result = await self._process_impl(typed_input)
 
         if self._output_rails:
             self._output_rails.check(result.model_dump())
@@ -414,7 +474,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
 
         async def _run_impl():
             try:
-                result = await self._process_impl(input)
+                with self._process_span(input):
+                    result = await self._process_impl(input)
                 result_holder.append(result)
             except Exception as e:
                 error_holder.append(e)
@@ -476,7 +537,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             if stream:
                 return self._stream_with_progress(validated_input)
             else:
-                output = await self._process_impl(validated_input)
+                with self._process_span(validated_input):
+                    output = await self._process_impl(validated_input)
 
                 if not isinstance(output, self._output_type):
                     raise TypeError(

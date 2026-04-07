@@ -68,6 +68,7 @@ dependencies = [
     "cogniverse-evaluation",
     "cogniverse-finetuning",
     "cogniverse-foundation",
+    "cogniverse-messaging",
     "cogniverse-runtime",
     "cogniverse-sdk",
     "cogniverse-synthetic",
@@ -87,6 +88,7 @@ cogniverse-dashboard = { workspace = true }
 cogniverse-evaluation = { workspace = true }
 cogniverse-finetuning = { workspace = true }
 cogniverse-foundation = { workspace = true }
+cogniverse-messaging = { workspace = true }
 cogniverse-runtime = { workspace = true }
 cogniverse-sdk = { workspace = true }
 cogniverse-synthetic = { workspace = true }

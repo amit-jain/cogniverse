@@ -9,42 +9,35 @@ Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 
 import pytest
 
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from tests.utils.async_polling import wait_for_vespa_indexing
-from tests.utils.llm_config import get_llm_model
+from tests.utils.llm_config import (
+    get_backend_host,
+    get_llm_base_url,
+    get_llm_model,
+    get_memory_embedding_model,
+)
 
 
 @pytest.fixture(scope="module")
 def memory_manager(shared_memory_vespa):
-    """Initialize and return memory manager for all tests"""
-    from pathlib import Path
-
-    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.utils import create_default_config_manager
-
-    # Clear singleton to ensure fresh state
+    """Initialize and return memory manager for all tests."""
     Mem0MemoryManager._instances.clear()
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
-    # Create dependencies for dependency injection
-    config_manager = create_default_config_manager()
-    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-    # Initialize with shared Vespa backend
-    # auto_create_schema=False since schema was already deployed
     manager.initialize(
-        backend_host="http://localhost",
+        backend_host=get_backend_host(),
         backend_port=shared_memory_vespa["http_port"],
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
-        embedding_model="nomic-embed-text",
-        llm_base_url="http://localhost:11434/v1",
-        auto_create_schema=False,  # Schema already deployed
-        config_manager=config_manager,
-        schema_loader=schema_loader,
+        embedding_model=get_memory_embedding_model(),
+        llm_base_url=get_llm_base_url(),
+        auto_create_schema=False,
+        config_manager=shared_memory_vespa["config_manager"],
+        schema_loader=shared_memory_vespa["schema_loader"],
     )
 
     yield manager
@@ -80,7 +73,6 @@ class TestMemorySystemCompleteE2E:
             f"http://localhost:{shared_memory_vespa['config_port']}/ApplicationStatus"
         )
         assert response.status_code == 200
-        print("✅ Vespa health check passed")
 
     def test_02_schema_deployed(self, memory_manager, shared_memory_vespa):
         """Test schema is deployed and accessible with real embeddings"""
@@ -124,10 +116,9 @@ class TestMemorySystemCompleteE2E:
             f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{namespace}/{schema_name}/docid/test_schema",
             json=test_doc,
         )
-        if response.status_code not in [200, 201]:
-            print(f"❌ Vespa returned {response.status_code}: {response.text[:500]}")
-        assert response.status_code in [200, 201]
-        print("✅ Schema verification passed with real nomic-embed-text embedding")
+        assert response.status_code in [200, 201], (
+            f"Vespa returned {response.status_code}: {response.text[:500]}"
+        )
 
         # Cleanup
         requests.delete(
@@ -138,7 +129,6 @@ class TestMemorySystemCompleteE2E:
         """Test memory manager initializes correctly"""
         assert memory_manager.memory is not None
         assert memory_manager.health_check() is True
-        print("✅ Memory manager initialization passed")
 
     def test_04_add_memory(self, memory_manager):
         """Test adding memory"""
@@ -151,13 +141,11 @@ class TestMemorySystemCompleteE2E:
 
         assert memory_id is not None
         assert isinstance(memory_id, str)
-        print(f"✅ Added memory with ID: {memory_id}")
 
     def test_05_search_memory(self, memory_manager):
         """Test searching memory"""
 
         # Wait for indexing
-        print("⏳ Waiting for Vespa indexing...")
         wait_for_vespa_indexing(delay=5)
 
         # Search
@@ -169,12 +157,10 @@ class TestMemorySystemCompleteE2E:
         )
 
         assert len(results) > 0
-        print(f"✅ Found {len(results)} memories")
 
         # Verify content
         result_text = str(results)
         assert "machine learning" in result_text.lower() or "AI" in result_text
-        print("✅ Search results contain expected content")
 
     def test_06_multi_tenant_isolation(self, memory_manager, shared_memory_vespa):
         """Test tenant isolation"""
@@ -227,7 +213,6 @@ class TestMemorySystemCompleteE2E:
             or "golden" in text_b.lower()
         )
 
-        print("✅ Tenant isolation verified")
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_a", "isolation_test")
@@ -281,7 +266,6 @@ class TestMemorySystemCompleteE2E:
         )
 
         assert len(memories) >= 3
-        print(f"✅ Retrieved {len(memories)} memories")
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
@@ -306,7 +290,6 @@ class TestMemorySystemCompleteE2E:
         )
 
         assert success is True
-        print(f"✅ Deleted memory {memory_id}")
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "delete_test")
@@ -376,7 +359,6 @@ class TestMemorySystemCompleteE2E:
         assert stats["total_memories"] >= 5
         assert stats["tenant_id"] == "e2e_test_tenant"
         assert stats["agent_name"] == "stats_test"
-        print(f"✅ Stats: {stats['total_memories']} memories")
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
@@ -390,42 +372,31 @@ class TestMemorySystemCompleteE2E:
 
         agent = TestAgent()
 
-        # Initialize with shared Vespa ports
-        # Use same tenant as shared fixture to reuse existing schema via singleton pattern
-        from pathlib import Path
-
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
         success = agent.initialize_memory(
             agent_name="mixin_e2e_test",
-            tenant_id="test_tenant",  # Same tenant = reuses manager singleton
-            backend_host="http://localhost",
+            tenant_id="test_tenant",
+            backend_host=get_backend_host(),
             backend_port=shared_memory_vespa["http_port"],
             llm_model=get_llm_model(),
-            embedding_model="nomic-embed-text",
-            llm_base_url="http://localhost:11434/v1",
-            config_manager=create_default_config_manager(),
-            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            embedding_model=get_memory_embedding_model(),
+            llm_base_url=get_llm_base_url(),
+            config_manager=shared_memory_vespa["config_manager"],
+            schema_loader=shared_memory_vespa["schema_loader"],
             backend_config_port=shared_memory_vespa["config_port"],
-            auto_create_schema=False,  # Explicitly don't try to create (already exists)
+            auto_create_schema=False,
         )
         assert success is True
-        print("✅ Mixin initialized")
 
         # Add memory with factual content - Domain 1: Geography
         success = agent.update_memory(
             "The Amazon River flows through Brazil and is 6400 kilometers long"
         )
         assert success is True
-        print("✅ Memory added via mixin")
 
         wait_for_vespa_indexing(delay=3)
 
-        # Search
-        context = agent.get_relevant_context("rivers in South America", top_k=5)
         # Context may be None if no semantic match, that's okay
-        print(f"✅ Search via mixin returned: {context is not None}")
+        agent.get_relevant_context("rivers in South America", top_k=5)
 
         # Remember success with factual content - Domain 2: Chemistry
         success = agent.remember_success(
@@ -434,7 +405,6 @@ class TestMemorySystemCompleteE2E:
             metadata={"test": "mixin"},
         )
         assert success is True
-        print("✅ Remember success via mixin")
 
         # Remember failure with factual content - Domain 3: Architecture
         success = agent.remember_failure(
@@ -442,7 +412,6 @@ class TestMemorySystemCompleteE2E:
             error="Could not verify construction date of 1889 in historical records",
         )
         assert success is True
-        print("✅ Remember failure via mixin")
 
         wait_for_vespa_indexing(delay=8)
 
@@ -451,16 +420,13 @@ class TestMemorySystemCompleteE2E:
         assert stats["enabled"] is True
         assert stats["agent_name"] == "mixin_e2e_test"
         assert stats["total_memories"] >= 2  # Mem0 may deduplicate similar content
-        print(f"✅ Mixin stats: {stats['total_memories']} memories")
 
         # Summary
         summary = agent.get_memory_summary()
         assert summary["enabled"] is True
-        print(f"✅ Mixin summary: {summary}")
 
         # Cleanup
         agent.clear_memory()
-        print("✅ Mixin cleanup complete")
 
     def test_11_cleanup_all_test_data(self, memory_manager, shared_memory_vespa):
         """Final cleanup of all test data"""
@@ -482,14 +448,9 @@ class TestMemorySystemCompleteE2E:
             except Exception:
                 pass
 
-        print("✅ All test data cleaned up")
 
     def test_12_final_verification(self, memory_manager, shared_memory_vespa):
         """Final verification that system is still healthy"""
 
         assert memory_manager.health_check() is True
-        print("✅ Final health check passed")
 
-        print("\n" + "=" * 70)
-        print("🎉 ALL TESTS PASSED - Memory system fully functional!")
-        print("=" * 70)

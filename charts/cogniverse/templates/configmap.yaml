@@ -8,3 +8,22 @@ metadata:
 data:
   config.json: |-
     {{ .Files.Get "files/config.json" | nindent 4 }}
+{{- if .Values.runtime.qualityMonitor.enabled }}
+---
+# Golden evaluation dataset for the QualityMonitor sidecar.
+# Audit fix #1 — sidecar previously crash-looped because data/testset/ was
+# never mounted. Bundling the dataset as a ConfigMap (sourced from
+# files/quality-monitor/golden_dataset.json, which is a copy of
+# data/testset/evaluation/sample_videos_retrieval_queries.json) makes the
+# sidecar self-contained in any environment, dev or production.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-quality-monitor-data
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: quality-monitor
+data:
+  golden_dataset.json: |-
+{{ .Files.Get "files/quality-monitor/golden_dataset.json" | indent 4 }}
+{{- end }}

@@ -7,6 +7,7 @@ This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -36,12 +37,92 @@ from cogniverse_synthetic.api import router as synthetic_router
 logger = logging.getLogger(__name__)
 
 
+def _probe_phoenix_reachability() -> None:
+    """Verify the TelemetryManager can actually emit a span at startup.
+
+    Audit fix #11 — TelemetryManager silently falls back to ``NoOpSpan``
+    when Phoenix is unreachable, so observability dashboards can be
+    completely empty without anything in the runtime logs hinting why.
+    This probe runs once at startup, attempts to emit a real span via the
+    global manager, and surfaces the result.
+
+    Behaviour:
+    - If the probe succeeds: log INFO with the configured endpoint.
+    - If it fails AND ``TELEMETRY_REQUIRED=true`` is set: raise
+      ``RuntimeError`` to fail-fast at startup. Operators set this in
+      production deployments where missing telemetry is a deploy-blocker.
+    - If it fails and the env var is unset: log WARNING with the error
+      and continue. Local development should not require Phoenix.
+
+    Extracted into a helper so it can be unit-tested without spinning up
+    the full FastAPI lifespan.
+    """
+    required = os.environ.get("TELEMETRY_REQUIRED", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    try:
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tm = get_telemetry_manager()
+        if not tm.config.enabled:
+            logger.info(
+                "Telemetry disabled in config — skipping Phoenix reachability probe"
+            )
+            return
+
+        with tm.span("startup.probe", tenant_id="default") as span:
+            # NoOpSpan has no record_exception/set_attribute side effects;
+            # if we got a real span we set an attribute to force any error
+            # in the export pipeline to surface here rather than later.
+            if hasattr(span, "set_attribute"):
+                span.set_attribute("startup.probe", True)
+
+        logger.info(
+            f"Phoenix reachability probe OK (otlp={tm.config.otlp_endpoint})"
+        )
+    except Exception as exc:
+        msg = (
+            f"Phoenix reachability probe FAILED: {exc}. "
+            "Telemetry spans will fall back to NoOpSpan and dashboards "
+            "will be empty until this is fixed."
+        )
+        if required:
+            raise RuntimeError(
+                f"{msg} (TELEMETRY_REQUIRED=true is set, refusing to start)"
+            )
+        logger.warning(msg)
+
+
+def _wire_argo_from_environment() -> None:
+    """Wire the tenant router's Argo config from environment variables.
+
+    Audit fix #3 — without this, ``tenant._argo_api_url`` stays ``None`` and
+    ``POST /{tenant}/jobs`` silently drops the CronWorkflow submission step.
+    Extracted into a helper so it can be unit-tested without spinning up
+    the whole FastAPI lifespan.
+    """
+    argo_api_url = os.environ.get("ARGO_API_URL") or None
+    argo_namespace = os.environ.get("ARGO_NAMESPACE", "cogniverse")
+    tenant.set_argo_config(api_url=argo_api_url, namespace=argo_namespace)
+    if argo_api_url:
+        logger.info(
+            f"Argo CronWorkflow submission enabled (url={argo_api_url}, "
+            f"namespace={argo_namespace})"
+        )
+    else:
+        logger.warning(
+            "ARGO_API_URL env var not set — scheduled jobs will be persisted "
+            "but never trigger. Set ARGO_API_URL in deployment to enable."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
 
     # Startup
-    import os
     import time as _time
 
     logger.info("Starting Cogniverse Runtime...")
@@ -97,6 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
+    _wire_argo_from_environment()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
     app.dependency_overrides[ingestion.get_config_manager_dependency] = (
@@ -266,6 +348,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"TelemetryManager otlp_endpoint set to {system_config.telemetry_collector_endpoint}"
         )
 
+    # 7c. Audit fix #11 — probe Phoenix reachability at startup so silent
+    # NoOpSpan fallbacks become visible immediately. If TELEMETRY_REQUIRED is
+    # set, missing telemetry fails startup; otherwise it logs a warning so
+    # operators can decide.
+    _probe_phoenix_reachability()
+
     if os.environ.get("COLPALI_INFERENCE_URL"):
         system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
         updated = True
@@ -281,7 +369,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
 
-    # 8b. Deploy wiki schema and initialize WikiManager
+    # 8b. Deploy wiki schema and install per-tenant WikiManager factory.
+    # Audit fix #12 — wiki is now per-tenant. We install a factory rather
+    # than a singleton so each request gets a manager bound to the right
+    # tenant. The factory caches one manager per tenant.
     try:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
         from cogniverse_runtime.routers import wiki as wiki_router
@@ -299,7 +390,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             schema_loader=schema_loader,
         )
 
-        # Deploy wiki_pages schema for the default tenant
+        # Deploy wiki_pages schema for the default tenant. Per-tenant schemas
+        # for non-default tenants are created on first access via the factory.
         try:
             wiki_backend.schema_registry.deploy_schema(
                 tenant_id="default", base_schema_name="wiki_pages"
@@ -308,13 +400,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as schema_err:
             logger.warning(f"Wiki schema deploy skipped: {schema_err}")
 
-        wm = WikiManager(
-            backend=wiki_backend,
-            tenant_id="default",
-            schema_name="wiki_pages_default",
-        )
-        wiki_router.set_wiki_manager(wm)
-        logger.info("WikiManager initialized")
+        _wiki_managers: dict = {}
+
+        def _wiki_manager_factory(tenant_id: str) -> WikiManager:
+            """Return a WikiManager for the given tenant, building it on demand.
+
+            Each tenant gets a dedicated wiki_pages_<tenant> schema. The first
+            access for a new tenant deploys the schema; subsequent accesses
+            reuse the cached manager. Errors during schema deploy are non-fatal
+            — the manager still constructs and writes will surface the error
+            naturally on first feed attempt.
+            """
+            if tenant_id in _wiki_managers:
+                return _wiki_managers[tenant_id]
+
+            try:
+                wiki_backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_id, base_schema_name="wiki_pages"
+                )
+            except Exception as schema_err:
+                logger.warning(
+                    f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
+                )
+
+            mgr = WikiManager(
+                backend=wiki_backend,
+                tenant_id=tenant_id,
+                schema_name=f"wiki_pages_{tenant_id}",
+            )
+            _wiki_managers[tenant_id] = mgr
+            return mgr
+
+        wiki_router.set_wiki_manager_factory(_wiki_manager_factory)
+        logger.info("WikiManager factory initialized (per-tenant)")
     except Exception as e:
         logger.warning(f"WikiManager init failed (non-fatal): {e}")
 

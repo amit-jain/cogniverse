@@ -727,11 +727,50 @@ class VespaBackend(Backend):
             # Deploy all schemas together in one ApplicationPackage
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
 
+            # Merge existing schemas from the SchemaRegistry into the deployment
+            # package. Vespa rejects an application deploy that would implicitly
+            # remove existing schemas, so a partial deploy (only the schemas
+            # being added) fails when the cluster has any pre-existing tenant
+            # schemas. Merging makes the deploy look like an "add", not a
+            # "remove + add".
+            new_schema_names = {s.name for s in schemas_to_deploy}
+            merged_schemas = list(schemas_to_deploy)
+            if self.schema_registry is not None:
+                try:
+                    existing_schemas = self.schema_registry._get_all_schemas() or []
+                    parser_for_existing = JsonSchemaParser()
+                    for schema_info in existing_schemas:
+                        if schema_info.full_schema_name in new_schema_names:
+                            # Replace the existing version with the new one
+                            continue
+                        try:
+                            existing_def = schema_info.schema_definition
+                            if isinstance(existing_def, str):
+                                if not existing_def.strip():
+                                    continue
+                                existing_def = json.loads(existing_def)
+                            existing_obj = parser_for_existing.parse_schema(existing_def)
+                            merged_schemas.append(existing_obj)
+                        except Exception as merge_exc:
+                            logger.warning(
+                                f"Skipping existing schema {schema_info.full_schema_name} "
+                                f"during merge: {merge_exc}"
+                            )
+                    logger.info(
+                        f"Merged {len(merged_schemas) - len(schemas_to_deploy)} existing "
+                        f"schemas from registry into deployment package"
+                    )
+                except Exception as registry_exc:
+                    logger.warning(
+                        f"Could not fetch existing schemas from registry "
+                        f"(will rely on allow_schema_removal): {registry_exc}"
+                    )
+
             # Get application name from system config
             system_config = self._config_manager_instance.get_system_config()
             app_name = system_config.application_name
 
-            app_package = ApplicationPackage(name=app_name, schema=schemas_to_deploy)
+            app_package = ApplicationPackage(name=app_name, schema=merged_schemas)
 
             # Add metadata schemas (Vespa-specific requirement)
             from cogniverse_vespa.metadata_schemas import (
@@ -741,8 +780,10 @@ class VespaBackend(Backend):
             add_metadata_schemas_to_package(app_package)
             logger.debug("Added metadata schemas to deployment package")
 
-            # Deploy package directly via Backend's own method
-            self._deploy_package(app_package)
+            # allow_schema_removal=True is a fallback safety net. The merge
+            # above should make this unnecessary, but the registry may not
+            # always reflect every schema actually in the cluster.
+            self._deploy_package(app_package, allow_schema_removal=True)
 
             # Wait for content nodes to converge with the new schema
             # Vespa config server accepts the package immediately but content/distributor
@@ -758,7 +799,10 @@ class VespaBackend(Backend):
             return False
 
     def _deploy_package(
-        self, app_package, allow_field_type_change: bool = False
+        self,
+        app_package,
+        allow_field_type_change: bool = False,
+        allow_schema_removal: bool = False,
     ) -> None:
         """
         Deploy an application package to Vespa.
@@ -766,6 +810,11 @@ class VespaBackend(Backend):
         Args:
             app_package: The ApplicationPackage to deploy
             allow_field_type_change: If True, adds validation override for field type changes
+            allow_schema_removal: If True, adds validation override for content type
+                removal. Required when the package contains fewer schemas than the
+                cluster currently has — without this, partial deploys (e.g., adding a
+                single tenant schema) get rejected because Vespa interprets the missing
+                schemas as a destructive removal.
 
         Raises:
             RuntimeError: If deployment fails
@@ -776,20 +825,38 @@ class VespaBackend(Backend):
         import requests
         from vespa.package import Validation, ValidationID
 
-        # Add validation override if requested
-        if allow_field_type_change:
+        # Add validation overrides if requested
+        if allow_field_type_change or allow_schema_removal:
             from datetime import datetime, timedelta
 
-            # Set validation until 29 days from now (to stay within 30-day limit)
-            until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
-            validation = Validation(
-                validation_id=ValidationID.fieldTypeChange,
-                until=until_date,
-                comment="Allow field type changes for schema updates",
-            )
+            # Set validation until 7 days from now. Vespa treats the date as an
+            # exclusive end (until="2026-05-07" → "2026-05-08T00:00:00Z"), so
+            # using 29 days can land exactly on the 30-day boundary and fail.
+            until_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
             if app_package.validations is None:
                 app_package.validations = []
-            app_package.validations.append(validation)
+
+            if allow_field_type_change:
+                app_package.validations.append(
+                    Validation(
+                        validation_id=ValidationID.fieldTypeChange,
+                        until=until_date,
+                        comment="Allow field type changes for schema updates",
+                    )
+                )
+
+            if allow_schema_removal:
+                app_package.validations.append(
+                    Validation(
+                        validation_id=ValidationID.contentTypeRemoval,
+                        until=until_date,
+                        comment=(
+                            "Allow schema removal during partial deployments. "
+                            "Required when deploy_schemas() merges existing schemas "
+                            "from SchemaRegistry but the registry is incomplete."
+                        ),
+                    )
+                )
 
         # Create the deployment URL - properly construct with base URL and port
         # Remove any existing port from endpoint
@@ -844,6 +911,14 @@ class VespaBackend(Backend):
         import time
 
         import requests
+
+        # If there are no schemas to wait for (e.g., the rollback path
+        # re-deploying 0 previous schemas), there's nothing to probe.
+        if not schema_names:
+            logger.debug(
+                "Skipping convergence probe: no schemas in deployment package"
+            )
+            return
 
         base_url = re.sub(r":\d+$", "", self._url)
         probe_url = f"{base_url}:{self._port}/document/v1/{schema_names[0]}/{schema_names[0]}/docid/convergence_probe"

@@ -45,6 +45,61 @@ class AgentDispatcher:
         self._sandbox_manager = sandbox_manager
         self._query_rewriter = None
 
+    def _init_agent_memory(
+        self, agent: Any, agent_name: str, tenant_id: str
+    ) -> None:
+        """Auto-initialize MemoryAwareMixin for any agent that supports it.
+
+        Audit fix #14 — the dispatcher previously constructed agents without
+        ever calling ``initialize_memory()``, so even agents that inherited
+        MemoryAwareMixin had ``is_memory_enabled() == False`` and silently
+        skipped strategy/memory injection.
+
+        This helper checks at runtime whether the constructed agent inherits
+        the mixin and, if so, runs ``initialize_memory`` with the dispatcher's
+        own config_manager and schema_loader. Silently no-ops for agents that
+        don't inherit the mixin (e.g. ImageSearchAgent). Errors during init
+        are logged but never raised — memory is best-effort enrichment, not a
+        hard dependency.
+        """
+        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+
+        if not isinstance(agent, MemoryAwareMixin):
+            return
+
+        # Always set tenant for instruction lookup, even if full memory init fails.
+        try:
+            agent.set_tenant_for_context(tenant_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "set_tenant_for_context failed for %s: %s", agent_name, exc
+            )
+
+        sys_cfg = self._config_manager.get_system_config()
+        try:
+            agent.initialize_memory(
+                agent_name=agent_name,
+                tenant_id=tenant_id,
+                backend_host=sys_cfg.backend_url,
+                backend_port=sys_cfg.backend_port,
+                llm_model=getattr(sys_cfg, "llm_model", "qwen3:4b"),
+                embedding_model=getattr(
+                    sys_cfg, "embedding_model", "nomic-embed-text"
+                ),
+                llm_base_url=getattr(
+                    sys_cfg, "base_url", "http://localhost:11434"
+                ),
+                config_manager=self._config_manager,
+                schema_loader=self._schema_loader,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize memory for %s (tenant=%s): %s",
+                agent_name,
+                tenant_id,
+                exc,
+            )
+
     async def dispatch(
         self,
         agent_name: str,
@@ -113,20 +168,29 @@ class AgentDispatcher:
         tenant_id: str,
         turn_count: int,
     ) -> None:
-        """Fire-and-forget wiki auto-filing. Non-fatal: logs and returns on any error."""
-        try:
-            from cogniverse_runtime.routers.wiki import _wiki_manager
+        """Fire-and-forget wiki auto-filing. Non-fatal: logs and returns on any error.
 
-            if _wiki_manager is None:
+        Audit fix #12 — resolves the per-tenant WikiManager via the factory
+        rather than the deleted ``_wiki_manager`` singleton, so each tenant's
+        auto-filed pages land in their own wiki.
+        """
+        try:
+            from cogniverse_runtime.routers import wiki as wiki_router
+
+            if wiki_router._wiki_manager_factory is None:
                 return
 
-            if not _wiki_manager._should_auto_file(entities, agent_name, turn_count):
+            wm = wiki_router._wiki_manager_factory(tenant_id)
+            if wm is None:
+                return
+
+            if not wm._should_auto_file(entities, agent_name, turn_count):
                 return
 
             response_text = str(response.get("answer", response))
             await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: _wiki_manager.save_session(
+                lambda: wm.save_session(
                     query=query,
                     response=response_text,
                     entities=entities,
@@ -368,7 +432,9 @@ class AgentDispatcher:
         llm_endpoint = llm_config.resolve("routing_agent")
 
         routing_config = config.get("routing_agent", {})
-        memory_enabled = routing_config.get("enable_memory", False)
+        # Audit fix #14 — memory is on by default. Per-tenant config can still
+        # disable it explicitly via routing_agent.enable_memory: false.
+        memory_enabled = routing_config.get("enable_memory", True)
 
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -689,6 +755,7 @@ class AgentDispatcher:
 
         deps = SummarizerDeps(tenant_id=tenant_id)
         agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
+        self._init_agent_memory(agent, "summarizer_agent", tenant_id)
 
         request = SummaryRequest(
             query=query,
@@ -734,6 +801,7 @@ class AgentDispatcher:
 
         deps = DetailedReportDeps(tenant_id=tenant_id)
         agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
+        self._init_agent_memory(agent, "detailed_report_agent", tenant_id)
 
         request = ReportRequest(
             query=query,
@@ -815,6 +883,7 @@ class AgentDispatcher:
             tenant_id=tenant_id,
         )
         agent = DocumentAgent(deps=deps)
+        self._init_agent_memory(agent, "document_agent", tenant_id)
 
         results = await agent.search_documents(query=query, limit=top_k)
 
@@ -843,6 +912,8 @@ class AgentDispatcher:
             return result.get("results", [])
 
         agent = DeepResearchAgent(deps=deps, search_fn=search_fn)
+        self._init_agent_memory(agent, "deep_research_agent", tenant_id)
+
         input_data = DeepResearchInput(query=query, tenant_id=tenant_id)
         result = await agent.process(input_data)
 
@@ -913,6 +984,9 @@ class AgentDispatcher:
             search_fn=search_fn,
             sandbox_manager=self._sandbox_manager,
         )
+        # Audit fix #14 — auto-init memory so the coding agent receives
+        # learned strategies and tenant memories in inject_context_into_prompt.
+        self._init_agent_memory(agent, "coding_agent", tenant_id)
 
         ctx = context or {}
         input_data = CodingInput(

@@ -13,11 +13,12 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)

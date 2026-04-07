@@ -223,6 +223,89 @@ spec:
         configMap:
           name: {{ $fullName }}-config
 {{- end }}
+{{- if .Values.argo.optimization.scheduledDistillation.enabled }}
+---
+# Scheduled distillation cron — audit fix #7. Runs ``quality_monitor_cli
+# --once`` periodically to force a strategy distillation pass even when
+# quality is stable. Without this CronWorkflow, distillation only fired
+# when QualityMonitor detected a quality drop, leaving long stable
+# periods with no learning happening at all.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-scheduled-distillation
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.scheduledDistillation.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: scheduled-distillation
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: scheduled-distillation
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
+        args:
+          - "--once"
+          - "--tenant-id"
+          - "default"
+          - "--runtime-url"
+          - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+          - "--phoenix-url"
+          - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+          - "--llm-base-url"
+          {{- if .Values.llm.external.enabled }}
+          - {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          - "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+          - "--golden-dataset-path"
+          - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
+          - "--argo-url"
+          - "http://{{ $fullName }}-argo-server:2746"
+          - "--argo-namespace"
+          - {{ .Release.Namespace | quote }}
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        - name: quality-monitor-data
+          mountPath: /app/data/quality-monitor/golden_dataset.json
+          subPath: golden_dataset.json
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      - name: quality-monitor-data
+        configMap:
+          name: {{ $fullName }}-quality-monitor-data
+{{- end }}
 ---
 # RBAC: Allow the quality monitor sidecar (via the shared ServiceAccount)
 # to create Workflow resources for on-demand optimization.

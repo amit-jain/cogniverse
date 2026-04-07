@@ -544,14 +544,18 @@ class TestAgentOperations:
         assert "count" in data
         assert isinstance(data["agents"], list)
 
-    def test_agent_upload_returns_501(self):
-        """POST /agents/{name}/upload returns 501 (not implemented)."""
+    def test_agent_upload_endpoint_removed(self):
+        """POST /agents/{name}/upload was deleted (audit fix #13).
+
+        The endpoint was a 501 stub with no implementation path. File
+        uploads have a real home at POST /ingestion/upload, so the stub
+        is gone. Hitting the old URL must now produce 404 / 405."""
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             resp = client.post(
                 "/agents/routing_agent/upload",
                 files={"file": ("test.txt", b"test content", "text/plain")},
             )
-        assert resp.status_code == 501
+        assert resp.status_code in (404, 405)
 
     def test_unregister_nonexistent_agent_returns_404(self):
         """DELETE /agents/{name} returns 404 for unknown agent."""

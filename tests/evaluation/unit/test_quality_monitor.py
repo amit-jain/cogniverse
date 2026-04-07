@@ -621,3 +621,224 @@ class TestXGBoostIntegration:
 class TestAgentTypeEnum:
     def test_verdict_ordering(self):
         assert Verdict.SKIP.value < Verdict.OPTIMIZE.value
+
+
+class TestForceOptimizationCycle:
+    """Audit fix #7 — verify ``force_optimization_cycle`` runs the full
+    eval+trigger+submit chain regardless of thresholds. This is the API
+    used by the scheduled distillation Argo CronWorkflow."""
+
+    @pytest.mark.asyncio
+    async def test_force_cycle_builds_and_submits_with_argo(self, monitor):
+        """Happy path: both evals succeed, trigger is built and submitted."""
+        monitor.argo_api_url = "http://argo-server:2746"
+
+        golden_result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            mean_mrr=0.8,
+            mean_ndcg=0.75,
+            mean_precision_at_5=0.6,
+            query_count=10,
+        )
+        live_result = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+        )
+
+        with patch.object(
+            monitor, "evaluate_golden_set", new_callable=AsyncMock
+        ) as mock_golden, patch.object(
+            monitor, "evaluate_live_traffic", new_callable=AsyncMock
+        ) as mock_live, patch.object(
+            monitor, "_store_trigger_dataset", new_callable=AsyncMock
+        ) as mock_store, patch.object(
+            monitor, "submit_optimization", new_callable=AsyncMock
+        ) as mock_submit:
+            mock_golden.return_value = golden_result
+            mock_live.return_value = live_result
+
+            result = await monitor.force_optimization_cycle()
+
+        # Both evals were called.
+        mock_golden.assert_awaited_once()
+        mock_live.assert_awaited_once()
+        # Trigger was stored AND submitted.
+        mock_store.assert_awaited_once()
+        mock_submit.assert_awaited_once()
+
+        assert result["status"] == "ok"
+        assert result["submitted_to_argo"] is True
+        # ALL agents must be in the trigger, not just degraded ones.
+        assert set(result["agents_triggered"]) == {
+            "search",
+            "summary",
+            "report",
+            "routing",
+        }
+
+    @pytest.mark.asyncio
+    async def test_force_cycle_skips_argo_when_url_missing(self, monitor):
+        """Without argo_api_url, the cycle still builds and stores the
+        trigger but doesn't try to submit."""
+        monitor.argo_api_url = None
+
+        golden_result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            mean_mrr=0.8,
+            mean_ndcg=0.75,
+            mean_precision_at_5=0.6,
+            query_count=10,
+        )
+
+        with patch.object(
+            monitor, "evaluate_golden_set", new_callable=AsyncMock
+        ) as mock_golden, patch.object(
+            monitor, "evaluate_live_traffic", new_callable=AsyncMock
+        ) as mock_live, patch.object(
+            monitor, "_store_trigger_dataset", new_callable=AsyncMock
+        ), patch.object(
+            monitor, "submit_optimization", new_callable=AsyncMock
+        ) as mock_submit:
+            mock_golden.return_value = golden_result
+            mock_live.return_value = LiveEvalResult(
+                timestamp=datetime.utcnow(), tenant_id="test_tenant"
+            )
+
+            result = await monitor.force_optimization_cycle()
+
+        mock_submit.assert_not_awaited()
+        assert result["status"] == "ok"
+        assert result["submitted_to_argo"] is False
+
+    @pytest.mark.asyncio
+    async def test_force_cycle_returns_no_data_when_both_evals_fail(
+        self, monitor
+    ):
+        """If both golden and live evals raise, the cycle must return a
+        ``no_data`` status without crashing — Argo will retry on next run."""
+        with patch.object(
+            monitor, "evaluate_golden_set", new_callable=AsyncMock
+        ) as mock_golden, patch.object(
+            monitor, "evaluate_live_traffic", new_callable=AsyncMock
+        ) as mock_live, patch.object(
+            monitor, "_store_trigger_dataset", new_callable=AsyncMock
+        ) as mock_store, patch.object(
+            monitor, "submit_optimization", new_callable=AsyncMock
+        ) as mock_submit:
+            mock_golden.side_effect = Exception("phoenix down")
+            mock_live.side_effect = Exception("phoenix down")
+
+            result = await monitor.force_optimization_cycle()
+
+        assert result["status"] == "no_data"
+        assert result["submitted_to_argo"] is False
+        mock_store.assert_not_awaited()
+        mock_submit.assert_not_awaited()
+
+
+class TestSpanNameByAgent:
+    """Pin the SPAN_NAME_BY_AGENT convention.
+
+    Audit fix #2 — the previous lookup table had values like
+    ``"search_service.search"`` and ``"summarizer_agent.process"`` that did
+    NOT match what agents actually emit, so live-traffic eval queried zero
+    spans. After audit fix #10, AgentBase emits ``f"{ClassName}.process"``
+    for every agent. These tests pin that contract so future renames trip
+    a CI failure instead of silently breaking the monitoring loop.
+    """
+
+    def test_span_names_match_class_name_dot_process_format(self):
+        """Every entry must be of the form ``<ClassName>.process`` so it
+        matches what AgentBase._process_span() emits."""
+        from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
+
+        for agent_type, span_name in SPAN_NAME_BY_AGENT.items():
+            assert span_name.endswith(".process"), (
+                f"{agent_type.value} span name '{span_name}' must end in "
+                f"'.process' to match AgentBase._process_span() convention"
+            )
+            class_name = span_name.removesuffix(".process")
+            assert class_name and class_name[0].isupper(), (
+                f"{agent_type.value} span name '{span_name}' must start "
+                f"with a capitalized class name (got '{class_name}')"
+            )
+
+    def test_span_names_cover_all_agent_types(self):
+        """Every AgentType in the enum must have an entry."""
+        from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
+
+        for agent_type in AgentType:
+            assert agent_type in SPAN_NAME_BY_AGENT, (
+                f"AgentType.{agent_type.name} missing from SPAN_NAME_BY_AGENT — "
+                "add an entry or QualityMonitor will skip live eval for it"
+            )
+
+    def test_span_names_match_actual_agent_class_names(self):
+        """The class-name half of each span name must correspond to a real
+        agent class. If an agent gets renamed, this test catches the drift
+        between the class name and the lookup table."""
+        from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
+
+        expected = {
+            AgentType.SEARCH: "SearchAgent",
+            AgentType.SUMMARY: "SummarizerAgent",
+            AgentType.REPORT: "DetailedReportAgent",
+            AgentType.ROUTING: "RoutingAgent",
+        }
+        for agent_type, expected_class in expected.items():
+            span_name = SPAN_NAME_BY_AGENT[agent_type]
+            assert span_name == f"{expected_class}.process", (
+                f"{agent_type.value} expected '{expected_class}.process', "
+                f"got '{span_name}'"
+            )
+
+    def test_span_name_format_matches_agent_base_emission(self):
+        """End-to-end pin: instantiate a concrete subclass of AgentBase, call
+        process() with a spy telemetry manager, and verify the span name is
+        EXACTLY ``f"{ClassName}.process"``. If AgentBase._process_span()
+        ever changes the format, this test fails and forces an update to
+        SPAN_NAME_BY_AGENT in the same commit."""
+        import asyncio
+        from contextlib import contextmanager
+
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class _PinInput(AgentInput):
+            query: str
+            tenant_id: str = "default"
+
+        class _PinOutput(AgentOutput):
+            ok: bool
+
+        class _PinDeps(AgentDeps):
+            pass
+
+        class SearchAgent(AgentBase[_PinInput, _PinOutput, _PinDeps]):
+            async def _process_impl(self, input: _PinInput) -> _PinOutput:
+                return _PinOutput(ok=True)
+
+        captured: list = []
+
+        class _Spy:
+            @contextmanager
+            def span(self, name, tenant_id, project_name=None, attributes=None):
+                captured.append(name)
+                yield None
+
+        agent = SearchAgent(deps=_PinDeps())
+        agent.set_telemetry_manager(_Spy())
+        asyncio.run(
+            agent.process(_PinInput(query="hi", tenant_id="acme"))
+        )
+
+        assert captured == ["SearchAgent.process"], (
+            f"AgentBase emitted {captured!r}, but SPAN_NAME_BY_AGENT expects "
+            f"'SearchAgent.process'. Fix one or the other."
+        )

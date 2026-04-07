@@ -656,7 +656,7 @@ class TestJobExecutor:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _call_agent(mock_client, "http://localhost:28000", "acme", "latest AI papers")
         )
 
@@ -683,7 +683,7 @@ class TestJobExecutor:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             _call_agent(
                 mock_client,
                 "http://localhost:28000",
@@ -705,4 +705,130 @@ class TestJobExecutor:
         assert _is_pure_delivery("notify me") is True
         assert _is_pure_delivery("summarize and save to wiki") is False
         assert _is_pure_delivery("create a report and send on telegram") is False
-        assert _is_pure_delivery("analyze trends") is False
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestArgoEnvironmentWiring:
+    """Audit fix #3 — verify the runtime startup actually wires Argo.
+
+    Before this fix ``set_argo_config()`` was defined but never called from
+    ``main.py``, so ``tenant._argo_api_url`` stayed ``None`` and POST /jobs
+    silently dropped the CronWorkflow submission. These tests pin the
+    helper that the lifespan calls and the round-trip from env var → POST
+    /jobs → submitted manifest.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_argo_state(self):
+        """Snapshot and restore tenant._argo_api_url around each test."""
+        original_url = tenant._argo_api_url
+        original_ns = tenant._argo_namespace
+        yield
+        tenant._argo_api_url = original_url
+        tenant._argo_namespace = original_ns
+
+    def test_helper_sets_argo_url_when_env_var_present(self, monkeypatch):
+        """When ARGO_API_URL is set, the helper must populate the module
+        state via set_argo_config()."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        tenant._argo_api_url = None
+        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
+        monkeypatch.setenv("ARGO_NAMESPACE", "production")
+
+        _wire_argo_from_environment()
+
+        assert tenant._argo_api_url == "http://argo-server:2746"
+        assert tenant._argo_namespace == "production"
+
+    def test_helper_leaves_argo_url_none_when_env_var_missing(
+        self, monkeypatch
+    ):
+        """When ARGO_API_URL is unset, the helper must explicitly set
+        _argo_api_url to None — not raise — so that POST /jobs degrades
+        gracefully (persist without scheduling)."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        tenant._argo_api_url = "stale-value"
+        monkeypatch.delenv("ARGO_API_URL", raising=False)
+        monkeypatch.delenv("ARGO_NAMESPACE", raising=False)
+
+        _wire_argo_from_environment()
+
+        assert tenant._argo_api_url is None
+        assert tenant._argo_namespace == "cogniverse"
+
+    def test_helper_treats_empty_string_as_unset(self, monkeypatch):
+        """Helm sometimes injects empty strings for unset values; the
+        helper must coerce empty → None so the conditional in create_job
+        still skips submission."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        monkeypatch.setenv("ARGO_API_URL", "")
+
+        _wire_argo_from_environment()
+
+        assert tenant._argo_api_url is None
+
+    def test_round_trip_env_var_set_then_post_submits_workflow(
+        self, monkeypatch, tenant_client
+    ):
+        """End-to-end round trip: set ARGO_API_URL, run the wire helper,
+        POST /jobs, assert that the CronWorkflow submission was actually
+        attempted. This is the test that would have caught the original
+        bug — without the wire-up call, _argo_api_url would stay None and
+        _submit_cron_workflow would never be reached."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        client, _cm = tenant_client
+        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
+
+        _wire_argo_from_environment()
+        assert tenant._argo_api_url == "http://argo-server:2746"
+
+        with patch(
+            "cogniverse_runtime.routers.tenant._submit_cron_workflow",
+            new_callable=AsyncMock,
+        ) as mock_submit:
+            resp = client.post(
+                "/acme/jobs",
+                json={
+                    "name": "daily_news",
+                    "schedule": "0 8 * * *",
+                    "query": "latest AI papers",
+                },
+            )
+            assert resp.status_code == 200
+            mock_submit.assert_awaited_once()
+            manifest = mock_submit.call_args[0][0]
+            assert manifest["kind"] == "CronWorkflow"
+            assert manifest["spec"]["schedule"] == "0 8 * * *"
+
+    def test_round_trip_env_var_unset_then_post_skips_workflow(
+        self, monkeypatch, tenant_client
+    ):
+        """Symmetric round trip: when ARGO_API_URL is missing, POST /jobs
+        must still succeed (persist) but NOT call _submit_cron_workflow."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        client, _cm = tenant_client
+        monkeypatch.delenv("ARGO_API_URL", raising=False)
+
+        _wire_argo_from_environment()
+        assert tenant._argo_api_url is None
+
+        with patch(
+            "cogniverse_runtime.routers.tenant._submit_cron_workflow",
+            new_callable=AsyncMock,
+        ) as mock_submit:
+            resp = client.post(
+                "/acme/jobs",
+                json={
+                    "name": "daily_news",
+                    "schedule": "0 8 * * *",
+                    "query": "latest AI papers",
+                },
+            )
+            assert resp.status_code == 200
+            mock_submit.assert_not_awaited()

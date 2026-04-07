@@ -308,13 +308,14 @@ class TestStrategyRetrieval:
         assert strategies[0]["_level"] == "user"
         assert strategies[1]["_level"] == "org"
 
-    def test_returns_all_from_agent_name_scope(self, mock_memory_manager):
-        """Agent filtering is done by agent_name scope in search_memory,
-        not by metadata. All results from _strategy_store are strategies."""
+    def test_results_without_metadata_pass_filter(self, mock_memory_manager):
+        """Backward compat: items stored without metadata.agent (e.g. legacy
+        rows from before audit fix #6) should still flow through. The filter
+        treats missing ``agent`` as a wildcard so existing data isn't lost."""
         mock_memory_manager.search_memory.side_effect = [
             [
-                {"memory": "strategy about search", "score": 0.8},
-                {"memory": "strategy about summaries", "score": 0.7},
+                {"memory": "strategy without metadata", "score": 0.8},
+                {"memory": "another strategy", "score": 0.7},
             ],
             [],
         ]
@@ -322,9 +323,8 @@ class TestStrategyRetrieval:
         learner = StrategyLearner(
             memory_manager=mock_memory_manager, tenant_id="acme:alice"
         )
-        strategies = learner.get_strategies_for_agent("query", "search")
+        strategies = learner.get_strategies_for_agent("query", "search_agent")
 
-        # All results returned — no metadata filtering
         assert len(strategies) == 2
 
     def test_respects_top_k(self, mock_memory_manager):
@@ -341,6 +341,94 @@ class TestStrategyRetrieval:
         )
         strategies = learner.get_strategies_for_agent("query", "search", top_k=3)
         assert len(strategies) == 3
+
+    def test_filters_strategies_by_agent_metadata(self, mock_memory_manager):
+        """Audit fix #6 — strategies tagged for one agent must NOT leak to
+        another agent's queries. Isolation is enforced by using agent-specific
+        Mem0 namespaces (_strategy_store_{agent_name}) so the vector store
+        itself separates strategies at query time — not post-fetch Python.
+
+        The mock simulates Vespa returning only search_agent strategies
+        because the query namespace is _strategy_store_search_agent."""
+        mock_memory_manager.search_memory.side_effect = [
+            [
+                {
+                    "memory": "Use chunked retrieval for temporal queries",
+                    "metadata": {"agent": "search_agent", "type": "strategy"},
+                    "score": 0.9,
+                },
+            ],
+            [],  # org-level returns nothing
+        ]
+
+        learner = StrategyLearner(
+            memory_manager=mock_memory_manager, tenant_id="acme:alice"
+        )
+
+        search_strategies = learner.get_strategies_for_agent(
+            "query", "search_agent"
+        )
+
+        # Verify the lookup used the agent-specific namespace — not the
+        # shared STRATEGY_AGENT_NAME — so the vector store does the isolation.
+        first_call_kwargs = mock_memory_manager.search_memory.call_args_list[0]
+        actual_namespace = first_call_kwargs.kwargs.get(
+            "agent_name", first_call_kwargs.args[2] if len(first_call_kwargs.args) > 2 else None
+        )
+        assert actual_namespace == "_strategy_store_search_agent", (
+            f"Expected namespace '_strategy_store_search_agent', got '{actual_namespace}'. "
+            f"Fix #6 must use namespace-based isolation, not Python post-filtering."
+        )
+        assert len(search_strategies) == 1
+
+    def test_wildcard_agent_returns_all_strategies(self, mock_memory_manager):
+        """Passing ``"*"`` as ``agent_name`` bypasses the filter — useful for
+        debugging tools that want to see every strategy regardless of agent."""
+        mock_memory_manager.search_memory.side_effect = [
+            [
+                {
+                    "memory": "search strategy",
+                    "metadata": {"agent": "search_agent"},
+                    "score": 0.9,
+                },
+                {
+                    "memory": "summary strategy",
+                    "metadata": {"agent": "summarizer_agent"},
+                    "score": 0.85,
+                },
+            ],
+            [],
+        ]
+
+        learner = StrategyLearner(
+            memory_manager=mock_memory_manager, tenant_id="acme:alice"
+        )
+        strategies = learner.get_strategies_for_agent("query", "*")
+        assert len(strategies) == 2
+
+    def test_none_agent_returns_all_strategies(self, mock_memory_manager):
+        """Passing ``None`` as ``agent_name`` also bypasses the filter."""
+        mock_memory_manager.search_memory.side_effect = [
+            [
+                {
+                    "memory": "search strategy",
+                    "metadata": {"agent": "search_agent"},
+                    "score": 0.9,
+                },
+                {
+                    "memory": "summary strategy",
+                    "metadata": {"agent": "summarizer_agent"},
+                    "score": 0.85,
+                },
+            ],
+            [],
+        ]
+
+        learner = StrategyLearner(
+            memory_manager=mock_memory_manager, tenant_id="acme:alice"
+        )
+        strategies = learner.get_strategies_for_agent("query", None)
+        assert len(strategies) == 2
 
 
 class TestFormatStrategies:

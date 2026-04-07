@@ -346,6 +346,7 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
         top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search agent's memory for relevant content.
@@ -355,6 +356,9 @@ class Mem0MemoryManager:
             tenant_id: Tenant identifier
             agent_name: Agent name
             top_k: Number of results to return
+            filters: Optional Mem0 metadata filters (e.g. {"agent": "search_agent"}).
+                Passed directly to memory.search() — supports Mem0's full filter
+                syntax including exact-match, in-list, and logical operators.
 
         Returns:
             List of matching memories with scores
@@ -369,6 +373,7 @@ class Mem0MemoryManager:
                 user_id=tenant_id,
                 agent_id=agent_name,
                 limit=top_k,
+                filters=filters,
             )
 
             # Mem0 search might return dict with "results" key

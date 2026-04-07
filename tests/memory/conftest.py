@@ -1,13 +1,6 @@
-"""
-Shared fixtures for memory integration tests.
+"""Shared fixtures for memory integration tests."""
 
-Provides session-scoped backend container that:
-1. Starts once for entire test session
-2. Deploys memory schemas once
-3. Tests clean up documents (not schemas)
-4. Stops after all tests complete
-"""
-
+import logging
 import platform
 import subprocess
 from pathlib import Path
@@ -20,56 +13,54 @@ import cogniverse_vespa  # noqa: F401
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
+from tests.utils.docker_utils import generate_unique_ports
 
-# Shared backend configuration for all memory tests
-MEMORY_BACKEND_PORT = 8081
-MEMORY_BACKEND_CONFIG_PORT = 19072
-MEMORY_BACKEND_CONTAINER = "backend-memory-tests"
+logger = logging.getLogger(__name__)
+
+# Random ephemeral ports — never hardcode. Hardcoded ports collide with
+# whatever else is running on the host (OpenShell on 8080, etc.) and silently
+# route test traffic to the wrong service.
+MEMORY_BACKEND_PORT, MEMORY_BACKEND_CONFIG_PORT = generate_unique_ports(
+    "tests.memory.conftest"
+)
+MEMORY_BACKEND_CONTAINER = f"backend-memory-tests-{MEMORY_BACKEND_PORT}"
 
 
 def wait_for_backend_ready(config_port: int, timeout: int = 120) -> bool:
     """Wait for backend config server to be ready."""
-    print(f"⏳ Waiting for backend config server on port {config_port}...")
-    for i in range(timeout):
+    for _ in range(timeout):
         try:
             response = requests.get(
                 f"http://localhost:{config_port}/ApplicationStatus",
                 timeout=2,
             )
             if response.status_code == 200:
-                print(f"✅ Backend config server ready after {i + 1} seconds")
                 return True
         except Exception:
             pass
         wait_for_service_startup(delay=1.0, description="Backend container startup")
-
-    print(f"❌ Backend config server not ready after {timeout} seconds")
     return False
 
 
 def wait_for_data_port_ready(data_port: int, timeout: int = 120) -> bool:
     """Wait for Vespa HTTP container node (data port) to respond with 200.
 
-    The config port (19071) becomes ready well before the HTTP container node
-    (8080) starts. After schema deployment the container node needs additional
-    time to initialize. This probe uses GET /ApplicationStatus on the data port
-    so it returns True only once the container node is fully up.
+    The config port becomes ready well before the HTTP container node, and
+    after schema deployment the container node needs additional time to
+    initialize. This probe uses GET /ApplicationStatus on the data port so
+    it returns True only once the container node is fully up.
     """
-    print(f"⏳ Waiting for Vespa HTTP container node on port {data_port}...")
-    for i in range(timeout):
+    for _ in range(timeout):
         try:
             response = requests.get(
                 f"http://localhost:{data_port}/ApplicationStatus",
                 timeout=5,
             )
             if response.status_code == 200:
-                print(f"✅ Vespa HTTP container node ready after {i + 1} seconds")
                 return True
         except Exception:
             pass
         wait_for_service_startup(delay=1.0, description="Data port readiness")
-
-    print(f"❌ Vespa HTTP container node not ready after {timeout} seconds")
     return False
 
 
@@ -93,9 +84,6 @@ def deploy_memory_schema_for_tests(
         get_config,
     )
 
-    print(f"📦 Deploying {base_schema_name} for {tenant_id}...")
-
-    # Create dependencies for backend abstraction
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
@@ -125,13 +113,9 @@ def deploy_memory_schema_for_tests(
         schema_loader=schema_loader,
     )
 
-    # Deploy via SchemaRegistry
-    tenant_schema_name = backend.schema_registry.deploy_schema(
+    return backend.schema_registry.deploy_schema(
         tenant_id=tenant_id, base_schema_name=base_schema_name
     )
-
-    print(f"✅ Deployed {tenant_schema_name}")
-    return tenant_schema_name
 
 
 def _get_real_embedding(text: str = "readiness check") -> list:
@@ -209,14 +193,9 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) 
     exercises the same code path as real document operations.
     """
     namespace = _namespace_for_schema(schema_name)
-    print(
-        f"⏳ Waiting for schema {schema_name} (namespace={namespace}) "
-        f"to be ready on port {data_port}..."
-    )
-
     test_doc = _readiness_doc_for_namespace(namespace)
 
-    for i in range(timeout):
+    for _ in range(timeout):
         try:
             response = requests.post(
                 f"http://localhost:{data_port}/document/v1/{namespace}/{schema_name}/docid/readiness_check",
@@ -224,61 +203,54 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) 
                 timeout=5,
             )
             if response.status_code in [200, 201]:
-                # Cleanup test document
                 requests.delete(
                     f"http://localhost:{data_port}/document/v1/{namespace}/{schema_name}/docid/readiness_check",
                     timeout=5,
                 )
-                print(f"✅ Schema {schema_name} ready after {i + 1} seconds")
                 return True
-            elif i % 10 == 0:  # Log non-success status codes every 10 attempts
-                print(
-                    f"   Attempt {i + 1}: Status {response.status_code}: {response.text[:100]}"
-                )
-        except Exception as e:
-            # Log every 10th attempt to avoid spam
-            if i % 10 == 0:
-                print(
-                    f"   Attempt {i + 1}: Readiness check error: {type(e).__name__}: {e}"
-                )
+        except Exception:
+            pass
         wait_for_vespa_indexing(delay=1.0, description="schema readiness check")
 
-    print(f"❌ Schema {schema_name} not ready after {timeout} seconds")
     return False
+
+
+def _cleanup_leftover_memory_test_containers() -> None:
+    """Remove any backend-memory-tests-* containers leaked by prior pytest runs.
+
+    A container leaks when pytest is killed before its teardown can run
+    (Ctrl-C, OOM, kill -9, etc.). The container names embed the random
+    port so they don't collide with the current run, but they accumulate
+    over time and consume Docker resources.
+    """
+    result = subprocess.run(
+        ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter",
+         "name=^backend-memory-tests-"],
+        capture_output=True,
+        text=True,
+    )
+    for name in result.stdout.splitlines():
+        name = name.strip()
+        if not name:
+            continue
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
 @pytest.fixture(scope="session")
 def shared_memory_vespa():
-    """
-    Session-scoped backend instance for all memory tests.
-
-    Starts once, deploys schemas once, used by all tests.
-    Tests are responsible for cleaning up their own documents.
-    """
-    print("\n" + "=" * 70)
-    print("🚀 Starting shared backend container for memory tests...")
-    print(
-        f"   Port: {MEMORY_BACKEND_PORT} (data), {MEMORY_BACKEND_CONFIG_PORT} (config)"
-    )
-    print("=" * 70)
-
-    # Stop and remove any existing container
-    subprocess.run(
-        ["docker", "stop", MEMORY_BACKEND_CONTAINER],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["docker", "rm", MEMORY_BACKEND_CONTAINER],
-        capture_output=True,
+    """Session-scoped Vespa backend container for all memory tests."""
+    logger.info(
+        f"Starting shared backend container {MEMORY_BACKEND_CONTAINER} "
+        f"(data={MEMORY_BACKEND_PORT}, config={MEMORY_BACKEND_CONFIG_PORT})"
     )
 
-    # Determine platform for Docker
+    _cleanup_leftover_memory_test_containers()
+
     machine = platform.machine().lower()
     docker_platform = (
         "linux/arm64" if machine in ["arm64", "aarch64"] else "linux/amd64"
     )
 
-    # Start fresh backend container
     result = subprocess.run(
         [
             "docker",
@@ -298,49 +270,32 @@ def shared_memory_vespa():
         text=True,
     )
 
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start backend container: {result.stderr}")
-
-    print(f"✅ Container started: {result.stdout.strip()}")
-
-    # Wait for backend config port to be ready
-    if not wait_for_backend_ready(MEMORY_BACKEND_CONFIG_PORT, timeout=120):
-        # Cleanup on failure
-        subprocess.run(
-            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
-        )
-        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-        pytest.fail("Backend config port failed to start within 120 seconds")
-
-    # Give Vespa additional time to fully initialize all services
-    # Config port being ready doesn't mean data port is ready for document operations
-    import time
-
-    print("⏳ Waiting additional 10 seconds for Vespa services to fully initialize...")
-    time.sleep(10)
-    print("✅ Vespa initialization complete")
-
-    # Deploy memory schema using the SAME approach as working backend tests
-    print("\n📦 Deploying agent_memories schema...")
-
-    # Clear backend registry cache to ensure fresh state
-    Mem0MemoryManager._instances.clear()
-
-    # Clear backend registry cache to force recreation with profiles
-    from cogniverse_core.registries.backend_registry import BackendRegistry
-
-    BackendRegistry._backend_instances.clear()
-
     try:
-        # Deploy schema via BackendRegistry + SchemaRegistry (correct pattern)
-        from pathlib import Path
+        if result.returncode != 0:
+            pytest.fail(f"Failed to start backend container: {result.stderr}")
 
-        # Deploy metadata schemas first — VespaConfigStore needs config_metadata
-        # schema to exist before set_system_config() can write to it.
-        from vespa.package import ApplicationPackage
+        if not wait_for_backend_ready(MEMORY_BACKEND_CONFIG_PORT, timeout=120):
+            pytest.fail("Backend config port failed to start within 120 seconds")
+
+        # Config port being ready doesn't mean data port is ready for document operations.
+        import time
+
+        time.sleep(10)
+
+        Mem0MemoryManager._instances.clear()
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
+
+        BackendRegistry._backend_instances.clear()
+
+        from pathlib import Path
+
+        from vespa.package import ApplicationPackage
+
+        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from cogniverse_vespa.config.config_store import VespaConfigStore
         from cogniverse_vespa.json_schema_parser import JsonSchemaParser
         from cogniverse_vespa.metadata_schemas import (
             create_adapter_registry_schema,
@@ -357,20 +312,16 @@ def shared_memory_vespa():
             create_adapter_registry_schema(),
         ]
 
-        # Also include agent_memories schema for test_tenant
         parser = JsonSchemaParser()
-        memory_schema_file = Path("configs/schemas/agent_memories_schema.json")
         import json
 
-        with open(memory_schema_file) as f:
+        with open(Path("configs/schemas/agent_memories_schema.json")) as f:
             memory_schema_json = json.load(f)
         memory_schema_json["name"] = "agent_memories_test_tenant"
         memory_schema_json["document"]["name"] = "agent_memories_test_tenant"
         memory_schema = parser.parse_schema(memory_schema_json)
 
-        # Include wiki_pages schema for test_tenant
-        wiki_schema_file = Path("configs/schemas/wiki_pages_schema.json")
-        with open(wiki_schema_file) as f:
+        with open(Path("configs/schemas/wiki_pages_schema.json")) as f:
             wiki_schema_json = json.load(f)
         wiki_schema_json["name"] = "wiki_pages_test_tenant"
         wiki_schema_json["document"]["name"] = "wiki_pages_test_tenant"
@@ -384,10 +335,6 @@ def shared_memory_vespa():
             backend_port=MEMORY_BACKEND_CONFIG_PORT,
         )
         schema_mgr._deploy_package(app_package)
-        print("✅ Deployed metadata + agent_memories schemas")
-
-        # Wait for application ready
-        import time
 
         for _ in range(60):
             try:
@@ -401,27 +348,20 @@ def shared_memory_vespa():
                 pass
             time.sleep(2)
 
-        # Create ConfigManager backed by the TEST Vespa
-        from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_vespa.config.config_store import VespaConfigStore
-
         config_store = VespaConfigStore(
             backend_url="http://localhost",
             backend_port=MEMORY_BACKEND_PORT,
         )
         config_manager = ConfigManager(store=config_store)
-
-        system_config = SystemConfig(
-            backend_url="http://localhost",
-            backend_port=MEMORY_BACKEND_PORT,
+        config_manager.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=MEMORY_BACKEND_PORT,
+            )
         )
-        config_manager.set_system_config(system_config)
 
-        # Register deployed schemas in ConfigStore so any new SchemaRegistry
-        # created by downstream fixtures (e.g., Mem0's get_ingestion_backend)
-        # finds them and doesn't attempt redeployment.
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
-
+        # Register deployed schemas in ConfigStore so any SchemaRegistry created
+        # by downstream fixtures finds them and doesn't attempt redeployment.
         tenant_schema_name = "agent_memories_test_tenant"
         wiki_schema_name = "wiki_pages_test_tenant"
 
@@ -447,64 +387,44 @@ def shared_memory_vespa():
 
         BackendRegistry._backend_instances.clear()
 
-    except Exception as e:
-        # Cleanup on failure
+        if not wait_for_data_port_ready(MEMORY_BACKEND_PORT, timeout=120):
+            pytest.fail(
+                f"Vespa HTTP container node (port {MEMORY_BACKEND_PORT}) not ready within "
+                "120 seconds after schema deployment."
+            )
+
+        if not wait_for_schema_ready(
+            MEMORY_BACKEND_PORT, tenant_schema_name, timeout=120
+        ):
+            pytest.fail(
+                f"Schema {tenant_schema_name} not ready within 120 seconds — "
+                "data port did not converge after schema deployment."
+            )
+
+        if not wait_for_schema_ready(
+            MEMORY_BACKEND_PORT, wiki_schema_name, timeout=120
+        ):
+            pytest.fail(
+                f"Schema {wiki_schema_name} not ready within 120 seconds — "
+                "data port did not converge after schema deployment."
+            )
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        backend_config = {
+            "http_port": MEMORY_BACKEND_PORT,
+            "config_port": MEMORY_BACKEND_CONFIG_PORT,
+            "container_name": MEMORY_BACKEND_CONTAINER,
+            "base_url": f"http://localhost:{MEMORY_BACKEND_PORT}",
+            "tenant_schema_name": tenant_schema_name,
+            "wiki_schema_name": wiki_schema_name,
+            "config_manager": config_manager,
+            "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+        }
+
+        yield backend_config
+
+    finally:
         subprocess.run(
-            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
+            ["docker", "rm", "-f", MEMORY_BACKEND_CONTAINER], capture_output=True
         )
-        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-        pytest.fail(f"Failed to deploy schema: {e}")
-
-    # After schema deployment the Vespa HTTP container node (data port) needs
-    # additional time to start. Wait until it responds with 200 before testing.
-    if not wait_for_data_port_ready(MEMORY_BACKEND_PORT, timeout=120):
-        subprocess.run(
-            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
-        )
-        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-        pytest.fail(
-            f"Vespa HTTP container node (port {MEMORY_BACKEND_PORT}) not ready within "
-            "120 seconds after schema deployment."
-        )
-
-    # Wait for schemas to be fully ready — fail hard if readiness times out.
-    # Tests depend on Vespa being able to accept document operations; silently
-    # continuing with an unready backend causes cascading test failures.
-    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, tenant_schema_name, timeout=120):
-        subprocess.run(
-            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
-        )
-        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-        pytest.fail(
-            f"Schema {tenant_schema_name} not ready within 120 seconds — "
-            "data port did not converge after schema deployment."
-        )
-
-    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, wiki_schema_name, timeout=120):
-        subprocess.run(
-            ["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True
-        )
-        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-        pytest.fail(
-            f"Schema {wiki_schema_name} not ready within 120 seconds — "
-            "data port did not converge after schema deployment."
-        )
-
-    print("\n" + "=" * 70)
-    print("✅ Shared backend ready for memory tests")
-    print("=" * 70 + "\n")
-
-    backend_config = {
-        "http_port": MEMORY_BACKEND_PORT,
-        "config_port": MEMORY_BACKEND_CONFIG_PORT,
-        "container_name": MEMORY_BACKEND_CONTAINER,
-        "base_url": f"http://localhost:{MEMORY_BACKEND_PORT}",
-        "tenant_schema_name": tenant_schema_name,
-        "wiki_schema_name": wiki_schema_name,
-    }
-
-    yield backend_config
-
-    # Cleanup container after tests
-    subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
-    subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)

@@ -14,9 +14,9 @@ import dspy
 import httpx
 from pydantic import BaseModel, Field
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 if TYPE_CHECKING:
     from cogniverse_agents.agent_registry import AgentRegistry

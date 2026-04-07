@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -101,6 +102,7 @@ class SynthesisSignature(dspy.Signature):
 
 
 class DeepResearchAgent(
+    MemoryAwareMixin,
     RLMAwareMixin,
     A2AAgent[DeepResearchInput, DeepResearchOutput, DeepResearchDeps],
 ):
@@ -137,9 +139,17 @@ class DeepResearchAgent(
     async def _process_impl(
         self, input: DeepResearchInput
     ) -> DeepResearchOutput:
+        # Set tenant for memory/instructions injection and enrich the query
+        # with the full context stack (instructions + learned strategies +
+        # tenant memories) before decomposition. Mirrors the pattern used
+        # by SearchAgent and CodingAgent. No-ops gracefully when memory
+        # isn't initialized.
+        self.set_tenant_for_context(input.tenant_id)
+        enriched_query = self.inject_context_into_prompt(input.query, input.query)
+
         self.emit_progress("decompose", "Decomposing research query...")
 
-        sub_questions = await self._decompose(input.query)
+        sub_questions = await self._decompose(enriched_query)
 
         all_evidence: List[Dict[str, Any]] = []
         all_citations: List[Dict[str, str]] = []

@@ -15,32 +15,32 @@ from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_
 
 
 def generate_unique_ports(
-    module_name: str, base_http_port: int = 8100
+    module_name: str, base_http_port: int = 50000
 ) -> Tuple[int, int]:
     """
-    Generate unique HTTP and config ports based on module name.
+    Generate unique HTTP and config ports for a test module in the IANA
+    ephemeral range (49152-65535) so they don't collide with well-known
+    or registered services running on the host.
 
-    Uses MD5 hash of module name to deterministically assign ports,
-    ensuring different test modules never conflict.
+    The hash is seeded with module_name + the OS PID so concurrent pytest
+    invocations from different shells land on distinct ports while retries
+    within the same process get the same port.
 
     Args:
         module_name: Test module name (e.g., __name__ from the test file)
-        base_http_port: Starting port for HTTP (default: 8100)
+        base_http_port: Starting port for HTTP (default: 50000)
 
     Returns:
-        Tuple of (http_port, config_port)
-
-    Example:
-        >>> http_port, config_port = generate_unique_ports(__name__)
-        >>> # tests.backends.integration.conftest → 8142, 19133
-        >>> # tests.system.conftest → 8167, 19158
+        Tuple of (http_port, config_port). Both in the ephemeral range.
     """
-    # Hash module name to get deterministic unique value
-    port_hash = int(hashlib.md5(module_name.encode()).hexdigest()[:4], 16)
+    import os
 
-    # Calculate ports with modulo to keep in reasonable range
-    http_port = base_http_port + (port_hash % 100)  # Range: base to base+99
-    config_port = http_port + 10991  # Standard Vespa config port offset
+    seed = f"{module_name}:{os.getpid()}"
+    port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
+
+    # 50000-60999 leaves headroom for the +1000 config offset.
+    http_port = base_http_port + (port_hash % 11000)
+    config_port = http_port + 1000
 
     return http_port, config_port
 

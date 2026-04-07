@@ -168,3 +168,45 @@ class TestEnhancementFailureFallback:
 
         # This means no variants flow to SearchAgent → single-query path
         assert metadata.get("query_variants", []) == []
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestRoutingDecisionContextInjection:
+    """Audit fix #8 — verify _make_routing_decision wires the FULL context
+    stack (instructions + strategies + memory) into the DSPy routing call.
+
+    Before this fix the method only loaded raw _get_tenant_instructions(),
+    so learned strategies and tenant memories never reached the router. The
+    fix replaces that with self.inject_context_into_prompt(prompt=, query=)
+    which gracefully handles uninitialized memory."""
+
+    def test_make_routing_decision_calls_inject_context_into_prompt(self):
+        """Pin the wiring at the source level. A regression where someone
+        replaces inject_context_into_prompt() with a partial fallback (e.g.,
+        just _get_tenant_instructions()) would silently drop strategies."""
+        import inspect
+
+        from cogniverse_agents.routing_agent import RoutingAgent
+
+        source = inspect.getsource(RoutingAgent._make_routing_decision)
+        assert "inject_context_into_prompt" in source, (
+            "_make_routing_decision must call self.inject_context_into_prompt() "
+            "to inject the FULL context stack (instructions + strategies + memory). "
+            "Audit fix #8 requires this — see "
+            "docs/superpowers/audits/2026-04-07-orphan-and-wiring-audit.md"
+        )
+
+    def test_routing_agent_inherits_extended_memory_aware_mixin(self):
+        """RoutingAgent must inherit from the EXTENDED MemoryAwareMixin
+        (cogniverse_agents.memory_aware_mixin) — the one with get_strategies
+        and the strategies-aware inject_context_into_prompt. Audit fix #16
+        deleted the base mixin in cogniverse_core, so this test pins that
+        the agent gets the right one."""
+        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_agents.routing_agent import RoutingAgent
+
+        assert issubclass(RoutingAgent, MemoryAwareMixin)
+        # The extended mixin has get_strategies; the deleted base did not.
+        assert hasattr(MemoryAwareMixin, "get_strategies")
+        assert callable(MemoryAwareMixin.get_strategies)

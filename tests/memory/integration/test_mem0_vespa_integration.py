@@ -406,7 +406,7 @@ class TestMem0MemoryAwareMixinIntegration:
         """Test MemoryAwareMixin with real Mem0 backend"""
         from pathlib import Path
 
-        from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig

@@ -65,9 +65,12 @@ class MemoryAwareMixin:
         llm_base_url: str = "http://localhost:11434",
         config_manager=None,
         schema_loader=None,
+        provider: str = "ollama",
+        backend_config_port: Optional[int] = None,
+        auto_create_schema: bool = True,
     ) -> bool:
         """
-        Initialize memory for this agent
+        Initialize memory for this agent.
 
         Args:
             agent_name: Name of the agent
@@ -79,6 +82,9 @@ class MemoryAwareMixin:
             llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
+            provider: LLM/embedder provider for Mem0 (e.g. "ollama", "openai")
+            backend_config_port: Backend config endpoint port (default: 19071)
+            auto_create_schema: Auto-deploy tenant schema if not exists
 
         Returns:
             Success status
@@ -103,9 +109,11 @@ class MemoryAwareMixin:
                     embedding_model=embedding_model,
                     llm_base_url=llm_base_url,
                     base_schema_name="agent_memories",
-                    auto_create_schema=True,
+                    auto_create_schema=auto_create_schema,
                     config_manager=config_manager,
                     schema_loader=schema_loader,
+                    provider=provider,
+                    backend_config_port=backend_config_port,
                 )
 
             self._memory_initialized = True
@@ -123,8 +131,16 @@ class MemoryAwareMixin:
             return False
 
     def is_memory_enabled(self) -> bool:
-        """Check if memory is enabled and initialized"""
-        return self._memory_initialized and self.memory_manager is not None
+        """Check if memory is enabled and initialized.
+
+        Uses getattr with defaults so subclasses with broken cooperative
+        __init__ chains (where MemoryAwareMixin.__init__ never ran) still
+        report False instead of raising AttributeError.
+        """
+        return bool(
+            getattr(self, "_memory_initialized", False)
+            and getattr(self, "memory_manager", None) is not None
+        )
 
     def get_relevant_context(
         self, query: str, top_k: Optional[int] = 5
@@ -298,6 +314,9 @@ class MemoryAwareMixin:
 
     def _get_tenant_instructions(self) -> Optional[str]:
         """Load tenant instructions from ConfigStore."""
+        tenant_id = getattr(self, "_memory_tenant_id", None)
+        if not tenant_id:
+            return None
         try:
             import json
 
@@ -306,7 +325,7 @@ class MemoryAwareMixin:
 
             cm = create_default_config_manager()
             entry = cm.store.get_config(
-                tenant_id=self._memory_tenant_id,
+                tenant_id=tenant_id,
                 scope=ConfigScope.SYSTEM,
                 service="tenant_instructions",
                 config_key="system_prompt",
