@@ -118,6 +118,7 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 - **Try API**: Use the REST API at http://localhost:8000/docs
 - **Configure**: Customize profiles in `configs/config.json`
 - **Coding Agent**: Run `cogniverse code` to start an interactive coding REPL with streaming — see [Coding Agent CLI](user/coding-agent-cli.md)
+- **Knowledge Graph**: Run `cogniverse index ./path --type code` to build a searchable knowledge graph — see [Knowledge Graph](user/knowledge-graph.md)
 - **Learn More**: Continue reading this guide
 
 ---

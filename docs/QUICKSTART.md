@@ -243,6 +243,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 |------|---------------|
 | Understand the architecture | [Architecture Overview](./architecture/overview.md) |
 | Use the interactive coding agent | [Coding Agent CLI](./user/coding-agent-cli.md) |
+| Extract a knowledge graph from code / docs | [Knowledge Graph](./user/knowledge-graph.md) |
 | Create a custom agent | [Creating Agents Tutorial](./tutorials/creating-agents.md) |
 | Learn key concepts | [Glossary](./GLOSSARY.md) |
 | Deep dive into modules | [Core Module](./modules/core.md), [Foundation](./modules/foundation.md) |

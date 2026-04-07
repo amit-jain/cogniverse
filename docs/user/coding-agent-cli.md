@@ -81,17 +81,22 @@ cogniverse index ./src --type code
 | Option | Default | Description |
 |---|---|---|
 | `<path>` | _required_ | Directory to index |
-| `--type` | `code` | Content type: `code`, `docs`, `video` |
+| `--type` | `code` | Content type: `code` or `docs` |
 | `--tenant` | `$COGNIVERSE_TENANT_ID` or `default` | Tenant identifier |
 | `--profile` | _(auto from type)_ | Override Vespa profile |
 
-**Type → profile mapping:**
+The `docs` type is a catch-all for any non-code file — it auto-routes per extension to the right Vespa profile:
 
-| Type | Profile | Chunking | Embeddings |
-|---|---|---|---|
-| `code` | `code_lateon_mv` | tree-sitter AST by function/class | LateOn-Code multi-vector |
-| `docs` | `document_text_semantic` | paragraph / markdown section | nomic-embed-text |
-| `video` | `video_colpali_smol500_mv_frame` | keyframe extraction | ColPali |
+| Extension | Content profile |
+|---|---|
+| `.md` `.txt` `.rst` `.html` `.pdf` | `document_text_semantic` |
+| `.mp4` `.mov` `.mkv` `.avi` `.webm` | `video_colpali_smol500_mv_frame` |
+| `.jpg` `.jpeg` `.png` `.webp` `.gif` | `image_colpali_mv` |
+| `.wav` `.mp3` `.m4a` `.flac` | `audio_clap_semantic` |
+
+Code files always go to `code_lateon_mv` (tree-sitter AST chunking, LateOn-Code multi-vector embeddings).
+
+**Knowledge graph extraction** — in addition to content indexing, `cogniverse index` extracts a knowledge graph of entities and relationships from code and text files and writes it to a separate schema. Query it with `cogniverse graph`. See [Knowledge Graph](knowledge-graph.md) for full details.
 
 The indexer walks the directory, respects `.gitignore`, skips `node_modules` / `.venv` / `__pycache__`, and uploads via the runtime's `/ingestion/upload` endpoint. Re-indexing the same files is idempotent.
 
