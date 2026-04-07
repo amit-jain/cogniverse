@@ -24,9 +24,11 @@ The `docs` type now fans out per file extension to the right content profile:
 |---|---|---|
 | `.md` `.txt` `.rst` `.html` | `document_text_semantic` | GLiNER entities + co-mention edges |
 | `.pdf` | `document_text_semantic` | PDF text → GLiNER entities |
-| `.mp4` `.mov` `.mkv` `.avi` | `video_colpali_smol500_mv_frame` | Content only (graph TBD) |
-| `.jpg` `.png` `.webp` | `image_colpali_mv` | Content only (graph TBD) |
-| `.wav` `.mp3` `.m4a` | `audio_clap_semantic` | Content only (graph TBD) |
+| `.mp4` `.mov` `.mkv` `.avi` | `video_colpali_smol500_mv_frame` | Whisper transcript + VLM captions → GLiNER entities |
+| `.jpg` `.png` `.webp` | `image_colpali_mv` | VLM captions + OCR → GLiNER entities |
+| `.wav` `.mp3` `.m4a` | `audio_clap_semantic` | Whisper transcript → GLiNER entities |
+
+Multimodal graph extraction reuses the text that the content pipelines already produce — Whisper transcripts for audio/video, VLM captions for images and keyframes. No extra model calls. After the content pipeline processes a file, the runtime reads its transcript/description outputs and runs the same DocExtractor that text files use.
 
 Code files (`.py`, `.ts`, `.go`, etc.) go to `code_lateon_mv` for content and tree-sitter for graph extraction.
 
@@ -283,13 +285,10 @@ Extraction runs locally in the CLI process so the runtime doesn't need to re-rea
 **What graphify has that cogniverse doesn't (yet):**
 
 - **Community detection** (Leiden clustering) for topic grouping — would need `graspologic`
-- **Multimodal graph extraction** from image/video — content indexing works but graph extraction is code + text only. The plan is to read existing content pipeline outputs (transcriptions, captions) for graph extraction without adding new VLM calls.
-- **Interactive HTML visualization** — graphify outputs `graph.html` (vis.js), Obsidian vault, Gephi graphml, Neo4j cypher
-- **God node metrics beyond degree** — centrality, betweenness, etc.
-- **Watch mode / git post-commit hook** — auto-rebuild on file changes
-- **MCP server** — expose the graph as an MCP endpoint for other agents
-- **Token reduction benchmark** — measuring query-time token savings vs reading raw files
 - **LLM-based edge inference** — currently only simple co-mention; graphify uses Claude to infer typed relationships ("X implements Y", "X depends on Z")
+- **Interactive HTML visualization, Obsidian export, Gephi, Neo4j cypher** — cosmetic output formats
+- **MCP server, git post-commit hook, watch mode** — integration conveniences
+- **Token reduction benchmark** — measuring query-time token savings
 
 ## Troubleshooting
 

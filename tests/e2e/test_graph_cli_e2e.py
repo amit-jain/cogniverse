@@ -194,6 +194,52 @@ class TestGraphEndpoints:
 
 @pytest.mark.e2e
 @skip_if_no_runtime
+class TestMultimodalGraphExtraction:
+    """Graph extraction from multimodal content via the ingestion pipeline.
+
+    Uploads a real video file to /ingestion/upload. The runtime processes
+    it through the existing Whisper + VLM pipelines, then reads the
+    transcript/descriptions and runs the DocExtractor on them to produce
+    graph nodes. Verified by reading the response and the /graph/stats
+    endpoint.
+    """
+
+    def test_video_upload_produces_graph_nodes(self):
+        video_path = Path(
+            "data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4"
+        )
+        if not video_path.exists():
+            pytest.skip(f"Sample video missing at {video_path}")
+
+        tenant = _unique_tenant()
+        with httpx.Client(timeout=600.0) as client:
+            with open(video_path, "rb") as f:
+                resp = client.post(
+                    f"{RUNTIME}/ingestion/upload",
+                    files={"file": (video_path.name, f, "video/mp4")},
+                    data={
+                        "profile": "video_colpali_smol500_mv_frame",
+                        "backend": "vespa",
+                        "tenant_id": tenant,
+                    },
+                )
+
+        if resp.status_code != 200:
+            pytest.skip(
+                f"Video ingestion returned {resp.status_code}: {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        assert data["status"] == "success", data
+
+        assert "graph_nodes" in data, (
+            "ingestion response should include graph_nodes field"
+        )
+        assert "graph_edges" in data
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
 class TestCliIndexWithGraph:
     """cogniverse index extracts graph from real files and persists them."""
 

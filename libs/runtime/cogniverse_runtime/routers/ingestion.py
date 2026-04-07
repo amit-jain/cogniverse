@@ -231,6 +231,24 @@ async def upload_video(
         if isinstance(embeddings_data, dict):
             documents_fed = embeddings_data.get("documents_fed", 0)
 
+        # Multimodal graph extraction — read the text outputs the content
+        # pipeline already produced (transcripts, VLM captions, OCR) and
+        # feed them to the graph extractor. No new model calls.
+        graph_nodes = 0
+        graph_edges = 0
+        try:
+            graph_text = _extract_text_for_graph(processing_results)
+            if graph_text:
+                graph_counts = await _extract_graph_from_multimodal(
+                    text=graph_text,
+                    source_doc_id=result.get("video_id") or file.filename,
+                    tenant_id=upload_tenant_id,
+                )
+                graph_nodes = graph_counts.get("nodes_upserted", 0)
+                graph_edges = graph_counts.get("edges_upserted", 0)
+        except Exception as graph_exc:
+            logger.warning("Multimodal graph extraction failed: %s", graph_exc)
+
         return {
             "status": "success"
             if result.get("status") == "completed"
@@ -239,12 +257,106 @@ async def upload_video(
             "video_id": result.get("video_id"),
             "chunks_created": chunks_created,
             "documents_fed": documents_fed,
+            "graph_nodes": graph_nodes,
+            "graph_edges": graph_edges,
             "processing_time": result.get("total_processing_time"),
         }
 
     except Exception as e:
         logger.error(f"Video upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _extract_text_for_graph(processing_results: Dict[str, Any]) -> str:
+    """Pull any LLM-analyzable text out of ingestion pipeline results.
+
+    Walks the pipeline output and concatenates every text-ish field the
+    processors already produced: Whisper transcripts (audio/video), VLM
+    keyframe descriptions (images/video), and existing "extracted_text"
+    blobs. Returns an empty string if nothing useful is found.
+    """
+    if not isinstance(processing_results, dict):
+        return ""
+
+    parts: list = []
+
+    transcript = processing_results.get("transcript", {})
+    if isinstance(transcript, dict):
+        full = transcript.get("full_text") or transcript.get("text")
+        if full:
+            parts.append(str(full))
+        segments = transcript.get("segments", [])
+        if isinstance(segments, list):
+            for seg in segments:
+                if isinstance(seg, dict):
+                    text = seg.get("text", "")
+                    if text:
+                        parts.append(str(text))
+
+    descriptions = processing_results.get("descriptions", {})
+    if isinstance(descriptions, dict):
+        inner = descriptions.get("descriptions", descriptions)
+        if isinstance(inner, dict):
+            for desc in inner.values():
+                if isinstance(desc, str):
+                    parts.append(desc)
+                elif isinstance(desc, dict):
+                    text = desc.get("description") or desc.get("text") or ""
+                    if text:
+                        parts.append(str(text))
+
+    keyframes_data = processing_results.get("keyframes", {})
+    if isinstance(keyframes_data, dict):
+        for kf in keyframes_data.get("keyframes", []) or []:
+            if isinstance(kf, dict):
+                text = kf.get("ocr_text") or kf.get("caption") or ""
+                if text:
+                    parts.append(str(text))
+
+    doc_files = processing_results.get("document_files", [])
+    if isinstance(doc_files, list):
+        for doc in doc_files:
+            if isinstance(doc, dict):
+                text = doc.get("extracted_text") or ""
+                if text:
+                    parts.append(str(text))
+
+    return "\n\n".join(parts).strip()
+
+
+async def _extract_graph_from_multimodal(
+    text: str,
+    source_doc_id: str,
+    tenant_id: str,
+) -> Dict[str, int]:
+    """Run the DocExtractor on multimodal text outputs and upsert to graph.
+
+    Uses the same tenant-scoped GraphManager factory the /graph router
+    uses, so no new manager wiring is needed.
+    """
+    from cogniverse_agents.graph.doc_extractor import DocExtractor
+    from cogniverse_runtime.routers import graph as graph_router
+
+    if graph_router._graph_manager_factory is None:
+        return {"nodes_upserted": 0, "edges_upserted": 0}
+
+    mgr = graph_router._graph_manager_factory(tenant_id)
+    result = DocExtractor().extract_from_text(
+        text=text,
+        tenant_id=tenant_id,
+        source_doc_id=source_doc_id,
+    )
+    if not result.nodes and not result.edges:
+        return {"nodes_upserted": 0, "edges_upserted": 0}
+
+    counts = mgr.upsert(result)
+    logger.info(
+        "Multimodal graph extraction for %s: %d nodes, %d edges",
+        source_doc_id,
+        counts["nodes_upserted"],
+        counts["edges_upserted"],
+    )
+    return counts
 
 
 async def run_ingestion(
