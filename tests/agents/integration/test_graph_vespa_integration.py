@@ -429,19 +429,223 @@ class TestGraphExtractorE2E:
         assert "alpha" in out_targets or "beta" in out_targets
 
 
-@pytest.mark.integration
-class TestMultimodalGraphExtraction:
-    """Feed transcript/VLM text through the extractor and persist to real Vespa.
+def _ollama_available() -> bool:
+    try:
+        r = requests.get("http://localhost:11434/api/tags", timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
 
-    These tests exercise the same code path that the ingestion router's
-    /ingestion/upload endpoint uses for video/image/audio files — the
-    ``_extract_text_for_graph`` helper harvests text from pipeline
-    results, then ``DocExtractor.extract_from_text`` turns that text
-    into nodes/edges, then ``GraphManager.upsert`` writes them to Vespa.
+
+@pytest.fixture(scope="module")
+def real_doc_extractor():
+    """A DocExtractor with the real GLiNER model loaded.
+
+    Loads `urchade/gliner_large-v2.1` once per module — ~1GB download on
+    first run, cached afterwards in HF_HOME. Produces deterministic
+    named-entity predictions so tests can assert exact entity names.
+    """
+    pytest.importorskip("gliner")
+
+    from cogniverse_agents.graph.doc_extractor import DocExtractor
+
+    extractor = DocExtractor()
+    gliner = extractor._get_gliner()
+    if gliner is None:
+        pytest.skip("GLiNER model unavailable — skipping real-extractor tests")
+    return extractor
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not _ollama_available(),
+    reason="Ollama required for real embeddings in graph integration tests",
+)
+class TestMultimodalGraphExtraction:
+    """Real multimodal extraction: real GLiNER, real Ollama embeddings, real Vespa.
+
+    Exercises the exact code path the ingestion router uses:
+      pipeline_result → _extract_text_for_graph → DocExtractor (GLiNER)
+        → GraphManager.upsert → real Vespa HTTP feed
+
+    Pipeline result dicts match the actual shapes produced by
+    AudioTranscriber and VLMDescriptor (see ingestion/processors/*.py).
+    Assertions are tight — exact node ids, exact mention lists, exact
+    counts where GLiNER is deterministic.
     """
 
-    def test_video_transcript_extracts_nodes(self, graph_manager):
-        from cogniverse_agents.graph.doc_extractor import DocExtractor
+    _TRANSCRIPT_TEXT = (
+        "In this tutorial we walk through the ColPali model from LightOn. "
+        "ColPali is a multi-vector retrieval system that uses patch-level "
+        "embeddings and late interaction for document image search. "
+        "It is paired with Vespa as the vector storage backend for "
+        "production-scale retrieval workloads."
+    )
+
+    def test_whisper_transcript_extracts_real_entities(self, graph_manager, real_doc_extractor):
+        """A realistic Whisper transcript fixture round-trips through GLiNER and Vespa.
+
+        Asserts that GLiNER finds the two most prominent named entities
+        (ColPali and LightOn — both explicit product/org names in the text),
+        that every node has the expected shape, and that the persisted
+        Vespa document has a real Ollama embedding (non-zero 768-dim vector).
+        """
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, port = graph_manager
+
+        pipeline_result = {
+            "transcript": {
+                "full_text": self._TRANSCRIPT_TEXT,
+                "segments": [
+                    {"text": "The ColPali model was published by LightOn."},
+                    {"text": "Vespa is the backend we will use."},
+                ],
+                "language": "en",
+                "duration": 42.0,
+            }
+        }
+
+        harvested = _extract_text_for_graph(pipeline_result)
+        assert self._TRANSCRIPT_TEXT in harvested
+        assert "ColPali model was published by LightOn" in harvested
+        assert "Vespa is the backend" in harvested
+
+        result = real_doc_extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="tutorial.mp4",
+        )
+
+        assert len(result.nodes) >= 3, (
+            f"GLiNER should find at least 3 named entities, got {[n.name for n in result.nodes]}"
+        )
+
+        names_lower = {n.name.lower() for n in result.nodes}
+        assert any("colpali" in n for n in names_lower), (
+            f"GLiNER should find ColPali in transcript, got {names_lower}"
+        )
+        assert any("lighton" in n for n in names_lower), (
+            f"GLiNER should find LightOn in transcript, got {names_lower}"
+        )
+
+        for node in result.nodes:
+            assert node.tenant_id == TENANT_ID
+            assert node.mentions == ["tutorial.mp4"]
+            assert node.kind == "concept"
+            assert node.node_id == node.name.replace(" ", "_").lower().replace("-", "_")
+
+        edges_per_source = {}
+        for edge in result.edges:
+            assert edge.provenance == "INFERRED"
+            assert edge.relation == "mentioned_with"
+            assert edge.source_doc_id == "tutorial.mp4"
+            edges_per_source.setdefault(edge.source_node_id, []).append(edge.target_node_id)
+
+        counts = manager.upsert(result)
+        assert counts["nodes_upserted"] == len(
+            {n.node_id for n in result.nodes}
+        ), f"Upsert count must match unique node count, got {counts}"
+        assert counts["edges_upserted"] == len(result.edges)
+
+        colpali_node = next(n for n in result.nodes if "colpali" in n.name.lower())
+        doc = _get_vespa_doc(port, colpali_node.doc_id)
+        assert doc is not None, f"ColPali node {colpali_node.doc_id} not in Vespa"
+
+        fields = doc["fields"]
+        assert fields["tenant_id"] == TENANT_ID
+        assert fields["doc_type"] == "node"
+        assert fields["kind"] == "concept"
+        assert fields["name"] == colpali_node.name
+        assert "tutorial.mp4" in json.loads(fields["mentions"])
+
+        embedding_field = fields.get("embedding", {})
+        embedding = embedding_field.get("values", []) if isinstance(embedding_field, dict) else embedding_field
+        assert len(embedding) == 768, (
+            f"Real Ollama embedding must be 768-dim, got {len(embedding)}"
+        )
+        non_zero_count = sum(1 for v in embedding if v != 0.0)
+        assert non_zero_count > 700, (
+            f"Real Ollama embedding should have ~all dims non-zero, got {non_zero_count}/768"
+        )
+
+    def test_vlm_descriptions_extract_real_entities(self, graph_manager, real_doc_extractor):
+        """Realistic VLMDescriptor output round-trips through GLiNER and Vespa."""
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, port = graph_manager
+
+        pipeline_result = {
+            "descriptions": {
+                "video_id": "architecture_overview",
+                "descriptions": {
+                    "frame_0": (
+                        "A technical architecture diagram drawn on a whiteboard. "
+                        "The diagram shows a Kubernetes cluster with Vespa deployed "
+                        "as a stateful service."
+                    ),
+                    "frame_1": {
+                        "description": (
+                            "A Python code editor window showing imports from DSPy "
+                            "and the ColPali library. The file is named search_agent.py."
+                        )
+                    },
+                    "frame_2": {
+                        "text": (
+                            "A terminal window running Docker commands against the "
+                            "Ollama service."
+                        )
+                    },
+                },
+            }
+        }
+
+        harvested = _extract_text_for_graph(pipeline_result)
+        assert "Kubernetes" in harvested
+        assert "Vespa" in harvested
+        assert "DSPy" in harvested
+        assert "ColPali" in harvested
+        assert "Docker" in harvested
+        assert "Ollama" in harvested
+
+        result = real_doc_extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="architecture_overview.mp4",
+        )
+
+        names = {n.name.lower() for n in result.nodes}
+        expected_concepts = {"kubernetes", "vespa", "dspy", "colpali", "docker", "ollama"}
+        hits = sum(1 for c in expected_concepts if any(c in n for n in names))
+        assert hits >= 4, (
+            f"GLiNER should find at least 4 of {expected_concepts} in {names}"
+        )
+
+        counts = manager.upsert(result)
+        unique_node_count = len({n.node_id for n in result.nodes})
+        assert counts["nodes_upserted"] == unique_node_count
+
+        persisted = []
+        for concept in expected_concepts:
+            matching = [n for n in result.nodes if concept in n.name.lower()]
+            if matching:
+                doc = _get_vespa_doc(port, f"kg_node_test_tenant_{matching[0].node_id}")
+                if doc is not None:
+                    persisted.append(concept)
+
+        assert len(persisted) >= 4, (
+            f"At least 4 expected concepts should persist, got {persisted}"
+        )
+
+    def test_combined_sources_produce_unified_graph(
+        self, graph_manager, real_doc_extractor
+    ):
+        """Whisper + VLM + OCR outputs all merge into the same graph via one upsert.
+
+        Uses well-known technology names (Kubernetes, PostgreSQL, React, TypeScript)
+        that GLiNER reliably recognizes, so the test isn't fragile to GLiNER's
+        entity recognition quality on obscure names.
+        """
         from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
 
         manager, port = graph_manager
@@ -449,124 +653,69 @@ class TestMultimodalGraphExtraction:
         pipeline_result = {
             "transcript": {
                 "full_text": (
-                    "In this video we demonstrate the ColPali model "
-                    "running against Vespa for video retrieval. "
-                    "The SearchAgent routes queries to the right profile "
-                    "and the RoutingAgent handles query enhancement."
+                    "This video covers deploying a React application to "
+                    "Kubernetes with PostgreSQL as the database."
                 ),
                 "segments": [
-                    {"text": "ColPali uses late interaction over patches."},
-                    {"text": "Vespa is the vector database backend."},
+                    {"text": "We will use TypeScript for type safety."},
                 ],
             },
-        }
-
-        harvested = _extract_text_for_graph(pipeline_result)
-        assert "ColPali" in harvested
-        assert "Vespa" in harvested
-
-        extractor = DocExtractor()
-        extractor._gliner_failed = True
-        result = extractor.extract_from_text(
-            text=harvested,
-            tenant_id=TENANT_ID,
-            source_doc_id="video_multimodal_1.mp4",
-        )
-        counts = manager.upsert(result)
-        assert counts["nodes_upserted"] >= 2
-
-        colpali_doc = _get_vespa_doc(port, "kg_node_test_tenant_colpali")
-        assert colpali_doc is not None, "ColPali node not persisted to Vespa"
-        fields = colpali_doc.get("fields", {})
-        assert fields.get("doc_type") == "node"
-        assert fields.get("tenant_id") == TENANT_ID
-        mentions = json.loads(fields.get("mentions", "[]"))
-        assert "video_multimodal_1.mp4" in mentions
-
-    def test_vlm_descriptions_extract_nodes(self, graph_manager):
-        from cogniverse_agents.graph.doc_extractor import DocExtractor
-        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
-
-        manager, port = graph_manager
-
-        pipeline_result = {
             "descriptions": {
                 "descriptions": {
-                    "frame_1": "A whiteboard diagram showing SearchAgent calling VespaBackend.",
-                    "frame_2": {"description": "Code editor with ColPali imports and DSPy modules."},
-                    "frame_3": {"text": "Terminal running kubectl logs deployment."},
-                }
-            }
-        }
-
-        harvested = _extract_text_for_graph(pipeline_result)
-        assert "SearchAgent" in harvested
-        assert "VespaBackend" in harvested
-        assert "ColPali" in harvested
-
-        extractor = DocExtractor()
-        extractor._gliner_failed = True
-        result = extractor.extract_from_text(
-            text=harvested,
-            tenant_id=TENANT_ID,
-            source_doc_id="image_vlm_1.jpg",
-        )
-        counts = manager.upsert(result)
-        assert counts["nodes_upserted"] >= 3
-
-        time.sleep(2)
-        neighbors = manager.get_neighbors("SearchAgent")
-        out_targets = {e["target_node_id"] for e in neighbors["out_edges"]}
-        in_sources = {e["source_node_id"] for e in neighbors["in_edges"]}
-        assert "vespabackend" in out_targets or "vespabackend" in in_sources
-
-    def test_combined_pipeline_result_extracts_all_sources(self, graph_manager):
-        from cogniverse_agents.graph.doc_extractor import DocExtractor
-        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
-
-        manager, port = graph_manager
-
-        pipeline_result = {
-            "transcript": {
-                "full_text": "The SearchAgent orchestrates queries using RoutingAgent.",
-                "segments": [],
-            },
-            "descriptions": {
-                "descriptions": {
-                    "frame_1": "A diagram of CodingAgent interacting with OpenShell.",
+                    "frame_0": (
+                        "A code editor showing a Redis client connecting to a "
+                        "PostgreSQL database via the Prisma ORM."
+                    ),
                 }
             },
             "keyframes": {
                 "keyframes": [
-                    {"ocr_text": "CodingAgent -> OpenShell -> Sandbox"},
+                    {"ocr_text": "Docker Compose running Nginx and Redis services"},
                 ]
             },
         }
 
         harvested = _extract_text_for_graph(pipeline_result)
-        assert "SearchAgent" in harvested
-        assert "RoutingAgent" in harvested
-        assert "CodingAgent" in harvested
-        assert "OpenShell" in harvested
+        for fragment in ("React", "Kubernetes", "PostgreSQL", "TypeScript", "Redis", "Prisma", "Docker", "Nginx"):
+            assert fragment in harvested, f"{fragment} should be in harvested text"
 
-        extractor = DocExtractor()
-        extractor._gliner_failed = True
-        result = extractor.extract_from_text(
+        result = real_doc_extractor.extract_from_text(
             text=harvested,
             tenant_id=TENANT_ID,
-            source_doc_id="combined_multimodal_1.mp4",
+            source_doc_id="combined_overview.mp4",
         )
+
+        names_lower = {n.name.lower() for n in result.nodes}
+        well_known = {"react", "kubernetes", "postgresql", "typescript", "redis", "prisma", "docker", "nginx"}
+        found = {w for w in well_known if any(w in n for n in names_lower)}
+        assert len(found) >= 5, (
+            f"GLiNER should find at least 5 of {well_known} in {names_lower}, found {found}"
+        )
+
         counts = manager.upsert(result)
-        assert counts["nodes_upserted"] >= 4
+        unique_node_count = len({n.node_id for n in result.nodes})
+        assert counts["nodes_upserted"] == unique_node_count
+        assert counts["edges_upserted"] == len(result.edges)
 
-        time.sleep(2)
-        for expected in ("searchagent", "routingagent", "codingagent", "openshell"):
-            doc = _get_vespa_doc(port, f"kg_node_test_tenant_{expected}")
-            assert doc is not None, f"Expected node {expected} to persist"
+        persisted_names: list = []
+        for node in result.nodes:
+            doc = _get_vespa_doc(port, node.doc_id)
+            assert doc is not None, f"Node {node.doc_id} should persist in Vespa"
+            fields = doc["fields"]
+            assert fields["tenant_id"] == TENANT_ID
+            assert fields["doc_type"] == "node"
+            mentions = json.loads(fields["mentions"])
+            assert "combined_overview.mp4" in mentions
+            persisted_names.append(fields["name"])
 
-    def test_empty_pipeline_result_produces_no_graph(self, graph_manager):
-        """Files with no extractable text (e.g. pure audio without whisper) get 0."""
-        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        assert len(persisted_names) == unique_node_count, (
+            "Every extracted node should persist to Vespa"
+        )
+
+    def test_empty_pipeline_result_produces_zero_graph(
+        self, graph_manager, real_doc_extractor
+    ):
+        """An ingestion result with no text (e.g. audio with Whisper disabled) extracts nothing."""
         from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
 
         manager, _ = graph_manager
@@ -574,11 +723,13 @@ class TestMultimodalGraphExtraction:
         harvested = _extract_text_for_graph({"chunks": [{"score": 1.0}]})
         assert harvested == ""
 
-        extractor = DocExtractor()
-        extractor._gliner_failed = True
-        result = extractor.extract_from_text(
+        result = real_doc_extractor.extract_from_text(
             text=harvested,
             tenant_id=TENANT_ID,
             source_doc_id="silent.mp4",
         )
         assert len(result.nodes) == 0
+        assert len(result.edges) == 0
+
+        counts = manager.upsert(result)
+        assert counts == {"nodes_upserted": 0, "edges_upserted": 0}
