@@ -1,4 +1,4 @@
-{{- if .Values.runtime.sandbox.inCluster.enabled }}
+{{- if and .Values.runtime.sandbox (.Values.runtime.sandbox.inCluster).enabled }}
 # Pre-install job that generates mTLS certs for the in-cluster OpenShell
 # gateway and stores them as k8s Secrets. Runs before openshell starts
 # (helm pre-install,pre-upgrade hook) so the gateway can mount them.

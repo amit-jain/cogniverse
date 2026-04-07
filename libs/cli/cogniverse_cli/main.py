@@ -359,6 +359,58 @@ def status() -> None:
 
 
 @cli.group()
+def graph() -> None:
+    """Query the knowledge graph built by `cogniverse index`."""
+
+
+@graph.command(name="stats")
+@click.option("--tenant", default=None, help="Tenant ID.")
+def graph_stats(tenant: str | None) -> None:
+    """Show graph statistics: node/edge counts and top-degree nodes."""
+    from cogniverse_cli.graph import cmd_stats
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    cmd_stats(tenant_id)
+
+
+@graph.command(name="search")
+@click.argument("query")
+@click.option("--tenant", default=None, help="Tenant ID.")
+@click.option("-k", "--top-k", default=10, type=int, help="Max results.")
+def graph_search(query: str, tenant: str | None, top_k: int) -> None:
+    """Semantic search over graph nodes."""
+    from cogniverse_cli.graph import cmd_search
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    cmd_search(tenant_id, query, top_k=top_k)
+
+
+@graph.command(name="neighbors")
+@click.argument("node")
+@click.option("--tenant", default=None, help="Tenant ID.")
+@click.option("-d", "--depth", default=1, type=int, help="Traversal depth (1-3).")
+def graph_neighbors(node: str, tenant: str | None, depth: int) -> None:
+    """Show direct neighbors of a node."""
+    from cogniverse_cli.graph import cmd_neighbors
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    cmd_neighbors(tenant_id, node, depth=depth)
+
+
+@graph.command(name="path")
+@click.argument("source")
+@click.argument("target")
+@click.option("--tenant", default=None, help="Tenant ID.")
+@click.option("-d", "--max-depth", default=4, type=int, help="Max path depth.")
+def graph_path(source: str, target: str, tenant: str | None, max_depth: int) -> None:
+    """Find the shortest path between two nodes."""
+    from cogniverse_cli.graph import cmd_path
+
+    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    cmd_path(tenant_id, source, target, max_depth=max_depth)
+
+
+@cli.group()
 def sandbox() -> None:
     """Manage the OpenShell sandbox gateway for the coding agent."""
 

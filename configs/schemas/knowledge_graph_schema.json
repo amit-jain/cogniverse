@@ -1,0 +1,152 @@
+{
+  "name": "knowledge_graph",
+  "document": {
+    "name": "knowledge_graph",
+    "fields": [
+      {
+        "name": "doc_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "doc_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "indexing": ["summary", "attribute", "index"],
+        "attribute": ["fast-search"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "mentions",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "degree",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "source_node_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "target_node_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "relation",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "provenance",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "source_doc_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "confidence",
+        "type": "float",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "updated_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<float>(d0[768])",
+        "indexing": ["summary", "attribute", "index"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["name", "description"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "semantic_search",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "closeness(field, embedding)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "distance(field, embedding)"
+      ]
+    },
+    {
+      "name": "bm25",
+      "first_phase": {
+        "expression": "bm25(name) + bm25(description)"
+      }
+    },
+    {
+      "name": "hybrid",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "0.6 * closeness(field, embedding) + 0.2 * bm25(name) + 0.2 * bm25(description)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "bm25(name)",
+        "bm25(description)"
+      ]
+    }
+  ]
+}

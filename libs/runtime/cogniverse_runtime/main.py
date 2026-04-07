@@ -24,6 +24,7 @@ from cogniverse_runtime.routers import (
     admin,
     agents,
     events,
+    graph,
     health,
     ingestion,
     search,
@@ -317,6 +318,54 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning(f"WikiManager init failed (non-fatal): {e}")
 
+    # 8c. Deploy knowledge graph schema and wire GraphManager factory
+    try:
+        from cogniverse_agents.graph.graph_manager import GraphManager
+        from cogniverse_runtime.routers import graph as graph_router
+
+        graph_backend = BackendRegistry.get_instance().get_ingestion_backend(
+            name=bootstrap.backend_type,
+            tenant_id="default",
+            config={
+                "backend": {
+                    "url": bootstrap.backend_url,
+                    "port": bootstrap.backend_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        try:
+            graph_backend.schema_registry.deploy_schema(
+                tenant_id="default", base_schema_name="knowledge_graph"
+            )
+            logger.info("Knowledge graph schema deployed for default tenant")
+        except Exception as schema_err:
+            logger.warning(f"Knowledge graph schema deploy skipped: {schema_err}")
+
+        # Single shared schema across all tenants. Isolation is enforced by
+        # the tenant_id field on every document. Deploying a per-tenant schema
+        # conflicts with Vespa's schema-removal safety when multiple tenants
+        # are added dynamically.
+        _graph_managers: dict = {}
+        _shared_graph_schema = "knowledge_graph_default"
+
+        def _graph_manager_factory(tenant_id: str) -> GraphManager:
+            if tenant_id in _graph_managers:
+                return _graph_managers[tenant_id]
+            mgr = GraphManager(
+                backend=graph_backend,
+                tenant_id=tenant_id,
+                schema_name=_shared_graph_schema,
+            )
+            _graph_managers[tenant_id] = mgr
+            return mgr
+
+        graph_router.set_graph_manager_factory(_graph_manager_factory)
+        logger.info("GraphManager factory initialized (shared schema: %s)", _shared_graph_schema)
+    except Exception as e:
+        logger.warning(f"GraphManager init failed (non-fatal): {e}")
+
     # 9. Configure DSPy LM and synthetic data service
     import dspy
 
@@ -409,6 +458,7 @@ app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-managem
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])
 app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
+app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 
 

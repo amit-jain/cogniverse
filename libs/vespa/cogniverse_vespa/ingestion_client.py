@@ -111,6 +111,8 @@ class VespaPyClient:
         # YQL search queries by schema type, not namespace.
         if "agent_memories" in self.schema_name:
             self.namespace = "memory_content"
+        elif "knowledge_graph" in self.schema_name:
+            self.namespace = "graph_content"
         elif (
             "config_metadata" in self.schema_name
             or "tenant_metadata" in self.schema_name

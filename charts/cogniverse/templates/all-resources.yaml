@@ -273,6 +273,8 @@ spec:
           mountPath: /app/libs
         - name: src-scripts
           mountPath: /app/scripts
+        - name: src-configs-schemas
+          mountPath: /app/configs/schemas
         {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       - name: quality-monitor
@@ -363,6 +365,10 @@ spec:
       - name: src-scripts
         hostPath:
           path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      - name: src-configs-schemas
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/configs/schemas
           type: Directory
       {{- end }}
       {{- with .Values.runtime.nodeSelector }}
