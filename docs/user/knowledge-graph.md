@@ -185,6 +185,52 @@ Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.pdf`.
 
 All doc edges are `INFERRED` because co-mention isn't a proven relationship — it's a heuristic.
 
+### Multimodal extractor (video / image / audio)
+
+Unlike the code and doc paths which run in the CLI process, multimodal extraction happens **inside the runtime**, after the content pipeline produces text outputs.
+
+**The flow:**
+
+1. User runs `cogniverse index ./stuff --type docs` and a `.mp4` is found.
+2. CLI uploads it via `POST /ingestion/upload` with the `video_colpali_smol500_mv_frame` profile.
+3. Runtime's `VideoIngestionPipeline` processes the file normally — runs Whisper for audio transcription, extracts keyframes, calls the VLM descriptor on each keyframe, generates embeddings, feeds Vespa.
+4. **New** — after the pipeline returns, `routers/ingestion.py` harvests every text field from the result via `_extract_text_for_graph()`:
+   - `result["transcript"]["full_text"]` + per-segment text
+   - `result["descriptions"]["descriptions"]` (VLM captions per keyframe)
+   - `result["keyframes"][*]["ocr_text"]` if OCR was run
+   - `result["document_files"][*]["extracted_text"]` for PDFs
+5. The combined text blob is passed to `DocExtractor.extract_from_text()` — the same GLiNER + regex pipeline used for `.md` files.
+6. The resulting nodes and edges are upserted to the tenant's shared `knowledge_graph_default` schema.
+
+**No new model calls** — the multimodal path reuses Whisper/VLM outputs that the content pipelines already produce. Whether a file gets graph extraction or not depends on whether its pipeline emits text:
+
+| File kind | Source of text | Graph nodes |
+|---|---|---|
+| Text doc (`.md`, `.txt`, etc.) | File contents | Yes |
+| PDF | `PyPDF2` text extraction | Yes |
+| Video | Whisper transcript + VLM keyframe captions + optional OCR | Yes |
+| Image | VLM caption + optional OCR | Yes (if pipeline produces captions) |
+| Audio | Whisper transcript | Yes |
+| Silent video / no-caption image | (nothing) | No graph extraction — just content indexing |
+
+**Ingestion response** now includes graph counts so you can see what was extracted per file:
+
+```bash
+$ curl -s -X POST http://localhost:28000/ingestion/upload \
+    -F "file=@demo.mp4" -F "profile=video_colpali_smol500_mv_frame" -F "tenant_id=default"
+{
+  "status": "success",
+  "video_id": "demo",
+  "chunks_created": 47,
+  "documents_fed": 47,
+  "graph_nodes": 12,
+  "graph_edges": 28,
+  "processing_time": 34.2
+}
+```
+
+Graph extraction is fail-safe: if the extractor errors or the GraphManager factory isn't wired, ingestion still succeeds with `graph_nodes: 0` — content indexing is never blocked by graph extraction.
+
 ## REST API
 
 The CLI is a thin client over these endpoints at `/graph/`:
@@ -236,31 +282,37 @@ Why one schema instead of per-tenant? Vespa refuses to deploy an application pac
 cogniverse index ./src --type code
     │
     ▼
-  collect_files → [file1.py, file2.py, ...]
+  collect_files → [file1.py, file2.md, file3.mp4, file4.jpg, ...]
     │
-    ├── content: upload to runtime /ingestion/upload
-    │       └── Vespa (code_lateon_mv_<tenant>)
+    ├── For each file:
     │
-    └── graph (local CLI extraction):
-           │
-           ▼
-        CodeExtractor (tree-sitter) / DocExtractor (GLiNER)
-           │
-           ▼  [{nodes: [...], edges: [...]}]
-        POST /graph/upsert
-           │
-           ▼
-        GraphManager.upsert()
-           │
-           ├── merge_duplicate_nodes()
-           ├── generate_embedding(name + description)
-           └── feed_node/feed_edge via /document/v1/graph_content/
-                  │
-                  ▼
-               Vespa (knowledge_graph_default)
+    ├── CODE / TEXT PATH (local extraction, cheap)
+    │   ├── content: POST /ingestion/upload → Vespa (code_lateon_mv, document_text_semantic)
+    │   └── graph:   CodeExtractor / DocExtractor (locally in CLI process)
+    │                    │
+    │                    ▼
+    │                 POST /graph/upsert → GraphManager.upsert() → Vespa
+    │
+    └── MULTIMODAL PATH (video / image / audio — server-side)
+        └── content: POST /ingestion/upload → Vespa (video_colpali, image_colpali, audio_clap)
+                         │
+                         ▼ (inside runtime)
+                     VideoIngestionPipeline runs Whisper, VLM, OCR
+                         │
+                         ▼
+                     _extract_text_for_graph(result)  ← harvests transcript/captions/ocr
+                         │
+                         ▼
+                     DocExtractor.extract_from_text(harvested)
+                         │
+                         ▼
+                     GraphManager.upsert() → Vespa (knowledge_graph_default)
+                         │
+                         ▼
+                     Response includes graph_nodes / graph_edges counts
 ```
 
-Extraction runs locally in the CLI process so the runtime doesn't need to re-read the files. Only the resulting `(nodes, edges)` are shipped over HTTP.
+**Two extraction paths, one graph.** Code and text files are extracted locally in the CLI process so the runtime doesn't re-read them. Multimodal files (video/image/audio) are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR already run. Both paths write to the same `knowledge_graph_default` schema in the same way.
 
 ## Comparison with graphify
 

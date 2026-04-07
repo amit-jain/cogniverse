@@ -427,3 +427,158 @@ class TestGraphExtractorE2E:
         neighbors = manager.get_neighbors("roundtrip")
         out_targets = {e["target_node_id"] for e in neighbors["out_edges"]}
         assert "alpha" in out_targets or "beta" in out_targets
+
+
+@pytest.mark.integration
+class TestMultimodalGraphExtraction:
+    """Feed transcript/VLM text through the extractor and persist to real Vespa.
+
+    These tests exercise the same code path that the ingestion router's
+    /ingestion/upload endpoint uses for video/image/audio files — the
+    ``_extract_text_for_graph`` helper harvests text from pipeline
+    results, then ``DocExtractor.extract_from_text`` turns that text
+    into nodes/edges, then ``GraphManager.upsert`` writes them to Vespa.
+    """
+
+    def test_video_transcript_extracts_nodes(self, graph_manager):
+        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, port = graph_manager
+
+        pipeline_result = {
+            "transcript": {
+                "full_text": (
+                    "In this video we demonstrate the ColPali model "
+                    "running against Vespa for video retrieval. "
+                    "The SearchAgent routes queries to the right profile "
+                    "and the RoutingAgent handles query enhancement."
+                ),
+                "segments": [
+                    {"text": "ColPali uses late interaction over patches."},
+                    {"text": "Vespa is the vector database backend."},
+                ],
+            },
+        }
+
+        harvested = _extract_text_for_graph(pipeline_result)
+        assert "ColPali" in harvested
+        assert "Vespa" in harvested
+
+        extractor = DocExtractor()
+        extractor._gliner_failed = True
+        result = extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="video_multimodal_1.mp4",
+        )
+        counts = manager.upsert(result)
+        assert counts["nodes_upserted"] >= 2
+
+        colpali_doc = _get_vespa_doc(port, "kg_node_test_tenant_colpali")
+        assert colpali_doc is not None, "ColPali node not persisted to Vespa"
+        fields = colpali_doc.get("fields", {})
+        assert fields.get("doc_type") == "node"
+        assert fields.get("tenant_id") == TENANT_ID
+        mentions = json.loads(fields.get("mentions", "[]"))
+        assert "video_multimodal_1.mp4" in mentions
+
+    def test_vlm_descriptions_extract_nodes(self, graph_manager):
+        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, port = graph_manager
+
+        pipeline_result = {
+            "descriptions": {
+                "descriptions": {
+                    "frame_1": "A whiteboard diagram showing SearchAgent calling VespaBackend.",
+                    "frame_2": {"description": "Code editor with ColPali imports and DSPy modules."},
+                    "frame_3": {"text": "Terminal running kubectl logs deployment."},
+                }
+            }
+        }
+
+        harvested = _extract_text_for_graph(pipeline_result)
+        assert "SearchAgent" in harvested
+        assert "VespaBackend" in harvested
+        assert "ColPali" in harvested
+
+        extractor = DocExtractor()
+        extractor._gliner_failed = True
+        result = extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="image_vlm_1.jpg",
+        )
+        counts = manager.upsert(result)
+        assert counts["nodes_upserted"] >= 3
+
+        time.sleep(2)
+        neighbors = manager.get_neighbors("SearchAgent")
+        out_targets = {e["target_node_id"] for e in neighbors["out_edges"]}
+        in_sources = {e["source_node_id"] for e in neighbors["in_edges"]}
+        assert "vespabackend" in out_targets or "vespabackend" in in_sources
+
+    def test_combined_pipeline_result_extracts_all_sources(self, graph_manager):
+        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, port = graph_manager
+
+        pipeline_result = {
+            "transcript": {
+                "full_text": "The SearchAgent orchestrates queries using RoutingAgent.",
+                "segments": [],
+            },
+            "descriptions": {
+                "descriptions": {
+                    "frame_1": "A diagram of CodingAgent interacting with OpenShell.",
+                }
+            },
+            "keyframes": {
+                "keyframes": [
+                    {"ocr_text": "CodingAgent -> OpenShell -> Sandbox"},
+                ]
+            },
+        }
+
+        harvested = _extract_text_for_graph(pipeline_result)
+        assert "SearchAgent" in harvested
+        assert "RoutingAgent" in harvested
+        assert "CodingAgent" in harvested
+        assert "OpenShell" in harvested
+
+        extractor = DocExtractor()
+        extractor._gliner_failed = True
+        result = extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="combined_multimodal_1.mp4",
+        )
+        counts = manager.upsert(result)
+        assert counts["nodes_upserted"] >= 4
+
+        time.sleep(2)
+        for expected in ("searchagent", "routingagent", "codingagent", "openshell"):
+            doc = _get_vespa_doc(port, f"kg_node_test_tenant_{expected}")
+            assert doc is not None, f"Expected node {expected} to persist"
+
+    def test_empty_pipeline_result_produces_no_graph(self, graph_manager):
+        """Files with no extractable text (e.g. pure audio without whisper) get 0."""
+        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
+
+        manager, _ = graph_manager
+
+        harvested = _extract_text_for_graph({"chunks": [{"score": 1.0}]})
+        assert harvested == ""
+
+        extractor = DocExtractor()
+        extractor._gliner_failed = True
+        result = extractor.extract_from_text(
+            text=harvested,
+            tenant_id=TENANT_ID,
+            source_doc_id="silent.mp4",
+        )
+        assert len(result.nodes) == 0
