@@ -303,7 +303,14 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
         else:
             console.print(f"  [yellow]{name}[/yellow] not reachable")
 
-    # 12. Print final status
+    console.print("[cyan]Setting up coding agent sandbox...[/cyan]")
+    from cogniverse_cli.sandbox import ensure_sandbox_ready
+
+    if ensure_sandbox_ready():
+        console.print("  [green]Sandbox[/green] ready")
+    else:
+        console.print("  [yellow]Sandbox[/yellow] disabled (coding agent execution unavailable)")
+
     console.print()
     _print_status_table()
 
@@ -349,6 +356,51 @@ def down(keep_data: bool) -> None:
 def status() -> None:
     """Show status of the Cogniverse stack."""
     _print_status_table()
+
+
+@cli.group()
+def sandbox() -> None:
+    """Manage the OpenShell sandbox gateway for the coding agent."""
+
+
+@sandbox.command(name="sync")
+def sandbox_sync() -> None:
+    """Sync openshell gateway certs into the cluster (after rotation)."""
+    from cogniverse_cli.sandbox import sync_gateway_certs_to_cluster
+
+    if not sync_gateway_certs_to_cluster():
+        raise click.ClickException("Failed to sync openshell certs")
+    console.print("[green]Sandbox certs synced. Restart runtime to pick up changes.[/green]")
+
+
+@sandbox.command(name="status")
+def sandbox_status() -> None:
+    """Show openshell gateway status and cluster sync state."""
+    from cogniverse_cli.sandbox import (
+        gateway_running,
+        get_active_gateway_dir,
+        openshell_installed,
+    )
+
+    if not openshell_installed():
+        console.print("[red]openshell CLI not installed[/red]")
+        return
+
+    gateway_dir = get_active_gateway_dir()
+    if gateway_dir is None:
+        console.print("[yellow]No active openshell gateway[/yellow]")
+        return
+
+    console.print(f"Active gateway: [bold]{gateway_dir.name}[/bold]")
+    console.print(f"  Config: {gateway_dir}")
+    console.print(f"  Running: {'[green]yes[/green]' if gateway_running() else '[red]no[/red]'}")
+
+    result = subprocess.run(
+        ["kubectl", "get", "secret", "openshell-mtls", "-n", NAMESPACE],
+        capture_output=True, text=True, timeout=10,
+    )
+    synced = result.returncode == 0
+    console.print(f"  Synced to cluster: {'[green]yes[/green]' if synced else '[red]no[/red]'}")
 
 
 @cli.command()

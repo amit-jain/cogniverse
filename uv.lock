@@ -1127,6 +1127,7 @@ source = { editable = "libs/cli" }
 dependencies = [
     { name = "click" },
     { name = "httpx" },
+    { name = "httpx-sse" },
     { name = "pyyaml" },
     { name = "rich" },
 ]
@@ -1135,6 +1136,7 @@ dependencies = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx-sse", specifier = ">=0.4" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
 ]
@@ -1374,6 +1376,7 @@ dependencies = [
     { name = "msgpack" },
     { name = "openai-whisper" },
     { name = "opencv-python" },
+    { name = "openshell" },
     { name = "pdf2image" },
     { name = "pillow" },
     { name = "pypdf2" },
@@ -1410,6 +1413,7 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "openai-whisper", specifier = ">=20231117" },
     { name = "opencv-python", specifier = ">=4.12.0" },
+    { name = "openshell", specifier = "==0.0.13" },
     { name = "pdf2image", specifier = ">=1.17.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pypdf2", specifier = ">=3.0.1" },
