@@ -30,10 +30,51 @@ ACTIVE_CONFIGMAP = "openshell-active"
 GATEWAY_NAME = "cogniverse"
 POD_GATEWAY_ENDPOINT = "https://host.docker.internal:19091"
 
+# Version pin — must match the openshell Python package version pinned in
+# libs/runtime/pyproject.toml so the runtime SDK and host gateway speak the
+# same gRPC/mTLS protocol.
+OPENSHELL_VERSION = "v0.0.13"
+OPENSHELL_INSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh"
+
 
 def openshell_installed() -> bool:
     """Return True if the openshell CLI is available on the host."""
-    return shutil.which("openshell") is not None
+    if shutil.which("openshell") is not None:
+        return True
+    # Also check the default install location (~/.local/bin/openshell)
+    fallback = Path.home() / ".local" / "bin" / "openshell"
+    return fallback.exists()
+
+
+def install_openshell() -> bool:
+    """Download and install the openshell CLI to ~/.local/bin.
+
+    Uses NVIDIA's install script with version pinned to OPENSHELL_VERSION.
+    Returns True on success.
+    """
+    console.print(f"Installing openshell {OPENSHELL_VERSION}...")
+    try:
+        result = subprocess.run(
+            ["sh", "-c", f"curl -LsSf {OPENSHELL_INSTALL_URL} | OPENSHELL_VERSION={OPENSHELL_VERSION} sh"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        console.print("[red]openshell install timed out[/red]")
+        return False
+
+    if result.returncode != 0:
+        console.print(f"[red]openshell install failed: {result.stderr[:300]}[/red]")
+        return False
+
+    if not openshell_installed():
+        console.print("[red]openshell install completed but CLI not found on PATH[/red]")
+        console.print("  [dim]Check ~/.local/bin is in PATH[/dim]")
+        return False
+
+    return True
 
 
 def get_active_gateway_dir() -> Optional[Path]:
@@ -194,21 +235,18 @@ def sync_gateway_certs_to_cluster() -> bool:
 
 
 def ensure_sandbox_ready() -> bool:
-    """End-to-end setup: host CLI installed → gateway running → certs synced.
+    """End-to-end setup: install CLI if missing → start gateway → sync certs.
 
     The openshell Python SDK is baked into the runtime image. This function
-    sets up the *host-side* gateway that the runtime pod connects to. If the
-    host ``openshell`` CLI is missing, the coding agent's code execution
-    will fail at request time (plan/generate still work, but execution doesn't).
+    sets up the *host-side* gateway that the runtime pod connects to, doing
+    everything needed: auto-installs the CLI, starts the gateway daemon,
+    and syncs mTLS certs into the cluster.
 
     Returns True if the sandbox is ready.
     """
     if not openshell_installed():
-        console.print(
-            "[yellow]Host openshell CLI not installed — install from "
-            "https://github.com/NVIDIA/OpenShell to enable coding agent execution.[/yellow]"
-        )
-        return False
+        if not install_openshell():
+            return False
 
     if not gateway_running():
         if not start_gateway():
