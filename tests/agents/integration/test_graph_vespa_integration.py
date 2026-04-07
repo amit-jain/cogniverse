@@ -439,17 +439,27 @@ def _ollama_available() -> bool:
 
 @pytest.fixture(scope="module")
 def real_doc_extractor():
-    """A DocExtractor with the real GLiNER model loaded.
+    """DocExtractor with real GLiNER and tech/infra domain labels.
 
-    Loads `urchade/gliner_large-v2.1` once per module — ~1GB download on
-    first run, cached afterwards in HF_HOME. Produces deterministic
-    named-entity predictions so tests can assert exact entity names.
+    The default DocExtractor labels (Technology, Concept, Organization,
+    etc.) are generic and miss specific infrastructure entities. These
+    tests use a tech-focused label set (Database, Platform, Tool,
+    Library, Framework, Service, Organization, Model) which GLiNER
+    confidently maps real infra names to.
+
+    This is how the extractor is meant to be used — callers pass domain-
+    specific labels. The test just declares the tech domain explicitly
+    rather than relying on the permissive defaults.
     """
     pytest.importorskip("gliner")
 
     from cogniverse_agents.graph.doc_extractor import DocExtractor
 
-    extractor = DocExtractor()
+    tech_labels = [
+        "Database", "Platform", "Tool", "Library", "Framework",
+        "Service", "Organization", "Model", "Algorithm",
+    ]
+    extractor = DocExtractor(labels=tech_labels)
     gliner = extractor._get_gliner()
     if gliner is None:
         pytest.skip("GLiNER model unavailable — skipping real-extractor tests")
@@ -482,13 +492,36 @@ class TestMultimodalGraphExtraction:
         "production-scale retrieval workloads."
     )
 
-    def test_whisper_transcript_extracts_real_entities(self, graph_manager, real_doc_extractor):
-        """A realistic Whisper transcript fixture round-trips through GLiNER and Vespa.
+    def _extracted_names(self, result) -> set[str]:
+        """Normalized node names as a set for subset assertions."""
+        return {n.name.lower() for n in result.nodes}
 
-        Asserts that GLiNER finds the two most prominent named entities
-        (ColPali and LightOn — both explicit product/org names in the text),
-        that every node has the expected shape, and that the persisted
-        Vespa document has a real Ollama embedding (non-zero 768-dim vector).
+    def _find_node(self, result, substring: str):
+        """Return the first node whose lowercase name contains substring, or None."""
+        return next(
+            (n for n in result.nodes if substring.lower() in n.name.lower()),
+            None,
+        )
+
+    def _edges_between(self, result, src_substring: str, tgt_substring: str) -> list:
+        """Return edges whose source_node_id and target_node_id contain the given substrings."""
+        src = src_substring.lower()
+        tgt = tgt_substring.lower()
+        matches = []
+        for edge in result.edges:
+            if src in edge.source_node_id and tgt in edge.target_node_id:
+                matches.append(edge)
+            elif src in edge.target_node_id and tgt in edge.source_node_id:
+                matches.append(edge)
+        return matches
+
+    def test_whisper_transcript_extracts_real_entities(self, graph_manager, real_doc_extractor):
+        """Transcript → GLiNER → graph: specific entity + relationship assertions.
+
+        Three known entities in the transcript (ColPali, LightOn, Vespa) must
+        all be extracted, pairwise linked with mentioned_with edges (because
+        they co-occur in the same chunk), and querying ColPali's neighbors
+        via real Vespa must return both LightOn and Vespa.
         """
         from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
 
@@ -499,7 +532,7 @@ class TestMultimodalGraphExtraction:
                 "full_text": self._TRANSCRIPT_TEXT,
                 "segments": [
                     {"text": "The ColPali model was published by LightOn."},
-                    {"text": "Vespa is the backend we will use."},
+                    {"text": "ColPali is paired with Vespa for retrieval."},
                 ],
                 "language": "en",
                 "duration": 42.0,
@@ -509,7 +542,7 @@ class TestMultimodalGraphExtraction:
         harvested = _extract_text_for_graph(pipeline_result)
         assert self._TRANSCRIPT_TEXT in harvested
         assert "ColPali model was published by LightOn" in harvested
-        assert "Vespa is the backend" in harvested
+        assert "ColPali is paired with Vespa" in harvested
 
         result = real_doc_extractor.extract_from_text(
             text=harvested,
@@ -517,41 +550,66 @@ class TestMultimodalGraphExtraction:
             source_doc_id="tutorial.mp4",
         )
 
-        assert len(result.nodes) >= 3, (
-            f"GLiNER should find at least 3 named entities, got {[n.name for n in result.nodes]}"
+        names = self._extracted_names(result)
+        colpali_node = self._find_node(result, "colpali")
+        lighton_node = self._find_node(result, "lighton")
+        vespa_node = self._find_node(result, "vespa")
+
+        assert colpali_node is not None, f"ColPali not in extracted nodes: {names}"
+        assert lighton_node is not None, f"LightOn not in extracted nodes: {names}"
+        assert vespa_node is not None, f"Vespa not in extracted nodes: {names}"
+
+        colpali_lighton_edges = self._edges_between(result, "colpali", "lighton")
+        colpali_vespa_edges = self._edges_between(result, "colpali", "vespa")
+        lighton_vespa_edges = self._edges_between(result, "lighton", "vespa")
+
+        assert len(colpali_lighton_edges) >= 1, (
+            "ColPali and LightOn are in the same chunk — must have a mentioned_with edge"
+        )
+        assert len(colpali_vespa_edges) >= 1, (
+            "ColPali and Vespa are in the same chunk — must have a mentioned_with edge"
+        )
+        assert len(lighton_vespa_edges) >= 1, (
+            "LightOn and Vespa are both in the transcript — must be linked"
         )
 
-        names_lower = {n.name.lower() for n in result.nodes}
-        assert any("colpali" in n for n in names_lower), (
-            f"GLiNER should find ColPali in transcript, got {names_lower}"
-        )
-        assert any("lighton" in n for n in names_lower), (
-            f"GLiNER should find LightOn in transcript, got {names_lower}"
-        )
+        for edge in result.edges:
+            assert edge.provenance == "INFERRED"
+            assert edge.relation == "mentioned_with"
+            assert edge.source_doc_id == "tutorial.mp4"
+            assert edge.confidence == 0.5
 
         for node in result.nodes:
             assert node.tenant_id == TENANT_ID
             assert node.mentions == ["tutorial.mp4"]
             assert node.kind == "concept"
-            assert node.node_id == node.name.replace(" ", "_").lower().replace("-", "_")
-
-        edges_per_source = {}
-        for edge in result.edges:
-            assert edge.provenance == "INFERRED"
-            assert edge.relation == "mentioned_with"
-            assert edge.source_doc_id == "tutorial.mp4"
-            edges_per_source.setdefault(edge.source_node_id, []).append(edge.target_node_id)
 
         counts = manager.upsert(result)
-        assert counts["nodes_upserted"] == len(
-            {n.node_id for n in result.nodes}
-        ), f"Upsert count must match unique node count, got {counts}"
+        assert counts["nodes_upserted"] == len({n.node_id for n in result.nodes})
         assert counts["edges_upserted"] == len(result.edges)
 
-        colpali_node = next(n for n in result.nodes if "colpali" in n.name.lower())
-        doc = _get_vespa_doc(port, colpali_node.doc_id)
-        assert doc is not None, f"ColPali node {colpali_node.doc_id} not in Vespa"
+        time.sleep(2)
+        neighbors = manager.get_neighbors(colpali_node.name)
+        out_targets = {e["target_node_id"] for e in neighbors["out_edges"]}
+        in_sources = {e["source_node_id"] for e in neighbors["in_edges"]}
+        colpali_connections = out_targets | in_sources
 
+        assert lighton_node.node_id in colpali_connections, (
+            f"LightOn must be a neighbor of ColPali in Vespa, got {colpali_connections}"
+        )
+        assert vespa_node.node_id in colpali_connections, (
+            f"Vespa must be a neighbor of ColPali in Vespa, got {colpali_connections}"
+        )
+
+        path = manager.get_path(lighton_node.name, vespa_node.name, max_depth=3)
+        assert path is not None, (
+            f"A path must exist between LightOn and Vespa, got None"
+        )
+        assert lighton_node.node_id in path
+        assert vespa_node.node_id in path
+
+        doc = _get_vespa_doc(port, colpali_node.doc_id)
+        assert doc is not None
         fields = doc["fields"]
         assert fields["tenant_id"] == TENANT_ID
         assert fields["doc_type"] == "node"
@@ -560,17 +618,25 @@ class TestMultimodalGraphExtraction:
         assert "tutorial.mp4" in json.loads(fields["mentions"])
 
         embedding_field = fields.get("embedding", {})
-        embedding = embedding_field.get("values", []) if isinstance(embedding_field, dict) else embedding_field
-        assert len(embedding) == 768, (
-            f"Real Ollama embedding must be 768-dim, got {len(embedding)}"
+        embedding = (
+            embedding_field.get("values", [])
+            if isinstance(embedding_field, dict)
+            else embedding_field
         )
+        assert len(embedding) == 768
         non_zero_count = sum(1 for v in embedding if v != 0.0)
         assert non_zero_count > 700, (
-            f"Real Ollama embedding should have ~all dims non-zero, got {non_zero_count}/768"
+            f"Real Ollama embedding should be densely non-zero, got {non_zero_count}/768"
         )
 
     def test_vlm_descriptions_extract_real_entities(self, graph_manager, real_doc_extractor):
-        """Realistic VLMDescriptor output round-trips through GLiNER and Vespa."""
+        """VLM descriptions → graph: each frame's entities are linked intra-frame.
+
+        Three separate VLM frame descriptions each have distinct entities.
+        The extractor chunks per paragraph so entities from different frames
+        are NOT linked (they're in different chunks), but entities from the
+        same frame must be co-mention linked.
+        """
         from cogniverse_runtime.routers.ingestion import _extract_text_for_graph
 
         manager, port = graph_manager
@@ -580,33 +646,26 @@ class TestMultimodalGraphExtraction:
                 "video_id": "architecture_overview",
                 "descriptions": {
                     "frame_0": (
-                        "A technical architecture diagram drawn on a whiteboard. "
-                        "The diagram shows a Kubernetes cluster with Vespa deployed "
-                        "as a stateful service."
+                        "A technical architecture diagram drawn on a whiteboard "
+                        "showing a Kubernetes cluster with Vespa deployed as a "
+                        "stateful service."
                     ),
                     "frame_1": {
                         "description": (
-                            "A Python code editor window showing imports from DSPy "
-                            "and the ColPali library. The file is named search_agent.py."
+                            "A Python code editor window showing imports from "
+                            "DSPy and the ColPali library."
                         )
                     },
                     "frame_2": {
-                        "text": (
-                            "A terminal window running Docker commands against the "
-                            "Ollama service."
-                        )
+                        "text": "A terminal window running Docker against Ollama."
                     },
                 },
             }
         }
 
         harvested = _extract_text_for_graph(pipeline_result)
-        assert "Kubernetes" in harvested
-        assert "Vespa" in harvested
-        assert "DSPy" in harvested
-        assert "ColPali" in harvested
-        assert "Docker" in harvested
-        assert "Ollama" in harvested
+        for fragment in ("Kubernetes", "Vespa", "DSPy", "ColPali", "Docker", "Ollama"):
+            assert fragment in harvested
 
         result = real_doc_extractor.extract_from_text(
             text=harvested,
@@ -614,28 +673,61 @@ class TestMultimodalGraphExtraction:
             source_doc_id="architecture_overview.mp4",
         )
 
-        names = {n.name.lower() for n in result.nodes}
-        expected_concepts = {"kubernetes", "vespa", "dspy", "colpali", "docker", "ollama"}
-        hits = sum(1 for c in expected_concepts if any(c in n for n in names))
-        assert hits >= 4, (
-            f"GLiNER should find at least 4 of {expected_concepts} in {names}"
+        kubernetes_node = self._find_node(result, "kubernetes")
+        vespa_node = self._find_node(result, "vespa")
+        dspy_node = self._find_node(result, "dspy")
+        colpali_node = self._find_node(result, "colpali")
+        docker_node = self._find_node(result, "docker")
+        ollama_node = self._find_node(result, "ollama")
+
+        required_found = [
+            ("Kubernetes", kubernetes_node),
+            ("Vespa", vespa_node),
+            ("DSPy", dspy_node),
+            ("ColPali", colpali_node),
+            ("Docker", docker_node),
+            ("Ollama", ollama_node),
+        ]
+        missing = [name for name, node in required_found if node is None]
+        assert not missing, (
+            f"GLiNER must find all frame entities, missing: {missing}"
+        )
+
+        kube_vespa = self._edges_between(result, "kubernetes", "vespa")
+        assert len(kube_vespa) >= 1, (
+            "Kubernetes and Vespa are in the same frame — must be linked"
+        )
+
+        dspy_colpali = self._edges_between(result, "dspy", "colpali")
+        assert len(dspy_colpali) >= 1, (
+            "DSPy and ColPali are in the same frame — must be linked"
+        )
+
+        docker_ollama = self._edges_between(result, "docker", "ollama")
+        assert len(docker_ollama) >= 1, (
+            "Docker and Ollama are in the same frame — must be linked"
         )
 
         counts = manager.upsert(result)
-        unique_node_count = len({n.node_id for n in result.nodes})
-        assert counts["nodes_upserted"] == unique_node_count
+        assert counts["nodes_upserted"] == len({n.node_id for n in result.nodes})
+        assert counts["edges_upserted"] == len(result.edges)
 
-        persisted = []
-        for concept in expected_concepts:
-            matching = [n for n in result.nodes if concept in n.name.lower()]
-            if matching:
-                doc = _get_vespa_doc(port, f"kg_node_test_tenant_{matching[0].node_id}")
-                if doc is not None:
-                    persisted.append(concept)
-
-        assert len(persisted) >= 4, (
-            f"At least 4 expected concepts should persist, got {persisted}"
+        time.sleep(2)
+        neighbors = manager.get_neighbors(kubernetes_node.name)
+        kube_connections = {
+            e["target_node_id"] for e in neighbors["out_edges"]
+        } | {e["source_node_id"] for e in neighbors["in_edges"]}
+        assert vespa_node.node_id in kube_connections, (
+            f"Vespa must be a neighbor of Kubernetes (same frame), got {kube_connections}"
         )
+
+        for node in (kubernetes_node, vespa_node, dspy_node, colpali_node, docker_node, ollama_node):
+            doc = _get_vespa_doc(port, node.doc_id)
+            assert doc is not None, f"Expected {node.name} to persist as {node.doc_id}"
+            fields = doc["fields"]
+            assert fields["tenant_id"] == TENANT_ID
+            assert fields["doc_type"] == "node"
+            assert "architecture_overview.mp4" in json.loads(fields["mentions"])
 
     def test_combined_sources_produce_unified_graph(
         self, graph_manager, real_doc_extractor
