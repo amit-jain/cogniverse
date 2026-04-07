@@ -194,13 +194,19 @@ def sync_gateway_certs_to_cluster() -> bool:
 
 
 def ensure_sandbox_ready() -> bool:
-    """End-to-end setup: CLI installed → gateway running → certs synced.
+    """End-to-end setup: host CLI installed → gateway running → certs synced.
 
-    Returns True if the sandbox is ready to be used by the runtime pod.
+    The openshell Python SDK is baked into the runtime image. This function
+    sets up the *host-side* gateway that the runtime pod connects to. If the
+    host ``openshell`` CLI is missing, the coding agent's code execution
+    will fail at request time (plan/generate still work, but execution doesn't).
+
+    Returns True if the sandbox is ready.
     """
     if not openshell_installed():
         console.print(
-            "[yellow]Coding agent sandbox disabled — openshell CLI not installed.[/yellow]"
+            "[yellow]Host openshell CLI not installed — install from "
+            "https://github.com/NVIDIA/OpenShell to enable coding agent execution.[/yellow]"
         )
         return False
 
