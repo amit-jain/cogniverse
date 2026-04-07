@@ -34,8 +34,9 @@ def _build_a2a_request(
     context: Optional[Dict[str, Any]] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> dict:
-    """Build a JSON-RPC 2.0 A2A request for tasks/sendSubscribe."""
-    task_id = uuid.uuid4().hex[:16]
+    """Build a JSON-RPC 2.0 A2A message/stream request."""
+    request_id = uuid.uuid4().hex[:16]
+    message_id = uuid.uuid4().hex
     context_id = uuid.uuid4().hex[:16]
 
     metadata = {
@@ -47,25 +48,23 @@ def _build_a2a_request(
     if context:
         metadata.update(context)
 
-    message = {"role": "user", "parts": [{"type": "text", "text": query}]}
-    history = []
+    message = {
+        "kind": "message",
+        "messageId": message_id,
+        "role": "user",
+        "parts": [{"kind": "text", "text": query}],
+        "contextId": context_id,
+    }
     if conversation_history:
-        for turn in conversation_history:
-            history.append({
-                "role": turn.get("role", "user"),
-                "parts": [{"type": "text", "text": turn.get("content", "")}],
-            })
+        message["metadata"] = {"conversation_history": conversation_history}
 
     return {
         "jsonrpc": "2.0",
-        "id": task_id,
-        "method": "tasks/sendSubscribe",
+        "id": request_id,
+        "method": "message/stream",
         "params": {
-            "id": task_id,
-            "contextId": context_id,
             "metadata": metadata,
             "message": message,
-            "history": history,
         },
     }
 
@@ -128,10 +127,10 @@ def stream_coding_response(
     result: Optional[CodingResult] = None
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(600.0, connect=10.0), follow_redirects=True) as client:
             with client.stream(
                 "POST",
-                f"{runtime_url}/a2a",
+                f"{runtime_url}/a2a/",
                 json=request_body,
                 headers={"Accept": "text/event-stream"},
             ) as response:
@@ -173,18 +172,23 @@ def stream_coding_response(
 
 
 def _handle_event(event: dict, current_phase: str):
-    """Handle a single SSE event. Returns new phase name or CodingResult."""
-    status = event.get("status", {})
+    """Handle a single SSE event. Returns new phase name or CodingResult.
+
+    Event structure:
+      {"id": ..., "result": {"status": {"state": "...", "message": {"parts": [{"kind": "text", "text": "{...json...}"}]}}}}
+    """
+    result_obj = event.get("result", event)
+    status = result_obj.get("status", {})
     state = status.get("state", "")
     message = status.get("message", {})
 
-    if not message:
+    if not isinstance(message, dict):
         return current_phase
 
-    parts = message.get("parts", []) if isinstance(message, dict) else []
+    parts = message.get("parts", [])
     text = ""
     for part in parts:
-        if isinstance(part, dict) and part.get("type") == "text":
+        if isinstance(part, dict) and (part.get("kind") == "text" or part.get("type") == "text"):
             text = part.get("text", "")
             break
 
@@ -211,11 +215,10 @@ def _handle_event(event: dict, current_phase: str):
             console.print(partial_text, end="")
         return current_phase
 
-    if state in ("completed", "input_required"):
-        if "status" in payload and payload.get("status") == "success":
-            return _parse_coding_result(payload)
-        if "result" in payload:
-            return _parse_coding_result(payload)
+    if event_type == "final":
+        return _parse_coding_result(payload.get("data", payload))
+
+    if state in ("completed", "input-required", "input_required"):
         return _parse_coding_result(payload)
 
     return current_phase

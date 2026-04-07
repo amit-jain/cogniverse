@@ -167,13 +167,26 @@ class CogniverseAgentExecutor(AgentExecutor):
         """
         try:
             import asyncio
+            import contextlib
 
             agent, typed_input = await asyncio.to_thread(
                 self._dispatcher.create_streaming_agent,
                 agent_name, query, tenant_id,
             )
 
-            async for event in await agent.process(typed_input, stream=True):
+            agent_lm = getattr(agent, "_dspy_lm", None)
+            if agent_lm is not None:
+                import dspy
+                lm_ctx = dspy.context(lm=agent_lm)
+            else:
+                lm_ctx = contextlib.nullcontext()
+
+            async def _iterate_with_ctx():
+                with lm_ctx:
+                    async for ev in await agent.process(typed_input, stream=True):
+                        yield ev
+
+            async for event in _iterate_with_ctx():
                 event_type = event.get("type", "")
                 event_text = json.dumps(event, default=str)
 

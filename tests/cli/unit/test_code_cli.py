@@ -22,11 +22,14 @@ class TestA2ARequestBuilder:
     def test_builds_valid_jsonrpc_request(self):
         req = _build_a2a_request("write a fibonacci function", tenant_id="acme")
         assert req["jsonrpc"] == "2.0"
-        assert req["method"] == "tasks/sendSubscribe"
+        assert req["method"] == "message/stream"
         assert req["params"]["metadata"]["agent_name"] == "coding_agent"
         assert req["params"]["metadata"]["query"] == "write a fibonacci function"
         assert req["params"]["metadata"]["tenant_id"] == "acme"
         assert req["params"]["metadata"]["stream"] is True
+        msg = req["params"]["message"]
+        assert msg["kind"] == "message"
+        assert msg["parts"][0]["text"] == "write a fibonacci function"
 
     def test_includes_conversation_history(self):
         history = [
@@ -34,9 +37,8 @@ class TestA2ARequestBuilder:
             {"role": "assistant", "content": "Created retry.py"},
         ]
         req = _build_a2a_request("now add tests", conversation_history=history)
-        assert len(req["params"]["history"]) == 2
-        assert req["params"]["history"][0]["role"] == "user"
-        assert req["params"]["history"][0]["parts"][0]["text"] == "write a retry decorator"
+        msg_meta = req["params"]["message"]["metadata"]
+        assert msg_meta["conversation_history"] == history
 
     def test_includes_context(self):
         req = _build_a2a_request(

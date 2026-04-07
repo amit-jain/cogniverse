@@ -219,8 +219,6 @@ class AgentDispatcher:
             return agent, typed_input
 
         if capabilities & {"coding"}:
-            import dspy
-
             from cogniverse_agents.coding_agent import (
                 CodingAgent,
                 CodingDeps,
@@ -233,7 +231,6 @@ class AgentDispatcher:
                 tenant_id=tenant_id, config_manager=self._config_manager
             )
             coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
-            dspy.configure(lm=coding_lm)
 
             deps = CodingDeps(
                 tenant_id=tenant_id,
@@ -243,21 +240,26 @@ class AgentDispatcher:
             async def search_fn(q: str, tid: str):
                 from cogniverse_agents.search.service import SearchService
 
-                cfg = get_config(tenant_id=tid, config_manager=self._config_manager)
-                svc = SearchService(
-                    config=cfg,
-                    config_manager=self._config_manager,
-                    schema_loader=self._schema_loader,
-                )
-                return [r.to_dict() for r in svc.search(
-                    query=q, profile="code_lateon_mv", tenant_id=tid, top_k=10,
-                )]
+                try:
+                    cfg = get_config(tenant_id=tid, config_manager=self._config_manager)
+                    svc = SearchService(
+                        config=cfg,
+                        config_manager=self._config_manager,
+                        schema_loader=self._schema_loader,
+                    )
+                    return [r.to_dict() for r in svc.search(
+                        query=q, profile="code_lateon_mv", tenant_id=tid, top_k=10,
+                    )]
+                except Exception as exc:
+                    logger.info("Code search unavailable, proceeding without context: %s", exc)
+                    return []
 
             agent = CodingAgent(
                 deps=deps,
                 search_fn=search_fn,
                 sandbox_manager=self._sandbox_manager,
             )
+            agent._dspy_lm = coding_lm  # type: ignore[attr-defined]
             typed_input = CodingInput(task=query, tenant_id=tenant_id)
             return agent, typed_input
 
@@ -869,7 +871,6 @@ class AgentDispatcher:
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
-        dspy.configure(lm=coding_lm)
 
         deps = CodingDeps(
             tenant_id=tenant_id,
@@ -877,24 +878,35 @@ class AgentDispatcher:
         )
 
         async def search_fn(query: str, tenant_id: str):
-            """Search code using the code_lateon_mv profile."""
+            """Search code using the code_lateon_mv profile.
+
+            Returns empty list if code search is unavailable (e.g. encoder
+            not yet registered for the code model), so coding tasks can
+            proceed without indexed context.
+            """
             from cogniverse_agents.search.service import SearchService
 
-            search_config = get_config(
-                tenant_id=tenant_id, config_manager=self._config_manager
-            )
-            search_service = SearchService(
-                config=search_config,
-                config_manager=self._config_manager,
-                schema_loader=self._schema_loader,
-            )
-            results = search_service.search(
-                query=query,
-                profile="code_lateon_mv",
-                tenant_id=tenant_id,
-                top_k=10,
-            )
-            return [r.to_dict() for r in results]
+            try:
+                search_config = get_config(
+                    tenant_id=tenant_id, config_manager=self._config_manager
+                )
+                search_service = SearchService(
+                    config=search_config,
+                    config_manager=self._config_manager,
+                    schema_loader=self._schema_loader,
+                )
+                results = search_service.search(
+                    query=query,
+                    profile="code_lateon_mv",
+                    tenant_id=tenant_id,
+                    top_k=10,
+                )
+                return [r.to_dict() for r in results]
+            except Exception as exc:
+                logger.info(
+                    "Code search unavailable, proceeding without context: %s", exc
+                )
+                return []
 
         agent = CodingAgent(
             deps=deps,
@@ -910,7 +922,8 @@ class AgentDispatcher:
             max_iterations=ctx.get("max_iterations", 5),
             language=ctx.get("language", "python"),
         )
-        result = await agent.process(input_data)
+        with dspy.context(lm=coding_lm):
+            result = await agent.process(input_data)
 
         return {
             "status": "success",
