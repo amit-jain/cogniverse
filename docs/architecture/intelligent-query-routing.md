@@ -234,18 +234,18 @@ A factory function selects the appropriate signature tier:
 
 ## Multi-Agent Orchestration
 
-When a query is too complex for a single agent, the `RoutingAgent` hands off to `MultiAgentOrchestrator` which coordinates multiple agents through a dependency-aware execution plan.
+Query complexity is determined at the entry point by `GatewayAgent`, which classifies queries as "simple" or "complex" using GLiNER entity classification (no LLM call, <100ms).
 
-### Routing Execution Paths
+### Dispatch Execution Paths
 
-`_execute_routing_task` in `AgentDispatcher` handles two execution paths based on the routing decision:
+`AgentDispatcher.dispatch()` routes queries through `_execute_gateway_task` for any agent with `gateway` or `routing` capabilities:
 
-#### Non-Orchestration Path (Single Agent)
+#### Simple Path (Single Agent)
 
-When `needs_orchestration=False`, the routing agent executes the recommended downstream agent directly via `_execute_downstream_agent`:
+When `GatewayAgent` classifies a query as `complexity="simple"`:
 
-1. `RoutingAgent.route_query()` returns a `RoutingOutput` with the recommended agent and `metadata["needs_orchestration"] = False`
-2. `_execute_downstream_agent` looks up the recommended agent in the registry and dispatches based on its capabilities:
+1. `GatewayAgent._process_impl()` returns a `GatewayOutput` with the target agent name, modality, and generation type
+2. `_execute_downstream_agent` looks up the target agent in the registry and dispatches based on its capabilities:
    - `search`/`video_search`/`retrieval` → `_execute_search_task` (with `conversation_history` for query rewrite)
    - `image_search`/`visual_analysis` → `_execute_image_search_task`
    - `audio_analysis`/`transcription` → `_execute_audio_search_task`
@@ -253,30 +253,26 @@ When `needs_orchestration=False`, the routing agent executes the recommended dow
    - `detailed_report` → `_execute_detailed_report_task`
    - `summarization`/`text_generation` → `_execute_summarization_task`
    - `text_analysis`/`sentiment`/`classification` → `_execute_text_analysis_task`
-3. The response includes both routing metadata (`recommended_agent`, `confidence`, `reasoning`) and the `downstream_result` from the executed agent
+3. The response includes gateway metadata (`complexity`, `modality`, `routed_to`, `confidence`) and the `downstream_result` from the executed agent
 
-#### Orchestration Path (Multi-Agent)
+#### Complex Path (Multi-Agent Orchestration)
 
-When `needs_orchestration=True`, the routing agent hands off to `MultiAgentOrchestrator`:
+When `GatewayAgent` classifies a query as `complexity="complex"`:
 
-1. `RoutingAgent.route_query()` returns a `RoutingOutput` with `metadata["needs_orchestration"] = True`
-2. The runtime instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager` and the same `RoutingAgent` instance
-3. `MultiAgentOrchestrator.process_complex_query()` plans a workflow using DSPy, executes agents via direct HTTP (`POST /agents/{name}/process`), and aggregates results
-4. A `cogniverse.orchestration` telemetry span is emitted with attributes (`orchestration.query`, `orchestration.workflow_id`, `orchestration.pattern`, `orchestration.execution_time`, `orchestration.tasks_completed`, `orchestration.agents_used`, `orchestration.execution_order`) consumed by the dashboard's Orchestration Annotation tab
+1. `GatewayAgent._process_impl()` returns `complexity="complex"` (triggered by: no entities detected, low confidence, or multiple modalities)
+2. `_execute_orchestration_task` instantiates `OrchestratorAgent` with the `AgentRegistry` and `ConfigManager`
+3. `OrchestratorAgent._process_impl()` plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
+4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
 
-### Orchestration Signal Detection
+### Complexity Classification
 
-Seven signals are evaluated. If **≥ 3 signals** fire, orchestration is triggered:
+GatewayAgent classifies queries as complex when any of these conditions hold:
 
 | # | Signal | Detection Logic |
 |---|---|---|
-| 1 | Multiple action verbs | ≥ 2 of: find, search, analyze, summarize, compare, generate, create, extract, identify |
-| 2 | Complex conjunctions | Presence of: and, then, also, plus, followed by, as well as |
-| 3 | Query length | > 15 words |
-| 4 | Entity density | > 5 extracted entities |
-| 5 | Relationship complexity | > 3 extracted relationships |
-| 6 | Sequential indicators | Presence of: first, then, after, finally, next, before, subsequently |
-| 7 | Low routing confidence | Routing confidence < 0.6 |
+| 1 | No entities detected | GLiNER returns zero entities for the query |
+| 2 | Low confidence | Classification confidence below `fast_path_confidence_threshold` (default: 0.7) |
+| 3 | Multiple modalities | Entities span more than one modality (e.g., video + audio) |
 
 ### Workflow Planning & Execution
 
@@ -325,7 +321,7 @@ sequenceDiagram
 
 3. **Durable execution via checkpointing** — Each completed phase checkpoints its results. If a workflow fails mid-execution, it can resume from the last successful phase rather than restarting from scratch. Checkpoints store task status, results, and timestamps.
 
-4. **Direct HTTP execution** — `MultiAgentOrchestrator` calls agents via `httpx.AsyncClient` to `POST /agents/{name}/process`, enabling heterogeneous agent types (search, generation, analysis) to exchange structured messages.
+4. **Direct HTTP execution** — `OrchestratorAgent` calls agents via `httpx.AsyncClient` to `POST /agents/{name}/process`, enabling heterogeneous agent types (search, generation, analysis) to exchange structured messages.
 
 ---
 

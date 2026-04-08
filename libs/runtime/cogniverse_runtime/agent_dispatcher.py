@@ -124,8 +124,12 @@ class AgentDispatcher:
 
         conversation_history = context.get("conversation_history", [])
 
-        if "routing" in capabilities:
-            result = await self._execute_routing_task(query, context, tenant_id)
+        if capabilities & {"gateway", "routing"}:
+            result = await self._execute_gateway_task(query, context, tenant_id)
+        elif "orchestration" in capabilities:
+            result = await self._execute_orchestration_task(
+                query, context, tenant_id
+            )
         elif capabilities & {"search", "video_search", "retrieval"}:
             result = await self._execute_search_task(
                 query, tenant_id, top_k, conversation_history=conversation_history
@@ -213,6 +217,18 @@ class AgentDispatcher:
             raise ValueError(f"Agent '{agent_name}' not found in registry")
 
         capabilities = set(agent_entry.capabilities)
+
+        if capabilities & {"gateway"}:
+            from cogniverse_agents.gateway_agent import (
+                GatewayAgent,
+                GatewayDeps,
+                GatewayInput,
+            )
+
+            deps = GatewayDeps()
+            agent = GatewayAgent(deps=deps)
+            typed_input = GatewayInput(query=query, tenant_id=tenant_id)
+            return agent, typed_input
 
         if capabilities & {"summarization", "text_generation"}:
             from cogniverse_agents.summarizer_agent import (
@@ -421,9 +437,109 @@ class AgentDispatcher:
         rewritten = result.rewritten_query.strip()
         return rewritten if rewritten else query
 
+    async def _execute_gateway_task(
+        self, query: str, context: Dict[str, Any], tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Route query through GatewayAgent for triage.
+
+        Simple queries are dispatched directly to the target execution agent.
+        Complex queries are forwarded to OrchestratorAgent for multi-agent
+        coordination.
+        """
+        from cogniverse_agents.gateway_agent import (
+            GatewayAgent,
+            GatewayDeps,
+            GatewayInput,
+        )
+
+        deps = GatewayDeps()
+        agent = GatewayAgent(deps=deps)
+
+        input_data = GatewayInput(query=query, tenant_id=tenant_id)
+        result = await agent._process_impl(input_data)
+
+        if result.complexity == "complex":
+            return await self._execute_orchestration_task(
+                query, context, tenant_id,
+                gateway_context={
+                    "modality": result.modality,
+                    "generation_type": result.generation_type,
+                    "confidence": result.confidence,
+                },
+            )
+
+        # Simple: route directly to the execution agent
+        conversation_history = context.get("conversation_history", [])
+        downstream = await self._execute_downstream_agent(
+            agent_name=result.routed_to,
+            query=query,
+            tenant_id=tenant_id,
+            top_k=context.get("top_k", 10),
+            conversation_history=conversation_history,
+        )
+        return {
+            "status": "success",
+            "agent": "gateway_agent",
+            "message": f"Routed '{query[:50]}' to {result.routed_to} (simple)",
+            "gateway": {
+                "complexity": result.complexity,
+                "modality": result.modality,
+                "generation_type": result.generation_type,
+                "routed_to": result.routed_to,
+                "confidence": result.confidence,
+            },
+            "downstream_result": downstream,
+        }
+
+    async def _execute_orchestration_task(
+        self,
+        query: str,
+        context: Dict[str, Any],
+        tenant_id: str,
+        gateway_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Execute full orchestration pipeline via OrchestratorAgent."""
+        from cogniverse_agents.orchestrator_agent import (
+            OrchestratorAgent,
+            OrchestratorDeps,
+            OrchestratorInput,
+        )
+
+        deps = OrchestratorDeps()
+        agent = OrchestratorAgent(
+            deps=deps,
+            registry=self._registry,
+            config_manager=self._config_manager,
+        )
+        self._init_agent_memory(agent, "orchestrator_agent", tenant_id)
+
+        input_data = OrchestratorInput(
+            query=query,
+            tenant_id=tenant_id,
+            session_id=context.get("session_id"),
+            conversation_history=context.get("conversation_history"),
+        )
+
+        result = await agent._process_impl(input_data)
+
+        return {
+            "status": "success",
+            "agent": "orchestrator_agent",
+            "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
+            "orchestration_result": (
+                result.model_dump() if hasattr(result, "model_dump") else vars(result)
+            ),
+            "gateway_context": gateway_context,
+        }
+
     async def _execute_routing_task(
         self, query: str, context: Dict[str, Any], tenant_id: str
     ) -> Dict[str, Any]:
+        """Thin routing via RoutingAgent — dispatches to downstream agent.
+
+        Orchestration is no longer handled here; GatewayAgent decides whether
+        a query is simple or complex *before* the routing path is ever reached.
+        """
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
         from cogniverse_foundation.config.utils import get_config
 
@@ -445,19 +561,14 @@ class AgentDispatcher:
             "telemetry_config": telemetry_config,
             "llm_config": llm_endpoint,
             "enable_memory": memory_enabled,
-            "enable_advanced_optimization": routing_config.get(
-                "enable_advanced_optimization", False
-            ),
         }
 
         if memory_enabled:
             _sys_cfg = self._config_manager.get_system_config()
-            backend_url = _sys_cfg.backend_url
-            backend_port = _sys_cfg.backend_port
             deps_kwargs.update(
                 {
-                    "memory_backend_host": backend_url,
-                    "memory_backend_port": backend_port,
+                    "memory_backend_host": _sys_cfg.backend_url,
+                    "memory_backend_port": _sys_cfg.backend_port,
                     "memory_llm_model": llm_endpoint.model,
                     "memory_embedding_model": routing_config.get(
                         "memory_embedding_model", "nomic-embed-text"
@@ -469,74 +580,17 @@ class AgentDispatcher:
             )
 
         deps = RoutingDeps(**deps_kwargs)
-        # RoutingAgent.__init__ loads GLiNER + spaCy models (sync, CPU-bound).
-        # Run in thread to avoid blocking the event loop and health probes.
         import asyncio
+
         agent = await asyncio.to_thread(
             RoutingAgent, deps=deps, registry=self._registry
         )
-
-        action = context.get("action")
-        if action == "optimize_routing":
-            examples = context.get("examples", [])
-            if examples:
-                return await self._handle_routing_optimization(
-                    agent, context, tenant_id
-                )
-            return await self._run_optimization_cycle(agent, tenant_id)
-        elif action == "get_optimization_status":
-            return self._handle_optimization_status(agent, tenant_id)
 
         result = await agent.route_query(
             query=query,
             context=context.get("context"),
             tenant_id=tenant_id,
         )
-
-        needs_orchestration = result.metadata.get("needs_orchestration", False)
-
-        if needs_orchestration:
-            from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
-                MultiAgentOrchestrator,
-            )
-            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-            runtime_base_url = "http://localhost:8000"
-            available_agents = {}
-            for name in self._registry.list_agents():
-                agent_ep = self._registry.get_agent(name)
-                if agent_ep and name != "routing_agent":
-                    available_agents[name] = {
-                        "capabilities": agent_ep.capabilities,
-                        "endpoint": runtime_base_url,
-                        "timeout_seconds": agent_ep.timeout,
-                    }
-
-            orchestrator = MultiAgentOrchestrator(
-                tenant_id=tenant_id,
-                telemetry_manager=get_telemetry_manager(),
-                routing_agent=agent,
-                available_agents=available_agents,
-            )
-
-            orch_result = await orchestrator.process_complex_query(
-                query=result.enhanced_query or query,
-                context=context.get("context"),
-                conversation_history=context.get("conversation_history"),
-            )
-
-            return {
-                "status": "success",
-                "agent": "routing_agent",
-                "message": f"Orchestrated '{query}' via multi-agent workflow",
-                "recommended_agent": result.recommended_agent,
-                "confidence": result.confidence,
-                "reasoning": result.reasoning,
-                "enhanced_query": result.enhanced_query,
-                "needs_orchestration": True,
-                "orchestration_result": orch_result,
-                "metadata": result.metadata,
-            }
 
         recommended = result.recommended_agent
         effective_query = result.enhanced_query or query
@@ -564,128 +618,6 @@ class AgentDispatcher:
             "metadata": result.metadata,
             "downstream_result": downstream_result,
         }
-
-    async def _handle_routing_optimization(
-        self, agent, context: Dict[str, Any], tenant_id: str
-    ) -> Dict[str, Any]:
-        """Trigger routing optimization with provided examples."""
-        examples = context.get("examples", [])
-        if not examples:
-            return {
-                "status": "insufficient_data",
-                "message": "No routing examples provided",
-                "training_examples": 0,
-            }
-
-        optimizer = agent._get_optimizer(tenant_id)
-        if not optimizer:
-            return {
-                "status": "error",
-                "message": "Advanced optimization not enabled for this tenant",
-            }
-
-        try:
-            for example in examples:
-                await optimizer.record_routing_experience(
-                    query=example.get("query", ""),
-                    entities=example.get("entities", []),
-                    relationships=example.get("relationships", []),
-                    enhanced_query=example.get("enhanced_query", ""),
-                    chosen_agent=example.get("chosen_agent", "search_agent"),
-                    routing_confidence=example.get("confidence", 0.5),
-                    search_quality=example.get("search_quality", 0.5),
-                    agent_success=example.get("agent_success", True),
-                    processing_time=example.get("processing_time", 0.0),
-                )
-
-            # Explicitly trigger DSPy optimization compile after recording all examples
-            await optimizer._run_optimization_step()
-            await optimizer._persist_data()
-
-            return {
-                "status": "optimization_triggered",
-                "message": "Routing experiences recorded for optimization",
-                "training_examples": len(examples),
-                "optimizer": "AdvancedRoutingOptimizer",
-            }
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    def _handle_optimization_status(self, agent, tenant_id: str) -> Dict[str, Any]:
-        """Get optimization status from routing agent."""
-        optimizer = agent._get_optimizer(tenant_id)
-        if not optimizer:
-            return {
-                "status": "inactive",
-                "message": "Advanced optimization not enabled",
-                "optimizer_ready": False,
-                "metrics": {},
-            }
-
-        stats = agent.get_routing_statistics()
-        return {
-            "status": "active",
-            "optimizer_ready": True,
-            "metrics": stats,
-        }
-
-    async def _run_optimization_cycle(self, agent, tenant_id: str) -> Dict[str, Any]:
-        """Run full optimization cycle from accumulated traces.
-
-        Creates an OptimizationOrchestrator that reads routing spans from
-        Phoenix, annotates low-quality decisions, feeds back to optimizer,
-        and triggers DSPy compile when enough data exists.
-        """
-        from cogniverse_agents.routing.optimization_orchestrator import (
-            OptimizationOrchestrator,
-        )
-
-        optimizer = agent._get_optimizer(tenant_id)
-        if not optimizer:
-            return {
-                "status": "error",
-                "message": "Advanced optimization not enabled for this tenant",
-            }
-
-        telemetry_provider = agent._get_telemetry_provider(tenant_id)
-
-        try:
-            from cogniverse_agents.routing.config import AutomationRulesConfig
-            from cogniverse_foundation.config.utils import get_config
-
-            rules_config = get_config(
-                tenant_id=tenant_id, config_manager=self._config_manager
-            )
-            rules_data = rules_config.get("automation_rules", {})
-            automation_rules = (
-                AutomationRulesConfig.from_dict(rules_data) if rules_data else None
-            )
-
-            from cogniverse_runtime.routers.agents import get_annotation_queue
-
-            orchestrator = OptimizationOrchestrator(
-                llm_config=agent.deps.llm_config,
-                telemetry_provider=telemetry_provider,
-                tenant_id=tenant_id,
-                automation_rules=automation_rules,
-                annotation_queue=get_annotation_queue(),
-            )
-
-            results = await orchestrator.run_once()
-
-            return {
-                "status": "optimization_triggered",
-                "message": "Full optimization cycle completed from traces",
-                "cycle_results": results,
-                "spans_evaluated": results.get("span_evaluation", {}).get(
-                    "spans_processed", 0
-                ),
-                "annotations_generated": results.get("annotations_generated", 0),
-                "optimizer": "OptimizationOrchestrator",
-            }
-        except Exception as e:
-            logger.error(f"Optimization cycle failed: {e}")
-            return {"status": "error", "message": str(e)}
 
     async def _execute_downstream_agent(
         self,

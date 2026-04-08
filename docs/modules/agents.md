@@ -49,13 +49,14 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 ### Key Agents
 
-1. **RoutingAgent** - Query entry point: DSPy routing with orchestration handoff for complex queries
-2. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
-3. **OrchestratorAgent** - A2A HTTP entry point wrapping MultiAgentOrchestrator for external agent communication
-4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
-5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
-6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
-7. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
+1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
+2. **RoutingAgent** - Thin DSPy routing agent for pre-enriched queries (receives entities/relationships from upstream agents)
+3. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
+4. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
+5. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
+6. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
+7. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
+8. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
 8. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
 9. **ImageSearchAgent** - Image similarity search using ColPali embeddings
 10. **SummarizerAgent** - Intelligent summarization with thinking phase
@@ -2869,22 +2870,21 @@ When the query maps to a single agent (`needs_orchestration=False`):
 
 ### Orchestration Path (Multi-Agent)
 
-When `RoutingAgent.route_query()` determines a query is too complex for a single agent, it sets `metadata["needs_orchestration"] = True`:
+Query complexity triage is handled by `GatewayAgent` at the dispatcher entry point:
 
-1. **RoutingAgent** analyzes the query (entity extraction, relationship inference, DSPy routing decision)
-2. A 7-signal heuristic evaluates orchestration need (multiple verbs, entity density, low confidence, etc.)
-3. If >= 3 signals fire → `needs_orchestration = True` in routing result metadata
-4. The runtime instantiates `MultiAgentOrchestrator` with the tenant's `TelemetryManager`
-5. `MultiAgentOrchestrator.process_complex_query()` plans, executes, and aggregates a multi-agent workflow
-6. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
+1. **GatewayAgent** classifies the query using GLiNER entity detection (no LLM, <100ms)
+2. If entities are clear and single-modality with high confidence → `complexity="simple"`, dispatch directly to execution agent
+3. If no entities, low confidence, or multi-modal → `complexity="complex"`, forward to OrchestratorAgent
+4. **OrchestratorAgent** plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
+5. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
 
-### Key distinction: three orchestration-related components
+### Key orchestration-related components
 
 | Component | Role | Location |
 |---|---|---|
-| **RoutingAgent** | Query entry point, decides *whether* orchestration is needed | `cogniverse_agents/routing_agent.py` |
-| **MultiAgentOrchestrator** | Workflow engine: plans tasks, executes agents, aggregates results | `cogniverse_agents/multi_agent_orchestrator.py` |
-| **OrchestratorAgent** | A2A agent with own DSPy planning and AgentRegistry-based execution | `cogniverse_agents/orchestrator_agent.py` |
+| **GatewayAgent** | Entry point, classifies queries as simple/complex via GLiNER | `cogniverse_agents/gateway_agent.py` |
+| **RoutingAgent** | Thin DSPy routing for pre-enriched queries | `cogniverse_agents/routing_agent.py` |
+| **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion, checkpointing | `cogniverse_agents/orchestrator_agent.py` |
 
 ---
 
@@ -3648,7 +3648,7 @@ def test_tenant_isolation():
 
 ### Overview
 
-The `MultiAgentOrchestrator` supports durable execution through workflow checkpointing. This enables:
+The `OrchestratorAgent` supports durable execution through workflow checkpointing. This enables:
 
 - **Checkpoint**: Save workflow state after each phase
 - **Resume**: Restart failed workflows from the last checkpoint
@@ -3739,11 +3739,11 @@ stateDiagram-v2
 ### Enabling Checkpointing
 
 ```python
-from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig, CheckpointLevel
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.manager import ConfigManager
 
 # Create checkpoint storage (Phoenix span-based)
 storage = WorkflowCheckpointStorage(
@@ -3760,12 +3760,13 @@ config = CheckpointConfig(
     retain_failed_hours=24 * 30      # Keep failed for 30 days
 )
 
-# Create orchestrator with checkpointing (telemetry_manager is REQUIRED)
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="acme",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
+# Create orchestrator with checkpointing
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=registry,
+    config_manager=config_manager,
     checkpoint_config=config,
-    checkpoint_storage=storage
+    checkpoint_storage=storage,
 )
 ```
 
@@ -3848,20 +3849,19 @@ class TaskCheckpoint:
 ### Example: Complete Checkpoint Flow
 
 ```python
-from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Setup
 storage = WorkflowCheckpointStorage(project_name="checkpoints", tenant_id="acme")
 config = CheckpointConfig(enabled=True)
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="acme",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=registry,
+    config_manager=config_manager,
     checkpoint_config=config,
-    checkpoint_storage=storage
+    checkpoint_storage=storage,
 )
 
 # Execute workflow (checkpoints saved automatically after each phase)
@@ -3888,7 +3888,7 @@ except Exception as e:
 
 ### Overview
 
-The `MultiAgentOrchestrator` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
+The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
 
 - **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
 - **Automatic Event Emission**: Checkpoint saves automatically emit A2A-compatible events
@@ -3898,11 +3898,9 @@ The `MultiAgentOrchestrator` integrates with the A2A EventQueue system for real-
 ### Enabling EventQueue
 
 ```python
-from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
 from cogniverse_core.events import get_queue_manager
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Create event queue for the workflow
 manager = get_queue_manager()
@@ -3916,10 +3914,11 @@ storage = WorkflowCheckpointStorage(
     event_queue=queue,  # Events emitted on checkpoint saves
 )
 
-# Create orchestrator (telemetry_manager is REQUIRED)
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="tenant1",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
+# Create orchestrator
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=registry,
+    config_manager=config_manager,
     checkpoint_storage=storage,
     event_queue=queue,  # Additional events at non-checkpoint boundaries
 )
