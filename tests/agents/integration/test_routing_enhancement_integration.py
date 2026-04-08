@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+    MultiAgentOrchestrator,
+)
 from cogniverse_agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
@@ -404,10 +406,10 @@ class TestEnhancedAgentComponentIntegration:
         )
 
         with patch(
-            "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
         ) as mock_routing_agent_class:
             with patch(
-                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient"
             ) as mock_httpx_cls:
                 mock_routing_agent_class.return_value = Mock()
                 mock_httpx_cls.return_value.__aenter__ = AsyncMock(

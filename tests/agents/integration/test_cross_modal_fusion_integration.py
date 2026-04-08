@@ -15,7 +15,7 @@ import pytest
 import requests
 from PIL import Image
 
-from cogniverse_agents.multi_agent_orchestrator import (
+from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
 from cogniverse_agents.workflow_types import (

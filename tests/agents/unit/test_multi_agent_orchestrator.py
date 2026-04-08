@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from cogniverse_agents.multi_agent_orchestrator import (
+from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
     FusionStrategy,
     MultiAgentOrchestrator,
     ResultAggregatorSignature,
@@ -103,8 +103,8 @@ class TestMultiAgentOrchestrator:
             },
         }
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_default(
         self,
@@ -138,7 +138,7 @@ class TestMultiAgentOrchestrator:
         assert stats["failed_workflows"] == 0
         assert stats["average_execution_time"] == 0.0
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_custom_config(
         self,
@@ -165,8 +165,8 @@ class TestMultiAgentOrchestrator:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_get_default_agents(
         self,
@@ -192,8 +192,8 @@ class TestMultiAgentOrchestrator:
         assert "endpoint" in search_agent
         assert "timeout_seconds" in search_agent
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     async def test_process_complex_query_basic(
         self,
@@ -249,9 +249,9 @@ class TestMultiAgentOrchestratorWorkflowExecution:
     def orchestrator_with_mocks(self, telemetry_manager_without_phoenix):
         """Create orchestrator with mocked dependencies"""
         with (
-            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
+            patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"),
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
             orchestrator = MultiAgentOrchestrator(
@@ -317,7 +317,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
 class TestMultiAgentOrchestratorEdgeCases:
     """Test edge cases and error handling"""
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
     def test_orchestrator_with_disabled_workflow_intelligence(
         self, mock_routing, telemetry_manager_without_phoenix
     ):
@@ -331,7 +331,7 @@ class TestMultiAgentOrchestratorEdgeCases:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
     @pytest.mark.ci_fast
     def test_orchestrator_agent_utilization_tracking(
         self, mock_routing, telemetry_manager_without_phoenix
@@ -357,7 +357,7 @@ class TestCrossModalFusion:
     def orchestrator(self, telemetry_manager_without_phoenix):
         """Create orchestrator for testing fusion"""
         with (
-            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
+            patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"),
         ):
             return MultiAgentOrchestrator(
                 tenant_id="test_tenant",
@@ -679,8 +679,8 @@ class TestCrossModalFusion:
 class TestOrchestratorTelemetrySpan:
     """Test orchestration telemetry span instrumentation"""
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
     async def test_span_attributes_set_on_success(
@@ -755,7 +755,7 @@ class TestOrchestratorTelemetrySpan:
         assert "orchestration.agents_used" in attr_calls
         assert "orchestration.execution_order" in attr_calls
 
-    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent")
     @pytest.mark.ci_fast
     def test_determine_execution_pattern(
         self,
@@ -829,10 +829,10 @@ class TestOrchestrationPipelineChain:
         """Construct a real MultiAgentOrchestrator with controlled DSPy mocks."""
         with (
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
             ) as mock_routing_cls,
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
             mock_routing_instance = Mock()
@@ -884,7 +884,7 @@ class TestOrchestrationPipelineChain:
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
             return_value=mock_client_cm,
         ):
             yield mock_client
@@ -930,7 +930,7 @@ class TestOrchestrationPipelineChain:
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
             return_value=mock_client_cm,
         ):
             # Set max_retries=0 on tasks after planning to avoid backoff
@@ -1076,10 +1076,10 @@ class TestOrchestrationPipelineChain:
         """After workflow intelligence optimization, invalid agents are re-resolved."""
         with (
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
             ) as mock_routing_cls,
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ) as mock_wi_factory,
         ):
             mock_routing_cls.return_value = Mock()
@@ -1147,7 +1147,7 @@ class TestOrchestrationPipelineChain:
             mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
             with patch(
-                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
                 return_value=mock_client_cm,
             ):
                 result = await orchestrator.process_complex_query("test")
@@ -1174,10 +1174,10 @@ class TestOrchestrationPipelineChain:
 
         with (
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
             ) as mock_routing_cls,
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
             mock_routing_cls.return_value = Mock()
@@ -1230,7 +1230,7 @@ class TestOrchestrationPipelineChain:
             mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
             with patch(
-                "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
                 return_value=mock_client_cm,
             ):
                 result = await orchestrator.process_complex_query("test")
@@ -1302,7 +1302,7 @@ class TestOrchestrationPipelineChain:
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
             return_value=mock_client_cm,
         ):
             result = await orchestrator.process_complex_query("test")
@@ -1425,7 +1425,7 @@ class TestOrchestrationPipelineChain:
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "cogniverse_agents.multi_agent_orchestrator.httpx.AsyncClient",
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.httpx.AsyncClient",
             return_value=mock_client_cm,
         ):
             result = await orchestrator.process_complex_query(

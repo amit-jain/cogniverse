@@ -33,7 +33,9 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+    MultiAgentOrchestrator,
+)
 from cogniverse_agents.routing_agent import RoutingOutput
 from tests.agents.integration.conftest import skip_if_no_llm
 
@@ -185,10 +187,10 @@ def orchestrator(stub_server, telemetry_manager_without_phoenix):
 
     with (
         patch(
-            "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
         ) as mock_routing_cls,
         patch(
-            "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+            "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
         ),
     ):
         mock_routing_instance = Mock()
@@ -470,10 +472,10 @@ class TestOrchestratorHttpPipeline:
 
         with (
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
             ) as mock_routing_cls,
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
             mock_routing_cls.return_value = Mock()
@@ -607,10 +609,10 @@ class TestConversationAwarePlanningWithLLM:
 
         with (
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.RoutingAgent"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.RoutingAgent"
             ) as mock_routing_cls,
             patch(
-                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.orchestrator.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
             mock_routing_cls.return_value = Mock()

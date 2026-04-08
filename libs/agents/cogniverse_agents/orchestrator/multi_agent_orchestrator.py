@@ -39,7 +39,7 @@ from cogniverse_agents.routing_agent import (
     RoutingAgent,
     RoutingDeps,
 )
-from cogniverse_agents.workflow.types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,
@@ -1407,8 +1407,10 @@ class MultiAgentOrchestrator:
                     "total_tasks": len(workflow_plan.tasks),
                     "completed_tasks": len(completed_tasks),
                     "execution_time": (
-                        workflow_plan.end_time - workflow_plan.start_time
-                    ).total_seconds(),
+                        (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                        if workflow_plan.end_time is not None and workflow_plan.start_time is not None
+                        else 0.0
+                    ),
                     "agents_used": list(set(t.agent_name for t in completed_tasks)),
                 },
             }

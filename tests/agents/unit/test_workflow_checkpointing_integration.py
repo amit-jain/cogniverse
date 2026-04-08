@@ -26,7 +26,7 @@ from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.workflow.types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowTask,

@@ -1981,7 +1981,7 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestrator_initialization(self, telemetry_manager_without_phoenix):
         """Test Multi-Agent Orchestrator initialization"""
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.workflow_intelligence import OptimizationStrategy
 
         # Test default initialization
@@ -2012,7 +2012,7 @@ class TestMultiAgentOrchestrator:
 
     def test_workflow_plan_structure(self):
         """Test workflow plan data structures"""
-        from cogniverse_agents.multi_agent_orchestrator import (
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
             TaskStatus,
             WorkflowPlan,
             WorkflowStatus,
@@ -2047,7 +2047,7 @@ class TestMultiAgentOrchestrator:
 
     def test_execution_order_calculation(self, telemetry_manager_without_phoenix):
         """Test execution order calculation with dependencies"""
-        from cogniverse_agents.multi_agent_orchestrator import (
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
             MultiAgentOrchestrator,
             WorkflowTask,
         )
@@ -2097,7 +2097,7 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestration_statistics(self, telemetry_manager_without_phoenix):
         """Test orchestration statistics tracking"""
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
@@ -2247,7 +2247,7 @@ class TestSystemIntegration:
         self, telemetry_manager_without_phoenix
     ):
         """Test flow from enhanced routing to orchestration"""
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.routing_agent import RoutingDeps
 
         # Create components
@@ -2280,7 +2280,7 @@ class TestSystemIntegration:
 
     def test_phase4_statistics_consistency(self, telemetry_manager_without_phoenix):
         """Test statistics reporting consistency across Phase 4 components"""
-        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
         from cogniverse_agents.routing_agent import RoutingDeps
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 

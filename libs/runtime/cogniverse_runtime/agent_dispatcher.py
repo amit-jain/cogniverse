@@ -496,7 +496,7 @@ class AgentDispatcher:
         needs_orchestration = result.metadata.get("needs_orchestration", False)
 
         if needs_orchestration:
-            from cogniverse_agents.multi_agent_orchestrator import (
+            from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
                 MultiAgentOrchestrator,
             )
             from cogniverse_foundation.telemetry.manager import get_telemetry_manager

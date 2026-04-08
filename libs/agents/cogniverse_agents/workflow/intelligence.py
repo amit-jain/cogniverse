@@ -33,7 +33,7 @@ import dspy
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
 # Shared workflow types
-from cogniverse_agents.workflow.types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,
