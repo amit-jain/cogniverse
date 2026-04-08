@@ -300,12 +300,12 @@ class ProfileSelectionAgent(
         confidence: float,
     ) -> None:
         """Emit cogniverse.profile_selection telemetry span."""
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager) or not tenant_id:
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
             with self.telemetry_manager.span(
                 "cogniverse.profile_selection",
-                tenant_id=tenant_id,
+                tenant_id=tenant_id or "default",
                 attributes={
                     "profile_selection.query": query[:200],
                     "profile_selection.selected_profile": selected_profile,

@@ -281,7 +281,8 @@ class QueryEnhancementAgent(
         parts: List[str] = []
         if entities:
             entity_strs = [
-                f"{e.get('text', '')} ({e.get('label', '')})" for e in entities
+                f"{e.get('text', '')} ({e.get('type', e.get('label', ''))})"
+                for e in entities
             ]
             parts.append(f"Entities: {', '.join(entity_strs)}")
         if relationships:

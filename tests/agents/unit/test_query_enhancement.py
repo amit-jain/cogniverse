@@ -2669,8 +2669,8 @@ class TestEnhancedQueryEnhancementAgent:
     def test_build_entity_context_with_entities_and_relationships(self, qe_agent):
         """Entity context string includes both entities and relationships."""
         entities = [
-            {"text": "robots", "label": "TECH"},
-            {"text": "soccer", "label": "SPORT"},
+            {"text": "robots", "type": "TECH"},
+            {"text": "soccer", "type": "SPORT"},
         ]
         relationships = [
             {"subject": "robots", "relation": "playing", "object": "soccer"},

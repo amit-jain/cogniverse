@@ -330,8 +330,8 @@ class TestProfileSelectionAgent:
         assert attrs["profile_selection.intent"] == "video_search"
 
     @pytest.mark.asyncio
-    async def test_span_not_emitted_without_tenant_id(self, profile_agent):
-        """No span emitted when tenant_id is None."""
+    async def test_span_uses_default_tenant_when_tenant_id_is_none(self, profile_agent):
+        """Span emitted with tenant_id='default' when tenant_id is None."""
         mock_telemetry = Mock()
         profile_agent.telemetry_manager = mock_telemetry
 
@@ -350,7 +350,9 @@ class TestProfileSelectionAgent:
             ProfileSelectionInput(query="cat videos")
         )
 
-        mock_telemetry.span.assert_not_called()
+        mock_telemetry.span.assert_called_once()
+        call_kwargs = mock_telemetry.span.call_args
+        assert call_kwargs[1]["tenant_id"] == "default"
 
     @pytest.mark.asyncio
     async def test_span_failure_does_not_raise(self, profile_agent):

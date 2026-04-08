@@ -1,9 +1,10 @@
 """
-Workflow Intelligence - Read-only template loader and profile provider
+Workflow Intelligence - Template loader, profile provider, and execution recorder
 
 Loads workflow templates and agent performance profiles from artifacts at startup.
-Provides template matching for the orchestrator. Does NOT run DSPy optimization
-inline or record workflow executions inline (telemetry spans replace this).
+Provides template matching for the orchestrator. Records workflow executions to
+in-memory history (used by OrchestrationEvaluator in batch jobs). Does NOT run
+DSPy optimization inline.
 """
 
 import json
@@ -18,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.workflow_types import (
     WorkflowPlan,
+    WorkflowStatus,
     WorkflowTask,
 )
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
@@ -85,12 +87,12 @@ class WorkflowTemplate:
 
 class WorkflowIntelligence:
     """
-    Read-only template loader and profile provider.
+    Template loader, profile provider, and execution recorder.
 
     Loads workflow templates and agent performance profiles from artifacts
-    at startup. Provides template matching for the orchestrator. Does NOT
-    run DSPy optimization inline or record workflow executions inline
-    (telemetry spans replace this).
+    at startup. Provides template matching for the orchestrator. Records
+    workflow executions to in-memory history for batch evaluation. Does NOT
+    run DSPy optimization inline.
     """
 
     def __init__(
@@ -201,11 +203,30 @@ class WorkflowIntelligence:
             self.logger.error(f"Failed to load historical data: {e}")
 
     async def record_workflow_execution(self, workflow_plan: WorkflowPlan) -> None:
-        """Record workflow execution via telemetry span (no inline storage)."""
-        self.logger.info(
-            "Workflow %s completed (recording via telemetry spans, not inline)",
-            workflow_plan.workflow_id,
-        )
+        """Convert a completed WorkflowPlan to a WorkflowExecution and append to history."""
+        try:
+            execution = WorkflowExecution(
+                workflow_id=workflow_plan.workflow_id,
+                query=workflow_plan.original_query,
+                query_type=self._classify_query_type(workflow_plan.original_query),
+                execution_time=(
+                    (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                    if workflow_plan.end_time and workflow_plan.start_time
+                    else 0.0
+                ),
+                success=workflow_plan.status == WorkflowStatus.COMPLETED,
+                agent_sequence=[task.agent_name for task in workflow_plan.tasks],
+                task_count=len(workflow_plan.tasks),
+                parallel_efficiency=self._calculate_parallel_efficiency(workflow_plan),
+                confidence_score=workflow_plan.metadata.get("average_confidence", 0.5),
+                metadata=workflow_plan.metadata,
+            )
+            self.workflow_history.append(execution)
+            self.logger.debug(
+                "Recorded workflow execution: %s", workflow_plan.workflow_id
+            )
+        except Exception as e:
+            self.logger.error("Failed to record workflow execution: %s", e)
 
     async def optimize_workflow_plan(
         self,
@@ -440,6 +461,29 @@ class WorkflowIntelligence:
         else:
             return "general"
 
+    def _calculate_parallel_efficiency(self, workflow_plan: WorkflowPlan) -> float:
+        """Calculate parallel execution efficiency."""
+        if not workflow_plan.execution_order or not workflow_plan.tasks:
+            return 0.0
+
+        max_task_time = (
+            max(
+                (task.end_time - task.start_time).total_seconds()
+                for task in workflow_plan.tasks
+                if task.end_time and task.start_time
+            )
+            if workflow_plan.tasks
+            else 0.0
+        )
+
+        actual_time = (
+            (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+            if workflow_plan.end_time and workflow_plan.start_time
+            else 0.0
+        )
+
+        return max_task_time / actual_time if actual_time > 0 else 0.0
+
     def _calculate_execution_order(self, tasks: List[WorkflowTask]) -> List[List[str]]:
         """Calculate execution order considering dependencies (simplified version)"""
         # This is a simplified version - full implementation would be in the orchestrator
@@ -518,10 +562,10 @@ class WorkflowIntelligence:
         }
 
     async def record_execution(self, workflow_execution: WorkflowExecution) -> None:
-        """Record workflow execution (no-op, spans are the record)."""
-        self.logger.info(
-            "Workflow %s recorded via telemetry spans, not inline",
-            workflow_execution.workflow_id,
+        """Record workflow execution directly (called by OrchestrationEvaluator in batch jobs)."""
+        self.workflow_history.append(workflow_execution)
+        self.logger.debug(
+            "Recorded workflow execution: %s", workflow_execution.workflow_id
         )
 
     async def record_ground_truth_execution(

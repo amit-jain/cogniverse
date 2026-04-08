@@ -46,8 +46,8 @@ class TestWorkflowIntelligence:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_record_workflow_execution_is_noop(self):
-        """record_workflow_execution is a no-op (spans are the record)."""
+    async def test_record_workflow_execution_appends_to_history(self):
+        """record_workflow_execution converts a plan and appends to history."""
         intelligence = _make_intelligence()
 
         workflow_plan = WorkflowPlan(
@@ -63,8 +63,12 @@ class TestWorkflowIntelligence:
 
         assert len(intelligence.workflow_history) == 0
         await intelligence.record_workflow_execution(workflow_plan)
-        # No-op: history must remain empty
-        assert len(intelligence.workflow_history) == 0
+        assert len(intelligence.workflow_history) == 1
+        recorded = intelligence.workflow_history[0]
+        assert recorded.workflow_id == "test-workflow"
+        assert recorded.query == "find AI videos"
+        assert recorded.success is True
+        assert recorded.agent_sequence == ["video_search"]
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -160,8 +164,8 @@ class TestSimplifiedWorkflowIntelligence:
         assert isinstance(report, dict)
 
     @pytest.mark.asyncio
-    async def test_record_workflow_is_noop(self):
-        """record_workflow_execution should be a no-op (spans are the record)."""
+    async def test_record_workflow_execution_appends(self):
+        """record_workflow_execution converts plan and appends to history."""
         intelligence = _make_intelligence()
         plan = WorkflowPlan(
             workflow_id="test-wf",
@@ -170,11 +174,12 @@ class TestSimplifiedWorkflowIntelligence:
             tasks=[],
         )
         await intelligence.record_workflow_execution(plan)
-        assert len(intelligence.workflow_history) == 0
+        assert len(intelligence.workflow_history) == 1
+        assert intelligence.workflow_history[0].workflow_id == "test-wf"
 
     @pytest.mark.asyncio
-    async def test_record_execution_is_noop(self):
-        """record_execution should be a no-op (spans are the record)."""
+    async def test_record_execution_appends_to_history(self):
+        """record_execution appends a WorkflowExecution to history."""
         from cogniverse_agents.workflow.intelligence import WorkflowExecution
 
         intelligence = _make_intelligence()
@@ -190,7 +195,32 @@ class TestSimplifiedWorkflowIntelligence:
             confidence_score=0.9,
         )
         await intelligence.record_execution(execution)
-        assert len(intelligence.workflow_history) == 0
+        assert len(intelligence.workflow_history) == 1
+        assert intelligence.workflow_history[0].workflow_id == "wf-1"
+        assert intelligence.workflow_history[0].success is True
+
+    @pytest.mark.asyncio
+    async def test_record_execution_respects_max_history_size(self):
+        """record_execution should respect max_history_size limit."""
+        from cogniverse_agents.workflow.intelligence import WorkflowExecution
+
+        intelligence = _make_intelligence(max_history_size=2)
+        for i in range(3):
+            execution = WorkflowExecution(
+                workflow_id=f"wf-{i}",
+                query="test",
+                query_type="general",
+                execution_time=1.0,
+                success=True,
+                agent_sequence=["agent1"],
+                task_count=1,
+                parallel_efficiency=1.0,
+                confidence_score=0.9,
+            )
+            await intelligence.record_execution(execution)
+        assert len(intelligence.workflow_history) == 2
+        assert intelligence.workflow_history[0].workflow_id == "wf-1"
+        assert intelligence.workflow_history[1].workflow_id == "wf-2"
 
     @pytest.mark.asyncio
     async def test_optimize_from_ground_truth_is_noop(self):
