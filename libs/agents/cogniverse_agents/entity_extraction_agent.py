@@ -218,8 +218,13 @@ class EntityExtractionAgent(
         path_used = "dspy"
 
         if self._gliner_extractor is not None:
-            # --- Fast path: GLiNER + SpaCy ---
-            entities, relationships, path_used = self._extract_fast_path(query)
+            try:
+                entities, relationships, path_used = self._extract_fast_path(query)
+            except Exception as e:
+                logger.warning("Fast path extraction failed, falling back to DSPy: %s", e)
+                entities = await self._extract_dspy_path(query)
+                relationships = []
+                path_used = "dspy"
         else:
             # --- DSPy fallback ---
             entities = await self._extract_dspy_path(query)
@@ -418,9 +423,11 @@ class EntityExtractionAgent(
                 "input_schema": {"query": "string"},
                 "output_schema": {
                     "entities": "list",
+                    "relationships": "list",
                     "entity_count": "integer",
                     "has_entities": "boolean",
                     "dominant_types": "list",
+                    "path_used": "string",
                 },
                 "examples": [
                     {

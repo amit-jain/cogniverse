@@ -266,7 +266,7 @@ class ProfileSelectionAgent(
             query, profiles, result.selected_profile, result.modality
         )
 
-        return ProfileSelectionOutput(
+        output = ProfileSelectionOutput(
             query=query,
             selected_profile=result.selected_profile,
             confidence=confidence,
@@ -276,6 +276,48 @@ class ProfileSelectionAgent(
             complexity=result.complexity,
             alternatives=alternatives,
         )
+
+        self._emit_profile_span(
+            query=input.query,
+            tenant_id=input.tenant_id,
+            selected_profile=output.selected_profile,
+            intent=output.query_intent,
+            modality=output.modality,
+            complexity=output.complexity,
+            confidence=output.confidence,
+        )
+
+        return output
+
+    def _emit_profile_span(
+        self,
+        query: str,
+        tenant_id: Optional[str],
+        selected_profile: str,
+        intent: str,
+        modality: str,
+        complexity: str,
+        confidence: float,
+    ) -> None:
+        """Emit cogniverse.profile_selection telemetry span."""
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager) or not tenant_id:
+            return
+        try:
+            with self.telemetry_manager.span(
+                "cogniverse.profile_selection",
+                tenant_id=tenant_id,
+                attributes={
+                    "profile_selection.query": query[:200],
+                    "profile_selection.selected_profile": selected_profile,
+                    "profile_selection.modality": modality,
+                    "profile_selection.complexity": complexity,
+                    "profile_selection.intent": intent,
+                    "profile_selection.confidence": confidence,
+                },
+            ):
+                pass
+        except Exception as e:
+            logger.debug("Failed to emit profile_selection span: %s", e)
 
     def _generate_alternatives(
         self, query: str, profiles: List[str], selected: str, modality: str

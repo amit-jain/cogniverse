@@ -43,6 +43,9 @@ class ConfigLoader:
         "deep_research_agent": "cogniverse_agents.deep_research_agent:DeepResearchAgent",
         "coding_agent": "cogniverse_agents.coding_agent:CodingAgent",
         "gateway_agent": "cogniverse_agents.gateway_agent:GatewayAgent",
+        "entity_extraction_agent": "cogniverse_agents.entity_extraction_agent:EntityExtractionAgent",
+        "query_enhancement_agent": "cogniverse_agents.query_enhancement_agent:QueryEnhancementAgent",
+        "profile_selection_agent": "cogniverse_agents.profile_selection_agent:ProfileSelectionAgent",
     }
 
     def __init__(self, tenant_id: str = "default"):

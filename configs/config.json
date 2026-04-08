@@ -127,6 +127,24 @@
         "classification"
       ],
       "timeout": 10
+    },
+    "entity_extraction_agent": {
+      "enabled": true,
+      "url": "http://localhost:8000",
+      "capabilities": ["entity_extraction", "ner"],
+      "timeout": 15
+    },
+    "query_enhancement_agent": {
+      "enabled": true,
+      "url": "http://localhost:8000",
+      "capabilities": ["query_enhancement", "expansion"],
+      "timeout": 15
+    },
+    "profile_selection_agent": {
+      "enabled": true,
+      "url": "http://localhost:8000",
+      "capabilities": ["profile_selection"],
+      "timeout": 15
     }
   },
   "llm_config": {

@@ -291,3 +291,87 @@ class TestProfileSelectionAgent:
         assert "query" in skills[0]["input_schema"]
         assert "selected_profile" in skills[0]["output_schema"]
         assert len(skills[0]["examples"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_span_emitted_with_tenant_id(self, profile_agent):
+        """Span is emitted with cogniverse.profile_selection name when tenant_id is set."""
+        mock_telemetry = Mock()
+        mock_cm = Mock()
+        mock_cm.__enter__ = Mock(return_value=None)
+        mock_cm.__exit__ = Mock(return_value=False)
+        mock_telemetry.span = Mock(return_value=mock_cm)
+        profile_agent.telemetry_manager = mock_telemetry
+
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="0.85",
+                reasoning="Good match",
+                query_intent="video_search",
+                modality="video",
+                complexity="simple",
+            )
+        )
+
+        await profile_agent._process_impl(
+            ProfileSelectionInput(
+                query="Show me cat videos",
+                tenant_id="test_tenant",
+            )
+        )
+
+        mock_telemetry.span.assert_called_once()
+        call_kwargs = mock_telemetry.span.call_args
+        assert call_kwargs[0][0] == "cogniverse.profile_selection"
+        attrs = call_kwargs[1]["attributes"]
+        assert attrs["profile_selection.selected_profile"] == "video_colpali_base"
+        assert attrs["profile_selection.modality"] == "video"
+        assert attrs["profile_selection.complexity"] == "simple"
+        assert attrs["profile_selection.intent"] == "video_search"
+
+    @pytest.mark.asyncio
+    async def test_span_not_emitted_without_tenant_id(self, profile_agent):
+        """No span emitted when tenant_id is None."""
+        mock_telemetry = Mock()
+        profile_agent.telemetry_manager = mock_telemetry
+
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="0.8",
+                reasoning="Match",
+                query_intent="video_search",
+                modality="video",
+                complexity="simple",
+            )
+        )
+
+        await profile_agent._process_impl(
+            ProfileSelectionInput(query="cat videos")
+        )
+
+        mock_telemetry.span.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_span_failure_does_not_raise(self, profile_agent):
+        """Span emission failure is swallowed and does not propagate."""
+        mock_telemetry = Mock()
+        mock_telemetry.span = Mock(side_effect=RuntimeError("telemetry down"))
+        profile_agent.telemetry_manager = mock_telemetry
+
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="0.8",
+                reasoning="Match",
+                query_intent="video_search",
+                modality="video",
+                complexity="simple",
+            )
+        )
+
+        # Must not raise
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="cat videos", tenant_id="t1")
+        )
+        assert result.selected_profile == "video_colpali_base"

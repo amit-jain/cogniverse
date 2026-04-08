@@ -16,6 +16,13 @@ from cogniverse_agents.entity_extraction_agent import (
 )
 
 
+def _make_extraction_agent():
+    """Create EntityExtractionAgent with mocked DSPy for use in tests."""
+    with patch("dspy.ChainOfThought"):
+        deps = EntityExtractionDeps()
+        return EntityExtractionAgent(deps=deps, port=8010)
+
+
 @pytest.fixture
 def mock_dspy_lm():
     """Mock DSPy language model"""
@@ -376,6 +383,27 @@ class TestGLiNERFastPath:
         assert result.path_used == "dspy"
         assert result.entity_count == 1
         assert result.entities[0].text == "Obama"
+
+    @pytest.mark.asyncio
+    async def test_fast_path_runtime_failure_falls_back_to_dspy(self):
+        """If GLiNER raises at runtime, should fall back to DSPy."""
+        agent = _make_extraction_agent()
+        agent._gliner_extractor = MagicMock()
+        agent._gliner_extractor.extract_entities.side_effect = RuntimeError("GLiNER OOM")
+        agent._spacy_analyzer = MagicMock()
+
+        # Mock DSPy fallback
+        mock_result = MagicMock()
+        mock_result.entities = "Python|TECHNOLOGY|0.8"
+        mock_result.entity_types = "TECHNOLOGY"
+        agent.dspy_module = MagicMock()
+        agent.dspy_module.forward.return_value = mock_result
+
+        input_data = EntityExtractionInput(query="Python programming")
+        result = await agent._process_impl(input_data)
+
+        assert result.entity_count >= 1
+        assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
     async def test_a2a_output_includes_relationships(self, fast_agent):
