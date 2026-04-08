@@ -33,7 +33,6 @@ class ColBERTQueryEncoder(QueryEncoder):
     """Query encoder for ColBERT models (text-only, per-token embeddings)."""
 
     def __init__(self, model_name: str = "lightonai/Reason-ModernColBERT"):
-        import os
 
         config = {
             "embedding_model": model_name,

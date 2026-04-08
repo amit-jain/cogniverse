@@ -19,6 +19,7 @@ from .videoprism_loader import (
 
 __all__ = [
     "get_or_load_model",
+    "model_load_lock",
     "ModelLoaderFactory",
     "ModelLoader",
     "ColBERTModelLoader",
