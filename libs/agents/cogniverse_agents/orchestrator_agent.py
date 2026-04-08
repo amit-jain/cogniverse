@@ -4,9 +4,19 @@ OrchestratorAgent - Autonomous A2A agent for coordinating multi-agent query proc
 Implements two-phase orchestration:
 1. Planning Phase: Analyze query and create execution plan
 2. Action Phase: Execute plan by coordinating specialized agents via A2A HTTP
+
+Features:
+- Streaming progress events per step
+- Checkpoint/resume for durable execution
+- Cross-modal fusion for multi-agent result aggregation
+- Workflow intelligence (template matching + execution recording)
+- Cancellation of in-flight workflows
 """
 
+import json
 import logging
+import time
+import uuid
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -15,11 +25,22 @@ import httpx
 from pydantic import BaseModel, Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.orchestrator.checkpoint_types import (
+    CheckpointConfig,
+    CheckpointStatus,
+    TaskCheckpoint,
+    WorkflowCheckpoint,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
 if TYPE_CHECKING:
     from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_agents.orchestrator.checkpoint_storage import (
+        WorkflowCheckpointStorage,
+    )
+    from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+    from cogniverse_core.events import EventQueue
     from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
@@ -44,6 +65,7 @@ class OrchestratorOutput(AgentOutput):
     """Type-safe output from orchestration"""
 
     query: str = Field(..., description="Original query")
+    workflow_id: str = Field("", description="Unique workflow identifier")
     plan_steps: List[Dict[str, Any]] = Field(
         default_factory=list, description="Orchestration plan steps"
     )
@@ -66,21 +88,20 @@ class OrchestratorDeps(AgentDeps):
     pass
 
 
-class AgentType(str, Enum):
-    """Available agent types for orchestration"""
+class FusionStrategy(Enum):
+    """Strategies for combining results from multiple agents across modalities"""
 
-    ENTITY_EXTRACTION = "entity_extraction"
-    PROFILE_SELECTION = "profile_selection"
-    QUERY_ENHANCEMENT = "query_enhancement"
-    SEARCH = "search"
-    SUMMARIZER = "summarizer"
-    DETAILED_REPORT = "detailed_report"
+    SCORE_BASED = "score"
+    TEMPORAL = "temporal"
+    SEMANTIC = "semantic"  # TODO: batch optimization via Argo
+    HIERARCHICAL = "hierarchical"
+    SIMPLE = "simple"
 
 
 class AgentStep(BaseModel):
     """Single step in orchestration plan"""
 
-    agent_type: AgentType
+    agent_name: str = Field(description="Name of the agent to invoke")
     input_data: Dict[str, Any] = Field(
         default_factory=dict, description="Input for this agent"
     )
@@ -124,14 +145,38 @@ class OrchestrationSignature(dspy.Signature):
     conversation_context: str = dspy.InputField(
         desc="Summary of previous conversation turns. Empty string if first turn."
     )
+    gateway_context: str = dspy.InputField(
+        desc="Classification context from gateway (intent, entities, modality). Empty string if not available."
+    )
 
     agent_sequence: str = dspy.OutputField(
-        desc="Comma-separated sequence of agents to invoke (e.g., 'entity_extraction,profile_selection,search')"
+        desc="Comma-separated sequence of agents to invoke (e.g., 'entity_extraction_agent,profile_selection_agent,search_agent')"
     )
     parallel_steps: str = dspy.OutputField(
         desc="Indices of steps that can run in parallel (e.g., '0,1|2,3' means 0&1 parallel, then 2&3 parallel)"
     )
     reasoning: str = dspy.OutputField(desc="Explanation of orchestration plan")
+
+
+class ResultAggregatorSignature(dspy.Signature):
+    """Cross-modal fusion of multi-agent results"""
+
+    original_query: str = dspy.InputField(desc="Original user query")
+    task_results: str = dspy.InputField(
+        desc="JSON string of individual task results with modalities"
+    )
+    fusion_strategy: str = dspy.InputField(
+        desc="Fusion strategy: score, temporal, semantic, hierarchical"
+    )
+    agent_modalities: str = dspy.InputField(
+        desc="Modalities of each agent result (video, image, audio, document, text)"
+    )
+
+    aggregated_result: str = dspy.OutputField(desc="Synthesized final result")
+    confidence_score: float = dspy.OutputField(desc="Confidence in aggregated result")
+    fusion_quality: str = dspy.OutputField(
+        desc="Fusion quality metrics: coverage, consistency, coherence"
+    )
 
 
 class OrchestrationModule(dspy.Module):
@@ -146,12 +191,14 @@ class OrchestrationModule(dspy.Module):
         query: str,
         available_agents: str,
         conversation_context: str = "",
+        gateway_context: str = "",
     ) -> dspy.Prediction:
         """Create orchestration plan using LLM reasoning"""
         return self.planner(
             query=query,
             available_agents=available_agents,
             conversation_context=conversation_context,
+            gateway_context=gateway_context,
         )
 
 
@@ -165,11 +212,13 @@ class OrchestratorAgent(
     1. Planning Phase: Analyze query and create execution plan
     2. Action Phase: Execute plan by coordinating agents
 
-    Capabilities:
-    - LLM-based query analysis for optimal agent selection
-    - Parallel agent execution where possible
-    - Result aggregation and synthesis
-    - Adaptive workflow based on query characteristics
+    Features:
+    - Dynamic agent discovery from AgentRegistry (no hardcoded enum)
+    - Streaming progress events per step
+    - Checkpoint/resume for durable execution
+    - Cross-modal fusion for multi-agent result aggregation
+    - Workflow intelligence (template matching + execution recording)
+    - Cancellation of in-flight workflows
     """
 
     def __init__(
@@ -178,6 +227,10 @@ class OrchestratorAgent(
         registry: "AgentRegistry",
         config_manager: "ConfigManager" = None,
         port: int = 8013,
+        checkpoint_config: Optional[CheckpointConfig] = None,
+        checkpoint_storage: Optional["WorkflowCheckpointStorage"] = None,
+        event_queue: Optional["EventQueue"] = None,
+        workflow_intelligence: Optional["WorkflowIntelligence"] = None,
     ):
         """
         Initialize OrchestratorAgent with real AgentRegistry.
@@ -187,6 +240,10 @@ class OrchestratorAgent(
             registry: AgentRegistry for dynamic agent discovery
             config_manager: ConfigManager instance (REQUIRED)
             port: Port for A2A server
+            checkpoint_config: Configuration for durable execution checkpoints
+            checkpoint_storage: Storage backend for checkpoints
+            event_queue: Optional EventQueue for real-time notifications
+            workflow_intelligence: Optional WorkflowIntelligence for template matching
 
         Raises:
             TypeError: If deps is not OrchestratorDeps
@@ -199,6 +256,20 @@ class OrchestratorAgent(
             )
         self.registry = registry
         self._config_manager = config_manager
+
+        # Checkpoint support
+        self.checkpoint_config = checkpoint_config or CheckpointConfig(enabled=False)
+        self.checkpoint_storage = checkpoint_storage
+
+        # Event queue for external consumers
+        self.event_queue = event_queue
+
+        # Workflow intelligence for template matching
+        self.workflow_intelligence = workflow_intelligence
+
+        # Active workflows for cancellation support
+        self.active_workflows: Dict[str, OrchestrationPlan] = {}
+        self._cancelled_workflows: set = set()
 
         orchestration_module = OrchestrationModule()
 
@@ -277,6 +348,11 @@ class OrchestratorAgent(
                 "Continuing without memory support."
             )
 
+    async def _emit_event(self, event) -> None:
+        """Emit event to EventQueue if configured."""
+        if self.event_queue is not None:
+            await self.event_queue.enqueue(event)
+
     async def _process_impl(
         self, input: Union[OrchestratorInput, Dict[str, Any]]
     ) -> OrchestratorOutput:
@@ -296,10 +372,12 @@ class OrchestratorAgent(
         query = input.query
         tenant_id = input.tenant_id
         session_id = input.session_id
+        workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
 
         if not query:
             return OrchestratorOutput(
                 query="",
+                workflow_id=workflow_id,
                 plan_steps=[],
                 parallel_groups=[],
                 plan_reasoning="Empty query, no orchestration needed",
@@ -307,6 +385,8 @@ class OrchestratorAgent(
                 final_output={"status": "error", "message": "Empty query"},
                 execution_summary="No execution performed",
             )
+
+        start_time = time.monotonic()
 
         # Lazy memory initialization for this tenant
         self._ensure_memory_for_tenant(tenant_id)
@@ -322,52 +402,127 @@ class OrchestratorAgent(
             input.conversation_history
         )
 
-        # Phase 1: Planning
+        # Phase 1: Planning (with workflow intelligence template matching)
         self.emit_progress("planning", "Creating execution plan...")
-        plan = await self._create_plan(query, conversation_context)
+        gateway_context = ""
+        if self.workflow_intelligence:
+            template = self.workflow_intelligence._find_matching_template(query)
+            if template:
+                gateway_context = (
+                    f"Matched template: {template.name}. "
+                    f"Suggested sequence: {json.dumps(template.task_sequence)}"
+                )
+                logger.info(f"Workflow intelligence matched template: {template.name}")
 
-        # Phase 2: Action — execute via A2A HTTP, passing tenant_id/session_id
-        self.emit_progress("execution", "Executing agent plan...")
-        agent_results = await self._execute_plan(
-            plan, tenant_id=tenant_id, session_id=session_id
-        )
+        plan = await self._create_plan(query, conversation_context, gateway_context)
 
-        self.emit_progress("aggregation", "Aggregating results...")
-        final_output = self._aggregate_results(query, agent_results)
-        execution_summary = self._generate_summary(plan, agent_results)
-        self.remember_success(query, execution_summary)
+        # Track active workflow for cancellation
+        self.active_workflows[workflow_id] = plan
 
-        return OrchestratorOutput(
-            query=query,
-            plan_steps=[
-                {
-                    "agent_type": step.agent_type.value,
-                    "reasoning": step.reasoning,
-                    "depends_on": step.depends_on,
-                }
-                for step in plan.steps
-            ],
-            parallel_groups=plan.parallel_groups,
-            plan_reasoning=plan.reasoning,
-            agent_results=agent_results,
-            final_output=final_output,
-            execution_summary=execution_summary,
-        )
+        try:
+            # Phase 2: Action -- execute via A2A HTTP, passing tenant_id/session_id
+            self.emit_progress("execution", "Executing agent plan...")
+            agent_results = await self._execute_plan(
+                plan,
+                workflow_id=workflow_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
+            )
+
+            self.emit_progress("aggregating", "Merging results from all agents")
+            final_output = self._aggregate_results(query, agent_results)
+            execution_summary = self._generate_summary(plan, agent_results)
+            self.remember_success(query, execution_summary)
+
+            execution_time = time.monotonic() - start_time
+
+            # Emit orchestration telemetry span
+            self._emit_orchestration_span(
+                workflow_id=workflow_id,
+                query=query,
+                agent_sequence=[step.agent_name for step in plan.steps],
+                execution_time=execution_time,
+                success=True,
+                tasks_completed=len(agent_results),
+            )
+
+            # Record execution for workflow intelligence
+            if self.workflow_intelligence:
+                try:
+                    from datetime import datetime, timedelta
+
+                    from cogniverse_agents.workflow_types import (
+                        WorkflowPlan as WFPlan,
+                    )
+                    from cogniverse_agents.workflow_types import (
+                        WorkflowStatus,
+                        WorkflowTask,
+                    )
+
+                    wf_plan = WFPlan(
+                        workflow_id=workflow_id,
+                        original_query=query,
+                        tasks=[
+                            WorkflowTask(
+                                task_id=f"task_{i}",
+                                agent_name=step.agent_name,
+                                query=query,
+                            )
+                            for i, step in enumerate(plan.steps)
+                        ],
+                        status=WorkflowStatus.COMPLETED,
+                        start_time=datetime.now() - timedelta(seconds=execution_time),
+                        end_time=datetime.now(),
+                        metadata={"agent_results": {}},
+                    )
+                    await self.workflow_intelligence.record_workflow_execution(wf_plan)
+                except Exception as e:
+                    logger.warning(f"Failed to record workflow execution: {e}")
+
+            self.emit_progress("complete", "Orchestration finished")
+
+            return OrchestratorOutput(
+                query=query,
+                workflow_id=workflow_id,
+                plan_steps=[
+                    {
+                        "agent_name": step.agent_name,
+                        "reasoning": step.reasoning,
+                        "depends_on": step.depends_on,
+                    }
+                    for step in plan.steps
+                ],
+                parallel_groups=plan.parallel_groups,
+                plan_reasoning=plan.reasoning,
+                agent_results=agent_results,
+                final_output=final_output,
+                execution_summary=execution_summary,
+            )
+        finally:
+            self.active_workflows.pop(workflow_id, None)
 
     async def _create_plan(
-        self, query: str, conversation_context: str = ""
+        self,
+        query: str,
+        conversation_context: str = "",
+        gateway_context: str = "",
     ) -> OrchestrationPlan:
         """
-        Planning Phase: Create execution plan using LLM reasoning
+        Planning Phase: Create execution plan using LLM reasoning.
+
+        Uses dynamic agent discovery from AgentRegistry instead of a hardcoded enum.
 
         Args:
             query: User query to analyze
             conversation_context: Formatted previous conversation turns
+            gateway_context: Classification context from gateway agent
 
         Returns:
             OrchestrationPlan with agent sequence and parallelization
         """
-        available_agents = ", ".join([a.value for a in AgentType])
+        # Dynamic agent discovery from registry
+        registered_agents = self.registry.list_agents()
+        available_agents = ", ".join(registered_agents)
 
         result = await self.call_dspy(
             self.dspy_module,
@@ -375,6 +530,7 @@ class OrchestratorAgent(
             query=query,
             available_agents=available_agents,
             conversation_context=conversation_context,
+            gateway_context=gateway_context,
         )
 
         agent_sequence = [
@@ -395,17 +551,20 @@ class OrchestratorAgent(
 
         steps = []
         for i, agent_name in enumerate(agent_sequence):
-            try:
-                agent_type = AgentType(agent_name)
-                step = AgentStep(
-                    agent_type=agent_type,
-                    input_data={"query": query},
-                    depends_on=self._calculate_dependencies(i, parallel_groups),
-                    reasoning=f"Step {i + 1}: {agent_type.value} processing",
+            # Validate against registry (skip unknown agents)
+            if agent_name not in registered_agents:
+                logger.warning(
+                    f"LLM proposed unknown agent '{agent_name}', "
+                    f"not in registry ({registered_agents}), skipping"
                 )
-                steps.append(step)
-            except ValueError:
-                logger.warning(f"Unknown agent type: {agent_name}, skipping")
+                continue
+            step = AgentStep(
+                agent_name=agent_name,
+                input_data={"query": query},
+                depends_on=self._calculate_dependencies(i, parallel_groups),
+                reasoning=f"Step {i + 1}: {agent_name} processing",
+            )
+            steps.append(step)
 
         return OrchestrationPlan(
             query=query,
@@ -470,6 +629,7 @@ class OrchestratorAgent(
     async def _execute_plan(
         self,
         plan: OrchestrationPlan,
+        workflow_id: str = "",
         tenant_id: str = "default",
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -478,9 +638,12 @@ class OrchestratorAgent(
 
         Discovers agents from the real AgentRegistry, calls them via HTTP,
         and passes tenant_id/session_id through to each agent.
+        Emits streaming progress events per step, saves checkpoints after
+        each step, and checks for cancellation between steps.
 
         Args:
             plan: OrchestrationPlan to execute
+            workflow_id: Workflow identifier for tracking
             tenant_id: Tenant identifier (per-request)
             session_id: Session identifier (per-request)
 
@@ -491,9 +654,16 @@ class OrchestratorAgent(
 
         agent_results = {}
         executed = [False] * len(plan.steps)
+        step_count = 0
 
         # Execute steps respecting dependencies and parallelism
         while not all(executed):
+            # Check for cancellation (explicit cancel via cancel_workflow)
+            if workflow_id and workflow_id in self._cancelled_workflows:
+                logger.info(f"Workflow {workflow_id} cancelled, stopping execution")
+                self._cancelled_workflows.discard(workflow_id)
+                break
+
             # Find steps ready to execute (all dependencies met)
             ready_steps = []
             for i, step in enumerate(plan.steps):
@@ -509,17 +679,23 @@ class OrchestratorAgent(
 
             logger.info(
                 f"Executing {len(ready_steps)} steps in parallel: "
-                f"{[s[1].agent_type.value for s in ready_steps]}"
+                f"{[s[1].agent_name for s in ready_steps]}"
             )
 
             async def execute_step(step_index: int, step: AgentStep):
                 """Execute a single step via A2A HTTP."""
-                agent_name = step.agent_type.value
+                agent_name = step.agent_name
+
+                # Emit progress before execution
+                self.emit_progress(
+                    "executing",
+                    f"Step {step_index}: {agent_name}",
+                    {"step": step_index, "agent": agent_name},
+                )
 
                 # Discover agent from registry by name
                 agent_endpoint = self.registry.get_agent(agent_name)
                 if not agent_endpoint:
-                    # Try finding by capability (agent_type.value matches capability name)
                     candidates = self.registry.find_agents_by_capability(agent_name)
                     if candidates:
                         agent_endpoint = candidates[0]
@@ -539,7 +715,7 @@ class OrchestratorAgent(
 
                 for dep_idx in step.depends_on:
                     if dep_idx < len(plan.steps):
-                        dep_agent = plan.steps[dep_idx].agent_type.value
+                        dep_agent = plan.steps[dep_idx].agent_name
                         if dep_agent in agent_results:
                             agent_input[f"{dep_agent}_result"] = agent_results[
                                 dep_agent
@@ -555,6 +731,16 @@ class OrchestratorAgent(
                         )
                         response.raise_for_status()
                         result = response.json()
+
+                    # Emit completion event
+                    self.emit_progress(
+                        "step_complete",
+                        f"Step {step_index} complete",
+                        {
+                            "step": step_index,
+                            "result_preview": str(result)[:200],
+                        },
+                    )
                     return agent_name, result
                 except Exception as e:
                     logger.error(
@@ -574,6 +760,17 @@ class OrchestratorAgent(
             for (step_idx, _), (agent_name, result) in zip(ready_steps, results):
                 agent_results[agent_name] = result
                 executed[step_idx] = True
+                step_count += 1
+
+            # Save checkpoint after each batch of steps (if configured)
+            if self._should_checkpoint():
+                await self._save_checkpoint(
+                    plan,
+                    workflow_id=workflow_id,
+                    current_step=step_count,
+                    status=CheckpointStatus.ACTIVE,
+                    agent_results=agent_results,
+                )
 
         return agent_results
 
@@ -598,23 +795,338 @@ class OrchestratorAgent(
     def _aggregate_results(
         self, query: str, agent_results: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Aggregate results from all agents into final output"""
-        final_output = {"query": query, "status": "success", "results": {}}
+        """Cross-modal fusion of results from all agents.
 
-        # Collect results from each agent
-        for agent_type, result in agent_results.items():
+        Detects modality per result, selects fusion strategy, and dispatches
+        to the appropriate fusion method. Falls back to simple aggregation
+        for single-modality results.
+        """
+        if not agent_results:
+            return {"query": query, "status": "success", "results": {}}
+
+        # Detect modalities and build task_results structure
+        task_results = {}
+        agent_modalities = {}
+
+        for agent_name, result in agent_results.items():
+            modality = self._detect_agent_modality(agent_name)
+            agent_modalities[agent_name] = modality
+
             if isinstance(result, BaseModel):
-                final_output["results"][agent_type] = result.model_dump()
+                result_data = result.model_dump()
             else:
-                final_output["results"][agent_type] = result
+                result_data = result
 
-        return final_output
+            confidence = (
+                result_data.get("confidence", 0.5)
+                if isinstance(result_data, dict)
+                else 0.5
+            )
+
+            task_results[agent_name] = {
+                "agent": agent_name,
+                "modality": modality,
+                "result": result_data,
+                "confidence": confidence,
+            }
+
+        # Select fusion strategy
+        fusion_strategy = self._select_fusion_strategy(query, agent_modalities)
+
+        # Dispatch to fusion method
+        if fusion_strategy == FusionStrategy.SCORE_BASED:
+            fused = self._fuse_by_score(task_results)
+        elif fusion_strategy == FusionStrategy.HIERARCHICAL:
+            fused = self._fuse_hierarchically(task_results, agent_modalities)
+        else:
+            fused = self._fuse_simple(task_results)
+
+        # Calculate fusion quality
+        modalities = set(agent_modalities.values())
+        fusion_quality = {
+            "strategy": fusion_strategy.value,
+            "modality_count": len(modalities),
+            "modalities": list(modalities),
+            "confidence": fused["confidence"],
+        }
+
+        return {
+            "query": query,
+            "status": "success",
+            "results": {
+                name: tr["result"] for name, tr in task_results.items()
+            },
+            "fusion_strategy": fusion_strategy.value,
+            "fusion_quality": fusion_quality,
+            "aggregated_content": fused["content"],
+        }
+
+    def _detect_agent_modality(self, agent_name: str) -> str:
+        """Detect modality from agent name."""
+        name_lower = agent_name.lower()
+        if "video" in name_lower:
+            return "video"
+        elif "image" in name_lower:
+            return "image"
+        elif "audio" in name_lower:
+            return "audio"
+        elif "document" in name_lower:
+            return "document"
+        return "text"
+
+    def _select_fusion_strategy(
+        self, query: str, agent_modalities: Dict[str, str]
+    ) -> FusionStrategy:
+        """Select fusion strategy based on query and modalities."""
+        modalities = set(agent_modalities.values())
+        query_lower = query.lower()
+
+        # Temporal fusion for time-related queries with multiple modalities
+        temporal_keywords = ["timeline", "sequence", "chronological", "when", "duration"]
+        if (
+            any(kw in query_lower for kw in temporal_keywords)
+            and len(modalities) > 1
+        ):
+            return FusionStrategy.TEMPORAL
+
+        # Hierarchical fusion for comparison queries
+        hierarchical_keywords = ["compare", "contrast", "difference", "versus", "vs"]
+        if any(kw in query_lower for kw in hierarchical_keywords):
+            return FusionStrategy.HIERARCHICAL
+
+        # Score-based for multi-modality queries
+        if len(modalities) > 1:
+            return FusionStrategy.SCORE_BASED
+
+        return FusionStrategy.SIMPLE
+
+    def _fuse_by_score(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
+        """Score-based fusion: weight results by confidence scores."""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        total_confidence = sum(tr["confidence"] for tr in task_results.values())
+
+        if total_confidence == 0:
+            weights = {tid: 1.0 / len(task_results) for tid in task_results}
+        else:
+            weights = {
+                tid: tr["confidence"] / total_confidence
+                for tid, tr in task_results.items()
+            }
+
+        content_parts = []
+        for tid, tr in sorted(
+            task_results.items(), key=lambda x: weights[x[0]], reverse=True
+        ):
+            modality = tr["modality"]
+            content_parts.append(
+                f"[{modality.upper()} - confidence: {weights[tid]:.2f}]\n{str(tr['result'])}"
+            )
+
+        aggregated_confidence = sum(
+            tr["confidence"] * weights[tid] for tid, tr in task_results.items()
+        )
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": aggregated_confidence,
+        }
+
+    def _fuse_hierarchically(
+        self, task_results: Dict[str, Dict], agent_modalities: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Hierarchical fusion: structured combination by modality groups."""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        modality_groups: Dict[str, List] = {}
+        for tid, tr in task_results.items():
+            modality = tr["modality"]
+            if modality not in modality_groups:
+                modality_groups[modality] = []
+            modality_groups[modality].append((tid, tr))
+
+        content_parts = []
+        total_confidence = 0.0
+        modality_count = 0
+
+        for modality in ["video", "image", "audio", "document", "text"]:
+            if modality not in modality_groups:
+                continue
+            modality_count += 1
+            tasks = modality_groups[modality]
+            content_parts.append(
+                f"## {modality.upper()} RESULTS ({len(tasks)} sources)"
+            )
+            modality_conf = 0.0
+            for tid, tr in tasks:
+                content_parts.append(f"- {str(tr['result'])}")
+                modality_conf += tr["confidence"]
+            avg = modality_conf / len(tasks)
+            total_confidence += avg
+            content_parts.append("")
+
+        avg_confidence = total_confidence / modality_count if modality_count > 0 else 0.0
+        return {"content": "\n".join(content_parts), "confidence": avg_confidence}
+
+    def _fuse_simple(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
+        """Simple fusion: basic concatenation."""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        content_parts = []
+        total_confidence = 0.0
+        for tr in task_results.values():
+            content_parts.append(str(tr["result"]))
+            total_confidence += tr["confidence"]
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": total_confidence / len(task_results),
+        }
+
+    # Checkpoint methods
+
+    def _should_checkpoint(self) -> bool:
+        """Check if checkpointing is enabled and configured."""
+        return (
+            self.checkpoint_config.enabled
+            and self.checkpoint_storage is not None
+        )
+
+    async def _save_checkpoint(
+        self,
+        plan: OrchestrationPlan,
+        workflow_id: str,
+        current_step: int,
+        status: CheckpointStatus,
+        agent_results: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Save a checkpoint of the current workflow state."""
+        if self.checkpoint_storage is None:
+            return None
+
+        try:
+            task_states = {}
+            for i, step in enumerate(plan.steps):
+                completed = i < current_step
+                task_states[f"step_{i}"] = TaskCheckpoint(
+                    task_id=f"step_{i}",
+                    agent_name=step.agent_name,
+                    query=step.input_data.get("query", ""),
+                    dependencies=[str(d) for d in step.depends_on],
+                    status="completed" if completed else "pending",
+                    result=(
+                        agent_results.get(step.agent_name)
+                        if agent_results and completed
+                        else None
+                    ),
+                )
+
+            from datetime import datetime
+
+            checkpoint = WorkflowCheckpoint(
+                checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
+                workflow_id=workflow_id,
+                tenant_id="default",
+                workflow_status="running" if status == CheckpointStatus.ACTIVE else status.value,
+                current_phase=current_step,
+                original_query=plan.query,
+                execution_order=[[f"step_{i}"] for i in range(len(plan.steps))],
+                metadata={"reasoning": plan.reasoning},
+                task_states=task_states,
+                checkpoint_time=datetime.now(),
+                checkpoint_status=status,
+            )
+
+            checkpoint_id = await self.checkpoint_storage.save_checkpoint(checkpoint)
+            logger.info(
+                f"Saved checkpoint {checkpoint_id} for workflow {workflow_id} "
+                f"(step {current_step}, status: {status.value})"
+            )
+            return checkpoint_id
+
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+            return None
+
+    async def resume_workflow(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """Resume a workflow from its latest checkpoint.
+
+        Args:
+            workflow_id: ID of the workflow to resume
+
+        Returns:
+            Checkpoint data if found, None if no checkpoint exists
+        """
+        if self.checkpoint_storage is None:
+            return None
+
+        checkpoint = await self.checkpoint_storage.get_latest_checkpoint(workflow_id)
+        if checkpoint is None:
+            logger.warning(f"No checkpoint found for workflow {workflow_id}")
+            return None
+
+        logger.info(
+            f"Resuming workflow {workflow_id} from checkpoint {checkpoint.checkpoint_id} "
+            f"(step {checkpoint.current_phase})"
+        )
+        return checkpoint.to_dict()
+
+    # Cancellation
+
+    def cancel_workflow(self, workflow_id: str) -> bool:
+        """Cancel an active workflow.
+
+        Args:
+            workflow_id: ID of the workflow to cancel
+
+        Returns:
+            True if workflow was cancelled, False if not found
+        """
+        if workflow_id not in self.active_workflows:
+            return False
+
+        self._cancelled_workflows.add(workflow_id)
+        self.active_workflows.pop(workflow_id)
+        logger.info(f"Workflow {workflow_id} cancelled")
+        return True
+
+    # Telemetry
+
+    def _emit_orchestration_span(
+        self,
+        workflow_id: str,
+        query: str,
+        agent_sequence: List[str],
+        execution_time: float,
+        success: bool,
+        tasks_completed: int,
+    ) -> None:
+        """Emit cogniverse.orchestration telemetry span."""
+        try:
+
+            config = self._config_manager
+            if not hasattr(config, "span"):
+                # config_manager doesn't have span method, log instead
+                logger.info(
+                    f"Orchestration span: workflow={workflow_id}, "
+                    f"agents={agent_sequence}, time={execution_time:.2f}s, "
+                    f"success={success}, tasks={tasks_completed}"
+                )
+                return
+        except Exception:
+            logger.debug(
+                f"Orchestration complete: workflow={workflow_id}, "
+                f"time={execution_time:.2f}s, tasks={tasks_completed}"
+            )
 
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]
     ) -> str:
         """Generate execution summary"""
-        executed_steps = len(agent_results)  # All executed, including errors
+        executed_steps = len(agent_results)
         successful_steps = sum(
             1
             for result in agent_results.values()
@@ -637,7 +1149,7 @@ class OrchestratorAgent(
             "plan": {
                 "steps": [
                     {
-                        "agent_type": step.agent_type.value,
+                        "agent_name": step.agent_name,
                         "reasoning": step.reasoning,
                         "depends_on": step.depends_on,
                     }

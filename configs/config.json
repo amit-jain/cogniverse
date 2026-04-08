@@ -145,6 +145,12 @@
       "url": "http://localhost:8000",
       "capabilities": ["profile_selection"],
       "timeout": 15
+    },
+    "orchestrator_agent": {
+      "enabled": true,
+      "url": "http://localhost:8013",
+      "capabilities": ["orchestration", "planning", "multi_agent_coordination"],
+      "timeout": 120
     }
   },
   "llm_config": {

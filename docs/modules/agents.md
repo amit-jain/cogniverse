@@ -1478,145 +1478,152 @@ async def _process_impl(
     )
 ```
 
-**`_create_plan(query: str) -> OrchestrationPlan`**
+**`_create_plan(query, conversation_context, gateway_context) -> OrchestrationPlan`**
 
-Planning Phase: Create execution plan using LLM reasoning.
+Planning Phase: Create execution plan using LLM reasoning with dynamic agent discovery.
 
 ```python
-async def _create_plan(self, query: str) -> OrchestrationPlan:
+async def _create_plan(
+    self, query: str, conversation_context: str = "", gateway_context: str = ""
+) -> OrchestrationPlan:
     """
-    Create execution plan using LLM reasoning.
+    Create execution plan using dynamic agent discovery from AgentRegistry.
 
     Args:
         query: User query to analyze
+        conversation_context: Formatted previous conversation turns
+        gateway_context: Classification context from gateway agent
 
     Returns:
         OrchestrationPlan with agent sequence and parallelization
     """
-    # Get available agents
-    available_agents = ", ".join([a.value for a in AgentType])
+    # Dynamic agent discovery from registry (no hardcoded enum)
+    registered_agents = self.registry.list_agents()
+    available_agents = ", ".join(registered_agents)
 
-    # Use DSPy to create plan
-    result = self.dspy_module.forward(
-        query=query, available_agents=available_agents
+    result = await self.call_dspy(
+        self.dspy_module,
+        output_field="agent_sequence",
+        query=query,
+        available_agents=available_agents,
+        conversation_context=conversation_context,
+        gateway_context=gateway_context,
     )
 
-    # Parse agent sequence and parallel groups
+    # Parse and validate agent sequence against registry
     agent_sequence = [
         a.strip() for a in result.agent_sequence.split(",") if a.strip()
     ]
 
-    # Create agent steps with dependency tracking
     steps = []
     for i, agent_name in enumerate(agent_sequence):
-        try:
-            agent_type = AgentType(agent_name)
-            step = AgentStep(
-                agent_type=agent_type,
-                input_data={"query": query},
-                depends_on=self._calculate_dependencies(i, parallel_groups),
-                reasoning=f"Step {i+1}: {agent_type.value} processing"
-            )
-            steps.append(step)
-        except ValueError:
-            logger.warning(f"Unknown agent type: {agent_name}, skipping")
+        if agent_name not in registered_agents:
+            logger.warning(f"Unknown agent '{agent_name}', skipping")
+            continue
+        step = AgentStep(
+            agent_name=agent_name,
+            input_data={"query": query},
+            depends_on=self._calculate_dependencies(i, parallel_groups),
+            reasoning=f"Step {i+1}: {agent_name} processing",
+        )
+        steps.append(step)
 
     return OrchestrationPlan(
         query=query,
         steps=steps,
         parallel_groups=parallel_groups,
-        reasoning=result.reasoning
+        reasoning=result.reasoning,
     )
 ```
 
 **`_execute_plan(plan: OrchestrationPlan) -> Dict[str, Any]`**
 
 Action Phase: Execute orchestration plan with parallel execution support.
+Emits streaming progress events per step, saves checkpoints after each batch,
+and checks for cancellation between steps.
 
 ```python
-async def _execute_plan(self, plan: OrchestrationPlan) -> Dict[str, Any]:
-    """
-    Execute orchestration plan with parallel execution support.
-
-    Args:
-        plan: OrchestrationPlan to execute
-
-    Returns:
-        Dictionary of agent results
-    """
+async def _execute_plan(
+    self, plan: OrchestrationPlan,
+    workflow_id: str = "", tenant_id: str = "default",
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
     agent_results = {}
     executed = [False] * len(plan.steps)
 
-    # Execute steps respecting dependencies and parallelism
     while not all(executed):
-        # Find steps ready to execute (all dependencies met)
-        ready_steps = []
-        for i, step in enumerate(plan.steps):
-            if executed[i]:
-                continue
-            deps_met = all(executed[dep_idx] for dep_idx in step.depends_on)
-            if deps_met:
-                ready_steps.append((i, step))
+        # Check for cancellation
+        if workflow_id and workflow_id in self._cancelled_workflows:
+            break
 
-        # Execute all ready steps in parallel using asyncio.gather
+        ready_steps = [
+            (i, step) for i, step in enumerate(plan.steps)
+            if not executed[i]
+            and all(executed[dep] for dep in step.depends_on)
+        ]
+
         async def execute_step(step_index: int, step: AgentStep):
-            agent = self.registry.find_agents_by_capability(step.agent_type.value)
-            if not agent:
-                return step.agent_type.value, {
-                    "status": "error",
-                    "message": f"Agent {step.agent_type.value} not available"
-                }
+            self.emit_progress("executing", f"Step {step_index}: {step.agent_name}")
+            agent_endpoint = self.registry.get_agent(step.agent_name)
+            if not agent_endpoint:
+                return step.agent_name, {"status": "error", "message": "not found"}
 
-            # Prepare input (merge query with previous results if needed)
             agent_input = step.input_data.copy()
-            for dep_idx in step.depends_on:
-                if dep_idx < len(plan.steps):
-                    dep_agent = plan.steps[dep_idx].agent_type.value
-                    if dep_agent in agent_results:
-                        agent_input[f"{dep_agent}_result"] = agent_results[dep_agent]
+            agent_input["tenant_id"] = tenant_id
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                response = await http_client.post(
+                    f"{agent_endpoint.url}/process",
+                    json={"query": agent_input.pop("query", ""), **agent_input},
+                )
+                response.raise_for_status()
+            self.emit_progress("step_complete", f"Step {step_index} complete")
+            return step.agent_name, response.json()
 
-            # Execute agent
-            result = await agent.process(agent_input)
-            return step.agent_type.value, result
-
-        # Execute all ready steps concurrently
         results = await asyncio.gather(
             *[execute_step(idx, step) for idx, step in ready_steps]
         )
-
-        # Store results and mark as executed
-        for (step_idx, _), (agent_name, result) in zip(ready_steps, results):
-            agent_results[agent_name] = result
+        for (step_idx, _), (name, result) in zip(ready_steps, results):
+            agent_results[name] = result
             executed[step_idx] = True
+
+        # Save checkpoint after each batch (if configured)
+        if self._should_checkpoint():
+            await self._save_checkpoint(plan, workflow_id, ...)
 
     return agent_results
 ```
 
 **`_aggregate_results(query: str, agent_results: Dict) -> Dict[str, Any]`**
 
-Aggregate results from all agents into final output.
+Cross-modal fusion of results from all agents. Detects modality per result,
+selects fusion strategy (SCORE_BASED, TEMPORAL, HIERARCHICAL, or SIMPLE),
+and dispatches to the appropriate fusion method.
 
 ```python
 def _aggregate_results(
-    self,
-    query: str,
-    agent_results: Dict[str, Any]
+    self, query: str, agent_results: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Aggregate results from all agents into final output"""
-    final_output = {
-        "query": query,
-        "status": "success",
-        "results": {}
+    # Detect modalities per agent
+    agent_modalities = {
+        name: self._detect_agent_modality(name) for name in agent_results
     }
+    fusion_strategy = self._select_fusion_strategy(query, agent_modalities)
 
-    # Collect results from each agent
-    for agent_type, result in agent_results.items():
-        if isinstance(result, BaseModel):
-            final_output["results"][agent_type] = result.model_dump()
-        else:
-            final_output["results"][agent_type] = result
+    # Dispatch to fusion method
+    if fusion_strategy == FusionStrategy.SCORE_BASED:
+        fused = self._fuse_by_score(task_results)
+    elif fusion_strategy == FusionStrategy.HIERARCHICAL:
+        fused = self._fuse_hierarchically(task_results, agent_modalities)
+    else:
+        fused = self._fuse_simple(task_results)
 
-    return final_output
+    return {
+        "query": query, "status": "success",
+        "results": ...,
+        "fusion_strategy": fusion_strategy.value,
+        "fusion_quality": ...,
+        "aggregated_content": fused["content"],
+    }
 ```
 
 **`_generate_summary(plan: OrchestrationPlan, agent_results: Dict) -> str`**
