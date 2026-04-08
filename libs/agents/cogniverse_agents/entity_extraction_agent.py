@@ -6,7 +6,7 @@ to enhance search and provide structured query understanding.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import dspy
 from pydantic import BaseModel, Field
@@ -38,6 +38,7 @@ class EntityExtractionInput(AgentInput):
     """Type-safe input for entity extraction"""
 
     query: str = Field(..., description="Query to extract entities from")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 
 class EntityExtractionOutput(AgentOutput):
@@ -165,6 +166,10 @@ class EntityExtractionAgent(
                 has_entities=False,
                 dominant_types=[],
             )
+
+        if input.tenant_id is not None:
+            self.set_tenant_for_context(input.tenant_id)
+            query = self.inject_context_into_prompt(query, query)
 
         # Extract entities using DSPy
         self.emit_progress("extraction", "Extracting entities with DSPy...")

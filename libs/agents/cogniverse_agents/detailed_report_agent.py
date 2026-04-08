@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class DetailedReportInput(AgentInput):
     """Type-safe input for detailed report generation"""
 
-    tenant_id: str = Field(..., description="Tenant identifier")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     query: str = Field(..., description="Query for report")
     search_results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Results to analyze"
@@ -854,8 +854,11 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             DetailedReportOutput with executive_summary, findings, recommendations, etc.
         """
         self.emit_progress("preparation", "Preparing report request...")
-        self.set_tenant_for_context(input.tenant_id)
-        enriched_query = self.inject_context_into_prompt(input.query, input.query)
+        if input.tenant_id is not None:
+            self.set_tenant_for_context(input.tenant_id)
+            enriched_query = self.inject_context_into_prompt(input.query, input.query)
+        else:
+            enriched_query = input.query
 
         request = ReportRequest(
             query=enriched_query,

@@ -38,6 +38,7 @@ class ProfileSelectionInput(AgentInput):
     available_profiles: Optional[List[str]] = Field(
         None, description="Available profiles to choose from"
     )
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 
 class ProfileSelectionOutput(AgentOutput):
@@ -236,6 +237,10 @@ class ProfileSelectionAgent(
                 complexity="simple",
                 alternatives=[],
             )
+
+        if input.tenant_id is not None:
+            self.set_tenant_for_context(input.tenant_id)
+            query = self.inject_context_into_prompt(query, query)
 
         # Convert profiles list to comma-separated string for DSPy
         profiles_str = ", ".join(profiles) if isinstance(profiles, list) else profiles

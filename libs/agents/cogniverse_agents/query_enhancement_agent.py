@@ -6,7 +6,7 @@ to improve search quality and recall.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import dspy
 from pydantic import Field
@@ -27,6 +27,7 @@ class QueryEnhancementInput(AgentInput):
     """Type-safe input for query enhancement"""
 
     query: str = Field(..., description="Query to enhance")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 
 class QueryEnhancementOutput(AgentOutput):
@@ -184,6 +185,10 @@ class QueryEnhancementAgent(
                 confidence=0.0,
                 reasoning="Empty query, no enhancement performed",
             )
+
+        if input.tenant_id is not None:
+            self.set_tenant_for_context(input.tenant_id)
+            query = self.inject_context_into_prompt(query, query)
 
         # Enhance query using DSPy
         self.emit_progress("enhancement", "Enhancing query with DSPy...")

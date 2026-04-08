@@ -347,12 +347,12 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_agents(self):
         """Add tracing to agent operations"""
         try:
-            from cogniverse_agents.video_agent_refactored import VideoAgent
+            from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 
-            if hasattr(VideoAgent, "process_query"):
-                original_process = VideoAgent.process_query
+            if hasattr(VideoSearchAgent, "search"):
+                original_process = VideoSearchAgent.search
                 self._original_methods[
-                    "src.agents.video_agent_refactored.VideoAgent.process_query"
+                    "cogniverse_agents.video_agent_refactored.VideoSearchAgent.search"
                 ] = original_process
 
                 # Capture tracer in closure
@@ -361,7 +361,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
                 @wraps(original_process)
                 def traced_process(agent_self, query, *args, **kwargs):
                     with tracer.start_as_current_span(
-                        "agent.video.process_query",
+                        "agent.video.search",
                         attributes={"query": query, "agent_type": "video"},
                     ) as span:
                         try:
@@ -391,8 +391,8 @@ class CogniverseInstrumentor(BaseInstrumentor):
                             span.set_status(Status(StatusCode.ERROR, str(e)))
                             raise
 
-                VideoAgent.process_query = traced_process
-                logger.info("Instrumented VideoAgent.process_query")
+                VideoSearchAgent.search = traced_process
+                logger.info("Instrumented VideoSearchAgent.search")
 
         except ImportError as e:
             logger.warning(f"Could not instrument agents: {e}")
