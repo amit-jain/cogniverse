@@ -50,10 +50,13 @@ class DummyLM(dspy.LM):
             )
             if entities_match:
                 raw_entities = entities_match.group(1).strip()
-                # Take the first comma-separated entity
-                first_entity = raw_entities.split(",")[0].strip()
-                if first_entity:
-                    entity_name = first_entity
+                # Pick the first entity with len > 3 (mirrors ValidatedEntityQueryGenerator's
+                # filter) so the generated query satisfies entity-presence validation.
+                for candidate in raw_entities.split(","):
+                    candidate = candidate.strip()
+                    if candidate and len(candidate) > 3:
+                        entity_name = candidate
+                        break
 
             # Generate query that explicitly contains the entity, with reasoning for ChainOfThought
             response_text = f'{{"reasoning": "Including {entity_name} as the primary entity since it is a key technology", "query": "find {entity_name} machine learning tutorial"}}'
