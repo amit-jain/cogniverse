@@ -1981,8 +1981,10 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestrator_initialization(self, telemetry_manager_without_phoenix):
         """Test Multi-Agent Orchestrator initialization"""
-        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
-        from cogniverse_agents.workflow_intelligence import OptimizationStrategy
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+            MultiAgentOrchestrator,
+        )
+        from cogniverse_agents.workflow.intelligence import OptimizationStrategy
 
         # Test default initialization
         orchestrator = MultiAgentOrchestrator(
@@ -2097,7 +2099,9 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestration_statistics(self, telemetry_manager_without_phoenix):
         """Test orchestration statistics tracking"""
-        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+            MultiAgentOrchestrator,
+        )
 
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
@@ -2129,9 +2133,10 @@ class TestWorkflowIntelligence:
 
     def test_query_type_classification(self):
         """Test query type classification logic"""
-        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+        from unittest.mock import Mock
 
-        intelligence = WorkflowIntelligence()
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        intelligence = WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="test_tenant")
 
         # Test video search queries
         assert (
@@ -2197,12 +2202,13 @@ class TestWorkflowIntelligence:
 
     def test_intelligence_statistics(self):
         """Test workflow intelligence statistics"""
-        from cogniverse_agents.workflow_intelligence import (
+        from unittest.mock import Mock
+
+        from cogniverse_agents.workflow.intelligence import (
             WorkflowExecution,
             WorkflowIntelligence,
         )
-
-        intelligence = WorkflowIntelligence(enable_persistence=False)
+        intelligence = WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="test_tenant")
 
         # Add some mock executions
         successful_execution = WorkflowExecution(
@@ -2247,7 +2253,9 @@ class TestSystemIntegration:
         self, telemetry_manager_without_phoenix
     ):
         """Test flow from enhanced routing to orchestration"""
-        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+            MultiAgentOrchestrator,
+        )
         from cogniverse_agents.routing_agent import RoutingDeps
 
         # Create components
@@ -2280,9 +2288,11 @@ class TestSystemIntegration:
 
     def test_phase4_statistics_consistency(self, telemetry_manager_without_phoenix):
         """Test statistics reporting consistency across Phase 4 components"""
-        from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
+            MultiAgentOrchestrator,
+        )
         from cogniverse_agents.routing_agent import RoutingDeps
-        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
         deps = RoutingDeps(
@@ -2302,7 +2312,8 @@ class TestSystemIntegration:
         assert isinstance(orch_stats, dict)
         assert "total_workflows" in orch_stats
 
-        intelligence = WorkflowIntelligence(enable_persistence=False)
+        from unittest.mock import Mock
+        intelligence = WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="test_tenant")
         intel_stats = intelligence.get_intelligence_statistics()
         assert isinstance(intel_stats, dict)
         assert "total_optimizations" in intel_stats

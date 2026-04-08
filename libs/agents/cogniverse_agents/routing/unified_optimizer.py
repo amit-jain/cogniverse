@@ -12,7 +12,7 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     RoutingExperience,
 )
-from cogniverse_agents.workflow_intelligence import (
+from cogniverse_agents.workflow.intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )

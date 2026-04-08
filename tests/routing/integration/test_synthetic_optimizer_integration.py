@@ -5,12 +5,21 @@ Tests that synthetic data generation integrates correctly with all optimizers.
 Uses real Phoenix telemetry provider for artifact persistence.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+
+def _make_workflow_intelligence(**kwargs) -> WorkflowIntelligence:
+    """Create WorkflowIntelligence with mock telemetry for in-memory-only tests."""
+    defaults = dict(telemetry_provider=Mock(), tenant_id=_TEST_TENANT)
+    defaults.update(kwargs)
+    return WorkflowIntelligence(**defaults)
 
 _TEST_TENANT = "synthetic_optimizer_test"
 
@@ -177,14 +186,14 @@ class TestWorkflowIntelligenceIntegration:
 
     def test_workflow_intelligence_initialization(self):
         """Test WorkflowIntelligence can be initialized"""
-        workflow_intel = WorkflowIntelligence()
+        workflow_intel = _make_workflow_intelligence()
         assert workflow_intel is not None
         assert hasattr(workflow_intel, "workflow_history")
 
     @pytest.mark.asyncio
     async def test_generate_synthetic_workflow_data(self):
         """Test generating synthetic data for WorkflowIntelligence"""
-        workflow_intel = WorkflowIntelligence()
+        workflow_intel = _make_workflow_intelligence()
 
         workflow_intel.workflow_history.clear()
 
@@ -196,7 +205,7 @@ class TestWorkflowIntelligenceIntegration:
     @pytest.mark.asyncio
     async def test_workflow_data_structure(self):
         """Test generated data has correct structure"""
-        workflow_intel = WorkflowIntelligence()
+        workflow_intel = _make_workflow_intelligence()
 
         await workflow_intel.generate_synthetic_training_data(count=5)
 
@@ -215,7 +224,7 @@ class TestWorkflowIntelligenceIntegration:
     @pytest.mark.asyncio
     async def test_workflow_pattern_variety(self):
         """Test that generated workflows have different patterns"""
-        workflow_intel = WorkflowIntelligence()
+        workflow_intel = _make_workflow_intelligence()
 
         await workflow_intel.generate_synthetic_training_data(count=30)
 
@@ -246,7 +255,7 @@ class TestMultiOptimizerIntegration:
             ),
             telemetry_provider=real_telemetry_provider,
         )
-        workflow = WorkflowIntelligence()
+        workflow = _make_workflow_intelligence()
 
         cross_modal_count = await cross_modal.generate_synthetic_training_data(count=5)
         routing_count = await routing.generate_synthetic_training_data(

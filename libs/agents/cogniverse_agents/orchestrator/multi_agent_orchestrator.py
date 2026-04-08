@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 # Workflow intelligence (import after types to avoid circular dependency)
-from cogniverse_agents.workflow_intelligence import (
+from cogniverse_agents.workflow.intelligence import (
     OptimizationStrategy,
     create_workflow_intelligence,
 )
@@ -196,8 +196,11 @@ class MultiAgentOrchestrator:
 
         self.enable_workflow_intelligence = enable_workflow_intelligence
         if enable_workflow_intelligence:
+            telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
             self.workflow_intelligence = create_workflow_intelligence(
-                optimization_strategy=optimization_strategy
+                telemetry_provider=telemetry_provider,
+                tenant_id=tenant_id,
+                optimization_strategy=optimization_strategy,
             )
             self.logger.info("Workflow intelligence enabled")
         else:

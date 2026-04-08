@@ -25,7 +25,7 @@ from cogniverse_agents.routing.orchestration_feedback_loop import (
     OrchestrationFeedbackLoop,
 )
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-from cogniverse_agents.workflow_intelligence import (
+from cogniverse_agents.workflow.intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )
@@ -52,11 +52,12 @@ class TestOrchestrationOptimizationIntegration:
     """Integration tests for orchestration optimization with real Phoenix"""
 
     @pytest.fixture
-    def workflow_intelligence(self):
+    def workflow_intelligence(self, real_telemetry_provider):
         """Create real WorkflowIntelligence instance"""
         return WorkflowIntelligence(
+            telemetry_provider=real_telemetry_provider,
+            tenant_id=_TEST_TENANT,
             max_history_size=1000,
-            enable_persistence=False,
         )
 
     @pytest.fixture

@@ -1165,6 +1165,65 @@ class WorkflowIntelligence:
 
         return successful_workflows[:limit]
 
+    async def generate_synthetic_training_data(
+        self,
+        count: int = 100,
+        backend: Optional[Any] = None,
+        backend_config: Optional[Dict[str, Any]] = None,
+        generator_config: Optional[Any] = None,
+    ) -> int:
+        """
+        Generate synthetic training data using libs/synthetic system
+
+        Args:
+            count: Number of synthetic examples to generate
+            backend: Optional Backend instance for content sampling
+            backend_config: Backend configuration with profiles
+            generator_config: Optional SyntheticGeneratorConfig for DSPy modules
+
+        Returns:
+            Number of examples added to workflow history
+        """
+        from cogniverse_synthetic import (
+            SyntheticDataRequest,
+            SyntheticDataService,
+        )
+
+        self.logger.info(f"Generating {count} synthetic workflow examples...")
+
+        service = SyntheticDataService(
+            backend=backend,
+            backend_config=backend_config,
+            generator_config=generator_config,
+        )
+        request = SyntheticDataRequest(optimizer="workflow", count=count)
+        response = await service.generate(request)
+
+        initial_count = len(self.workflow_history)
+        for example_data in response.data:
+            execution = WorkflowExecution(
+                workflow_id=example_data["workflow_id"],
+                query=example_data["query"],
+                query_type=example_data["query_type"],
+                execution_time=example_data["execution_time"],
+                success=example_data["success"],
+                agent_sequence=example_data["agent_sequence"],
+                task_count=example_data["task_count"],
+                parallel_efficiency=example_data["parallel_efficiency"],
+                confidence_score=example_data["confidence_score"],
+                user_satisfaction=example_data.get("user_satisfaction"),
+                error_details=example_data.get("error_details"),
+                metadata=example_data.get("metadata", {}),
+            )
+            self.workflow_history.append(execution)
+
+        added_count = len(self.workflow_history) - initial_count
+        self.logger.info(
+            f"Added {added_count} synthetic examples to workflow history "
+            f"(total: {len(self.workflow_history)})"
+        )
+        return added_count
+
 
 def create_workflow_intelligence(
     telemetry_provider: TelemetryProvider,

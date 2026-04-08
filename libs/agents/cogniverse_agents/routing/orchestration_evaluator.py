@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from cogniverse_agents.workflow_intelligence import (
+from cogniverse_agents.workflow.intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )

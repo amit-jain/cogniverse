@@ -13,7 +13,7 @@ from typing import Dict, Optional
 from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotationStorage,
 )
-from cogniverse_agents.workflow_intelligence import (
+from cogniverse_agents.workflow.intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )
