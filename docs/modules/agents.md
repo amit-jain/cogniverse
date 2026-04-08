@@ -1041,15 +1041,17 @@ deps = ProfileSelectionDeps(
 
 #### Overview
 
-EntityExtractionAgent extracts named entities from user queries using DSPy's `ChainOfThought` for intelligent entity recognition. It classifies entities by type (PERSON, PLACE, ORG, CONCEPT, DATE, etc.) and provides confidence scores for each entity.
+EntityExtractionAgent extracts named entities and relationships from user queries using a tiered fast/slow approach. The fast path uses GLiNER NER + SpaCy dependency analysis (no LLM needed). The fallback uses DSPy ChainOfThought (requires LLM).
 
 **Key Capabilities**:
 
-- Named entity recognition via DSPy ChainOfThought
+- Fast path: GLiNER entity extraction + SpaCy relationship extraction (sub-second, no LLM)
+- Fallback: DSPy ChainOfThought entity extraction (requires LLM)
 - Entity type classification (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
-- Confidence scoring per entity
+- Relationship extraction between entities (subject-relation-object triples)
+- Confidence scoring per entity and relationship
 - Dominant entity type detection
-- Fallback to heuristic extraction on LLM failure
+- Telemetry span emission (`cogniverse.entity_extraction`)
 
 #### Architecture
 
@@ -1057,19 +1059,26 @@ EntityExtractionAgent extracts named entities from user queries using DSPy's `Ch
 flowchart LR
     Query["<span style='color:#000'>User Query</span>"] --> EntityAgent["<span style='color:#000'>EntityExtractionAgent</span>"]
 
-    EntityAgent --> DSPy["<span style='color:#000'>DSPy ChainOfThought</span>"]
+    EntityAgent --> FastPath["<span style='color:#000'>GLiNER + SpaCy<br/>(fast path)</span>"]
+    EntityAgent --> DSPy["<span style='color:#000'>DSPy ChainOfThought<br/>(fallback)</span>"]
+
+    FastPath --> Entities["<span style='color:#000'>List[Entity]</span>"]
+    FastPath --> Rels["<span style='color:#000'>List[Relationship]</span>"]
     DSPy --> ParseEntities["<span style='color:#000'>_parse_entities()</span>"]
-    ParseEntities --> Entities["<span style='color:#000'>List[Entity]</span>"]
+    ParseEntities --> Entities
 
     Entities --> Output["<span style='color:#000'>EntityExtractionOutput</span>"]
+    Rels --> Output
 
     Output --> Orchestrator["<span style='color:#000'>OrchestratorAgent</span>"]
 
     style Query fill:#90caf9,stroke:#1565c0,color:#000
     style EntityAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FastPath fill:#a5d6a7,stroke:#388e3c,color:#000
     style DSPy fill:#81d4fa,stroke:#0288d1,color:#000
     style ParseEntities fill:#ffcc80,stroke:#ef6c00,color:#000
     style Entities fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Rels fill:#a5d6a7,stroke:#388e3c,color:#000
     style Output fill:#a5d6a7,stroke:#388e3c,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
@@ -1077,13 +1086,14 @@ flowchart LR
 #### Class Definition
 
 ```python
+import json
 import dspy
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 class Entity(BaseModel):
     """Extracted entity with type and metadata."""
@@ -1092,17 +1102,27 @@ class Entity(BaseModel):
     confidence: float = Field(description="Confidence score 0-1")
     context: str = Field(default="", description="Surrounding context")
 
+class Relationship(BaseModel):
+    """Extracted relationship between entities."""
+    subject: str = Field(description="Source entity")
+    relation: str = Field(description="Relationship type")
+    object: str = Field(description="Target entity")
+    confidence: float = Field(default=0.5, description="Confidence 0-1")
+
 class EntityExtractionInput(AgentInput):
     """Type-safe input for entity extraction."""
     query: str = Field(..., description="Query to extract entities from")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 class EntityExtractionOutput(AgentOutput):
     """Type-safe output from entity extraction."""
     query: str = Field(..., description="Original query")
     entities: List[Entity] = Field(default_factory=list, description="Extracted entities")
+    relationships: List[Relationship] = Field(default_factory=list, description="Extracted relationships")
     entity_count: int = Field(0, description="Number of entities found")
     has_entities: bool = Field(False, description="Whether entities were found")
     dominant_types: List[str] = Field(default_factory=list, description="Most common entity types")
+    path_used: str = Field("dspy", description="Extraction path: fast or dspy")
 
 class EntityExtractionDeps(AgentDeps):
     """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
@@ -1112,26 +1132,8 @@ class EntityExtractionAgent(
     MemoryAwareMixin,
     A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps],
 ):
-    """
-    Type-safe A2A agent for entity extraction.
-
-    Capabilities:
-    - Extract named entities from queries
-    - Classify entity types (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
-    - Provide confidence scores
-    - Support multi-entity queries
-    """
-
     def __init__(self, deps: EntityExtractionDeps, port: int = 8010):
-        """
-        Initialize EntityExtractionAgent with typed dependencies.
-
-        Args:
-            deps: Typed dependencies (tenant-agnostic)
-            port: Port for A2A server
-        """
         extraction_module = EntityExtractionModule()
-
         config = A2AAgentConfig(
             agent_name="entity_extraction_agent",
             agent_description="Type-safe entity extraction from user queries",
@@ -1145,6 +1147,11 @@ class EntityExtractionAgent(
             version="1.0.0",
         )
         super().__init__(deps=deps, config=config, dspy_module=extraction_module)
+
+        # GLiNER + SpaCy for fast path (no LLM required)
+        self._gliner_extractor = None
+        self._spacy_analyzer = None
+        self._initialize_extractors()
 ```
 
 
@@ -1152,56 +1159,13 @@ class EntityExtractionAgent(
 
 **`_process_impl(input: EntityExtractionInput) -> EntityExtractionOutput`**
 
-Main processing method (required by AgentBase).
+Main processing method (required by AgentBase). Uses tiered fast/slow path:
 
-```python
-async def _process_impl(
-    self,
-    input: EntityExtractionInput
-) -> EntityExtractionOutput:
-    """
-    Process entity extraction request with typed input/output.
+1. **Fast path** (GLiNER + SpaCy available): `_extract_fast_path(query)` -- GLiNER extracts typed entities, SpaCy extracts relationships when 2+ entities found.
+2. **DSPy fallback** (GLiNER/SpaCy unavailable): `_extract_dspy_path(query)` -- Uses DSPy ChainOfThought, parses pipe-delimited output. No relationships in fallback.
 
-    Args:
-        input: Typed input with query field
-
-    Returns:
-        EntityExtractionOutput with extracted entities
-    """
-    query = input.query
-
-    if not query:
-        return EntityExtractionOutput(
-            query="",
-            entities=[],
-            entity_count=0,
-            has_entities=False,
-            dominant_types=[]
-        )
-
-    # Extract entities using DSPy
-    result = self.dspy_module.forward(query=query)
-
-    # Parse entities from DSPy output
-    entities = self._parse_entities(result.entities, query)
-
-    # Count entity types
-    type_counts = {}
-    for entity in entities:
-        type_counts[entity.type] = type_counts.get(entity.type, 0) + 1
-
-    dominant_types = sorted(
-        type_counts.keys(), key=lambda k: type_counts[k], reverse=True
-    )
-
-    return EntityExtractionOutput(
-        query=query,
-        entities=entities,
-        entity_count=len(entities),
-        has_entities=len(entities) > 0,
-        dominant_types=dominant_types[:3]
-    )
-```
+After extraction, emits a `cogniverse.entity_extraction` telemetry span with attributes:
+`entity_extraction.query`, `entity_extraction.entity_count`, `entity_extraction.relationship_count`, `entity_extraction.entities`, `entity_extraction.path_used`.
 
 **`_parse_entities(entities_str: str, query: str) -> List[Entity]`**
 

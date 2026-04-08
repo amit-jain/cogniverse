@@ -1,6 +1,6 @@
 """Unit tests for EntityExtractionAgent"""
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import dspy
 import pytest
@@ -12,6 +12,7 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionInput,
     EntityExtractionModule,
     EntityExtractionOutput,
+    Relationship,
 )
 
 
@@ -28,10 +29,13 @@ def mock_dspy_lm():
 
 @pytest.fixture
 def entity_agent():
-    """Create EntityExtractionAgent for testing"""
+    """Create EntityExtractionAgent for testing (DSPy fallback mode)."""
     with patch("dspy.ChainOfThought"):
         deps = EntityExtractionDeps()
         agent = EntityExtractionAgent(deps=deps, port=8010)
+        # Force DSPy fallback path for existing tests
+        agent._gliner_extractor = None
+        agent._spacy_analyzer = None
         return agent
 
 
@@ -242,3 +246,271 @@ class TestEntityExtractionAgent:
         assert "query" in skills[0]["input_schema"]
         assert "entities" in skills[0]["output_schema"]
         assert len(skills[0]["examples"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_dspy_fallback_sets_path_used(self, entity_agent):
+        """DSPy fallback path sets path_used='dspy' in output."""
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Obama|PERSON|0.9", entity_types="PERSON"
+            )
+        )
+
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="Obama speech")
+        )
+
+        assert result.path_used == "dspy"
+        assert result.relationships == []
+
+    @pytest.mark.asyncio
+    async def test_dspy_fallback_output_has_new_fields(self, entity_agent):
+        """DSPy fallback output includes relationships (empty) and path_used."""
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(entities="", entity_types="")
+        )
+
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="hello")
+        )
+
+        assert isinstance(result.relationships, list)
+        assert result.path_used == "dspy"
+
+
+class TestGLiNERFastPath:
+    """Tests for GLiNER + SpaCy fast extraction path."""
+
+    @pytest.fixture
+    def fast_agent(self):
+        """Create agent with mocked GLiNER + SpaCy extractors."""
+        with patch("dspy.ChainOfThought"):
+            deps = EntityExtractionDeps()
+            agent = EntityExtractionAgent(deps=deps, port=8010)
+
+            mock_gliner = MagicMock()
+            mock_spacy = MagicMock()
+            agent._gliner_extractor = mock_gliner
+            agent._spacy_analyzer = mock_spacy
+            return agent
+
+    @pytest.mark.asyncio
+    async def test_fast_path_extracts_typed_entities(self, fast_agent):
+        """GLiNER fast path converts raw dicts to Entity objects."""
+        fast_agent._gliner_extractor.extract_entities.return_value = [
+            {"text": "Barack Obama", "label": "PERSON", "confidence": 0.95,
+             "start_pos": 0, "end_pos": 12},
+            {"text": "Chicago", "label": "LOCATION", "confidence": 0.88,
+             "start_pos": 16, "end_pos": 23},
+        ]
+        fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = []
+
+        result = await fast_agent._process_impl(
+            EntityExtractionInput(query="Barack Obama in Chicago")
+        )
+
+        assert result.path_used == "fast"
+        assert result.entity_count == 2
+        assert result.entities[0].text == "Barack Obama"
+        assert result.entities[0].type == "PERSON"
+        assert result.entities[0].confidence == 0.95
+        assert result.entities[1].text == "Chicago"
+        assert result.entities[1].type == "LOCATION"
+
+    @pytest.mark.asyncio
+    async def test_fast_path_extracts_relationships(self, fast_agent):
+        """SpaCy produces Relationship objects when 2+ entities found."""
+        fast_agent._gliner_extractor.extract_entities.return_value = [
+            {"text": "Obama", "label": "PERSON", "confidence": 0.9,
+             "start_pos": 0, "end_pos": 5},
+            {"text": "White House", "label": "LOCATION", "confidence": 0.85,
+             "start_pos": 14, "end_pos": 25},
+        ]
+        fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = [
+            {"subject": "Obama", "relation": "at", "object": "House",
+             "confidence": 0.7, "grammatical_pattern": "prep-at"},
+        ]
+
+        result = await fast_agent._process_impl(
+            EntityExtractionInput(query="Obama at the White House")
+        )
+
+        assert result.path_used == "fast"
+        assert len(result.relationships) == 1
+        assert result.relationships[0].subject == "Obama"
+        assert result.relationships[0].relation == "at"
+        assert result.relationships[0].object == "House"
+        assert result.relationships[0].confidence == 0.7
+
+    @pytest.mark.asyncio
+    async def test_fast_path_skips_relationships_for_single_entity(self, fast_agent):
+        """SpaCy relationship extraction skipped when fewer than 2 entities."""
+        fast_agent._gliner_extractor.extract_entities.return_value = [
+            {"text": "Obama", "label": "PERSON", "confidence": 0.9,
+             "start_pos": 0, "end_pos": 5},
+        ]
+
+        result = await fast_agent._process_impl(
+            EntityExtractionInput(query="Obama speech")
+        )
+
+        assert result.path_used == "fast"
+        assert result.entity_count == 1
+        assert result.relationships == []
+        fast_agent._spacy_analyzer.extract_semantic_relationships.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_gliner_unavailable(self, fast_agent):
+        """When GLiNER is None, DSPy fallback is used."""
+        fast_agent._gliner_extractor = None
+        fast_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Obama|PERSON|0.9", entity_types="PERSON"
+            )
+        )
+
+        result = await fast_agent._process_impl(
+            EntityExtractionInput(query="Obama speech")
+        )
+
+        assert result.path_used == "dspy"
+        assert result.entity_count == 1
+        assert result.entities[0].text == "Obama"
+
+    @pytest.mark.asyncio
+    async def test_a2a_output_includes_relationships(self, fast_agent):
+        """_dspy_to_a2a_output includes relationships and path_used."""
+        output = EntityExtractionOutput(
+            query="test",
+            entities=[Entity(text="X", type="PERSON", confidence=0.9)],
+            relationships=[
+                Relationship(subject="X", relation="at", object="Y", confidence=0.7)
+            ],
+            entity_count=1,
+            has_entities=True,
+            dominant_types=["PERSON"],
+            path_used="fast",
+        )
+
+        a2a = fast_agent._dspy_to_a2a_output(output)
+
+        assert a2a["path_used"] == "fast"
+        assert len(a2a["relationships"]) == 1
+        assert a2a["relationships"][0]["subject"] == "X"
+
+
+class TestTelemetrySpanEmission:
+    """Tests for entity extraction telemetry span."""
+
+    @pytest.fixture
+    def agent_with_telemetry(self):
+        """Create agent with mocked telemetry manager."""
+        with patch("dspy.ChainOfThought"):
+            deps = EntityExtractionDeps()
+            agent = EntityExtractionAgent(deps=deps, port=8010)
+            agent._gliner_extractor = None
+            agent._spacy_analyzer = None
+
+            mock_tm = MagicMock()
+            mock_span = MagicMock()
+            mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
+            mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+            agent.telemetry_manager = mock_tm
+            return agent
+
+    @pytest.mark.asyncio
+    async def test_span_emitted(self, agent_with_telemetry):
+        """Telemetry span emitted with correct attributes."""
+        agent = agent_with_telemetry
+        agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Obama|PERSON|0.9\nChicago|PLACE|0.8",
+                entity_types="PERSON, PLACE",
+            )
+        )
+
+        await agent._process_impl(
+            EntityExtractionInput(query="Obama in Chicago", tenant_id="acme")
+        )
+
+        agent.telemetry_manager.span.assert_called_once()
+        call_kwargs = agent.telemetry_manager.span.call_args
+        assert call_kwargs[0][0] == "cogniverse.entity_extraction"
+        assert call_kwargs[1]["tenant_id"] == "acme"
+        attrs = call_kwargs[1]["attributes"]
+        assert attrs["entity_extraction.entity_count"] == 2
+        assert attrs["entity_extraction.relationship_count"] == 0
+        assert attrs["entity_extraction.path_used"] == "dspy"
+        assert "Obama" in attrs["entity_extraction.entities"]
+
+    @pytest.mark.asyncio
+    async def test_no_telemetry_manager(self):
+        """No telemetry_manager -> no error, no span."""
+        with patch("dspy.ChainOfThought"):
+            deps = EntityExtractionDeps()
+            agent = EntityExtractionAgent(deps=deps, port=8010)
+            agent._gliner_extractor = None
+            agent._spacy_analyzer = None
+            agent.telemetry_manager = None
+            agent.dspy_module.forward = Mock(
+                return_value=dspy.Prediction(entities="", entity_types="")
+            )
+
+            result = await agent._process_impl(
+                EntityExtractionInput(query="hello")
+            )
+
+            assert result.entity_count == 0
+
+    @pytest.mark.asyncio
+    async def test_default_tenant_in_span(self, agent_with_telemetry):
+        """When tenant_id is None, 'default' is used in span."""
+        agent = agent_with_telemetry
+        agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(entities="", entity_types="")
+        )
+
+        await agent._process_impl(EntityExtractionInput(query="hello"))
+
+        call_kwargs = agent.telemetry_manager.span.call_args
+        assert call_kwargs[1]["tenant_id"] == "default"
+
+    @pytest.mark.asyncio
+    async def test_span_query_truncated(self, agent_with_telemetry):
+        """Long queries are truncated to 200 chars in span attributes."""
+        agent = agent_with_telemetry
+        agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(entities="", entity_types="")
+        )
+
+        long_query = "x" * 500
+        await agent._process_impl(EntityExtractionInput(query=long_query))
+
+        call_kwargs = agent.telemetry_manager.span.call_args
+        attrs = call_kwargs[1]["attributes"]
+        assert len(attrs["entity_extraction.query"]) <= 200
+
+
+class TestRelationshipModel:
+    """Tests for the Relationship Pydantic model."""
+
+    def test_relationship_defaults(self):
+        """Relationship has default confidence of 0.5."""
+        r = Relationship(subject="A", relation="knows", object="B")
+        assert r.confidence == 0.5
+
+    def test_relationship_custom_confidence(self):
+        """Relationship accepts custom confidence."""
+        r = Relationship(subject="A", relation="at", object="B", confidence=0.9)
+        assert r.confidence == 0.9
+
+    def test_relationship_model_dump(self):
+        """Relationship serializes correctly."""
+        r = Relationship(subject="X", relation="in", object="Y", confidence=0.7)
+        d = r.model_dump()
+        assert d == {
+            "subject": "X",
+            "relation": "in",
+            "object": "Y",
+            "confidence": 0.7,
+        }

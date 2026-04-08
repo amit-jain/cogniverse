@@ -3,8 +3,13 @@ EntityExtractionAgent - Type-safe A2A agent for extracting entities from queries
 
 Extracts named entities (people, places, organizations, concepts) from user queries
 to enhance search and provide structured query understanding.
+
+Tiered extraction:
+- Fast path: GLiNER NER + SpaCy dependency analysis (no LLM needed)
+- Fallback: DSPy ChainOfThought (requires LLM)
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +34,15 @@ class Entity(BaseModel):
     context: str = Field(default="", description="Surrounding context")
 
 
+class Relationship(BaseModel):
+    """Extracted relationship between entities."""
+
+    subject: str = Field(description="Source entity")
+    relation: str = Field(description="Relationship type")
+    object: str = Field(description="Target entity")
+    confidence: float = Field(default=0.5, description="Confidence 0-1")
+
+
 # =============================================================================
 # Type-Safe Input/Output/Dependencies
 # =============================================================================
@@ -48,11 +62,15 @@ class EntityExtractionOutput(AgentOutput):
     entities: List[Entity] = Field(
         default_factory=list, description="Extracted entities"
     )
+    relationships: List[Relationship] = Field(
+        default_factory=list, description="Extracted relationships between entities"
+    )
     entity_count: int = Field(0, description="Number of entities found")
     has_entities: bool = Field(False, description="Whether entities were found")
     dominant_types: List[str] = Field(
         default_factory=list, description="Most common entity types"
     )
+    path_used: str = Field("dspy", description="Extraction path: fast or dspy")
 
 
 class EntityExtractionDeps(AgentDeps):
@@ -142,19 +160,43 @@ class EntityExtractionAgent(
         # Initialize base class
         super().__init__(deps=deps, config=config, dspy_module=extraction_module)
 
+        # GLiNER + SpaCy for fast path (no LLM required)
+        self._gliner_extractor = None
+        self._spacy_analyzer = None
+        self._initialize_extractors()
+
         logger.info("EntityExtractionAgent initialized (tenant-agnostic)")
+
+    def _initialize_extractors(self) -> None:
+        """Initialize GLiNER and SpaCy extractors for fast-path entity extraction."""
+        try:
+            from cogniverse_agents.routing.relationship_extraction_tools import (
+                GLiNERRelationshipExtractor,
+                SpaCyDependencyAnalyzer,
+            )
+
+            self._gliner_extractor = GLiNERRelationshipExtractor()
+            self._spacy_analyzer = SpaCyDependencyAnalyzer()
+            logger.info("GLiNER + SpaCy extractors initialized for fast path")
+        except Exception as e:
+            self._gliner_extractor = None
+            self._spacy_analyzer = None
+            logger.warning("GLiNER/SpaCy unavailable, using DSPy fallback: %s", e)
 
     async def _process_impl(
         self, input: EntityExtractionInput
     ) -> EntityExtractionOutput:
         """
-        Process entity extraction request with typed input/output.
+        Process entity extraction request with tiered fast/slow path.
+
+        Fast path (GLiNER + SpaCy): No LLM call, sub-second latency.
+        Fallback (DSPy ChainOfThought): Requires LLM, higher quality.
 
         Args:
             input: Typed input with query field
 
         Returns:
-            EntityExtractionOutput with extracted entities
+            EntityExtractionOutput with extracted entities and relationships
         """
         query = input.query
 
@@ -171,35 +213,122 @@ class EntityExtractionAgent(
             self.set_tenant_for_context(input.tenant_id)
             query = self.inject_context_into_prompt(query, query)
 
-        # Extract entities using DSPy
+        entities: List[Entity] = []
+        relationships: List[Relationship] = []
+        path_used = "dspy"
+
+        if self._gliner_extractor is not None:
+            # --- Fast path: GLiNER + SpaCy ---
+            entities, relationships, path_used = self._extract_fast_path(query)
+        else:
+            # --- DSPy fallback ---
+            entities = await self._extract_dspy_path(query)
+
+        # Compute dominant types
+        type_counts: Dict[str, int] = {}
+        for entity in entities:
+            type_counts[entity.type] = type_counts.get(entity.type, 0) + 1
+        dominant_types = sorted(
+            type_counts.keys(), key=lambda k: type_counts[k], reverse=True
+        )
+
+        output = EntityExtractionOutput(
+            query=query,
+            entities=entities,
+            relationships=relationships,
+            entity_count=len(entities),
+            has_entities=len(entities) > 0,
+            dominant_types=dominant_types[:3],
+            path_used=path_used,
+        )
+
+        self._emit_extraction_span(
+            tenant_id=input.tenant_id or "default",
+            query=query,
+            entities=entities,
+            relationships=relationships,
+            path_used=path_used,
+        )
+
+        return output
+
+    def _extract_fast_path(
+        self, query: str
+    ) -> tuple[List[Entity], List[Relationship], str]:
+        """Extract entities via GLiNER and relationships via SpaCy."""
+        self.emit_progress("extraction", "Extracting entities with GLiNER...")
+        raw_entities = self._gliner_extractor.extract_entities(query)
+
+        entities = [
+            Entity(
+                text=e["text"],
+                type=e["label"],
+                confidence=e.get("confidence", e.get("score", 0.5)),
+                context=self._extract_context(e["text"], query),
+            )
+            for e in raw_entities
+        ]
+
+        relationships: List[Relationship] = []
+        if len(entities) >= 2 and self._spacy_analyzer is not None:
+            self.emit_progress(
+                "relationships", "Extracting relationships with SpaCy..."
+            )
+            raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
+            relationships = [
+                Relationship(
+                    subject=r["subject"],
+                    relation=r["relation"],
+                    object=r["object"],
+                    confidence=r.get("confidence", 0.5),
+                )
+                for r in raw_rels
+            ]
+
+        return entities, relationships, "fast"
+
+    async def _extract_dspy_path(self, query: str) -> List[Entity]:
+        """Fall back to DSPy ChainOfThought for entity extraction."""
         self.emit_progress("extraction", "Extracting entities with DSPy...")
         result = await self.call_dspy(
             self.dspy_module, output_field="entities", query=query
         )
 
-        # Parse entities from DSPy output
         self.emit_progress("parsing", "Parsing extracted entities...")
-        entities = self._parse_entities(result.entities, query)
+        return self._parse_entities(result.entities, query)
 
-        # Parse entity types
-        [t.strip() for t in result.entity_types.split(",") if t.strip()]
+    def _emit_extraction_span(
+        self,
+        *,
+        tenant_id: str,
+        query: str,
+        entities: List[Entity],
+        relationships: List[Relationship],
+        path_used: str,
+    ) -> None:
+        """Emit a cogniverse.entity_extraction telemetry span."""
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
 
-        # Count entity types
-        type_counts = {}
-        for entity in entities:
-            type_counts[entity.type] = type_counts.get(entity.type, 0) + 1
+        try:
+            entities_json = json.dumps(
+                [e.model_dump() for e in entities], default=str
+            )[:1000]
 
-        dominant_types = sorted(
-            type_counts.keys(), key=lambda k: type_counts[k], reverse=True
-        )
-
-        return EntityExtractionOutput(
-            query=query,
-            entities=entities,
-            entity_count=len(entities),
-            has_entities=len(entities) > 0,
-            dominant_types=dominant_types[:3],  # Top 3 types
-        )
+            with self.telemetry_manager.span(
+                "cogniverse.entity_extraction",
+                tenant_id=tenant_id,
+                attributes={
+                    "entity_extraction.query": query[:200],
+                    "entity_extraction.entity_count": len(entities),
+                    "entity_extraction.relationship_count": len(relationships),
+                    "entity_extraction.entities": entities_json,
+                    "entity_extraction.path_used": path_used,
+                },
+            ):
+                pass
+        except Exception as e:
+            logger.debug("Failed to emit entity_extraction span: %s", e)
 
     def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
         """Parse entities from DSPy output format"""
@@ -273,9 +402,11 @@ class EntityExtractionAgent(
             "agent": self.agent_name,
             "query": result.query,
             "entities": [entity.model_dump() for entity in result.entities],
+            "relationships": [r.model_dump() for r in result.relationships],
             "entity_count": result.entity_count,
             "has_entities": result.has_entities,
             "dominant_types": result.dominant_types,
+            "path_used": result.path_used,
         }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
