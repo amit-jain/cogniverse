@@ -33,10 +33,15 @@ def mock_gliner_model():
     return model
 
 
+def _make_gateway(**kwargs) -> GatewayAgent:
+    deps = GatewayDeps(**kwargs)
+    return GatewayAgent(deps=deps)
+
+
 @pytest.fixture
 def gateway_agent(mock_gliner_model):
     """GatewayAgent with a pre-injected mock GLiNER model (no real download)."""
-    agent = GatewayAgent()
+    agent = _make_gateway()
     agent._gliner_model = mock_gliner_model
     return agent
 
@@ -49,7 +54,7 @@ def gateway_agent(mock_gliner_model):
 class TestGatewayAgentInit:
     def test_initialization(self):
         """Agent initializes with default deps."""
-        agent = GatewayAgent()
+        agent = _make_gateway()
         assert agent.agent_name == "gateway_agent"
         assert "gateway" in agent.capabilities
         assert "classification" in agent.capabilities

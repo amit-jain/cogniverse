@@ -142,13 +142,10 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
     def __init__(
         self,
-        deps: Optional[GatewayDeps] = None,
+        deps: GatewayDeps,
         *,
-        port: int = 8000,
+        port: int = 8014,
     ) -> None:
-        if deps is None:
-            deps = GatewayDeps()
-
         config = A2AAgentConfig(
             agent_name="gateway_agent",
             agent_description="Query classifier and router using GLiNER entity detection",
@@ -178,10 +175,14 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             logger.info(
                 "Loading GLiNER model: %s", self.deps.gliner_model_name
             )
-            self._gliner_model = GLiNER.from_pretrained(
-                self.deps.gliner_model_name
-            )
-            logger.info("GLiNER model loaded")
+            try:
+                self._gliner_model = GLiNER.from_pretrained(
+                    self.deps.gliner_model_name
+                )
+                logger.info("GLiNER model loaded")
+            except Exception as e:
+                logger.error("GatewayAgent: failed to load GLiNER model: %s", e)
+                self._gliner_model = None
 
     # ------------------------------------------------------------------
     # Entity extraction and classification
@@ -190,9 +191,15 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     def _extract_entities(self, query: str) -> List[Dict[str, Any]]:
         """Run GLiNER entity prediction on the query."""
         self._ensure_model_loaded()
-        entities = self._gliner_model.predict_entities(
-            query, ALL_LABELS, threshold=self.deps.gliner_threshold
-        )
+        if self._gliner_model is None:
+            return []
+        try:
+            entities = self._gliner_model.predict_entities(
+                query, ALL_LABELS, threshold=self.deps.gliner_threshold
+            )
+        except Exception as e:
+            logger.error("GLiNER prediction failed: %s", e)
+            return []
         return [
             {"text": e["text"], "label": e["label"], "score": e["score"]}
             for e in entities
@@ -285,19 +292,22 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
 
-        with self.telemetry_manager.span(
-            "cogniverse.gateway",
-            tenant_id=tenant_id,
-            attributes={
-                "gateway.query": query,
-                "gateway.complexity": complexity,
-                "gateway.modality": modality,
-                "gateway.generation_type": generation_type,
-                "gateway.routed_to": routed_to,
-                "gateway.confidence": confidence,
-            },
-        ):
-            pass  # span auto-closes
+        try:
+            with self.telemetry_manager.span(
+                "cogniverse.gateway",
+                tenant_id=tenant_id,
+                attributes={
+                    "gateway.query": query[:200],
+                    "gateway.complexity": complexity,
+                    "gateway.modality": modality,
+                    "gateway.generation_type": generation_type,
+                    "gateway.routed_to": routed_to,
+                    "gateway.confidence": confidence,
+                },
+            ):
+                pass  # span auto-closes
+        except Exception as e:
+            logger.debug("Failed to emit gateway span: %s", e)
 
     # ------------------------------------------------------------------
     # Core processing
@@ -309,6 +319,8 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         modality, modality_confidence = self._classify_modality(entities)
         generation_type, gen_confidence = self._classify_generation_type(entities)
 
+        # Conservative: low confidence in either dimension pushes borderline queries
+        # to the orchestrator. This is safer for a gateway that should err on caution.
         overall_confidence = min(modality_confidence, gen_confidence)
         is_complex = self._is_complex(modality, entities, overall_confidence)
 
