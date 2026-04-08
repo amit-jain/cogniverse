@@ -339,12 +339,17 @@ class QueryEnhancementAgent(
             {
                 "name": "enhance_query",
                 "description": "Enhance user queries with synonyms, expansions, and context",
-                "input_schema": {"query": "string"},
+                "input_schema": {
+                    "query": "string",
+                    "entities": "list[dict]",
+                    "relationships": "list[dict]",
+                },
                 "output_schema": {
                     "enhanced_query": "string",
                     "expansion_terms": "list",
                     "synonyms": "list",
                     "context_additions": "list",
+                    "query_variants": "list",
                     "confidence": "float",
                 },
                 "examples": [

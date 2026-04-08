@@ -2833,6 +2833,8 @@ class TestEnhancedQueryEnhancementAgent:
         assert output.confidence == 0.5
         # Fallback with "show" and "ai" triggers expansions
         assert "artificial intelligence" in output.expansion_terms
+        # Fallback: enhanced == original, but expansion terms produce one variant
+        assert isinstance(output.query_variants, list)
 
     @pytest.mark.asyncio
     async def test_process_emits_span(self, qe_agent):
