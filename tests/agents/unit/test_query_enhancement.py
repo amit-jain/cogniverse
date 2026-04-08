@@ -2582,3 +2582,300 @@ class TestVideoSearchAgent:
             # First result should have higher score due to entity match
             assert enhanced_results[0]["enhanced_score"] > enhanced_results[0]["score"]
             assert enhanced_results[0]["entity_matches"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Enhanced QueryEnhancementAgent tests (Task 5 — entity input, RRF variants,
+# span emission, DSPy fallback)
+# ---------------------------------------------------------------------------
+
+from cogniverse_agents.query_enhancement_agent import (
+    QueryEnhancementAgent,
+    QueryEnhancementDeps,
+    QueryEnhancementInput,
+    QueryEnhancementOutput,
+)
+
+
+@pytest.fixture
+def qe_agent():
+    """Create a QueryEnhancementAgent with mocked DSPy for unit testing."""
+    deps = QueryEnhancementDeps()
+    agent = QueryEnhancementAgent(deps=deps)
+    return agent
+
+
+@pytest.mark.unit
+class TestEnhancedQueryEnhancementAgent:
+    """Tests for the enhanced QueryEnhancementAgent (entity input, RRF variants, spans)."""
+
+    # ------------------------------------------------------------------
+    # Input accepts entities / relationships
+    # ------------------------------------------------------------------
+
+    def test_input_accepts_entities_and_relationships(self):
+        """QueryEnhancementInput should accept optional entities/relationships."""
+        entities = [
+            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+        ]
+        relationships = [
+            {"subject": "robots", "relation": "playing", "object": "soccer"},
+        ]
+        inp = QueryEnhancementInput(
+            query="show me robots playing soccer",
+            entities=entities,
+            relationships=relationships,
+            tenant_id="acme",
+        )
+        assert inp.entities == entities
+        assert inp.relationships == relationships
+        assert inp.tenant_id == "acme"
+
+    def test_input_defaults_entities_to_none(self):
+        """When omitted, entities/relationships default to None."""
+        inp = QueryEnhancementInput(query="hello")
+        assert inp.entities is None
+        assert inp.relationships is None
+
+    # ------------------------------------------------------------------
+    # Output includes query_variants
+    # ------------------------------------------------------------------
+
+    def test_output_includes_query_variants(self):
+        """QueryEnhancementOutput should include query_variants field."""
+        out = QueryEnhancementOutput(
+            original_query="test",
+            enhanced_query="enhanced test",
+            query_variants=["enhanced test", "test alpha beta"],
+            confidence=0.8,
+            reasoning="test",
+        )
+        assert out.query_variants == ["enhanced test", "test alpha beta"]
+
+    def test_output_query_variants_defaults_empty(self):
+        """query_variants should default to empty list."""
+        out = QueryEnhancementOutput(
+            original_query="t",
+            enhanced_query="t",
+            confidence=0.5,
+            reasoning="r",
+        )
+        assert out.query_variants == []
+
+    # ------------------------------------------------------------------
+    # _build_entity_context
+    # ------------------------------------------------------------------
+
+    def test_build_entity_context_with_entities_and_relationships(self, qe_agent):
+        """Entity context string includes both entities and relationships."""
+        entities = [
+            {"text": "robots", "label": "TECH"},
+            {"text": "soccer", "label": "SPORT"},
+        ]
+        relationships = [
+            {"subject": "robots", "relation": "playing", "object": "soccer"},
+        ]
+        ctx = qe_agent._build_entity_context(entities, relationships)
+        assert "robots (TECH)" in ctx
+        assert "soccer (SPORT)" in ctx
+        assert "robots -playing-> soccer" in ctx
+
+    def test_build_entity_context_empty(self, qe_agent):
+        """Returns empty string when no entities/relationships."""
+        assert qe_agent._build_entity_context(None, None) == ""
+        assert qe_agent._build_entity_context([], []) == ""
+
+    # ------------------------------------------------------------------
+    # _generate_variants
+    # ------------------------------------------------------------------
+
+    def test_generate_variants_with_different_enhanced(self, qe_agent):
+        """Enhanced query != original produces a variant."""
+        variants = qe_agent._generate_variants(
+            "robots soccer", "robots playing soccer enhanced", ["AI", "ML"]
+        )
+        assert "robots playing soccer enhanced" in variants
+        assert any("AI" in v for v in variants)
+
+    def test_generate_variants_same_enhanced(self, qe_agent):
+        """When enhanced == original, only expansion variant appears."""
+        variants = qe_agent._generate_variants("robots", "robots", ["AI", "ML"])
+        assert "robots" not in variants  # enhanced == original, not added
+        assert len(variants) == 1
+        assert "robots AI ML" in variants
+
+    def test_generate_variants_no_expansion(self, qe_agent):
+        """When enhanced == original and no terms, returns empty."""
+        variants = qe_agent._generate_variants("robots", "robots", [])
+        assert variants == []
+
+    def test_generate_variants_caps_at_three_terms(self, qe_agent):
+        """Expansion variant uses at most 3 terms."""
+        variants = qe_agent._generate_variants(
+            "q", "q", ["a", "b", "c", "d", "e"]
+        )
+        assert len(variants) == 1
+        assert variants[0] == "q a b c"
+
+    # ------------------------------------------------------------------
+    # _emit_enhancement_span
+    # ------------------------------------------------------------------
+
+    def test_emit_span_calls_telemetry_manager(self, qe_agent):
+        """Span is emitted with correct name and attributes."""
+        mock_tm = MagicMock()
+        mock_span = MagicMock()
+        mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
+        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+        qe_agent.telemetry_manager = mock_tm
+
+        qe_agent._emit_enhancement_span(
+            tenant_id="acme",
+            original_query="robots",
+            enhanced_query="robots enhanced",
+            variant_count=2,
+            confidence=0.85,
+        )
+
+        mock_tm.span.assert_called_once()
+        call_kwargs = mock_tm.span.call_args
+        assert call_kwargs[0][0] == "cogniverse.query_enhancement"
+        assert call_kwargs[1]["tenant_id"] == "acme"
+        attrs = call_kwargs[1]["attributes"]
+        assert attrs["query_enhancement.original_query"] == "robots"
+        assert attrs["query_enhancement.enhanced_query"] == "robots enhanced"
+        assert attrs["query_enhancement.variant_count"] == 2
+        assert attrs["query_enhancement.confidence"] == 0.85
+
+    def test_emit_span_noop_without_telemetry_manager(self, qe_agent):
+        """No error when telemetry_manager is absent."""
+        qe_agent.telemetry_manager = None
+        # Should not raise
+        qe_agent._emit_enhancement_span(
+            tenant_id="t",
+            original_query="q",
+            enhanced_query="eq",
+            variant_count=0,
+            confidence=0.5,
+        )
+
+    def test_emit_span_swallows_exception(self, qe_agent):
+        """Telemetry exceptions are caught and logged, never propagated."""
+        mock_tm = MagicMock()
+        mock_tm.span.side_effect = RuntimeError("telemetry boom")
+        qe_agent.telemetry_manager = mock_tm
+
+        # Must not raise
+        qe_agent._emit_enhancement_span(
+            tenant_id="t",
+            original_query="q",
+            enhanced_query="eq",
+            variant_count=0,
+            confidence=0.5,
+        )
+
+    # ------------------------------------------------------------------
+    # Full _process_impl round-trip
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_process_with_entities_produces_variants(self, qe_agent):
+        """_process_impl uses entity context and generates variants."""
+        mock_result = dspy.Prediction(
+            enhanced_query="robots playing soccer enhanced",
+            expansion_terms="AI, deep learning",
+            synonyms="bots, football",
+            context="video",
+            confidence="0.88",
+            reasoning="Enhanced with entity context",
+        )
+        qe_agent.call_dspy = AsyncMock(return_value=mock_result)
+
+        inp = QueryEnhancementInput(
+            query="show me robots playing soccer",
+            entities=[{"text": "robots", "label": "TECH", "confidence": 0.9}],
+            relationships=[
+                {"subject": "robots", "relation": "playing", "object": "soccer"}
+            ],
+        )
+        output = await qe_agent._process_impl(inp)
+
+        assert isinstance(output, QueryEnhancementOutput)
+        assert output.enhanced_query == "robots playing soccer enhanced"
+        assert output.expansion_terms == ["AI", "deep learning"]
+        assert output.synonyms == ["bots", "football"]
+        assert len(output.query_variants) > 0
+        assert output.confidence == 0.88
+
+    @pytest.mark.asyncio
+    async def test_process_empty_query(self, qe_agent):
+        """Empty query returns zero-state output with empty variants."""
+        output = await qe_agent._process_impl(
+            QueryEnhancementInput(query="")
+        )
+        assert output.original_query == ""
+        assert output.enhanced_query == ""
+        assert output.query_variants == []
+        assert output.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_dspy_failure_graceful_fallback(self, qe_agent):
+        """When DSPy call raises, fallback heuristics are used."""
+        qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
+
+        inp = QueryEnhancementInput(query="show me AI tutorials")
+        output = await qe_agent._process_impl(inp)
+
+        assert isinstance(output, QueryEnhancementOutput)
+        assert output.original_query == "show me AI tutorials"
+        # Fallback keeps original query
+        assert output.enhanced_query == "show me AI tutorials"
+        assert output.confidence == 0.5
+        # Fallback with "show" and "ai" triggers expansions
+        assert "artificial intelligence" in output.expansion_terms
+
+    @pytest.mark.asyncio
+    async def test_process_emits_span(self, qe_agent):
+        """_process_impl emits a telemetry span."""
+        mock_result = dspy.Prediction(
+            enhanced_query="enhanced",
+            expansion_terms="",
+            synonyms="",
+            context="",
+            confidence="0.7",
+            reasoning="test",
+        )
+        qe_agent.call_dspy = AsyncMock(return_value=mock_result)
+
+        mock_tm = MagicMock()
+        mock_span = MagicMock()
+        mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
+        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+        qe_agent.telemetry_manager = mock_tm
+
+        await qe_agent._process_impl(
+            QueryEnhancementInput(query="test", tenant_id="acme")
+        )
+
+        mock_tm.span.assert_called_once()
+        assert mock_tm.span.call_args[1]["tenant_id"] == "acme"
+
+    # ------------------------------------------------------------------
+    # _dspy_to_a2a_output includes query_variants
+    # ------------------------------------------------------------------
+
+    def test_a2a_output_includes_query_variants(self, qe_agent):
+        """_dspy_to_a2a_output dict includes query_variants key."""
+        result = QueryEnhancementOutput(
+            original_query="q",
+            enhanced_query="eq",
+            expansion_terms=["a"],
+            synonyms=["b"],
+            context_additions=["c"],
+            query_variants=["eq", "q a"],
+            confidence=0.9,
+            reasoning="r",
+        )
+        a2a = qe_agent._dspy_to_a2a_output(result)
+        assert a2a["query_variants"] == ["eq", "q a"]
+        assert a2a["status"] == "success"

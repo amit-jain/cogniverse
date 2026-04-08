@@ -27,6 +27,12 @@ class QueryEnhancementInput(AgentInput):
     """Type-safe input for query enhancement"""
 
     query: str = Field(..., description="Query to enhance")
+    entities: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Entities from EntityExtractionAgent"
+    )
+    relationships: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Relationships from EntityExtractionAgent"
+    )
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 
@@ -43,6 +49,10 @@ class QueryEnhancementOutput(AgentOutput):
     )
     context_additions: List[str] = Field(
         default_factory=list, description="Contextual additions"
+    )
+    query_variants: List[str] = Field(
+        default_factory=list,
+        description="RRF query variants for fusion search",
     )
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="Enhancement confidence")
     reasoning: str = Field("", description="Explanation of enhancements")
@@ -182,6 +192,7 @@ class QueryEnhancementAgent(
                 expansion_terms=[],
                 synonyms=[],
                 context_additions=[],
+                query_variants=[],
                 confidence=0.0,
                 reasoning="Empty query, no enhancement performed",
             )
@@ -190,11 +201,21 @@ class QueryEnhancementAgent(
             self.set_tenant_for_context(input.tenant_id)
             query = self.inject_context_into_prompt(query, query)
 
-        # Enhance query using DSPy
-        self.emit_progress("enhancement", "Enhancing query with DSPy...")
-        result = await self.call_dspy(
-            self.dspy_module, output_field="enhanced_query", query=query
+        # Build entity context from upstream EntityExtractionAgent
+        entity_context = self._build_entity_context(
+            input.entities, input.relationships
         )
+        dspy_query = f"{query}\n{entity_context}" if entity_context else query
+
+        # Enhance query using DSPy (with fallback on failure)
+        self.emit_progress("enhancement", "Enhancing query with DSPy...")
+        try:
+            result = await self.call_dspy(
+                self.dspy_module, output_field="enhanced_query", query=dspy_query
+            )
+        except Exception as e:
+            logger.warning("DSPy enhancement failed, using fallback: %s", e)
+            result = self.dspy_module._fallback_enhancement(query)
 
         # Parse lists from comma-separated strings
         self.emit_progress("parsing", "Parsing expansion terms and synonyms...")
@@ -210,12 +231,25 @@ class QueryEnhancementAgent(
         except (ValueError, AttributeError):
             confidence = 0.7
 
+        # Generate RRF query variants
+        variants = self._generate_variants(query, result.enhanced_query, expansion_terms)
+
+        # Emit telemetry span
+        self._emit_enhancement_span(
+            tenant_id=input.tenant_id or "default",
+            original_query=query,
+            enhanced_query=result.enhanced_query,
+            variant_count=len(variants),
+            confidence=confidence,
+        )
+
         return QueryEnhancementOutput(
             original_query=query,
             enhanced_query=result.enhanced_query,
             expansion_terms=expansion_terms,
             synonyms=synonyms,
             context_additions=context_additions,
+            query_variants=variants,
             confidence=confidence,
             reasoning=result.reasoning,
         )
@@ -230,9 +264,74 @@ class QueryEnhancementAgent(
             "expansion_terms": result.expansion_terms,
             "synonyms": result.synonyms,
             "context_additions": result.context_additions,
+            "query_variants": result.query_variants,
             "confidence": result.confidence,
             "reasoning": result.reasoning,
         }
+
+    def _build_entity_context(
+        self,
+        entities: Optional[List[Dict[str, Any]]],
+        relationships: Optional[List[Dict[str, Any]]],
+    ) -> str:
+        """Build a context string from upstream entities and relationships."""
+        if not entities and not relationships:
+            return ""
+
+        parts: List[str] = []
+        if entities:
+            entity_strs = [
+                f"{e.get('text', '')} ({e.get('label', '')})" for e in entities
+            ]
+            parts.append(f"Entities: {', '.join(entity_strs)}")
+        if relationships:
+            rel_strs = [
+                f"{r.get('subject', '')} -{r.get('relation', '')}-> {r.get('object', '')}"
+                for r in relationships
+            ]
+            parts.append(f"Relationships: {', '.join(rel_strs)}")
+        return "; ".join(parts)
+
+    def _generate_variants(
+        self, original: str, enhanced: str, expansion_terms: List[str]
+    ) -> List[str]:
+        """Generate query variants for Reciprocal Rank Fusion search."""
+        variants: List[str] = []
+        if enhanced != original:
+            variants.append(enhanced)
+        if expansion_terms:
+            expanded = f"{original} {' '.join(expansion_terms[:3])}"
+            if expanded not in variants:
+                variants.append(expanded)
+        return variants
+
+    def _emit_enhancement_span(
+        self,
+        *,
+        tenant_id: str,
+        original_query: str,
+        enhanced_query: str,
+        variant_count: int,
+        confidence: float,
+    ) -> None:
+        """Emit a cogniverse.query_enhancement telemetry span."""
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+
+        try:
+            with self.telemetry_manager.span(
+                "cogniverse.query_enhancement",
+                tenant_id=tenant_id,
+                attributes={
+                    "query_enhancement.original_query": original_query[:200],
+                    "query_enhancement.enhanced_query": enhanced_query[:200],
+                    "query_enhancement.variant_count": variant_count,
+                    "query_enhancement.confidence": confidence,
+                },
+            ):
+                pass
+        except Exception as e:
+            logger.debug("Failed to emit query_enhancement span: %s", e)
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
         """Return agent-specific skills for A2A protocol."""
