@@ -118,6 +118,15 @@
         "code_search"
       ],
       "modalities": []
+    },
+    "gateway_agent": {
+      "url": "http://localhost:8000",
+      "enabled": true,
+      "capabilities": [
+        "gateway",
+        "classification"
+      ],
+      "timeout": 10
     }
   },
   "llm_config": {

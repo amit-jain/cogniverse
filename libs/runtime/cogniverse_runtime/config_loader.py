@@ -42,6 +42,7 @@ class ConfigLoader:
         "document_agent": "cogniverse_agents.document_agent:DocumentAgent",
         "deep_research_agent": "cogniverse_agents.deep_research_agent:DeepResearchAgent",
         "coding_agent": "cogniverse_agents.coding_agent:CodingAgent",
+        "gateway_agent": "cogniverse_agents.gateway_agent:GatewayAgent",
     }
 
     def __init__(self, tenant_id: str = "default"):
