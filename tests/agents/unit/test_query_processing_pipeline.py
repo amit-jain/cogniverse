@@ -133,66 +133,32 @@ class TestQueryProcessingPipeline:
     @pytest.mark.ci_fast
     def test_routing_decision_with_real_query(self):
         """Test routing decisions with real queries"""
-        import logging
         from unittest.mock import Mock, patch
 
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-        # Mock only external service URLs, not core logic
-        with patch(
-            "cogniverse_core.config.utils.create_default_config_manager"
-        ) as mock_config_manager:
-            mock_config = Mock()
-            mock_config.get.side_effect = lambda key, default=None: {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }.get(key, default)
-            mock_config_manager.return_value = mock_config
+        def _mock_configure_dspy(self_agent, deps_arg):
+            self_agent._dspy_lm = Mock()
 
-            # Mock RoutingAgent initialization to avoid hangs
-            with (
-                patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-                ),
-                patch(
-                    "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
-                    return_value=None,
-                ),
-            ):
-                # Create a mock routing agent manually
-                agent = object.__new__(RoutingAgent)
-                agent.deps = RoutingDeps(
+        with patch.object(
+            RoutingAgent, "_configure_dspy", _mock_configure_dspy
+        ):
+            agent = RoutingAgent(
+                deps=RoutingDeps(
                     telemetry_config=TelemetryConfig(enabled=False),
-                    enable_mlflow_tracking=False,
-                    enable_relationship_extraction=False,
-                    enable_query_enhancement=False,
                 )
-                agent.routing_module = None
-                agent._routing_stats = {}
-                agent.enable_telemetry = False
-                agent.logger = logging.getLogger(__name__)
+            )
 
-                # Mock the route_query method
-                async def mock_route_query(query_text, tenant_id=None):
-                    return {
-                        "query": query_text,
-                        "recommended_agent": "video_search_agent",
-                        "confidence": 0.8,
-                        "reasoning": f"Mock routing for: {query_text}",
-                    }
+            # Mock the route_query method
+            async def mock_route_query(query_text, tenant_id=None, **kwargs):
+                return {
+                    "query": query_text,
+                    "recommended_agent": "video_search_agent",
+                    "confidence": 0.8,
+                    "reasoning": f"Mock routing for: {query_text}",
+                }
 
-                agent.route_query = mock_route_query
+            agent.route_query = mock_route_query
 
             test_queries = [
                 "Find videos of autonomous robots",

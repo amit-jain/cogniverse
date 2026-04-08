@@ -1,84 +1,43 @@
 """
 Integration tests for RoutingAgent
-Tests real interactions with routing system and configuration
+Tests real interactions with routing system and configuration.
 """
 
-import json
-import os
-import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+
+def _make_agent(**dep_overrides) -> RoutingAgent:
+    """Create a RoutingAgent with mocked DSPy LM."""
+    defaults = {"telemetry_config": TelemetryConfig(enabled=False)}
+    defaults.update(dep_overrides)
+    deps = RoutingDeps(**defaults)
+
+    def _mock_configure_dspy(self_agent, deps_arg):
+        self_agent._dspy_lm = MagicMock()
+
+    with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
+        return RoutingAgent(deps=deps)
 
 
 class TestRoutingAgentIntegration:
-    """Integration tests for RoutingAgent with real routing components"""
-
-    @pytest.fixture
-    def test_config(self):
-        """Create test configuration"""
-        return {
-            "model_name": "ollama/gemma3:4b",
-            "base_url": "http://localhost:11434",
-            "api_key": "dummy",
-            "confidence_threshold": 0.7,
-        }
-
-    @pytest.fixture
-    def routing_config_file(self):
-        """Create temporary routing configuration file"""
-        config_data = {
-            "routing_mode": "tiered",
-            "tier_config": {
-                "enable_fast_path": True,
-                "enable_slow_path": True,
-                "enable_langextract": False,
-                "enable_fallback": True,
-                "fast_path_confidence_threshold": 0.7,
-                "slow_path_confidence_threshold": 0.6,
-            },
-            "gliner_config": {
-                "model": "urchade/gliner_large-v2.1",
-                "threshold": 0.3,
-                "labels": ["video_content", "text_information", "summary_request"],
-            },
-            "llm_config": {
-                "provider": "local",
-                "model": "ollama/gemma3:4b",
-                "endpoint": "http://localhost:11434",
-                "temperature": 0.1,
-            },
-            "cache_config": {"enable_caching": True, "cache_ttl_seconds": 300},
-            "monitoring_config": {"enable_metrics": True, "metrics_batch_size": 50},
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(config_data, f)
-            config_file_path = f.name
-
-        yield config_file_path
-
-        # Cleanup
-        os.unlink(config_file_path)
+    """Integration tests for RoutingAgent with routing components."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_real_routing_decision_flow(self, test_config):
-        """Test actual routing decision flow through comprehensive router"""
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        agent = RoutingAgent(deps=deps)
+    async def test_routing_decision_flow(self):
+        """Test actual routing decision flow."""
+        agent = _make_agent()
 
-        # Test different query types
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.85
+        mock_prediction.reasoning_chain = ["Video content search"]
+
         test_queries = [
             "Show me videos about machine learning",
             "Summarize the latest AI research",
@@ -86,96 +45,106 @@ class TestRoutingAgentIntegration:
             "Find documents about deep learning",
         ]
 
-        for query in test_queries:
-            result = await agent.route_query(query, tenant_id="test_tenant")
+        with patch.object(
+            agent.routing_module, "forward", return_value=mock_prediction
+        ):
+            for query in test_queries:
+                result = await agent.route_query(query, tenant_id="test_tenant")
 
-            # Verify result structure (RoutingDecision dataclass)
-            assert result.query == query
-            assert result.recommended_agent is not None
-            assert result.confidence > 0
-            assert result.reasoning is not None
-            assert isinstance(result.fallback_agents, list)
-            assert isinstance(result.metadata, dict)
+                assert result.query == query
+                assert result.recommended_agent is not None
+                assert result.confidence > 0
+                assert result.reasoning is not None
+                assert isinstance(result.fallback_agents, list)
+                assert isinstance(result.metadata, dict)
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_routing_agent_context_propagation(self, test_config):
-        """Test that context is properly propagated through routing layers"""
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        agent = RoutingAgent(deps=deps)
+    async def test_routing_agent_context_propagation(self):
+        """Test that context is properly propagated through routing."""
+        agent = _make_agent()
 
-        context = {
-            "user_id": "test_user",
-            "session_id": "session_123",
-            "preferences": {"language": "en", "max_results": 5},
-        }
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.8
+        mock_prediction.reasoning_chain = ["Search needed"]
 
-        result = await agent.route_query(
-            "find videos", context, tenant_id="test_tenant"
-        )
+        with patch.object(
+            agent.routing_module, "forward", return_value=mock_prediction
+        ):
+            result = await agent.route_query(
+                "find videos", context="user prefers video content", tenant_id="test_tenant"
+            )
 
-        # Context should be preserved and potentially enhanced
         assert result.query == "find videos"
         assert result.recommended_agent is not None
         assert result.confidence > 0
 
-    def test_agent_registry_validation_integration(self):
-        """Test agent initialization with different configurations"""
-        # Test with minimal valid config (default values)
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        agent = RoutingAgent(deps=deps)
+    def test_agent_initialization(self):
+        """Test agent initialization with different configurations."""
+        agent = _make_agent()
         assert agent.config is not None
         assert hasattr(agent, "logger")
-
-        # Test with another tenant
-        deps2 = RoutingDeps(telemetry_config=telemetry_config)
-        agent2 = RoutingAgent(deps=deps2)
-        assert agent2.config is not None
-        assert hasattr(agent2, "routing_module")
+        assert hasattr(agent, "routing_module")
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_workflow_generation_consistency(self, test_config):
-        """Test that workflow generation is consistent across multiple calls"""
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        agent = RoutingAgent(deps=deps)
+    async def test_workflow_generation_consistency(self):
+        """Test that routing is consistent across multiple calls."""
+        agent = _make_agent()
+
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.9
+        mock_prediction.reasoning_chain = ["Training video search"]
+
         query = "Show me training videos"
 
-        # Run same query multiple times
-        results = []
-        for _ in range(3):
-            result = await agent.route_query(query, tenant_id="test_tenant")
-            results.append(result)
+        with patch.object(
+            agent.routing_module, "forward", return_value=mock_prediction
+        ):
+            results = []
+            for _ in range(3):
+                result = await agent.route_query(query, tenant_id="test_tenant")
+                results.append(result)
 
-        # Results should be consistent in structure
         first_result = results[0]
         for result in results[1:]:
             assert result.query == first_result.query
             assert result.recommended_agent == first_result.recommended_agent
-            # Confidence and reasoning should be present and non-trivial
             assert result.confidence > 0
             assert result.reasoning is not None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_enriched_data_passthrough(self):
+        """Test that pre-enriched data from upstream agents is used."""
+        agent = _make_agent()
+
+        forward_calls = []
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "summarizer_agent"}
+        mock_prediction.overall_confidence = 0.9
+        mock_prediction.reasoning_chain = ["Summarization with entities"]
+
+        def capture_forward(**kwargs):
+            forward_calls.append(kwargs)
+            return mock_prediction
+
+        with patch.object(
+            agent.routing_module, "forward", side_effect=capture_forward
+        ):
+            result = await agent.route_query(
+                query="summarize AI research",
+                enhanced_query="summarize recent AI research papers from 2024",
+                entities=[{"text": "AI", "label": "TECH"}, {"text": "research", "label": "TOPIC"}],
+                relationships=[{"subject": "AI", "relation": "part_of", "object": "research"}],
+                tenant_id="test_tenant",
+            )
+
+        assert result.recommended_agent == "summarizer_agent"
+        assert len(forward_calls) == 1
+        # Enriched query should be used
+        assert "2024" in forward_calls[0]["query"]
+        # Context should contain entities
+        assert "AI" in forward_calls[0]["context"]

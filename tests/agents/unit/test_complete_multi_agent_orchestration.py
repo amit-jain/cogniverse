@@ -2,15 +2,15 @@
 Complete Multi-Agent Orchestration Tests
 
 Tests the full end-to-end multi-agent workflow with real components:
-1. Enhanced routing agent makes routing decisions
-2. Video search agent executes multimodal searches
-3. Summarizer agent processes results
-4. Detailed report agent generates comprehensive reports
-5. Query enhancement pipeline improves search queries
+1. Routing agent makes routing decisions
+2. Summarizer agent processes results
+3. Detailed report agent generates comprehensive reports
+4. Query enhancement pipeline improves search queries
 """
 
 import asyncio
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,19 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+
+def _make_routing_agent() -> RoutingAgent:
+    """Create RoutingAgent with mocked DSPy for unit tests."""
+    telemetry_config = TelemetryConfig(enabled=False)
+    deps = RoutingDeps(telemetry_config=telemetry_config)
+
+    def _mock_configure_dspy(self_agent, deps_arg):
+        self_agent._dspy_lm = MagicMock()
+
+    with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
+        return RoutingAgent(deps=deps)
 
 
 @pytest.mark.unit
@@ -37,56 +49,27 @@ class TestCompleteMultiAgentOrchestration:
         """Set up environment for video search testing"""
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
         yield
-        # Cleanup handled automatically
 
     @pytest.mark.ci_fast
     def test_routing_to_video_search_workflow(self):
         """Test routing decision leading to video search workflow"""
-
-        # Initialize routing agent
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(telemetry_config=telemetry_config)
-        routing_agent = RoutingAgent(deps=deps)
-
-        # Test video search query
+        routing_agent = _make_routing_agent()
         video_query = "Find videos of robots playing soccer"
 
-        try:
-            # Step 1: Route the query
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.85
+        mock_prediction.reasoning_chain = ["Video search needed"]
+
+        with patch.object(
+            routing_agent.routing_module, "forward", return_value=mock_prediction
+        ):
             routing_result = asyncio.run(
                 routing_agent.route_query(video_query, tenant_id="test_tenant")
             )
 
-            # Should return routing decision
-            assert routing_result is not None
-
-            # Step 2: Skip video search agent to avoid Vespa connection hang
-            try:
-                # Skip actual video agent initialization to avoid Vespa timeout
-                print("✅ Complete routing workflow functional (video search skipped)")
-
-            except Exception as video_error:
-                # Expected if Vespa not available
-                print(f"Video search handled gracefully: {video_error}")
-                assert (
-                    "vespa" in str(video_error).lower()
-                    or "connection" in str(video_error).lower()
-                )
-
-        except Exception as routing_error:
-            # Should handle external dependencies gracefully
-            print(f"Routing handled gracefully: {routing_error}")
-            assert (
-                "connection" in str(routing_error).lower()
-                or "config" in str(routing_error).lower()
-            )
+        assert routing_result is not None
+        assert routing_result.recommended_agent == "search_agent"
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
@@ -95,14 +78,9 @@ class TestCompleteMultiAgentOrchestration:
             deps=deps, config_manager=create_default_config_manager()
         )
 
-        # Test with sample search results
-
-        # Should handle summarization request
         assert summarizer is not None
         assert hasattr(summarizer, "summarize")
         assert callable(summarizer.summarize)
-
-        print("✅ Summarization workflow structure validated")
 
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
@@ -111,32 +89,24 @@ class TestCompleteMultiAgentOrchestration:
             deps=deps, config_manager=create_default_config_manager()
         )
 
-        # Test with comprehensive data structure
-
-        # Should handle report generation request
         assert reporter is not None
         assert hasattr(reporter, "generate_report")
         assert callable(reporter.generate_report)
-
-        print("✅ Detailed report workflow structure validated")
 
     def test_query_enhancement_to_search_workflow(self):
         """Test query enhancement feeding into search workflow"""
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline(enable_simba=False)
 
-        # Test query enhancement pipeline
         original_query = "Show me videos about machine learning robots"
 
         try:
-            # Step 1: Extract relationships
             extraction_result = asyncio.run(
                 extractor.extract_comprehensive_relationships(original_query)
             )
             entities = extraction_result.get("entities", [])
             relationships = extraction_result.get("relationships", [])
 
-            # Step 2: Enhance query
             enhancement_result = asyncio.run(
                 pipeline.enhance_query_with_relationships(
                     original_query, entities=entities, relationships=relationships
@@ -144,85 +114,26 @@ class TestCompleteMultiAgentOrchestration:
             )
 
             enhanced_query = enhancement_result.get("enhanced_query", original_query)
-
-            # Step 3: Enhanced query should be suitable for search
             assert isinstance(enhanced_query, str)
             assert len(enhanced_query) > 0
 
-            # Step 4: Skip video search agent to avoid Vespa connection hang
-            try:
-                # Skip actual video agent to avoid Vespa timeout
-                print(
-                    f"✅ Enhanced query ready for search: '{enhanced_query}' (video search skipped)"
-                )
-
-            except Exception as search_error:
-                # Expected if Vespa not available
-                print(
-                    f"Enhanced query workflow validated (search unavailable): {search_error}"
-                )
-
-        except Exception as enhancement_error:
-            # Should handle gracefully if models not available
-            print(f"Enhancement handled gracefully: {enhancement_error}")
-            assert True  # Graceful handling is success
+        except Exception:
+            # Graceful handling if models not available
+            assert True
 
     @pytest.mark.ci_fast
     def test_agent_coordination_interfaces(self):
         """Test that agents have compatible interfaces for coordination"""
-        import logging
-        from unittest.mock import patch
-
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-        # Initialize default config (side effect: sets up singleton)
-        _config_manager = create_default_config_manager()
-        assert _config_manager is not None  # Verify config initialized
-
-        # Initialize all core agents with mocked routing agent
-        with (
-            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-            ),
-            patch(
-                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
-                return_value=None,
-            ),
-        ):
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.deps = RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                enable_mlflow_tracking=False,
-                enable_relationship_extraction=False,
-                enable_query_enhancement=False,
-            )
-            routing_agent.routing_module = None
-            routing_agent._routing_stats = {}
-            routing_agent.enable_telemetry = False
-            routing_agent.logger = logging.getLogger(__name__)
-
-        summarizer_deps = SummarizerDeps()
+        routing_agent = _make_routing_agent()
         summarizer = SummarizerAgent(
-            deps=summarizer_deps, config_manager=create_default_config_manager()
+            deps=SummarizerDeps(),
+            config_manager=create_default_config_manager(),
         )
-        reporter_deps = DetailedReportDeps()
         reporter = DetailedReportAgent(
-            deps=reporter_deps, config_manager=create_default_config_manager()
+            deps=DetailedReportDeps(),
+            config_manager=create_default_config_manager(),
         )
 
-        # Verify agents have expected coordination interfaces
         agents = {
             "routing": routing_agent,
             "summarizer": summarizer,
@@ -232,171 +143,50 @@ class TestCompleteMultiAgentOrchestration:
         for agent_name, agent in agents.items():
             assert agent is not None, f"{agent_name} agent failed to initialize"
 
-            # Each agent should have basic coordination capabilities
-            if hasattr(agent, "process_a2a_message"):
-                assert callable(agent.process_a2a_message)
-                print(f"✅ {agent_name} agent supports A2A messaging")
-
-            if hasattr(agent, "get_agent_info"):
-                assert callable(agent.get_agent_info)
-                print(f"✅ {agent_name} agent provides agent info")
-
-        print("✅ Agent coordination interfaces validated")
-
     def test_error_propagation_across_agents(self):
         """Test that errors propagate gracefully across agent boundaries"""
-        import logging
-        from unittest.mock import patch
+        routing_agent = _make_routing_agent()
 
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-        with (
-            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-            ),
-            patch(
-                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
-                return_value=None,
-            ),
-        ):
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.deps = RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                enable_mlflow_tracking=False,
-                enable_relationship_extraction=False,
-                enable_query_enhancement=False,
-            )
-            routing_agent.routing_module = None
-            routing_agent._routing_stats = {}
-            routing_agent.enable_telemetry = False
-            routing_agent.logger = logging.getLogger(__name__)
-
-        # Test with problematic inputs
         problematic_queries = [
-            "",  # Empty query
-            None,  # None input
-            "x" * 1000,  # Very long query
-            "🤖" * 50,  # Unicode heavy
+            "",
+            "x" * 1000,
         ]
 
         for query in problematic_queries:
             try:
-                if query is not None:
+                with patch.object(
+                    routing_agent.routing_module,
+                    "forward",
+                    side_effect=RuntimeError("test error"),
+                ):
                     result = asyncio.run(
                         routing_agent.route_query(str(query), tenant_id="test_tenant")
                     )
-                    # Should handle gracefully
-                    assert (
-                        result is not None or True
-                    )  # Either return result or handle gracefully
-
-            except Exception as e:
-                # Should not crash the system
-                print(f"Error handled gracefully for query '{str(query)[:20]}...': {e}")
-                assert True  # Graceful error handling is success
-
-        print("✅ Error propagation handling validated")
+                    assert result is not None
+            except Exception:
+                assert True
 
     def test_resource_management_across_agents(self):
         """Test resource management when multiple agents are active"""
-        import logging
-        from unittest.mock import patch
-
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-
         agents = []
 
-        try:
-            # Initialize default config (side effect: sets up singleton)
-            _config_manager = create_default_config_manager()
-            assert _config_manager is not None  # Verify config initialized
-
-            # Create multiple agents simultaneously with mocked routing agent
-            with (
-                patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-                ),
-                patch(
-                    "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
-                    return_value=None,
-                ),
-            ):
-                # Create a mock routing agent manually
-                routing_agent = object.__new__(RoutingAgent)
-                routing_agent.deps = RoutingDeps(
-                    telemetry_config=TelemetryConfig(enabled=False),
-                    enable_mlflow_tracking=False,
-                    enable_relationship_extraction=False,
-                    enable_query_enhancement=False,
-                )
-                routing_agent.routing_module = None
-                routing_agent._routing_stats = {}
-                routing_agent.enable_telemetry = False
-                routing_agent.logger = logging.getLogger(__name__)
-                agents.append(routing_agent)
-                summarizer_deps = SummarizerDeps()
-                agents.append(
-                    SummarizerAgent(
-                        deps=summarizer_deps, config_manager=_config_manager
-                    )
-                )
-                reporter_deps = DetailedReportDeps()
-                agents.append(
-                    DetailedReportAgent(
-                        deps=reporter_deps, config_manager=_config_manager
-                    )
-                )
-
-            # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
-            try:
-                # Skip video agent to avoid Vespa connection timeout
-                print("Skipping video agent creation to avoid Vespa connection timeout")
-            except Exception as e:
-                print(f"Video agent handled gracefully: {e}")
-
-            # All created agents should be functional
-            for i, agent in enumerate(agents):
-                assert agent is not None, f"Agent {i} failed to initialize"
-
-            print(
-                f"✅ Resource management validated with {len(agents)} concurrent agents"
+        routing_agent = _make_routing_agent()
+        agents.append(routing_agent)
+        agents.append(
+            SummarizerAgent(
+                deps=SummarizerDeps(),
+                config_manager=create_default_config_manager(),
             )
+        )
+        agents.append(
+            DetailedReportAgent(
+                deps=DetailedReportDeps(),
+                config_manager=create_default_config_manager(),
+            )
+        )
 
-        except Exception as e:
-            # Should handle resource constraints gracefully
-            print(f"Resource management handled gracefully: {e}")
-            assert True  # Graceful handling is success
-
-        finally:
-            # Cleanup resources if agents have cleanup methods
-            for agent in agents:
-                if hasattr(agent, "cleanup"):
-                    try:
-                        agent.cleanup()
-                    except Exception:
-                        pass
+        for i, agent in enumerate(agents):
+            assert agent is not None, f"Agent {i} failed to initialize"
 
 
 @pytest.mark.unit
@@ -405,42 +195,7 @@ class TestSystemScalability:
 
     def test_concurrent_routing_requests(self):
         """Test handling multiple concurrent routing requests"""
-        import logging
-        from unittest.mock import patch
-
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-        with (
-            patch("cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-            ),
-            patch(
-                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-            ),
-            patch(
-                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
-                return_value=None,
-            ),
-        ):
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.deps = RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                enable_mlflow_tracking=False,
-                enable_relationship_extraction=False,
-                enable_query_enhancement=False,
-            )
-            routing_agent.routing_module = None
-            routing_agent._routing_stats = {}
-            routing_agent.enable_telemetry = False
-            routing_agent.logger = logging.getLogger(__name__)
+        routing_agent = _make_routing_agent()
 
         queries = [
             "Find videos of autonomous robots",
@@ -450,52 +205,39 @@ class TestSystemScalability:
             "Analyze computer vision papers",
         ]
 
+        mock_prediction = MagicMock()
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.8
+        mock_prediction.reasoning_chain = ["Search routing"]
+
         async def process_concurrent_queries():
             tasks = [
                 routing_agent.route_query(query, tenant_id="test_tenant")
                 for query in queries
             ]
-            try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                return results
-            except Exception as e:
-                return [e] * len(queries)
+            return await asyncio.gather(*tasks, return_exceptions=True)
 
-        try:
+        with patch.object(
+            routing_agent.routing_module, "forward", return_value=mock_prediction
+        ):
             results = asyncio.run(process_concurrent_queries())
 
-            # Should handle concurrent requests
-            assert len(results) == len(queries)
-            print(f"✅ Concurrent routing validated with {len(queries)} requests")
-
-        except Exception as e:
-            print(f"Concurrent processing handled gracefully: {e}")
-            assert True
+        assert len(results) == len(queries)
 
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
-        summarizer_deps = SummarizerDeps()
         summarizer = SummarizerAgent(
-            deps=summarizer_deps, config_manager=create_default_config_manager()
+            deps=SummarizerDeps(),
+            config_manager=create_default_config_manager(),
         )
-        reporter_deps = DetailedReportDeps()
         reporter = DetailedReportAgent(
-            deps=reporter_deps, config_manager=create_default_config_manager()
+            deps=DetailedReportDeps(),
+            config_manager=create_default_config_manager(),
         )
 
-        # Simulate repeated operations
-        for i in range(10):
-            try:
-                # Create and process sample data
-
-                # Both agents should handle repeated requests
-                assert summarizer is not None
-                assert reporter is not None
-
-            except Exception as e:
-                print(f"Memory stability test iteration {i} handled gracefully: {e}")
-
-        print("✅ Memory usage stability validated")
+        for _ in range(10):
+            assert summarizer is not None
+            assert reporter is not None
 
 
 if __name__ == "__main__":

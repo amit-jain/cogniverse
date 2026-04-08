@@ -1,234 +1,94 @@
 """
-Unit tests for cache and metrics integration in RoutingAgent:
-- Cache checking and storing
-- Metrics tracking
-- Production components
+Unit tests for RoutingAgent — cache and metrics.
+
+The gutted RoutingAgent no longer has inline caching, metrics tracking,
+or production components (those features move to dedicated A2A agents
+and infrastructure). These tests verify that the gutted agent works
+correctly without those components.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps, RoutingOutput
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
-class TestRoutingAgentCacheMetrics:
-    """Test cache and metrics integration in RoutingAgent"""
+def _make_agent(**dep_overrides) -> RoutingAgent:
+    """Create a RoutingAgent with mocked DSPy LM."""
+    defaults = {
+        "telemetry_config": TelemetryConfig(enabled=False),
+    }
+    defaults.update(dep_overrides)
+    deps = RoutingDeps(**defaults)
 
-    @pytest.fixture(scope="function")
-    def routing_agent(self):
-        """Create routing agent with test configuration"""
-        # Reset TelemetryManager singleton to avoid conflicts with previous tests
-        from cogniverse_foundation.telemetry.manager import TelemetryManager
+    def _mock_configure_dspy(self_agent, deps_arg):
+        self_agent._dspy_lm = MagicMock()
 
-        TelemetryManager._instance = None
+    with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
+        return RoutingAgent(deps=deps)
 
-        # Create telemetry config
-        telemetry_config = TelemetryConfig(
-            enabled=False,  # Disable telemetry for unit tests (cache/metrics don't need it)
-            provider_config={},
-        )
 
-        # Create deps with test configuration
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            enable_caching=True,
-            enable_metrics_tracking=True,
-            enable_parallel_execution=True,
-            enable_contextual_analysis=True,
-            enable_memory=False,  # Disabled for unit tests
-            enable_advanced_optimization=False,  # Disabled for unit tests
-            enable_relationship_extraction=False,  # Disabled for faster tests
-            enable_query_enhancement=False,  # Disabled for faster tests
-        )
+class TestGuttedAgentHasNoCacheOrMetrics:
+    """Verify the gutted agent has no cache/metrics/production components."""
 
-        # Mock all external dependencies to avoid network calls and delays
-        # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
-        def _mock_configure_dspy(self_agent, deps_arg):
-            """Mock _configure_dspy that sets _dspy_lm to a MagicMock."""
-            self_agent._dspy_lm = MagicMock()
+    @pytest.mark.ci_fast
+    def test_no_cache_manager(self):
+        agent = _make_agent()
+        assert not hasattr(agent, "cache_manager")
 
-        with (
-            patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy),
-            patch(
-                "cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"
-            ),
-        ):
-            agent = RoutingAgent(deps=deps, port=8001)
+    @pytest.mark.ci_fast
+    def test_no_metrics_tracker(self):
+        agent = _make_agent()
+        assert not hasattr(agent, "metrics_tracker")
 
-            # Yield agent for test use
-            yield agent
+    @pytest.mark.ci_fast
+    def test_no_parallel_executor(self):
+        agent = _make_agent()
+        assert not hasattr(agent, "parallel_executor")
 
-            # Cleanup after each test to prevent state pollution
-            if hasattr(agent, "cache_manager") and agent.cache_manager:
-                # Clear all caches
-                agent.cache_manager.invalidate_all()
-                agent.cache_manager.reset_stats()
+    @pytest.mark.ci_fast
+    def test_no_contextual_analyzer(self):
+        agent = _make_agent()
+        assert not hasattr(agent, "contextual_analyzer")
 
-            if hasattr(agent, "metrics_tracker") and agent.metrics_tracker:
-                # Reset all metrics
-                agent.metrics_tracker.reset_all_stats()
 
-            # Reset TelemetryManager singleton after test
-            from cogniverse_foundation.telemetry.manager import TelemetryManager
-
-            TelemetryManager._instance = None
+class TestGuttedAgentRouting:
+    """Verify routing still works without cache/metrics."""
 
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_cached_result(self, routing_agent):
-        """Test that cache hit returns cached result without processing"""
-        query = "machine learning videos"
-
-        # Create a RoutingDecision to cache
-        from datetime import datetime
-
-        from cogniverse_agents.routing_agent import RoutingOutput
-
-        cached_decision = RoutingOutput(
-            query=query,
-            recommended_agent="video_search_agent",
-            confidence=0.9,
-            reasoning="Cached routing decision",
-            enhanced_query=query,
-            entities=[],
-            relationships=[],
-            metadata={"cached": True},
-            timestamp=datetime.now(),
-        )
-
-        # Pre-populate cache (video_search_agent maps to VIDEO modality)
-        routing_agent.cache_manager.cache_result(
-            query, QueryModality.VIDEO, cached_decision
-        )
-
-        # Mock the routing module to ensure it's not called on cache hit
-        with patch.object(routing_agent.routing_module, "forward") as mock_forward:
-            # Call route_query
-            result = await routing_agent.route_query(query, tenant_id="test_tenant")
-
-            # Verify cached result was returned
-            assert result.query == cached_decision.query
-            assert result.recommended_agent == cached_decision.recommended_agent
-            assert result.confidence == cached_decision.confidence
-
-            # Verify routing module was not called (cache hit)
-            mock_forward.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_cache_miss_processes_query(self, routing_agent):
-        """Test that cache miss processes query normally"""
-        query = "deep learning tutorials"
-
-        # Mock the routing module to return a prediction matching
-        # DSPyAdvancedRoutingModule output format
+    @pytest.mark.ci_fast
+    async def test_route_query_without_cache(self):
+        agent = _make_agent()
         mock_prediction = MagicMock()
-        mock_prediction.routing_decision = {
-            "primary_agent": "video_search_agent",
-        }
-        mock_prediction.overall_confidence = 0.9
-        mock_prediction.reasoning_chain = ["Route to video search for tutorials"]
-        mock_prediction.primary_intent = "search"
-        mock_prediction.complexity_score = 0.5
+        mock_prediction.routing_decision = {"primary_agent": "search_agent"}
+        mock_prediction.overall_confidence = 0.85
+        mock_prediction.reasoning_chain = ["Direct routing"]
 
         with patch.object(
-            routing_agent.routing_module, "forward", return_value=mock_prediction
+            agent.routing_module, "forward", return_value=mock_prediction
         ):
-            # Call route_query
-            result = await routing_agent.route_query(query, tenant_id="test_tenant")
+            result = await agent.route_query(query="test query", tenant_id="t1")
 
-            # Verify routing was performed
-            assert result.query == query
-            assert result.recommended_agent == "video_search_agent"
-            assert result.confidence > 0
-
-            # Verify result was cached (video_search_agent maps to VIDEO modality)
-            cached = routing_agent.cache_manager.get_cached_result(
-                query, QueryModality.VIDEO
-            )
-            assert cached is not None
-            assert cached.query == result.query
-            assert cached.recommended_agent == result.recommended_agent
+        assert isinstance(result, RoutingOutput)
+        assert result.recommended_agent == "search_agent"
+        assert result.confidence == 0.85
 
     @pytest.mark.asyncio
-    async def test_metrics_tracked_on_success(self, routing_agent):
-        """Test that metrics are tracked on successful execution"""
-        query = "machine learning"
-
-        # Mock the routing module
-        mock_prediction = MagicMock()
-        mock_prediction.recommended_agent = "video_search_agent"
-        mock_prediction.confidence = 0.9
-        mock_prediction.reasoning = "Test routing decision"
-        mock_prediction.primary_intent = "search"
-        mock_prediction.complexity_score = 0.5
-
+    @pytest.mark.ci_fast
+    async def test_fallback_on_dspy_failure(self):
+        agent = _make_agent()
         with patch.object(
-            routing_agent.routing_module, "forward", return_value=mock_prediction
-        ):
-            # Call route_query
-            await routing_agent.route_query(query, tenant_id="test_tenant")
-
-            # Verify metrics were recorded
-            stats = routing_agent.metrics_tracker.get_summary_stats()
-            assert stats["total_requests"] > 0
-
-    @pytest.mark.asyncio
-    async def test_metrics_tracked_on_failure(self, routing_agent):
-        """Test that metrics are tracked on failed execution"""
-        query = "test query"
-
-        # Mock routing module to raise exception
-        with patch.object(
-            routing_agent.routing_module,
+            agent.routing_module,
             "forward",
-            side_effect=Exception("Routing failed"),
+            side_effect=Exception("DSPy error"),
         ):
-            # Call route_query (should not raise, returns fallback decision)
-            result = await routing_agent.route_query(query, tenant_id="test_tenant")
+            result = await agent.route_query(query="test query", tenant_id="t1")
 
-            # Verify fallback decision was returned
-            assert result is not None
-            assert result.query == query
-
-            # Routing stats are still tracked even on failure
-            stats = routing_agent.get_routing_statistics()
-            assert stats["total_queries"] > 0
-
-    @pytest.mark.asyncio
-    async def test_cache_stores_result_after_processing(self, routing_agent):
-        """Test that result is cached after processing"""
-        query = "neural networks"
-
-        # Ensure cache is empty (video_search_agent maps to VIDEO modality)
-        cached = routing_agent.cache_manager.get_cached_result(
-            query, QueryModality.VIDEO
-        )
-        assert cached is None
-
-        # Mock the routing module
-        mock_prediction = MagicMock()
-        mock_prediction.recommended_agent = "video_search_agent"
-        mock_prediction.confidence = 0.9
-        mock_prediction.reasoning = "Test routing decision"
-        mock_prediction.primary_intent = "search"
-        mock_prediction.complexity_score = 0.5
-
-        with patch.object(
-            routing_agent.routing_module, "forward", return_value=mock_prediction
-        ):
-            # Process query
-            result = await routing_agent.route_query(query, tenant_id="test_tenant")
-
-            # Verify result was cached (video_search_agent maps to VIDEO modality)
-            cached = routing_agent.cache_manager.get_cached_result(
-                query, QueryModality.VIDEO
-            )
-            assert cached is not None
-            assert cached.query == result.query
-            assert cached.recommended_agent == result.recommended_agent
-            assert cached.confidence == result.confidence
+        assert result.recommended_agent == "search_agent"
+        assert result.confidence <= 0.3
+        assert "Fallback" in result.reasoning or "error" in result.reasoning.lower()
 
 
 if __name__ == "__main__":

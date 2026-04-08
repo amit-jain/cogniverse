@@ -319,30 +319,23 @@ class TestDSPyAgentIntegration:
     """Test DSPy integration with actual agent classes."""
 
     @patch("cogniverse_agents.routing_agent.DSPyAdvancedRoutingModule")
-    @patch("cogniverse_agents.routing_agent.AdvancedRoutingOptimizer")
     def test_routing_agent_dspy_integration(
-        self, mock_optimizer, mock_routing_module, telemetry_manager_without_phoenix
+        self, mock_routing_module, telemetry_manager_without_phoenix
     ):
         """Test DSPy integration in RoutingAgent."""
         from cogniverse_agents.routing_agent import RoutingDeps
 
-        # Mock the routing modules to avoid loading models
         mock_routing_instance = Mock()
         mock_routing_module.return_value = mock_routing_instance
-        mock_optimizer.return_value = Mock()
 
         deps = RoutingDeps(
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
 
-        # Should have DSPy capabilities (routing_module is the DSPy component)
         assert hasattr(agent, "routing_module")
         assert agent.routing_module is not None
-
-        # Verify agent is functional
         assert hasattr(agent, "route_query")
-        assert hasattr(agent, "get_routing_statistics")
 
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
@@ -1835,110 +1828,24 @@ class TestRoutingAgent:
 
     @pytest.mark.ci_fast
     def test_routing_agent_initialization(self, telemetry_manager_without_phoenix):
-        """Test Enhanced Routing Agent initialization"""
+        """Test RoutingAgent initialization (gutted — thin DSPy decision-maker)."""
         from cogniverse_agents.routing_agent import RoutingDeps
 
-        # Test with default config
         deps = RoutingDeps(
             telemetry_config=telemetry_manager_without_phoenix.config,
         )
         agent = RoutingAgent(deps=deps)
         assert agent is not None
-        assert hasattr(agent, "deps")  # Config now stored in deps
-        assert hasattr(agent, "enhanced_system_available")
+        assert hasattr(agent, "deps")
+        assert hasattr(agent, "routing_module")
+        assert hasattr(agent, "route_query")
 
-        # Test with custom config via deps (RoutingDeps contains all config)
         custom_deps = RoutingDeps(
             telemetry_config=telemetry_manager_without_phoenix.config,
-            model_name="smollm3:3b",
-            base_url="http://localhost:11434/v1",
             confidence_threshold=0.8,
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
         )
-
         custom_agent = RoutingAgent(deps=custom_deps)
         assert custom_agent.deps.confidence_threshold == 0.8
-        assert custom_agent.deps.enable_relationship_extraction is True
-
-    def test_orchestration_need_assessment(self, telemetry_manager_without_phoenix):
-        """Test orchestration need assessment logic"""
-        from cogniverse_agents.routing_agent import RoutingDeps
-
-        deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        agent = RoutingAgent(deps=deps)
-
-        # Simple query - should not need orchestration
-        simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
-        simple_relationships = []
-        simple_routing_result = {"confidence": 0.9}
-
-        needs_orchestration = agent._assess_orchestration_need(
-            "show me robots",
-            simple_entities,
-            simple_relationships,
-            simple_routing_result,
-            None,
-        )
-        assert needs_orchestration is False
-
-        # Complex query - should need orchestration
-        complex_entities = [
-            {"text": "robots", "label": "ENTITY", "confidence": 0.9},
-            {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-            {"text": "analysis", "label": "TASK", "confidence": 0.8},
-            {"text": "comparison", "label": "TASK", "confidence": 0.7},
-            {"text": "report", "label": "OUTPUT", "confidence": 0.9},
-            {"text": "techniques", "label": "CONCEPT", "confidence": 0.8},
-        ]
-        complex_relationships = [
-            {"subject": "robots", "relation": "playing", "object": "soccer"},
-            {"subject": "analysis", "relation": "of", "object": "techniques"},
-            {"subject": "comparison", "relation": "between", "object": "teams"},
-            {"subject": "report", "relation": "contains", "object": "analysis"},
-        ]
-        complex_routing_result = {"confidence": 0.5}  # Low confidence
-
-        needs_orchestration = agent._assess_orchestration_need(
-            "find videos of robots playing soccer and analyze the techniques used then generate a comprehensive comparison report between different teams",
-            complex_entities,
-            complex_relationships,
-            complex_routing_result,
-            None,
-        )
-        assert needs_orchestration is True
-
-    def test_orchestration_signals_detection(self, telemetry_manager_without_phoenix):
-        """Test orchestration signals detection"""
-        from cogniverse_agents.routing_agent import RoutingDeps
-
-        deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        agent = RoutingAgent(deps=deps)
-
-        entities = [
-            {"text": "test", "label": "TEST", "confidence": 0.8}
-        ] * 6  # Many entities
-        relationships = [
-            {"subject": "a", "relation": "b", "object": "c"}
-        ] * 4  # Many relationships
-
-        signals = agent._get_orchestration_signals(
-            "first find videos then analyze the content and generate a comprehensive report plus create summaries",
-            entities,
-            relationships,
-        )
-
-        assert signals["query_length"] > 10
-        assert signals["entity_count"] == 6
-        assert signals["relationship_count"] == 4
-        assert len(signals["action_verbs"]) >= 3
-        assert len(signals["conjunctions"]) >= 2
-        assert len(signals["sequential_indicators"]) >= 1
-        assert signals["complexity_score"] > 1.0
 
     def test_routing_decision_structure(self):
         """Test routing decision data structure"""
