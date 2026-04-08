@@ -337,11 +337,16 @@ class TestXGBoostMetaModelRoundTrip:
 
 
 class TestWorkflowIntelligenceRoundTrip:
-    """Verify WorkflowIntelligence persist/reload through real Phoenix."""
+    """Verify WorkflowIntelligence is now a read-only template loader.
+
+    Inline recording/persistence was removed — record_execution and
+    record_workflow_execution are no-ops. Templates and executions are
+    loaded from artifacts persisted by batch Argo jobs.
+    """
 
     @pytest.mark.asyncio
-    async def test_execution_persist_and_reload(self, real_provider):
-        """Persist a workflow execution, reload in new instance, verify."""
+    async def test_record_execution_is_noop(self, real_provider):
+        """record_execution no longer persists inline."""
         from cogniverse_agents.workflow.intelligence import (
             WorkflowExecution,
             WorkflowIntelligence,
@@ -352,7 +357,6 @@ class TestWorkflowIntelligenceRoundTrip:
             tenant_id="wi-exec-test",
         )
 
-        # Create and record a WorkflowExecution
         execution = WorkflowExecution(
             workflow_id=f"wf-{uuid.uuid4().hex[:8]}",
             query="find videos about quantum computing",
@@ -366,64 +370,23 @@ class TestWorkflowIntelligenceRoundTrip:
             timestamp=datetime.now(),
         )
 
+        # Should not raise, but also should not persist anything
         await wi.record_execution(execution)
-
-        # Create new instance and reload
-        wi2 = WorkflowIntelligence(
-            telemetry_provider=real_provider,
-            tenant_id="wi-exec-test",
-        )
-
-        await wi2.load_historical_data()
-
-        assert len(wi2.workflow_history) >= 1
-        latest = wi2.workflow_history[-1]
-        assert latest.query_type == "video_search"
-        assert latest.success is True
-        assert latest.confidence_score == 0.92
+        assert len(wi.workflow_history) == 0
 
     @pytest.mark.asyncio
-    async def test_template_persist_and_reload(self, real_provider):
-        """Persist a workflow template via blob, reload, verify."""
-        from cogniverse_agents.workflow.intelligence import (
-            WorkflowIntelligence,
-            WorkflowTemplate,
-        )
+    async def test_load_historical_data_empty(self, real_provider):
+        """load_historical_data works with no prior artifacts."""
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
         wi = WorkflowIntelligence(
             telemetry_provider=real_provider,
-            tenant_id="wi-template-test",
+            tenant_id="wi-empty-test",
         )
-
-        # Manually create and persist a template
-        template = WorkflowTemplate(
-            template_id="template_1",
-            name="video_analysis",
-            description="Standard video analysis workflow",
-            query_patterns=["video_search"],
-            task_sequence=[
-                {"agent": "routing_agent"},
-                {"agent": "video_search_agent"},
-                {"agent": "summarizer"},
-            ],
-            expected_execution_time=3.0,
-            success_rate=0.95,
-        )
-        wi.workflow_templates["template_1"] = template
-        await wi._persist_template(template)
-
-        # Create new instance and reload
-        wi2 = WorkflowIntelligence(
-            telemetry_provider=real_provider,
-            tenant_id="wi-template-test",
-        )
-
-        await wi2.load_historical_data()
-
-        assert "template_1" in wi2.workflow_templates
-        loaded_template = wi2.workflow_templates["template_1"]
-        assert loaded_template.name == "video_analysis"
-        assert loaded_template.success_rate == 0.95
+        await wi.load_historical_data()
+        # No artifacts persisted, so everything is empty
+        assert len(wi.workflow_history) == 0
+        assert len(wi.workflow_templates) == 0
 
 
 # ---------------------------------------------------------------------------

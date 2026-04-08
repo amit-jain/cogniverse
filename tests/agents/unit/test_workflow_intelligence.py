@@ -1,8 +1,7 @@
 """
-Unit tests for WorkflowIntelligence with DSPy integration and adaptive learning
+Unit tests for WorkflowIntelligence — read-only template loader
 """
 
-from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +9,7 @@ import pytest
 from cogniverse_agents.workflow.intelligence import (
     OptimizationStrategy,
     WorkflowIntelligence,
+    WorkflowTemplate,
 )
 from cogniverse_agents.workflow_types import WorkflowPlan, WorkflowStatus, WorkflowTask
 
@@ -46,8 +46,8 @@ class TestWorkflowIntelligence:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_record_workflow_execution(self):
-        """Test recording workflow execution"""
+    async def test_record_workflow_execution_is_noop(self):
+        """record_workflow_execution is a no-op (spans are the record)."""
         intelligence = _make_intelligence()
 
         workflow_plan = WorkflowPlan(
@@ -58,23 +58,13 @@ class TestWorkflowIntelligence:
                 WorkflowTask(
                     task_id="task1", agent_name="video_search", query="find AI videos"
                 ),
-                WorkflowTask(
-                    task_id="task2", agent_name="summarizer", query="summarize results"
-                ),
             ],
         )
-        workflow_plan.start_time = datetime.now()
-        workflow_plan.end_time = datetime.now()
 
         assert len(intelligence.workflow_history) == 0
-        assert len(intelligence.agent_performance) == 0
-
         await intelligence.record_workflow_execution(workflow_plan)
-
-        assert len(intelligence.workflow_history) == 1
-        recorded_execution = intelligence.workflow_history[0]
-        assert recorded_execution.workflow_id == "test-workflow"
-        assert recorded_execution.query == "find AI videos"
+        # No-op: history must remain empty
+        assert len(intelligence.workflow_history) == 0
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -100,30 +90,13 @@ class TestWorkflowIntelligence:
 
     @pytest.mark.asyncio
     async def test_get_agent_performance_metrics(self):
-        """Test getting agent performance metrics"""
+        """Test getting agent performance report (read-only from loaded data)"""
         intelligence = _make_intelligence()
-
-        workflow_plan = WorkflowPlan(
-            workflow_id="test-workflow",
-            original_query="find AI videos",
-            status=WorkflowStatus.COMPLETED,
-            tasks=[
-                WorkflowTask(
-                    task_id="task1", agent_name="video_search", query="find AI videos"
-                )
-            ],
-        )
-        workflow_plan.start_time = datetime.now()
-        workflow_plan.end_time = datetime.now()
-
-        await intelligence.record_workflow_execution(workflow_plan)
 
         report = intelligence.get_agent_performance_report()
         assert isinstance(report, dict)
-
-        if "video_search" in intelligence.agent_performance:
-            video_perf = intelligence.agent_performance["video_search"]
-            assert video_perf.agent_name == "video_search"
+        # No data loaded, so report is empty
+        assert len(report) == 0
 
     def test_query_type_classification(self):
         """Test query type classification functionality"""
@@ -141,33 +114,123 @@ class TestWorkflowIntelligence:
 
 
 @pytest.mark.unit
-class TestWorkflowIntelligenceEdgeCases:
-    """Test edge cases and error handling"""
+class TestSimplifiedWorkflowIntelligence:
+    """Tests for the simplified read-only template loader."""
+
+    def test_initialization_without_optimization(self):
+        intelligence = _make_intelligence()
+        assert intelligence is not None
+        # No DSPy modules should be present
+        assert not hasattr(intelligence, "workflow_optimizer")
+        assert not hasattr(intelligence, "template_generator")
 
     @pytest.mark.asyncio
-    async def test_max_history_size_limit(self):
-        """Test that workflow history respects max size limit"""
-        intelligence = _make_intelligence(max_history_size=3)
+    async def test_load_templates(self):
+        intelligence = _make_intelligence()
+        templates = intelligence.get_workflow_templates()
+        assert isinstance(templates, list)
+        assert len(templates) == 0  # Nothing loaded
 
-        for i in range(5):
-            workflow_plan = WorkflowPlan(
-                workflow_id=f"workflow-{i}",
-                original_query=f"query {i}",
-                status=WorkflowStatus.COMPLETED,
-                tasks=[
-                    WorkflowTask(
-                        task_id=f"task-{i}", agent_name="agent1", query=f"query {i}"
-                    )
-                ],
-            )
-            workflow_plan.start_time = datetime.now()
-            workflow_plan.end_time = datetime.now()
+    @pytest.mark.asyncio
+    async def test_find_matching_template(self):
+        intelligence = _make_intelligence()
+        template = WorkflowTemplate(
+            template_id="t1",
+            name="multi_modal_search",
+            description="Multi-modal search workflow",
+            query_patterns=["find videos and documents"],
+            task_sequence=[
+                {"agent": "search_agent"},
+                {"agent": "document_agent"},
+            ],
+            expected_execution_time=3.0,
+            success_rate=0.9,
+        )
+        intelligence.workflow_templates["t1"] = template
 
-            await intelligence.record_workflow_execution(workflow_plan)
+        match = intelligence._find_matching_template(
+            "find videos and documents about AI"
+        )
+        assert match is not None
+        assert match.template_id == "t1"
 
-        assert len(intelligence.workflow_history) == 3
-        assert intelligence.workflow_history[-1].workflow_id == "workflow-4"
-        assert intelligence.workflow_history[0].workflow_id == "workflow-2"
+    def test_get_agent_performance_report(self):
+        intelligence = _make_intelligence()
+        report = intelligence.get_agent_performance_report()
+        assert isinstance(report, dict)
+
+    @pytest.mark.asyncio
+    async def test_record_workflow_is_noop(self):
+        """record_workflow_execution should be a no-op (spans are the record)."""
+        intelligence = _make_intelligence()
+        plan = WorkflowPlan(
+            workflow_id="test-wf",
+            original_query="test",
+            status=WorkflowStatus.COMPLETED,
+            tasks=[],
+        )
+        await intelligence.record_workflow_execution(plan)
+        assert len(intelligence.workflow_history) == 0
+
+    @pytest.mark.asyncio
+    async def test_record_execution_is_noop(self):
+        """record_execution should be a no-op (spans are the record)."""
+        from cogniverse_agents.workflow.intelligence import WorkflowExecution
+
+        intelligence = _make_intelligence()
+        execution = WorkflowExecution(
+            workflow_id="wf-1",
+            query="test",
+            query_type="general",
+            execution_time=1.0,
+            success=True,
+            agent_sequence=["agent1"],
+            task_count=1,
+            parallel_efficiency=1.0,
+            confidence_score=0.9,
+        )
+        await intelligence.record_execution(execution)
+        assert len(intelligence.workflow_history) == 0
+
+    @pytest.mark.asyncio
+    async def test_optimize_from_ground_truth_is_noop(self):
+        """optimize_from_ground_truth returns skip status."""
+        intelligence = _make_intelligence()
+        result = await intelligence.optimize_from_ground_truth()
+        assert result["status"] == "skipped"
+        assert result["reason"] == "use_argo_batch_jobs"
+
+    @pytest.mark.asyncio
+    async def test_optimize_plan_without_templates_uses_strategy(self):
+        """Without templates, optimize_workflow_plan falls through to strategy."""
+        intelligence = _make_intelligence()
+        plan = WorkflowPlan(
+            workflow_id="wf-1",
+            original_query="test query",
+            tasks=[
+                WorkflowTask(task_id="t1", agent_name="agent1", query="test query")
+            ],
+        )
+        result = await intelligence.optimize_workflow_plan("test query", plan)
+        assert isinstance(result, WorkflowPlan)
+        assert intelligence.optimization_stats["successful_optimizations"] == 1
+
+    def test_get_workflow_templates_returns_values(self):
+        """get_workflow_templates returns list of template objects."""
+        intelligence = _make_intelligence()
+        template = WorkflowTemplate(
+            template_id="t1",
+            name="test",
+            description="test template",
+            query_patterns=["test"],
+            task_sequence=[],
+            expected_execution_time=1.0,
+            success_rate=0.9,
+        )
+        intelligence.workflow_templates["t1"] = template
+        templates = intelligence.get_workflow_templates()
+        assert len(templates) == 1
+        assert templates[0].template_id == "t1"
 
 
 if __name__ == "__main__":
