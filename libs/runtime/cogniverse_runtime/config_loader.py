@@ -46,6 +46,7 @@ class ConfigLoader:
         "entity_extraction_agent": "cogniverse_agents.entity_extraction_agent:EntityExtractionAgent",
         "query_enhancement_agent": "cogniverse_agents.query_enhancement_agent:QueryEnhancementAgent",
         "profile_selection_agent": "cogniverse_agents.profile_selection_agent:ProfileSelectionAgent",
+        "orchestrator_agent": "cogniverse_agents.orchestrator_agent:OrchestratorAgent",
     }
 
     def __init__(self, tenant_id: str = "default"):

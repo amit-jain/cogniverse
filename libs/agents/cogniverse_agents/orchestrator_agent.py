@@ -376,6 +376,7 @@ class OrchestratorAgent(
         query = input.query
         tenant_id = input.tenant_id
         session_id = input.session_id
+        self._current_tenant_id = tenant_id
         workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
 
         if not query:
@@ -740,7 +741,7 @@ class OrchestratorAgent(
                     query = agent_input.pop("query", "")
                     async with httpx.AsyncClient(timeout=60.0) as http_client:
                         response = await http_client.post(
-                            f"{agent_endpoint.url}/process",
+                            f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
                             json={"query": query, **agent_input},
                         )
                         response.raise_for_status()
@@ -1119,22 +1120,25 @@ class OrchestratorAgent(
         tasks_completed: int,
     ) -> None:
         """Emit cogniverse.orchestration telemetry span."""
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+        tenant_id = getattr(self, "_current_tenant_id", "default")
         try:
-
-            config = self._config_manager
-            if not hasattr(config, "span"):
-                # config_manager doesn't have span method, log instead
-                logger.info(
-                    f"Orchestration span: workflow={workflow_id}, "
-                    f"agents={agent_sequence}, time={execution_time:.2f}s, "
-                    f"success={success}, tasks={tasks_completed}"
-                )
-                return
-        except Exception:
-            logger.debug(
-                f"Orchestration complete: workflow={workflow_id}, "
-                f"time={execution_time:.2f}s, tasks={tasks_completed}"
-            )
+            with self.telemetry_manager.span(
+                name="cogniverse.orchestration",
+                tenant_id=tenant_id,
+                attributes={
+                    "orchestration.workflow_id": str(workflow_id),
+                    "orchestration.query": query[:200],
+                    "orchestration.agent_sequence": ",".join(agent_sequence) if agent_sequence else "",
+                    "orchestration.execution_time": float(execution_time),
+                    "orchestration.success": bool(success),
+                    "orchestration.tasks_completed": int(tasks_completed),
+                },
+            ):
+                pass
+        except Exception as e:
+            logger.debug("Failed to emit orchestration span: %s", e)
 
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]

@@ -179,16 +179,16 @@ class TestExecuteCodingTaskWiresMemory:
             "_execute_detailed_report_task must call _init_agent_memory()"
         )
 
-    def test_routing_memory_default_is_true(self):
-        """Audit fix #14 also flips the routing enable_memory default from
-        False to True. Pin this so a careless commit doesn't revert it."""
+    def test_gateway_agent_cached_on_dispatcher(self):
+        """GatewayAgent must be cached on the dispatcher to avoid GLiNER
+        model reload per request. Verify _execute_gateway_task uses the
+        cached _gateway_agent attribute."""
         import inspect
 
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        source = inspect.getsource(AgentDispatcher._execute_routing_task)
-        # The default after the fix is True. Look for the new pattern.
-        assert 'enable_memory", True' in source, (
-            "routing_agent enable_memory default must be True (audit fix #14). "
-            "Without this, the routing agent silently runs without memory."
+        source = inspect.getsource(AgentDispatcher._execute_gateway_task)
+        assert "_gateway_agent" in source, (
+            "_execute_gateway_task must cache GatewayAgent as self._gateway_agent "
+            "to avoid GLiNER model reload on every request."
         )

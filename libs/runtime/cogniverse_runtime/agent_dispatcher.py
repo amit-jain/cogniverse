@@ -225,10 +225,11 @@ class AgentDispatcher:
                 GatewayInput,
             )
 
-            deps = GatewayDeps()
-            agent = GatewayAgent(deps=deps)
+            if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
+                deps = GatewayDeps()
+                self._gateway_agent = GatewayAgent(deps=deps)
             typed_input = GatewayInput(query=query, tenant_id=tenant_id)
-            return agent, typed_input
+            return self._gateway_agent, typed_input
 
         if capabilities & {"summarization", "text_generation"}:
             from cogniverse_agents.summarizer_agent import (
@@ -452,11 +453,12 @@ class AgentDispatcher:
             GatewayInput,
         )
 
-        deps = GatewayDeps()
-        agent = GatewayAgent(deps=deps)
+        if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
+            deps = GatewayDeps()
+            self._gateway_agent = GatewayAgent(deps=deps)
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
-        result = await agent._process_impl(input_data)
+        result = await self._gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
             return await self._execute_orchestration_task(
@@ -530,93 +532,6 @@ class AgentDispatcher:
                 result.model_dump() if hasattr(result, "model_dump") else vars(result)
             ),
             "gateway_context": gateway_context,
-        }
-
-    async def _execute_routing_task(
-        self, query: str, context: Dict[str, Any], tenant_id: str
-    ) -> Dict[str, Any]:
-        """Thin routing via RoutingAgent — dispatches to downstream agent.
-
-        Orchestration is no longer handled here; GatewayAgent decides whether
-        a query is simple or complex *before* the routing path is ever reached.
-        """
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.utils import get_config
-
-        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        llm_config = config.get_llm_config()
-        llm_endpoint = llm_config.resolve("routing_agent")
-
-        routing_config = config.get("routing_agent", {})
-        # Audit fix #14 — memory is on by default. Per-tenant config can still
-        # disable it explicitly via routing_agent.enable_memory: false.
-        memory_enabled = routing_config.get("enable_memory", True)
-
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        global_tm = get_telemetry_manager()
-        telemetry_config = global_tm.config
-
-        deps_kwargs: Dict[str, Any] = {
-            "telemetry_config": telemetry_config,
-            "llm_config": llm_endpoint,
-            "enable_memory": memory_enabled,
-        }
-
-        if memory_enabled:
-            _sys_cfg = self._config_manager.get_system_config()
-            deps_kwargs.update(
-                {
-                    "memory_backend_host": _sys_cfg.backend_url,
-                    "memory_backend_port": _sys_cfg.backend_port,
-                    "memory_llm_model": llm_endpoint.model,
-                    "memory_embedding_model": routing_config.get(
-                        "memory_embedding_model", "nomic-embed-text"
-                    ),
-                    "memory_llm_base_url": llm_endpoint.api_base,
-                    "memory_config_manager": self._config_manager,
-                    "memory_schema_loader": self._schema_loader,
-                }
-            )
-
-        deps = RoutingDeps(**deps_kwargs)
-        import asyncio
-
-        agent = await asyncio.to_thread(
-            RoutingAgent, deps=deps, registry=self._registry
-        )
-
-        result = await agent.route_query(
-            query=query,
-            context=context.get("context"),
-            tenant_id=tenant_id,
-        )
-
-        recommended = result.recommended_agent
-        effective_query = result.enhanced_query or query
-        conversation_history = context.get("conversation_history", [])
-
-        downstream_result = await self._execute_downstream_agent(
-            agent_name=recommended,
-            query=effective_query,
-            tenant_id=tenant_id,
-            top_k=context.get("top_k", 10),
-            conversation_history=conversation_history,
-        )
-
-        return {
-            "status": "success",
-            "agent": "routing_agent",
-            "message": f"Routed '{query}' to {recommended}",
-            "recommended_agent": recommended,
-            "confidence": result.confidence,
-            "reasoning": result.reasoning,
-            "enhanced_query": result.enhanced_query,
-            "entities": result.entities,
-            "relationships": result.relationships,
-            "query_variants": result.query_variants,
-            "metadata": result.metadata,
-            "downstream_result": downstream_result,
         }
 
     async def _execute_downstream_agent(

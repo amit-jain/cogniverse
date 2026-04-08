@@ -327,15 +327,15 @@ class TestProcessAgentTaskDispatch:
         client = TestClient(app)
         return app, client, registry
 
-    def test_routing_capability_dispatches_to_routing_task(self, app_and_client):
-        """Routing agent with 'routing' capability uses _execute_routing_task, not search."""
+    def test_routing_capability_dispatches_to_gateway_task(self, app_and_client):
+        """Routing agent with 'routing' capability dispatches via _execute_gateway_task."""
         _, client, registry = app_and_client
 
         registry.register_agent(
             AgentEndpoint(
                 name="routing_agent",
                 url="http://localhost:8001",
-                capabilities=["routing", "query_analysis", "conversation_memory"],
+                capabilities=["routing", "query_analysis"],
             )
         )
 

@@ -8,9 +8,7 @@
       "enabled": true,
       "capabilities": [
         "routing",
-        "query_analysis",
-        "entity_extraction",
-        "conversation_memory"
+        "query_analysis"
       ],
       "modalities": []
     },
