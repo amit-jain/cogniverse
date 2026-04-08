@@ -253,36 +253,6 @@ class TestAdvancedRoutingOptimizerCore:
         assert status["training_step"] == 0
 
 
-class TestSIMBAIntegration:
-    """Test SIMBA integration functionality."""
-
-    def test_simba_config_creation(self):
-        """Test SIMBA configuration creation."""
-        from cogniverse_agents.routing.simba_query_enhancer import SIMBAConfig
-
-        config = SIMBAConfig()
-        assert config.similarity_threshold >= 0
-        assert config.max_memory_size > 0
-
-    def test_simba_enhancer_creation(self):
-        """Test SIMBA enhancer can be created."""
-        from cogniverse_agents.routing.simba_query_enhancer import (
-            SIMBAConfig,
-            SIMBAQueryEnhancer,
-        )
-
-        config = SIMBAConfig()
-
-        with patch("sentence_transformers.SentenceTransformer"):
-            enhancer = SIMBAQueryEnhancer(
-                telemetry_provider=_make_mock_telemetry_provider(),
-                tenant_id="test_tenant",
-                config=config,
-            )
-            assert enhancer.config == config
-            assert len(enhancer.enhancement_patterns) == 0
-
-
 class TestAdaptiveThresholdLearner:
     """Test adaptive threshold learner functionality."""
 
@@ -608,23 +578,17 @@ class TestAdvancedRoutingOptimizerIntegration:
         assert status["total_experiences"] >= config.min_experiences_for_training
 
     def test_components_import_successfully(self):
-        """Test that all Phase 6 components can be imported."""
+        """Test that remaining routing optimizer components can be imported."""
         try:
             import cogniverse_agents.routing.adaptive_threshold_learner as atl
             import cogniverse_agents.routing.advanced_optimizer as ao
             import cogniverse_agents.routing.mlflow_integration as mli
-            import cogniverse_agents.routing.simba_query_enhancer as sqe
 
-            # Verify key components exist
             assert hasattr(atl, "AdaptiveThresholdLearner")
             assert hasattr(ao, "AdvancedRoutingOptimizer")
             assert hasattr(mli, "MLflowIntegration")
-            assert hasattr(sqe, "SIMBAQueryEnhancer")
-
-            # If we get here, all imports succeeded
-            assert True
         except ImportError as e:
-            pytest.fail(f"Failed to import Phase 6 components: {e}")
+            pytest.fail(f"Failed to import routing optimizer components: {e}")
 
 
 if __name__ == "__main__":

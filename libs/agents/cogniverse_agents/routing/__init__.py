@@ -1,36 +1,19 @@
 # src/routing/__init__.py
 """
-Comprehensive Routing System for Multi-Agent RAG
+Routing subsystem — base types, config, and optimization.
 
-This module provides a flexible, extensible routing system with multiple strategies
-and automatic optimization capabilities.
+ComprehensiveRouter/TieredRouter/strategies have been replaced by
+GatewayAgent (fast GLiNER triage) + OrchestratorAgent (LLM-planned pipeline).
 """
 
 from .base import RoutingDecision, RoutingMetrics, RoutingStrategy
 from .config import AutomationRulesConfig, RoutingConfig, load_config
 from .optimizer import AutoTuningOptimizer, RoutingOptimizer
-from .router import ComprehensiveRouter, TieredRouter
-from .strategies import (
-    EnsembleRoutingStrategy,
-    GLiNERRoutingStrategy,
-    HybridRoutingStrategy,
-    KeywordRoutingStrategy,
-    LangExtractRoutingStrategy,
-    LLMRoutingStrategy,
-)
 
 __all__ = [
     "RoutingStrategy",
     "RoutingDecision",
     "RoutingMetrics",
-    "GLiNERRoutingStrategy",
-    "LLMRoutingStrategy",
-    "KeywordRoutingStrategy",
-    "HybridRoutingStrategy",
-    "EnsembleRoutingStrategy",
-    "LangExtractRoutingStrategy",
-    "ComprehensiveRouter",
-    "TieredRouter",
     "RoutingOptimizer",
     "AutoTuningOptimizer",
     "AutomationRulesConfig",

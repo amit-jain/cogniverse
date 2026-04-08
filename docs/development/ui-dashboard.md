@@ -1501,7 +1501,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 # Implementation layer
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_agents.gateway_agent import GatewayAgent
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Application layer

@@ -18,10 +18,6 @@ from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
 )
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
-from cogniverse_agents.routing.relationship_extraction_tools import (
-    RelationshipExtractorTool,
-)
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -92,34 +88,6 @@ class TestCompleteMultiAgentOrchestration:
         assert reporter is not None
         assert hasattr(reporter, "generate_report")
         assert callable(reporter.generate_report)
-
-    def test_query_enhancement_to_search_workflow(self):
-        """Test query enhancement feeding into search workflow"""
-        extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        original_query = "Show me videos about machine learning robots"
-
-        try:
-            extraction_result = asyncio.run(
-                extractor.extract_comprehensive_relationships(original_query)
-            )
-            entities = extraction_result.get("entities", [])
-            relationships = extraction_result.get("relationships", [])
-
-            enhancement_result = asyncio.run(
-                pipeline.enhance_query_with_relationships(
-                    original_query, entities=entities, relationships=relationships
-                )
-            )
-
-            enhanced_query = enhancement_result.get("enhanced_query", original_query)
-            assert isinstance(enhanced_query, str)
-            assert len(enhanced_query) > 0
-
-        except Exception:
-            # Graceful handling if models not available
-            assert True
 
     @pytest.mark.ci_fast
     def test_agent_coordination_interfaces(self):

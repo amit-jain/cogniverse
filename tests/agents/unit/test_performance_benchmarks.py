@@ -21,7 +21,6 @@ from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
@@ -45,7 +44,6 @@ class TestPerformanceBenchmarks:
         """Benchmark initialization times for all components"""
         components_to_test = [
             ("RelationshipExtractorTool", RelationshipExtractorTool),
-            ("QueryEnhancementPipeline", QueryEnhancementPipeline),
             ("SummarizerAgent", SummarizerAgent),
             ("DetailedReportAgent", DetailedReportAgent),
             ("AdaptiveThresholdLearner", AdaptiveThresholdLearner),
@@ -77,8 +75,7 @@ class TestPerformanceBenchmarks:
         # Performance assertions
         for component_name, init_time in initialization_times.items():
             # Components should initialize within reasonable time
-            # QueryEnhancementPipeline loads heavy models and can take 40-50s on CPU
-            max_time = 60.0 if component_name == "QueryEnhancementPipeline" else 30.0
+            max_time = 30.0
             assert init_time < max_time, (
                 f"{component_name} took too long to initialize: {init_time:.3f}s (max: {max_time}s)"
             )
@@ -186,70 +183,6 @@ class TestPerformanceBenchmarks:
             # Performance assertion
             assert avg_extraction_time < 15.0, (
                 f"Average extraction time too high: {avg_extraction_time:.3f}s"
-            )
-
-    def test_query_enhancement_performance(self):
-        """Benchmark query enhancement pipeline performance"""
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        test_cases = [
-            {
-                "query": "Find videos of autonomous robots",
-                "entities": [
-                    {"text": "robots", "label": "ENTITY"},
-                    {"text": "autonomous", "label": "MODIFIER"},
-                ],
-                "relationships": [
-                    {"subject": "robots", "relation": "type", "object": "autonomous"}
-                ],
-            },
-            {
-                "query": "Research on machine learning",
-                "entities": [{"text": "machine learning", "label": "CONCEPT"}],
-                "relationships": [
-                    {
-                        "subject": "research",
-                        "relation": "focus",
-                        "object": "machine learning",
-                    }
-                ],
-            },
-        ]
-
-        enhancement_times = []
-
-        for test_case in test_cases:
-            start_time = time.time()
-            try:
-                result = asyncio.run(
-                    pipeline.enhance_query_with_relationships(
-                        test_case["query"],
-                        entities=test_case["entities"],
-                        relationships=test_case["relationships"],
-                    )
-                )
-                end_time = time.time()
-                enhancement_time = end_time - start_time
-                enhancement_times.append(enhancement_time)
-
-                result.get("enhanced_query", test_case["query"])
-                print(
-                    f"Enhancement '{test_case['query'][:30]}...': {enhancement_time:.3f}s"
-                )
-
-            except Exception:
-                end_time = time.time()
-                enhancement_time = end_time - start_time
-                enhancement_times.append(enhancement_time)
-                print(f"Enhancement handled gracefully: {enhancement_time:.3f}s")
-
-        if enhancement_times:
-            avg_enhancement_time = sum(enhancement_times) / len(enhancement_times)
-            print(f"Average enhancement time: {avg_enhancement_time:.3f}s")
-
-            # Performance assertion
-            assert avg_enhancement_time < 10.0, (
-                f"Average enhancement time too high: {avg_enhancement_time:.3f}s"
             )
 
     def test_memory_usage_during_operations(self):

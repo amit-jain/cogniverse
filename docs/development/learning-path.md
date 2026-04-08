@@ -167,9 +167,9 @@ Foundation Layer
 3. Files: foundation/config/manager.py → config/unified_config.py
 
 ### Exercise 4: Understand Checkpoint Recovery
-1. Start: `MultiAgentOrchestrator.process_complex_query(..., resume_from_workflow_id=...)`
+1. Start: `OrchestratorAgent._process_impl(...)` with checkpoint support
 2. Follow: Load checkpoint → Skip completed → Resume from phase
-3. Files: agents/orchestrator/multi_agent_orchestrator.py → agents/orchestrator/checkpoint_storage.py
+3. Files: agents/orchestrator_agent.py → agents/orchestrator/checkpoint_storage.py
 
 ### Exercise 4b: Trace Real-Time Event Flow
 1. Start: Create EventQueue for workflow

@@ -121,6 +121,10 @@ class OrchestrationPlan(BaseModel):
         description="Groups of step indices that can run in parallel",
     )
     reasoning: str = Field(description="Overall plan reasoning")
+    unavailable_agents: List[str] = Field(
+        default_factory=list,
+        description="Agent names proposed by LLM but not in registry",
+    )
 
 
 class OrchestrationResult(BaseModel):
@@ -429,6 +433,13 @@ class OrchestratorAgent(
                 session_id=session_id,
             )
 
+            # Record error entries for agents the LLM proposed but aren't registered
+            for agent_name in plan.unavailable_agents:
+                agent_results[agent_name] = {
+                    "status": "error",
+                    "message": f"Agent '{agent_name}' is not available in the registry",
+                }
+
             self.emit_progress("aggregating", "Merging results from all agents")
             final_output = self._aggregate_results(query, agent_results)
             execution_summary = self._generate_summary(plan, agent_results)
@@ -550,6 +561,7 @@ class OrchestratorAgent(
                     parallel_groups.append(indices)
 
         steps = []
+        unavailable_agents = []
         for i, agent_name in enumerate(agent_sequence):
             # Validate against registry (skip unknown agents)
             if agent_name not in registered_agents:
@@ -557,6 +569,7 @@ class OrchestratorAgent(
                     f"LLM proposed unknown agent '{agent_name}', "
                     f"not in registry ({registered_agents}), skipping"
                 )
+                unavailable_agents.append(agent_name)
                 continue
             step = AgentStep(
                 agent_name=agent_name,
@@ -571,6 +584,7 @@ class OrchestratorAgent(
             steps=steps,
             parallel_groups=parallel_groups,
             reasoning=result.reasoning,
+            unavailable_agents=unavailable_agents,
         )
 
     def _calculate_dependencies(

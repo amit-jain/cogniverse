@@ -16,7 +16,6 @@ import pytest
 from cogniverse_agents.dspy_integration_mixin import DSPyIntegrationMixin
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.strategies import LLMRoutingStrategy
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
@@ -141,81 +140,6 @@ class TestTenantIsolation:
 
         assert (await mgr_a.load_prompts("router")) == {"system": "A's prompt"}
         assert (await mgr_b.load_prompts("router")) == {"system": "B's prompt"}
-
-
-class TestOptimizerToStrategyWiring:
-    """Verify the full optimizer-saves -> strategy-loads pipeline against
-    real Phoenix.
-
-    This is the test for the filename mismatch bug: the old code had
-    router_optimizer writing to ``router_prompt_artifact.json`` while
-    LLMRoutingStrategy read from ``routing_prompts.json``. Both now
-    use dataset name ``dspy-prompts-{tenant}-router``.
-    """
-
-    @pytest.mark.asyncio
-    async def test_strategy_loads_optimizer_prompts(self, real_provider):
-        """Prompts saved to Phoenix are loaded by LLMRoutingStrategy."""
-        tenant_id = "strategy-wiring-test"
-
-        # Simulate optimizer saving prompts to real Phoenix
-        mgr = ArtifactManager(real_provider, tenant_id=tenant_id)
-        await mgr.save_prompts(
-            "router",
-            {
-                "system_prompt": "Optimized routing instructions here.",
-                "prompt_template": "Route: {system_prompt}\n{conversation_history}\n{query}",
-            },
-        )
-
-        # Strategy loads them via the same provider + tenant
-        strategy = LLMRoutingStrategy(
-            config={
-                "enable_dspy_optimization": True,
-                "tenant_id": tenant_id,
-                "telemetry_provider": real_provider,
-                "model": "test-model",
-            }
-        )
-
-        # In an async context, prompts load via ensure_future + callback.
-        await asyncio.sleep(0.5)
-
-        assert strategy.optimized_prompts["system_prompt"] == (
-            "Optimized routing instructions here."
-        )
-        assert "prompt_template" in strategy.optimized_prompts
-
-        # The system prompt should be the optimized one, not the default
-        assert strategy.system_prompt == "Optimized routing instructions here."
-
-        # Optimization status should reflect loaded state
-        status = strategy.get_optimization_status()
-        assert status["dspy_enabled"] is True
-        assert status["optimized_prompts_loaded"] is True
-        assert status["using_optimized_system_prompt"] is True
-
-    @pytest.mark.asyncio
-    async def test_strategy_without_prompts_uses_default(self, real_provider):
-        """Strategy with no saved prompts in Phoenix falls back to default."""
-        strategy = LLMRoutingStrategy(
-            config={
-                "enable_dspy_optimization": True,
-                "tenant_id": "empty-strategy-tenant-xyz",
-                "telemetry_provider": real_provider,
-                "model": "test-model",
-            }
-        )
-
-        await asyncio.sleep(0.5)
-
-        # No prompts saved -> default prompt used
-        assert strategy.optimized_prompts == {}
-        assert "routing agent" in strategy.system_prompt.lower()
-
-        status = strategy.get_optimization_status()
-        assert status["dspy_enabled"] is True
-        assert status["optimized_prompts_loaded"] is False
 
 
 class TestMixinAutoLoad:

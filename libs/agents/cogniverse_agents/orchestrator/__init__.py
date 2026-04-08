@@ -1,9 +1,7 @@
 """
-Orchestrator module for multi-agent workflow execution
+Orchestrator module — checkpoint types and storage for durable execution.
 
-Includes:
-- MultiAgentOrchestrator: DAG-based parallel workflow execution
-- Checkpoint types and storage for durable execution
+The orchestration agent itself lives at cogniverse_agents.orchestrator_agent.
 """
 
 from cogniverse_agents.orchestrator.checkpoint_storage import (
@@ -16,14 +14,8 @@ from cogniverse_agents.orchestrator.checkpoint_types import (
     TaskCheckpoint,
     WorkflowCheckpoint,
 )
-from cogniverse_agents.orchestrator.multi_agent_orchestrator import (
-    MultiAgentOrchestrator,
-    create_multi_agent_orchestrator,
-)
 
 __all__ = [
-    "MultiAgentOrchestrator",
-    "create_multi_agent_orchestrator",
     "CheckpointConfig",
     "CheckpointLevel",
     "CheckpointStatus",

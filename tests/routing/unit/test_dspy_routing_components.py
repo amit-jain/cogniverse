@@ -17,9 +17,6 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
 )
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
-
-# DSPy routing components
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
@@ -64,20 +61,6 @@ class TestRelationshipExtractionTool:
         assert isinstance(result, dict)
         assert "entities" in result
         assert "relationships" in result
-
-
-class TestQueryEnhancementPipeline:
-    """Test query enhancement pipeline"""
-
-    @pytest.mark.asyncio
-    async def test_enhance_query_basic(self):
-        """Test basic query enhancement"""
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        # Test with actual enhancement (should handle gracefully)
-        result = await pipeline.enhance_query_with_relationships("original query")
-        assert isinstance(result, dict)
-        assert "enhanced_query" in result
 
 
 class TestAdaptiveThresholdLearner:
@@ -189,13 +172,11 @@ class TestDSPyRoutingIntegration:
     @pytest.mark.asyncio
     async def test_component_interaction(self, tmp_path):
         """Test basic interaction between components"""
-        # Initialize components with temporary storage
         extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
         AdaptiveThresholdLearner(
             telemetry_provider=_make_mock_telemetry_provider(),
             tenant_id="test-tenant",
-        )  # Create but don't assign to unused variable
+        )
         optimizer = AdvancedRoutingOptimizer(
             tenant_id="test-tenant",
             llm_config=LLMEndpointConfig(model="ollama/test-model"),
@@ -203,24 +184,16 @@ class TestDSPyRoutingIntegration:
             config=AdvancedOptimizerConfig(min_experiences_for_training=10),
         )
 
-        # Test real interactions (components handle missing models gracefully)
-        # Extract relationships
         extract_result = await extractor.extract_comprehensive_relationships(
             "test query"
         )
-
-        # Enhance query
-        enhanced = await pipeline.enhance_query_with_relationships("test query")
-
         assert isinstance(extract_result, dict)
-        assert isinstance(enhanced, dict)
 
-        # Test optimizer recording
         await optimizer.record_routing_experience(
             query="test query",
             entities=[],
             relationships=[],
-            enhanced_query=enhanced.get("enhanced_query", "test"),
+            enhanced_query="test query",
             chosen_agent="test_agent",
             routing_confidence=0.8,
             search_quality=0.7,

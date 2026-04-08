@@ -447,7 +447,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 # Import from implementation layer
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_agents.gateway_agent import GatewayAgent
 from cogniverse_synthetic.generators.modality import ModalityGenerator
 from pathlib import Path
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -739,7 +739,7 @@ import cogniverse_agents
 import cogniverse_vespa
 import cogniverse_synthetic
 import cogniverse_finetuning
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_agents.gateway_agent import GatewayAgent
 
 # Test application layer
 import cogniverse_runtime

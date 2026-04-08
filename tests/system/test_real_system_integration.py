@@ -25,7 +25,6 @@ from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
 )
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
@@ -424,62 +423,6 @@ class TestRealOllamaIntegration:
                 print(f"⚠️  Real extraction failed for '{query}': {e}")
                 # Don't fail the test - some queries might not work with available models
 
-    def test_real_query_enhancement_with_ollama(self):
-        """Test actual query enhancement using Ollama models"""
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        test_cases = [
-            {
-                "query": "Find videos of autonomous robots",
-                "entities": [
-                    {"text": "robots", "label": "ENTITY"},
-                    {"text": "autonomous", "label": "MODIFIER"},
-                ],
-                "relationships": [
-                    {"subject": "robots", "relation": "type", "object": "autonomous"}
-                ],
-            },
-            {
-                "query": "Research on machine learning",
-                "entities": [{"text": "machine learning", "label": "CONCEPT"}],
-                "relationships": [
-                    {
-                        "subject": "research",
-                        "relation": "focus",
-                        "object": "machine learning",
-                    }
-                ],
-            },
-        ]
-
-        for test_case in test_cases:
-            print(f"Testing real query enhancement for: '{test_case['query']}'")
-
-            try:
-                # This should make actual calls to Ollama
-                result = asyncio.run(
-                    pipeline.enhance_query_with_relationships(
-                        test_case["query"],
-                        entities=test_case["entities"],
-                        relationships=test_case["relationships"],
-                    )
-                )
-
-                assert isinstance(result, dict)
-                enhanced_query = result.get("enhanced_query", test_case["query"])
-                metadata = result.get("metadata", {})
-
-                assert isinstance(enhanced_query, str)
-                assert len(enhanced_query) > 0
-
-                print(f"✅ Real enhancement results for '{test_case['query']}':")
-                print(f"   Original: {test_case['query']}")
-                print(f"   Enhanced: {enhanced_query}")
-                print(f"   Metadata: {metadata}")
-
-            except Exception as e:
-                print(f"⚠️  Real enhancement failed for '{test_case['query']}': {e}")
-
     def test_llm_model_availability(self):
         """Test that the LLM server has usable models available"""
         try:
@@ -509,115 +452,6 @@ class TestRealOllamaIntegration:
 @pytest.mark.requires_ollama
 class TestRealPipelineIntegration:
     """Pipeline integration tests requiring both Vespa and Ollama"""
-
-    def test_real_complete_pipeline(self, shared_system_vespa):
-        """Test complete pipeline with real services: routing -> extraction -> enhancement -> search"""
-        # Get Vespa ports from fixture
-        _vespa_url = shared_system_vespa["backend_url"]
-        _vespa_port = shared_system_vespa["http_port"]
-        base_url = shared_system_vespa["base_url"]
-        # Initialize all components
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        routing_deps = RoutingDeps(telemetry_config=telemetry_config)
-        routing_agent = RoutingAgent(deps=routing_deps)
-        extractor = RelationshipExtractorTool()
-        pipeline = QueryEnhancementPipeline(enable_simba=False)
-
-        test_query = "Find videos of people throwing objects"
-
-        print(f"Testing real end-to-end pipeline for: '{test_query}'")
-
-        try:
-            # Step 1: Routing decision (with real config)
-            print("Step 1: Making routing decision...")
-            routing_result = asyncio.run(
-                routing_agent.route_query(test_query, tenant_id="test_tenant")
-            )
-            assert routing_result is not None
-            print(f"✅ Routing decision: {routing_result}")
-
-            # Step 2: Relationship extraction (with real Ollama)
-            print("Step 2: Extracting relationships...")
-            extraction_result = asyncio.run(
-                extractor.extract_comprehensive_relationships(test_query)
-            )
-            entities = extraction_result.get("entities", [])
-            relationships = extraction_result.get("relationships", [])
-            print(
-                f"✅ Extracted {len(entities)} entities, {len(relationships)} relationships"
-            )
-
-            # Show actual extraction results
-            if entities:
-                print(f"  Sample entities: {entities[:2]}")
-            if relationships:
-                print(f"  Sample relationships: {relationships[:1]}")
-
-            # Step 3: Query enhancement (with real Ollama)
-            print("Step 3: Enhancing query...")
-            enhancement_result = asyncio.run(
-                pipeline.enhance_query_with_relationships(
-                    test_query, entities=entities, relationships=relationships
-                )
-            )
-            enhanced_query = enhancement_result.get("enhanced_query", test_query)
-            print(f"✅ Enhanced query: '{enhanced_query}'")
-
-            # Step 4: Direct Vespa search (lightweight approach)
-            print("Step 4: Searching videos with enhanced query...")
-            try:
-                # Use both original and enhanced queries
-                for query_type, query in [
-                    ("original", test_query),
-                    ("enhanced", enhanced_query),
-                ]:
-                    response = requests.get(
-                        f"{base_url}/search/",
-                        params={"query": query, "hits": 3, "timeout": "10s"},
-                        timeout=15,
-                    )
-
-                    if response.status_code == 200:
-                        result = response.json()
-                        total_hits = (
-                            result.get("root", {})
-                            .get("fields", {})
-                            .get("totalCount", 0)
-                        )
-                        hits = result.get("root", {}).get("children", [])
-
-                        print(
-                            f"✅ {query_type.title()} query search: {total_hits} total results, showing {len(hits)}"
-                        )
-
-                        # Show top results
-                        for i, hit in enumerate(hits):
-                            fields = hit.get("fields", {})
-                            video_id = fields.get("video_id", "unknown")
-                            relevance = hit.get("relevance", 0)
-                            print(f"  {i + 1}. {video_id} (relevance: {relevance:.3f})")
-                    else:
-                        print(
-                            f"⚠️  {query_type} query search failed: {response.status_code}"
-                        )
-
-                print("🎉 Real end-to-end pipeline completed successfully!")
-
-            except Exception as search_error:
-                print(f"⚠️  Direct Vespa search failed: {search_error}")
-                print(
-                    "Pipeline completed routing -> extraction -> enhancement steps successfully"
-                )
-
-        except Exception as e:
-            pytest.fail(f"Real end-to-end pipeline failed: {e}")
 
     def test_real_multi_agent_coordination(self, shared_system_vespa):
         """Test real multi-agent coordination with actual services"""
@@ -730,8 +564,6 @@ class TestRealEndToEndIntegration:
 
         relationship_extractor = RelationshipExtractorTool()
 
-        query_enhancer = QueryEnhancementPipeline(enable_simba=False)
-
         # Test query: "person throwing discus"
         test_query = "person throwing discus"
 
@@ -819,38 +651,7 @@ class TestRealEndToEndIntegration:
             print(f"   ❌ Relationship extraction failed: {e}")
             # Don't fail test - extraction might have issues but we can continue
 
-        # Test 3: Query Enhancement with QUALITY VALIDATION
-        print("3. Testing Query Enhancement with quality validation...")
-        enhanced_query = test_query  # Fallback
-        try:
-            if entities and relationships:
-                enhancement_result = (
-                    await query_enhancer.enhance_query_with_relationships(
-                        test_query, entities=entities, relationships=relationships
-                    )
-                )
-                enhanced_query = enhancement_result.get("enhanced_query", test_query)
-            else:
-                # Fallback: use the pipeline directly (it handles missing entities)
-                enhancement_result = (
-                    await query_enhancer.enhance_query_with_relationships(test_query)
-                )
-                enhanced_query = enhancement_result.get("enhanced_query", test_query)
-            print(f"   ✅ Enhanced query: {enhanced_query}")
-
-            # STRICT ASSERTION 5: Enhanced query should be different/longer than original
-            if enhanced_query != test_query:
-                print(
-                    f"      ✅ Query successfully enhanced (length: {len(enhanced_query)} vs {len(test_query)})"
-                )
-            else:
-                print("      ⚠️  Query unchanged - enhancement might not be working")
-
-        except Exception as e:
-            print(f"   ❌ Query enhancement failed: {e}")
-            enhanced_query = test_query  # Use original as fallback
-
-        # Test 4: Video Search Agent with STRICT ASSERTIONS
+        # Test 3: Video Search Agent with STRICT ASSERTIONS
         print("4. Testing Enhanced Video Search Agent with strict validation...")
         search_success = False
         try:
@@ -1026,11 +827,6 @@ class TestRealEndToEndIntegration:
             validation_results.append(f"✅ Extraction: Found {len(entities)} entities")
         else:
             validation_results.append("❌ Extraction: No entities extracted")
-
-        if enhanced_query and enhanced_query != test_query:
-            validation_results.append("✅ Enhancement: Query successfully enhanced")
-        else:
-            validation_results.append("⚠️  Enhancement: Query unchanged")
 
         if search_success and len(search_results) > 0:
             validation_results.append(f"✅ Search: Found {len(search_results)} results")

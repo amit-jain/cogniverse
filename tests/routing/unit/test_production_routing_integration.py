@@ -44,16 +44,6 @@ class TestProductionRoutingIntegration:
         """Create real lazy executor"""
         return LazyModalityExecutor()
 
-    @pytest.fixture
-    async def comprehensive_router(self):
-        """Create comprehensive router for testing"""
-        from cogniverse_agents.routing.config import RoutingConfig
-        from cogniverse_agents.routing.router import ComprehensiveRouter
-
-        config = RoutingConfig()
-        router = ComprehensiveRouter(config)
-        yield router
-
     async def test_parallel_execution_real_workflow(
         self, parallel_executor, metrics_tracker
     ):
@@ -271,79 +261,6 @@ class TestProductionRoutingIntegration:
         # Check error breakdown
         assert "timeout" in video_stats["error_breakdown"]
         assert video_stats["error_breakdown"]["timeout"] == 1
-
-    async def test_complete_production_workflow_with_routing_agent(
-        self, comprehensive_router, cache_manager, parallel_executor, lazy_executor
-    ):
-        """Test complete workflow: routing → parallel execution → caching → metrics"""
-
-        # Mock agent calls to avoid actual HTTP requests
-        async def mock_agent_call(agent_name: str, query: str, context: dict):
-            await asyncio.sleep(0.1)  # Simulate network latency
-            return {
-                "agent": agent_name,
-                "results": [
-                    {"id": f"{agent_name}-1", "score": 0.9, "title": "Test result"}
-                ],
-                "count": 1,
-            }
-
-        # Get routing decision
-        query = "machine learning videos"
-        context = {"tenant_id": "test-tenant"}
-
-        decision = await comprehensive_router.route(query, context)
-
-        # Verify decision
-        assert decision is not None
-        assert hasattr(decision, "search_modality")
-        assert hasattr(decision, "primary_agent")
-
-        # Check cache first
-        primary_modality = QueryModality.VIDEO  # Based on query
-        cached_result = cache_manager.get_cached_result(query, primary_modality)
-
-        if cached_result:
-            # Cache hit - verify stats
-            stats = cache_manager.get_cache_stats()
-            assert stats["total_hits"] > 0
-        else:
-            # Cache miss - execute agents
-            if decision.requires_orchestration:
-                # Use parallel executor for multiple agents
-                tasks = [
-                    (agent, query, context)
-                    for agent in decision.agent_execution_order
-                    or [decision.primary_agent]
-                ]
-                results = await parallel_executor.execute_agents_parallel(
-                    tasks[:3],
-                    agent_caller=mock_agent_call,  # Limit to 3 agents
-                )
-
-                # Cache successful results
-                for agent_name, result in results.items():
-                    if result["status"] == "success":
-                        # Map agent to modality
-                        modality = self._agent_to_modality(agent_name)
-                        cache_manager.cache_result(query, modality, result)
-            else:
-                # Single agent - use lazy evaluation
-                modalities = [primary_modality]
-
-                async def modality_executor(q, m, ctx):
-                    return await mock_agent_call(decision.primary_agent, q, ctx)
-
-                result = await lazy_executor.execute_with_lazy_evaluation(
-                    query, modalities, context, modality_executor=modality_executor
-                )
-
-                # Cache result
-                cache_manager.cache_result(query, primary_modality, result)
-
-        # Verify cache was populated (check primary modality)
-        cache_stats = cache_manager.get_cache_stats(primary_modality)
-        assert cache_stats["hits"] + cache_stats["misses"] > 0
 
     async def test_concurrent_requests_with_cache_and_metrics(
         self, cache_manager, parallel_executor, metrics_tracker
