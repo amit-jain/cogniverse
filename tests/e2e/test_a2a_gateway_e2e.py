@@ -76,6 +76,19 @@ class TestGatewaySimpleRouting:
             "raw_results", "summary", "detailed_report",
         )
 
+        # Content assertions: "cats playing piano" is an unambiguous video query
+        assert gw["modality"] == "video", (
+            f"Expected video modality for video query, got {gw['modality']!r}"
+        )
+        assert gw["routed_to"] == "search_agent", (
+            f"Simple video query should route to search_agent, got {gw['routed_to']!r}"
+        )
+        # Threshold is 0.4; a simple, unambiguous query must exceed it
+        assert gw["confidence"] >= 0.4, (
+            f"Simple route should have confidence >= 0.4 (threshold), "
+            f"got {gw['confidence']}"
+        )
+
     def test_simple_query_includes_downstream_result(self):
         """Simple path should execute the downstream agent and return its result."""
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
@@ -101,6 +114,22 @@ class TestGatewaySimpleRouting:
         assert isinstance(downstream, dict)
         assert downstream.get("status") == "success"
 
+        # Content assertions: downstream search results should be non-empty and ranked
+        if "results" in downstream and downstream.get("results_count", 0) > 0:
+            results = downstream["results"]
+            assert len(results) > 0, "Should find results for video query in ingested data"
+            # Results must be ordered by descending score if score fields exist
+            score_keys = ("score", "relevance", "relevance_score", "_score")
+            score_key = next(
+                (k for k in score_keys if k in results[0]), None
+            )
+            if score_key is not None:
+                scores = [r[score_key] for r in results]
+                assert scores == sorted(scores, reverse=True), (
+                    f"Results should be ranked by {score_key} descending, "
+                    f"got: {scores}"
+                )
+
     def test_message_field_present(self):
         """Gateway response includes a human-readable message."""
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
@@ -119,6 +148,10 @@ class TestGatewaySimpleRouting:
         assert "message" in data
         assert isinstance(data["message"], str)
         assert len(data["message"]) > 5
+        # Message should be informative, not a bare error string
+        assert data["message"].lower() not in ("error", "failed", "none", "null"), (
+            f"Message should be informative, got: {data['message']!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +195,22 @@ class TestGatewayComplexRouting:
         assert has_orchestration, (
             f"Complex query should trigger orchestration, got keys: {list(data.keys())}"
         )
+
+        # Content assertions: orchestration should produce real work, not empty shells
+        if "orchestration_result" in data:
+            orch = data["orchestration_result"]
+            assert isinstance(orch, dict), "orchestration_result must be a dict"
+            assert "plan_steps" in orch or "agent_results" in orch, (
+                f"Orchestration should produce plan_steps or agent_results, "
+                f"got keys: {list(orch.keys())}"
+            )
+        # If gateway classified as complex, complexity field must equal "complex"
+        if "gateway" in data:
+            gw = data["gateway"]
+            assert gw.get("complexity") == "complex", (
+                f"Multi-step query should be classified as complex, "
+                f"got complexity={gw.get('complexity')!r}"
+            )
 
     def test_complex_query_returns_gateway_context(self):
         """When the orchestrator handles a complex query, the response
@@ -229,6 +278,24 @@ class TestGatewaySearchPipeline:
             assert isinstance(downstream["results"], list)
             assert "results_count" in downstream
             assert isinstance(downstream["results_count"], int)
+            # Content assertion: "sports activities outdoor" should yield results
+            assert downstream["results_count"] >= 1, (
+                "Gateway search for 'sports activities outdoor' should return "
+                "at least one result from ingested data"
+            )
+            # Verify score ordering when score fields are present
+            results = downstream["results"]
+            if results:
+                score_keys = ("score", "relevance", "relevance_score", "_score")
+                score_key = next(
+                    (k for k in score_keys if k in results[0]), None
+                )
+                if score_key is not None:
+                    scores = [r[score_key] for r in results]
+                    assert scores == sorted(scores, reverse=True), (
+                        f"Gateway search results should be ranked by {score_key} "
+                        f"descending, got: {scores}"
+                    )
         elif "result" in downstream:
             # Alternate response shape from some agents
             assert isinstance(downstream["result"], (dict, list, str))
@@ -255,6 +322,22 @@ class TestGatewaySearchPipeline:
             assert isinstance(result, dict)
             assert len(result) > 1, (
                 f"Result should have multiple fields, got: {list(result.keys())}"
+            )
+            # Content assertions: each result must carry identity and relevance data
+            has_identity = any(
+                k in result for k in ("video_id", "chunk_id", "document_id", "id")
+            )
+            assert has_identity, (
+                f"Result should have an identity field (video_id/chunk_id/id), "
+                f"got: {list(result.keys())}"
+            )
+            has_score = any(
+                k in result
+                for k in ("score", "relevance", "relevance_score", "_score", "rank_score")
+            )
+            assert has_score, (
+                f"Result should have a score/relevance field, "
+                f"got: {list(result.keys())}"
             )
 
 
@@ -288,6 +371,35 @@ class TestRoutingAgentThin:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
+
+        # Content assertion: if routing exposes a recommended_agent, it must be valid
+        if "recommended_agent" in data:
+            assert data["recommended_agent"] in (
+                "search_agent",
+                "summarizer_agent",
+                "detailed_report_agent",
+                "image_search_agent",
+                "audio_analysis_agent",
+                "document_agent",
+                "deep_research_agent",
+                "coding_agent",
+                "text_analysis_agent",
+            ), f"Routing returned unknown agent: {data['recommended_agent']!r}"
+        # Gateway-style response must contain a valid routed_to field
+        if "gateway" in data:
+            gw = data["gateway"]
+            assert gw.get("routed_to") in (
+                "search_agent",
+                "summarizer_agent",
+                "detailed_report_agent",
+                "image_search_agent",
+                "audio_analysis_agent",
+                "document_agent",
+                "deep_research_agent",
+                "coding_agent",
+                "text_analysis_agent",
+                None,  # orchestrator path may not set routed_to
+            ), f"Gateway routed_to is invalid: {gw.get('routed_to')!r}"
 
     def test_routing_agent_slim_response(self):
         """Routing agent response should NOT contain inline entities or

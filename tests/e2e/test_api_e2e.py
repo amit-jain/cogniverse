@@ -75,6 +75,20 @@ class TestRoutingPipeline:
             "routing_agent", "gateway_agent", "orchestrator_agent",
         )
 
+        # Content assertions: "cats playing piano" is an unambiguous video query
+        if "gateway" in data:
+            gw = data["gateway"]
+            assert gw["modality"] == "video", (
+                f"Expected video modality for cat piano query, got {gw['modality']!r}"
+            )
+            assert gw["routed_to"] == "search_agent", (
+                f"Simple video query should route to search_agent, "
+                f"got {gw['routed_to']!r}"
+            )
+            assert gw["confidence"] >= 0.4, (
+                f"Simple route should have confidence >= 0.4, got {gw['confidence']}"
+            )
+
     def test_routing_no_longer_returns_inline_entities(self):
         """Routing agent no longer returns entities/enhanced_query at top level.
 
@@ -108,6 +122,26 @@ class TestRoutingPipeline:
             f"Routing should produce gateway-style response, "
             f"got keys: {list(data.keys())}"
         )
+        # Old inline entity/enhancement fields must NOT appear at the top level
+        assert "entities" not in data, (
+            "entities should not be at the top level in the A2A architecture"
+        )
+        assert "enhanced_query" not in data, (
+            "enhanced_query should not be at the top level in the A2A architecture"
+        )
+        # If recommended_agent is surfaced, it must be a known valid agent
+        if "recommended_agent" in data:
+            assert data["recommended_agent"] in (
+                "search_agent",
+                "summarizer_agent",
+                "detailed_report_agent",
+                "image_search_agent",
+                "audio_analysis_agent",
+                "document_agent",
+                "deep_research_agent",
+                "coding_agent",
+                "text_analysis_agent",
+            ), f"Routing returned unknown agent: {data['recommended_agent']!r}"
 
     def test_routing_executes_downstream(self):
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
@@ -132,6 +166,23 @@ class TestRoutingPipeline:
         assert has_downstream, (
             f"Routing should execute downstream, got keys: {list(data.keys())}"
         )
+        # Content assertion: animal video query should produce search results
+        downstream = data.get("downstream_result", {})
+        if "results" in downstream and downstream.get("results_count", 0) > 0:
+            results = downstream["results"]
+            assert len(results) > 0, (
+                "Search for 'animal videos' should return results from ingested data"
+            )
+            score_keys = ("score", "relevance", "relevance_score", "_score")
+            score_key = next(
+                (k for k in score_keys if k in results[0]), None
+            )
+            if score_key is not None:
+                scores = [r[score_key] for r in results]
+                assert scores == sorted(scores, reverse=True), (
+                    f"Results should be ranked by {score_key} descending, "
+                    f"got: {scores}"
+                )
 
 
 @pytest.mark.e2e
@@ -188,7 +239,7 @@ class TestQueryEnhancementViaGateway:
         )
 
     def test_gateway_confidence_in_range(self):
-        """Gateway classification confidence should be in [0.0, 1.0]."""
+        """Gateway classification confidence should be in [0.4, 1.0] for clear queries."""
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
@@ -206,6 +257,11 @@ class TestQueryEnhancementViaGateway:
         gw = data.get("gateway", {})
         if "confidence" in gw:
             assert 0.0 <= gw["confidence"] <= 1.0
+            # A clear, unambiguous query should exceed the routing threshold
+            assert gw["confidence"] >= 0.4, (
+                f"Clear query should produce confidence >= 0.4 (threshold), "
+                f"got {gw['confidence']}"
+            )
 
 
 @pytest.mark.e2e
