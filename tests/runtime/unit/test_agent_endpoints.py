@@ -266,7 +266,7 @@ class TestAgentDispatcherCapabilityRouting:
         agent_ep.capabilities = ["unknown_capability"]
         dispatcher._registry.get_agent.return_value = agent_ep
 
-        with pytest.raises(ValueError, match="no registered class"):
+        with pytest.raises(ValueError, match="no supported execution path"):
             await dispatcher.dispatch(agent_name="weird_agent", query="test")
 
     @pytest.mark.asyncio

@@ -230,7 +230,8 @@ class AgentDispatcher:
         class_path = ConfigLoader.AGENT_CLASSES.get(agent_name)
         if not class_path:
             raise ValueError(
-                f"Agent '{agent_name}' has no registered class in AGENT_CLASSES"
+                f"Agent '{agent_name}' has no supported execution path "
+                f"(not in AGENT_CLASSES)"
             )
 
         module_path, class_name = class_path.split(":")
@@ -251,7 +252,8 @@ class AgentDispatcher:
 
         if deps_cls is None:
             raise ValueError(
-                f"No Deps class found in {module_path} for {agent_name}"
+                f"Agent '{agent_name}' has no supported execution path "
+                f"(no Deps class in {module_path} — agent uses legacy mixin pattern)"
             )
 
         # Instantiate with default deps
@@ -273,7 +275,8 @@ class AgentDispatcher:
 
         if input_cls is None:
             raise ValueError(
-                f"No Input class found in {module_path} for {agent_name}"
+                f"Agent '{agent_name}' has no supported execution path "
+                f"(no Input class in {module_path} — agent uses legacy mixin pattern)"
             )
 
         # Build input — pass query + tenant_id + any extra context fields

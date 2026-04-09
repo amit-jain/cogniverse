@@ -47,6 +47,8 @@ class LLMEndpointConfig:
         result["max_tokens"] = self.max_tokens
         if self.adapter_path is not None:
             result["adapter_path"] = self.adapter_path
+        if self.extra_body is not None:
+            result["extra_body"] = self.extra_body
         return result
 
     @classmethod
@@ -59,6 +61,7 @@ class LLMEndpointConfig:
             temperature=data.get("temperature", 0.1),
             max_tokens=data.get("max_tokens", 1000),
             adapter_path=data.get("adapter_path"),
+            extra_body=data.get("extra_body"),
         )
 
 
