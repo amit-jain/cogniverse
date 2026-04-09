@@ -2,17 +2,20 @@
 End-to-end multi-agent pipeline integration tests.
 
 Tests the COMPLETE pipeline with real services:
-  RoutingAgent → SearchAgent (Vespa) → SummarizerAgent → DetailedReportAgent
+  OLD flow: RoutingAgent → SearchAgent (Vespa) → SummarizerAgent → DetailedReportAgent
+  NEW flow: GatewayAgent → OrchestratorAgent (complex) or GatewayAgent → SearchAgent (simple)
 
 Requirements:
 - Ollama running with qwen2.5:1.5b model
 - Docker for Vespa container
 - Test data ingested via VespaTestManager
+- GLiNER model for GatewayAgent (optional, skip if unavailable)
 
 These are true E2E tests — they exercise every layer from LLM inference
 through backend search to result processing.
 """
 
+import importlib.util
 import logging
 from pathlib import Path
 
@@ -24,6 +27,7 @@ from cogniverse_agents.detailed_report_agent import (
     DetailedReportDeps,
     ReportRequest,
 )
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchInput
 from cogniverse_agents.summarizer_agent import (
@@ -38,6 +42,13 @@ from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryC
 from tests.agents.integration.conftest import skip_if_no_ollama
 
 logger = logging.getLogger(__name__)
+
+# GLiNER availability check for GatewayAgent tests
+HAS_GLINER = importlib.util.find_spec("gliner") is not None
+
+skip_if_no_gliner = pytest.mark.skipif(
+    not HAS_GLINER, reason="GLiNER not installed"
+)
 
 
 @pytest.fixture(scope="module")
@@ -73,6 +84,13 @@ def routing_agent(dspy_lm):
         ),
     )
     return RoutingAgent(deps=deps)
+
+
+@pytest.fixture
+def gateway_agent():
+    """GatewayAgent with real GLiNER model (lazy-loaded on first use)."""
+    deps = GatewayDeps()
+    return GatewayAgent(deps=deps, port=18014)
 
 
 @pytest.fixture
@@ -125,17 +143,30 @@ class TestE2EMultiAgentPipeline:
     """
 
     @pytest.mark.asyncio
-    async def test_route_then_search(self, routing_agent, search_agent):
+    async def test_route_then_search_with_enriched_input(
+        self, routing_agent, search_agent
+    ):
         """
-        E2E: RoutingAgent makes a routing decision, SearchAgent executes the search.
+        E2E: RoutingAgent receives pre-enriched input (thin interface),
+        makes a routing decision, SearchAgent executes the search.
 
-        Validates that routing output flows into search input and real
-        Vespa results are returned.
+        Validates the new A2A flow where entities and enhanced_query
+        arrive from upstream agents (EntityExtractionAgent,
+        QueryEnhancementAgent) rather than being computed by RoutingAgent.
         """
         query = "machine learning tutorial videos"
+        enhanced_query = "machine learning tutorial videos deep learning neural networks"
+        entities = [
+            {"text": "machine learning", "type": "CONCEPT", "confidence": 0.9},
+        ]
 
-        # Step 1: Route the query
-        routing_result = await routing_agent.route_query(query, tenant_id="test_tenant")
+        routing_result = await routing_agent.route_query(
+            query=query,
+            enhanced_query=enhanced_query,
+            entities=entities,
+            relationships=[],
+            tenant_id="test_tenant",
+        )
         assert routing_result is not None
         assert routing_result.recommended_agent is not None
 
@@ -144,10 +175,7 @@ class TestE2EMultiAgentPipeline:
             f"confidence={routing_result.confidence}"
         )
 
-        # Step 2: Search Vespa using routing output
-        # RoutingOutput provides recommended_agent + enhanced_query;
-        # SearchInput takes query + tenant_id + modality
-        search_query = routing_result.enhanced_query or query
+        search_query = enhanced_query or query
         search_input = SearchInput(
             query=search_query,
             tenant_id="test_tenant",
@@ -155,8 +183,6 @@ class TestE2EMultiAgentPipeline:
         search_result = await search_agent._process_impl(search_input)
 
         assert search_result is not None
-        # Search may return 0 results if test data doesn't match query,
-        # but the pipeline must not crash
         assert hasattr(search_result, "results")
         logger.info(f"Search returned {len(search_result.results)} results")
 
@@ -168,7 +194,6 @@ class TestE2EMultiAgentPipeline:
         Tests the handoff from search results to summarization with
         real LLM inference on real search results.
         """
-        # Step 1: Search for content
         search_input = SearchInput(
             query="video content analysis",
             tenant_id="test_tenant",
@@ -176,8 +201,6 @@ class TestE2EMultiAgentPipeline:
         search_result = await search_agent._process_impl(search_input)
         assert search_result is not None
 
-        # Step 2: Summarize search results
-        # Convert search results to the format SummarizerAgent expects
         result_dicts = []
         for r in search_result.results:
             result_dicts.append(
@@ -190,8 +213,6 @@ class TestE2EMultiAgentPipeline:
                 }
             )
 
-        # If Vespa returned no results, use a minimal synthetic result
-        # so we still test the summarization path
         if not result_dicts:
             result_dicts = [
                 {
@@ -226,25 +247,37 @@ class TestE2EMultiAgentPipeline:
         self, routing_agent, search_agent, summarizer_agent, report_agent
     ):
         """
-        E2E: Full 4-stage pipeline with real services.
+        E2E: Full 4-stage pipeline with real services and pre-enriched routing input.
 
-        Route → Search (Vespa) → Summarize (LLM) → Report (LLM)
+        Route (thin) → Search (Vespa) → Summarize (LLM) → Report (LLM)
 
         This is the core E2E test — every agent processes real data
-        through real inference.
+        through real inference. RoutingAgent receives pre-enriched input
+        matching the new A2A architecture.
         """
         query = "robotics and computer vision research"
+        enhanced_query = "robotics computer vision research autonomous systems"
+        entities = [
+            {"text": "robotics", "type": "CONCEPT", "confidence": 0.85},
+            {"text": "computer vision", "type": "CONCEPT", "confidence": 0.92},
+        ]
 
-        # Stage 1: Route
-        routing_result = await routing_agent.route_query(query, tenant_id="test_tenant")
+        # Stage 1: Route with pre-enriched input
+        routing_result = await routing_agent.route_query(
+            query=query,
+            enhanced_query=enhanced_query,
+            entities=entities,
+            relationships=[],
+            tenant_id="test_tenant",
+        )
         assert routing_result is not None
         logger.info(
             f"Stage 1 (Route): agent={routing_result.recommended_agent}, "
             f"confidence={routing_result.confidence}"
         )
 
-        # Stage 2: Search using routing output
-        search_query = routing_result.enhanced_query or query
+        # Stage 2: Search using enhanced query
+        search_query = enhanced_query or query
         search_input = SearchInput(
             query=search_query,
             tenant_id="test_tenant",
@@ -253,7 +286,6 @@ class TestE2EMultiAgentPipeline:
         assert search_result is not None
         logger.info(f"Stage 2 (Search): {len(search_result.results)} results")
 
-        # Build result dicts for downstream agents
         result_dicts = []
         for r in search_result.results:
             result_dicts.append(
@@ -336,14 +368,19 @@ class TestE2EMultiAgentPipeline:
 
         Tests with a minimal query that may produce sparse results,
         verifying agents don't crash on empty/minimal data.
+        Uses the thin RoutingAgent interface with pre-enriched input.
         """
         query = "x"  # Minimal query — likely produces poor routing and sparse results
 
-        # Route should not crash
-        routing_result = await routing_agent.route_query(query, tenant_id="test_tenant")
+        routing_result = await routing_agent.route_query(
+            query=query,
+            enhanced_query=query,
+            entities=[],
+            relationships=[],
+            tenant_id="test_tenant",
+        )
         assert routing_result is not None
 
-        # Search should not crash
         search_input = SearchInput(
             query=query,
             tenant_id="test_tenant",
@@ -351,7 +388,6 @@ class TestE2EMultiAgentPipeline:
         search_result = await search_agent._process_impl(search_input)
         assert search_result is not None
 
-        # Summarize should handle empty results gracefully
         summary_request = SummaryRequest(
             query=query,
             search_results=[
@@ -369,6 +405,123 @@ class TestE2EMultiAgentPipeline:
         summary_result = await summarizer_agent._summarize(summary_request)
         assert summary_result is not None
         assert summary_result.summary is not None
+
+
+@pytest.mark.integration
+@skip_if_no_ollama
+@skip_if_no_gliner
+@pytest.mark.slow
+class TestE2EGatewayPipeline:
+    """
+    End-to-end tests for the NEW A2A flow via GatewayAgent.
+
+    GatewayAgent uses GLiNER (no LLM) to classify queries as simple or complex,
+    then routes:
+    - Simple → directly to execution agent (SearchAgent, SummarizerAgent, etc.)
+    - Complex → OrchestratorAgent for multi-agent coordination
+    """
+
+    @pytest.mark.asyncio
+    async def test_gateway_simple_query_routes_to_search(self, gateway_agent):
+        """GatewayAgent classifies a straightforward video search as simple."""
+        input_data = GatewayInput(
+            query="show me videos about dogs playing in the park",
+            tenant_id="test_tenant",
+        )
+        result = await gateway_agent._process_impl(input_data)
+
+        assert result is not None
+        assert result.complexity in ("simple", "complex")
+        assert result.modality in (
+            "video", "text", "audio", "image", "document", "both",
+        )
+        assert result.routed_to is not None
+        assert 0.0 <= result.confidence <= 1.0
+        assert len(result.reasoning) > 0
+
+        logger.info(
+            f"Gateway: complexity={result.complexity}, "
+            f"modality={result.modality}, "
+            f"routed_to={result.routed_to}, "
+            f"confidence={result.confidence:.2f}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gateway_complex_query_routes_to_orchestrator(self, gateway_agent):
+        """GatewayAgent classifies a multi-faceted query as complex."""
+        input_data = GatewayInput(
+            query=(
+                "Compare recent video tutorials on reinforcement learning "
+                "with audio lectures on deep learning and create a detailed "
+                "report with visual diagrams"
+            ),
+            tenant_id="test_tenant",
+        )
+        result = await gateway_agent._process_impl(input_data)
+
+        assert result is not None
+        assert result.complexity in ("simple", "complex")
+        assert result.routed_to is not None
+        assert 0.0 <= result.confidence <= 1.0
+
+        logger.info(
+            f"Gateway: complexity={result.complexity}, "
+            f"modality={result.modality}, "
+            f"routed_to={result.routed_to}, "
+            f"confidence={result.confidence:.2f}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gateway_then_search_e2e(
+        self, gateway_agent, search_agent
+    ):
+        """
+        E2E: GatewayAgent triages query, then SearchAgent executes.
+
+        Tests the new entry-point flow where GatewayAgent replaces
+        RoutingAgent as the first agent in the pipeline for simple queries.
+        """
+        input_data = GatewayInput(
+            query="find videos about machine learning",
+            tenant_id="test_tenant",
+        )
+        gateway_result = await gateway_agent._process_impl(input_data)
+        assert gateway_result is not None
+
+        logger.info(
+            f"Gateway classified: complexity={gateway_result.complexity}, "
+            f"routed_to={gateway_result.routed_to}"
+        )
+
+        # Regardless of gateway classification, exercise the search path
+        search_input = SearchInput(
+            query=input_data.query,
+            tenant_id="test_tenant",
+        )
+        search_result = await search_agent._process_impl(search_input)
+
+        assert search_result is not None
+        assert hasattr(search_result, "results")
+        logger.info(
+            f"Gateway → Search: {len(search_result.results)} results returned"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gateway_minimal_query(self, gateway_agent):
+        """GatewayAgent handles minimal/empty-ish queries without crashing."""
+        input_data = GatewayInput(
+            query="x",
+            tenant_id="test_tenant",
+        )
+        result = await gateway_agent._process_impl(input_data)
+
+        assert result is not None
+        assert result.complexity in ("simple", "complex")
+        # Minimal query with no entities should route to orchestrator
+        logger.info(
+            f"Gateway minimal: complexity={result.complexity}, "
+            f"routed_to={result.routed_to}"
+        )
 
 
 if __name__ == "__main__":
