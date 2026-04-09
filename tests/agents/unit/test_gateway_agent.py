@@ -192,19 +192,45 @@ class TestClassification:
 
 class TestComplexityDecision:
     def test_no_entities_is_complex(self, gateway_agent):
-        assert gateway_agent._is_complex("video", [], 0.0) is True
+        assert gateway_agent._is_complex("find videos", "video", "raw_results", [], 0.0) is True
 
     def test_low_confidence_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.35)]
-        assert gateway_agent._is_complex("video", entities, 0.35) is True
+        assert gateway_agent._is_complex("find videos", "video", "raw_results", entities, 0.35) is True
 
     def test_both_modality_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("both", entities, 0.9) is True
+        assert gateway_agent._is_complex("find stuff", "both", "raw_results", entities, 0.9) is True
 
     def test_high_confidence_single_modality_is_simple(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("video", entities, 0.9) is False
+        assert gateway_agent._is_complex("find videos", "video", "raw_results", entities, 0.9) is False
+
+    def test_detailed_report_is_always_complex(self, gateway_agent):
+        """detailed_report generation type always requires orchestration."""
+        entities = [_make_entity("doc", "document_content", 0.9)]
+        assert gateway_agent._is_complex("find docs", "document", "detailed_report", entities, 0.9) is True
+
+    def test_analysis_keyword_is_complex(self, gateway_agent):
+        """Queries with analysis/synthesis verbs need orchestration."""
+        entities = [_make_entity("vid", "video_content", 0.9)]
+        assert gateway_agent._is_complex("analyze the video trends", "video", "raw_results", entities, 0.9) is True
+
+    def test_multi_step_marker_is_complex(self, gateway_agent):
+        """Multi-step queries need orchestration."""
+        entities = [_make_entity("vid", "video_content", 0.9)]
+        assert gateway_agent._is_complex("find videos then summarize them", "video", "raw_results", entities, 0.9) is True
+
+    def test_compound_query_is_complex(self, gateway_agent):
+        """Queries with many clauses need orchestration."""
+        entities = [_make_entity("vid", "video_content", 0.9)]
+        query = "find videos about cats and dogs and birds and fish"
+        assert gateway_agent._is_complex(query, "video", "raw_results", entities, 0.9) is True
+
+    def test_simple_search_is_not_complex(self, gateway_agent):
+        """Plain search query with good confidence is simple."""
+        entities = [_make_entity("vid", "video_content", 0.9)]
+        assert gateway_agent._is_complex("find cat videos", "video", "raw_results", entities, 0.9) is False
 
 
 # ---------------------------------------------------------------------------
@@ -266,13 +292,14 @@ class TestProcessImpl:
 
     @pytest.mark.asyncio
     async def test_summary_request(self, gateway_agent, mock_gliner_model):
-        """Summary generation type -> summarizer_agent."""
+        """Summary generation type with simple query -> summarizer_agent."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.90},
             {"text": "summary", "label": "summary_request", "score": 0.88},
         ]
+        # "brief of the cooking video" — no analysis keywords, single modality
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Summarize the cooking video")
+            GatewayInput(query="brief of the cooking video")
         )
         assert result.complexity == "simple"
         assert result.generation_type == "summary"
@@ -305,19 +332,19 @@ class TestProcessImpl:
         assert result.routed_to == "audio_analysis_agent"
 
     @pytest.mark.asyncio
-    async def test_document_detailed_report(self, gateway_agent, mock_gliner_model):
-        """Document + detailed_report -> detailed_report_agent."""
+    async def test_document_detailed_report_is_complex(self, gateway_agent, mock_gliner_model):
+        """Document + detailed_report -> always complex (needs search→analyze→report)."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "spreadsheet", "label": "document_content", "score": 0.82},
-            {"text": "analysis", "label": "detailed_report_request", "score": 0.78},
+            {"text": "report", "label": "detailed_report_request", "score": 0.78},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Detailed analysis of the spreadsheet data")
+            GatewayInput(query="full writeup of the spreadsheet data")
         )
-        assert result.complexity == "simple"
-        assert result.modality == "document"
+        assert result.complexity == "complex"
         assert result.generation_type == "detailed_report"
-        assert result.routed_to == "detailed_report_agent"
+        assert result.routed_to == "orchestrator_agent"
+        assert "detailed report" in result.reasoning.lower()
 
     @pytest.mark.asyncio
     async def test_tenant_id_passthrough(self, gateway_agent, mock_gliner_model):

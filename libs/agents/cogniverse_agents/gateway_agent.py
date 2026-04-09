@@ -246,18 +246,36 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         best_type = max(gen_scores, key=gen_scores.get)  # type: ignore[arg-type]
         return best_type, gen_scores[best_type]
 
+    # Keywords that signal multi-step or analytical queries requiring orchestration
+    _COMPLEXITY_KEYWORDS = frozenset({
+        "analyze", "analyse", "compare", "contrast", "summarize", "summarise",
+        "explain", "evaluate", "correlate", "investigate", "review", "assess",
+        "combine", "merge", "synthesize", "synthesise", "report",
+    })
+
+    _MULTI_STEP_MARKERS = frozenset({
+        "then", "after that", "followed by", "and also", "additionally",
+        "step by step", "first", "finally", "next",
+    })
+
     def _is_complex(
         self,
+        query: str,
         modality: str,
+        generation_type: str,
         entities: List[Dict[str, Any]],
         confidence: float,
     ) -> bool:
-        """Decide whether a query is complex and needs orchestration.
+        """Decide whether a query needs orchestration.
 
-        Complex if:
-        - No entities detected at all
-        - Low confidence (below fast_path_confidence_threshold)
+        Complex if ANY of:
+        - No entities detected (GLiNER can't classify it)
+        - Low modality confidence (below threshold)
         - Multiple modalities detected ("both")
+        - Generation type is detailed_report (always needs search → analysis → report)
+        - Query contains analysis/comparison/synthesis verbs
+        - Query contains multi-step markers ("then", "after that", "first...next")
+        - Query has multiple clauses (3+ commas or 2+ "and")
         """
         if not entities:
             return True
@@ -265,6 +283,25 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             return True
         if modality == "both":
             return True
+
+        # detailed_report always needs orchestration: search → analyze → write
+        if generation_type == "detailed_report":
+            return True
+
+        # Check for analysis/synthesis verbs
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        if query_words & self._COMPLEXITY_KEYWORDS:
+            return True
+
+        # Check for multi-step markers
+        if any(marker in query_lower for marker in self._MULTI_STEP_MARKERS):
+            return True
+
+        # Multiple clauses suggest a compound query
+        if query_lower.count(",") >= 3 or query_lower.count(" and ") >= 2:
+            return True
+
         return False
 
     # ------------------------------------------------------------------
@@ -316,13 +353,15 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # Conservative: low confidence in either dimension pushes borderline queries
         # to the orchestrator. This is safer for a gateway that should err on caution.
         overall_confidence = min(modality_confidence, gen_confidence)
-        is_complex = self._is_complex(modality, entities, overall_confidence)
+        is_complex = self._is_complex(
+            input.query, modality, generation_type, entities, overall_confidence
+        )
 
         if is_complex:
             complexity = "complex"
             routed_to = "orchestrator_agent"
             reasoning = self._build_complex_reasoning(
-                modality, entities, overall_confidence
+                input.query, modality, generation_type, entities, overall_confidence
             )
         else:
             complexity = "simple"
@@ -354,17 +393,39 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             reasoning=reasoning,
         )
 
-    @staticmethod
+    @classmethod
     def _build_complex_reasoning(
+        cls,
+        query: str,
         modality: str,
+        generation_type: str,
         entities: List[Dict[str, Any]],
         confidence: float,
     ) -> str:
+        reasons = []
         if not entities:
-            return "No entities detected; forwarding to orchestrator for deeper analysis"
+            reasons.append("no entities detected")
         if modality == "both":
-            return "Multiple modalities detected; orchestrator needed for cross-modal coordination"
-        return (
-            f"Low classification confidence ({confidence:.2f}); "
-            f"forwarding to orchestrator for robust handling"
-        )
+            reasons.append("multiple modalities detected")
+        if confidence < 0.4:
+            reasons.append(f"low confidence ({confidence:.2f})")
+        if generation_type == "detailed_report":
+            reasons.append("detailed report requires multi-step pipeline")
+
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        matched_keywords = query_words & cls._COMPLEXITY_KEYWORDS
+        if matched_keywords:
+            reasons.append(f"analysis keywords: {', '.join(sorted(matched_keywords))}")
+
+        matched_markers = [m for m in cls._MULTI_STEP_MARKERS if m in query_lower]
+        if matched_markers:
+            reasons.append(f"multi-step markers: {', '.join(matched_markers)}")
+
+        if query_lower.count(",") >= 3 or query_lower.count(" and ") >= 2:
+            reasons.append("compound query (multiple clauses)")
+
+        if not reasons:
+            reasons.append("classified as complex by gateway")
+
+        return f"Orchestrator needed: {'; '.join(reasons)}"
