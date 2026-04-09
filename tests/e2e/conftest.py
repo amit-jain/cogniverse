@@ -23,8 +23,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-RUNTIME = "http://localhost:28000"
-DASHBOARD = "http://localhost:28501"
+# k3d NodePort URLs — defined in charts/cogniverse/values.yaml
+RUNTIME = "http://localhost:28000"      # runtime.service.nodePort
+DASHBOARD = "http://localhost:28501"    # dashboard.service.nodePort
+PHOENIX_URL = "http://localhost:26006"  # phoenix.service.nodePort
 TENANT_ID = "flywheel_org:production"
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"

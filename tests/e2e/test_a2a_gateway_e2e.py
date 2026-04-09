@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
     skip_if_no_runtime,
@@ -922,10 +923,10 @@ class TestTelemetrySpans:
     ) -> list:
         """Query Phoenix for spans matching a prefix.
 
-        Phoenix exposes a REST API at port 6006 for querying spans.
+        Phoenix URL comes from conftest.PHOENIX_URL (k3d NodePort).
         Returns a list of matching spans, or empty list on failure.
         """
-        phoenix_url = "http://localhost:6006"
+        phoenix_url = PHOENIX_URL
         try:
             with httpx.Client(timeout=10.0) as client:
                 # Try the Phoenix v1 spans API
@@ -994,7 +995,7 @@ class TestTelemetrySpans:
         """Verify Phoenix is reachable (informational)."""
         try:
             with httpx.Client(timeout=5.0) as client:
-                resp = client.get("http://localhost:6006/healthz")
+                resp = client.get(f"{PHOENIX_URL}/healthz")
             if resp.status_code == 200:
                 # Phoenix is healthy
                 pass
