@@ -120,7 +120,7 @@ class OrchestrationPlan(BaseModel):
         default_factory=list,
         description="Groups of step indices that can run in parallel",
     )
-    reasoning: str = Field(description="Overall plan reasoning")
+    reasoning: str = Field(default="", description="Overall plan reasoning")
     unavailable_agents: List[str] = Field(
         default_factory=list,
         description="Agent names proposed by LLM but not in registry",
@@ -545,9 +545,14 @@ class OrchestratorAgent(
             gateway_context=gateway_context,
         )
 
+        raw_sequence = result.agent_sequence or ""
         agent_sequence = [
-            a.strip() for a in result.agent_sequence.split(",") if a.strip()
+            a.strip() for a in raw_sequence.split(",") if a.strip()
         ]
+        if not agent_sequence:
+            # DSPy planner returned empty/None — fall back to search
+            logger.warning("DSPy planner returned empty agent_sequence, falling back to search_agent")
+            agent_sequence = ["search_agent"]
 
         # Parse parallel groups (LLM may return "None" or non-numeric strings)
         parallel_groups = []
@@ -584,7 +589,7 @@ class OrchestratorAgent(
             query=query,
             steps=steps,
             parallel_groups=parallel_groups,
-            reasoning=result.reasoning,
+            reasoning=result.reasoning or "",
             unavailable_agents=unavailable_agents,
         )
 

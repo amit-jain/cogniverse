@@ -5,6 +5,7 @@ Consolidates AgentConfig, RoutingConfig, TelemetryConfig into single system.
 
 import copy
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -222,7 +223,10 @@ class SystemConfig:
             backend_url=data.get("backend_url", "http://localhost"),
             backend_port=data.get("backend_port", 8080),
             llm_model=data.get("llm_model", "gpt-4"),
-            base_url=data.get("base_url", "http://localhost:11434"),
+            base_url=data.get(
+                "base_url",
+                os.environ.get("OLLAMA_API_BASE", "http://localhost:11434"),
+            ),
             llm_api_key=data.get("llm_api_key"),
             telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
             telemetry_collector_endpoint=data.get(
