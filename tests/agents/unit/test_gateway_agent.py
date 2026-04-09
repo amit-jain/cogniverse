@@ -166,7 +166,7 @@ class TestClassification:
     def test_classify_modality_multiple_returns_both(self, gateway_agent):
         entities = [
             _make_entity("video", "video_content", 0.8),
-            _make_entity("pdf", "pdf_content", 0.7),
+            _make_entity("document", "document_content", 0.7),
         ]
         modality, conf = gateway_agent._classify_modality(entities)
         assert modality == "both"
@@ -184,7 +184,7 @@ class TestClassification:
         assert conf == 0.85
 
     def test_classify_generation_type_detailed_report(self, gateway_agent):
-        entities = [_make_entity("report", "detailed_analysis", 0.75)]
+        entities = [_make_entity("report", "detailed_report_request", 0.75)]
         gen_type, conf = gateway_agent._classify_generation_type(entities)
         assert gen_type == "detailed_report"
         assert conf == 0.75
@@ -195,8 +195,8 @@ class TestComplexityDecision:
         assert gateway_agent._is_complex("video", [], 0.0) is True
 
     def test_low_confidence_is_complex(self, gateway_agent):
-        entities = [_make_entity("vid", "video_content", 0.4)]
-        assert gateway_agent._is_complex("video", entities, 0.4) is True
+        entities = [_make_entity("vid", "video_content", 0.35)]
+        assert gateway_agent._is_complex("video", entities, 0.35) is True
 
     def test_both_modality_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
@@ -233,7 +233,7 @@ class TestProcessImpl:
         """Multi-modal entities -> orchestrator_agent."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "videos", "label": "video_content", "score": 0.85},
-            {"text": "documents", "label": "pdf_content", "score": 0.80},
+            {"text": "documents", "label": "document_content", "score": 0.80},
         ]
         result = await gateway_agent._process_impl(
             GatewayInput(query="Compare the video with the PDF document")
@@ -282,7 +282,7 @@ class TestProcessImpl:
     async def test_image_search(self, gateway_agent, mock_gliner_model):
         """Image modality raw_results -> image_search_agent."""
         mock_gliner_model.predict_entities.return_value = [
-            {"text": "photo", "label": "photo_content", "score": 0.91},
+            {"text": "photo", "label": "image_content", "score": 0.91},
         ]
         result = await gateway_agent._process_impl(
             GatewayInput(query="Find photos of cats")
@@ -295,7 +295,7 @@ class TestProcessImpl:
     async def test_audio_analysis(self, gateway_agent, mock_gliner_model):
         """Audio modality -> audio_analysis_agent."""
         mock_gliner_model.predict_entities.return_value = [
-            {"text": "podcast", "label": "podcast_content", "score": 0.87},
+            {"text": "podcast", "label": "audio_content", "score": 0.87},
         ]
         result = await gateway_agent._process_impl(
             GatewayInput(query="Find podcast episodes about AI")
@@ -308,8 +308,8 @@ class TestProcessImpl:
     async def test_document_detailed_report(self, gateway_agent, mock_gliner_model):
         """Document + detailed_report -> detailed_report_agent."""
         mock_gliner_model.predict_entities.return_value = [
-            {"text": "spreadsheet", "label": "spreadsheet_content", "score": 0.82},
-            {"text": "analysis", "label": "detailed_analysis", "score": 0.78},
+            {"text": "spreadsheet", "label": "document_content", "score": 0.82},
+            {"text": "analysis", "label": "detailed_report_request", "score": 0.78},
         ]
         result = await gateway_agent._process_impl(
             GatewayInput(query="Detailed analysis of the spreadsheet data")

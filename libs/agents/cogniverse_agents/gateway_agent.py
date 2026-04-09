@@ -22,27 +22,21 @@ logger = logging.getLogger(__name__)
 # GLiNER label mappings
 # ---------------------------------------------------------------------------
 
+# Experimentally tuned: 7 labels (1 per modality + 2 generation types) produce
+# significantly higher GLiNER confidence scores than the original 21 labels.
+# Average top score: 0.56 (vs 0.41 with 21 labels). Zero missed queries.
+# See experiment in docs/superpowers/specs/2026-04-08-a2a-architecture-restructuring-design.md
 MODALITY_LABELS: Dict[str, List[str]] = {
-    "video": ["video_content", "visual_content", "media_content"],
-    "text": ["document_content", "text_information", "written_content"],
-    "audio": ["audio_content", "sound_content", "music_content", "podcast_content"],
-    "image": [
-        "image_content",
-        "photo_content",
-        "picture_content",
-        "diagram_content",
-        "chart_content",
-    ],
-    "document": [
-        "pdf_content",
-        "spreadsheet_content",
-        "presentation_content",
-    ],
+    "video": ["video_content"],
+    "text": ["text_information"],
+    "audio": ["audio_content"],
+    "image": ["image_content"],
+    "document": ["document_content"],
 }
 
 GENERATION_LABELS: Dict[str, List[str]] = {
     "summary": ["summary_request"],
-    "detailed_report": ["detailed_analysis", "report_request"],
+    "detailed_report": ["detailed_report_request"],
 }
 
 # Flat list of all labels for GLiNER predict_entities
@@ -123,7 +117,7 @@ class GatewayDeps(AgentDeps):
         0.3, description="Entity detection confidence threshold"
     )
     fast_path_confidence_threshold: float = Field(
-        0.7, description="Minimum confidence for simple (fast-path) routing"
+        0.4, description="Minimum confidence for simple (fast-path) routing"
     )
 
 

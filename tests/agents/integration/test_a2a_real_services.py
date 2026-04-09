@@ -91,30 +91,24 @@ def configure_dspy(_configure_dspy_lm):
 class TestGatewayWithRealGLiNER:
     """GatewayAgent uses GLiNER for zero-shot classification. No LLM needed.
 
-    GLiNER modality scores for natural queries are typically 0.3-0.6.
-    With default fast_path_confidence_threshold=0.7, most queries route
-    to orchestrator as "complex". We test both paths:
-    - Default threshold: verifies modality detection + complex routing
-    - Low threshold (0.3): verifies simple fast-path routing to search_agent
+    GLiNER modality scores with the tuned 7-label set are typically 0.4-0.7.
+    With default fast_path_confidence_threshold=0.4, unambiguous queries take
+    the fast path. Ambiguous or multi-modal queries route to orchestrator.
     """
 
     @pytest.fixture
     def gateway_agent(self):
-        """Gateway with default config."""
+        """Gateway with default config (7-label set, threshold=0.4)."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
 
-        return GatewayAgent(deps=GatewayDeps(
-            gliner_model_name="urchade/gliner_large-v2.1",
-            gliner_threshold=0.25,
-            fast_path_confidence_threshold=0.5,
-        ))
+        return GatewayAgent(deps=GatewayDeps())
 
     @pytest.mark.asyncio
     async def test_video_content_query_routes_to_search_agent(self, gateway_agent):
         """'search for video content about AI' -> video modality, simple, search_agent.
 
-        GLiNER scores ~0.61 for video_content on this query (above 0.5 threshold),
-        so it takes the fast path to search_agent.
+        GLiNER scores ~0.69 for video_content on this query with the 7-label set
+        (above default threshold=0.4), so it takes the fast path to search_agent.
         """
         from cogniverse_agents.gateway_agent import GatewayInput
 
@@ -128,7 +122,7 @@ class TestGatewayWithRealGLiNER:
             f"Reasoning: {result.reasoning}"
         )
         assert result.complexity == "simple", (
-            f"GLiNER scores ~0.61 for video_content, above 0.5 threshold, "
+            f"GLiNER scores ~0.69 for video_content with 7-label set, above threshold=0.4, "
             f"should be simple. Got {result.complexity!r}. "
             f"Reasoning: {result.reasoning}"
         )
@@ -148,7 +142,7 @@ class TestGatewayWithRealGLiNER:
             )
         )
 
-        # GLiNER detects: summary_request (~0.4), written_content (~0.59), document_content (~0.34)
+        # GLiNER detects: summary_request, text_information, document_content (7-label set)
         # Multiple modality labels from text/document -> "both" -> complex
         # Or single dominant modality with summary generation type
         assert result.modality in ("text", "document", "both"), (
@@ -174,7 +168,7 @@ class TestGatewayWithRealGLiNER:
             GatewayInput(query="find audio recordings of jazz music")
         )
 
-        # GLiNER detects music_content (~0.47) -> audio modality
+        # GLiNER detects audio_content with 7-label set -> audio modality
         assert result.modality == "audio", (
             f"Expected audio modality for 'jazz music' query, "
             f"got {result.modality!r}. Reasoning: {result.reasoning}"
