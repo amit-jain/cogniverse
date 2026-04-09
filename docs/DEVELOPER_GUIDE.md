@@ -638,6 +638,13 @@ python -m cogniverse_runtime.optimization_cli \
   --tenant-id default \
   --agents search,summary \
   --trigger-dataset optimization-trigger-default-20260403_040000
+
+# Optimization CLI — telemetry-first batch modes (A2A architecture)
+# Each mode reads spans from Phoenix, optimizes the relevant agent, and saves artifacts.
+python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default --lookback-hours 24
+python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default --lookback-hours 24
+python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default --lookback-hours 24
+python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default --lookback-hours 24
 ```
 
 ---

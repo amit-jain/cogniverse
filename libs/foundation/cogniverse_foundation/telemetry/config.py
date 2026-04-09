@@ -13,6 +13,9 @@ from typing import Any, Dict, Optional
 SPAN_NAME_REQUEST = "cogniverse.request"
 SPAN_NAME_ROUTING = "cogniverse.routing"
 SPAN_NAME_ORCHESTRATION = "cogniverse.orchestration"
+SPAN_NAME_QUERY_ENHANCEMENT = "cogniverse.query_enhancement"
+SPAN_NAME_GATEWAY = "cogniverse.gateway"
+SPAN_NAME_PROFILE_SELECTION = "cogniverse.profile_selection"
 
 # Service name constants
 SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"
