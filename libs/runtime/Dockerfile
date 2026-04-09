@@ -39,7 +39,11 @@ RUN uv pip install pylate --no-deps && \
     uv pip install datasets
 
 # Also install telemetry-phoenix into the same venv — agents discover it via entry points
-RUN uv pip install -e ./libs/telemetry-phoenix
+# Pin evals<3 before installing telemetry-phoenix to prevent arize-phoenix
+# from pulling evals 3.0+ which removes phoenix.evals.models namespace.
+# TODO: remove constraint when upgrading to arize-phoenix 14.x
+RUN uv pip install "arize-phoenix-evals<3" && \
+    uv pip install -e ./libs/telemetry-phoenix
 
 # Pre-download ML models so they don't need downloading at runtime.
 # This eliminates startup delays and liveness probe timeouts.

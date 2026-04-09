@@ -21,7 +21,6 @@ from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
     skip_if_no_runtime,
-    unique_id,
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
@@ -954,91 +953,75 @@ class TestTelemetrySpans:
     """After running a query through the gateway, verify telemetry spans
     were emitted to Phoenix."""
 
-    def _query_phoenix_spans(
-        self, project_name: str, span_prefix: str, limit: int = 10
-    ) -> list:
-        """Query Phoenix for spans matching a prefix.
+    def test_phoenix_is_healthy(self):
+        """Phoenix must be running and healthy in k3d."""
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"{PHOENIX_URL}/healthz")
+        assert resp.status_code == 200, (
+            f"Phoenix at {PHOENIX_URL} returned {resp.status_code}. "
+            f"Phoenix is a k3d pod — it must be running for E2E tests."
+        )
 
-        Phoenix URL comes from conftest.PHOENIX_URL (k3d NodePort).
-        Returns a list of matching spans, or empty list on failure.
+    def test_gateway_span_emitted_to_phoenix(self):
+        """Gateway query must produce a span visible in Phoenix.
+
+        Uses phoenix.Client SDK (same as integration tests) to query
+        spans by project. Polls for up to 30s for span propagation.
+
+        Known issue: if cogniverse-telemetry-phoenix fails to import
+        (broken phoenix.evals dependency in Docker image), the
+        TelemetryManager falls back to NoOpSpan and no spans are emitted.
+        This test will fail in that case — fix the Docker image deps.
         """
-        phoenix_url = PHOENIX_URL
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                # Try the Phoenix v1 spans API
-                resp = client.get(
-                    f"{phoenix_url}/v1/spans",
-                    params={
-                        "project_name": project_name,
-                        "limit": limit,
-                    },
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    spans = data if isinstance(data, list) else data.get("data", [])
-                    return [
-                        s for s in spans
-                        if span_prefix in s.get("name", "")
-                    ]
-        except (httpx.ConnectError, httpx.ReadTimeout, Exception):
-            pass
-        return []
+        import time
 
-    def test_gateway_emits_telemetry_spans(self):
-        """Run a query through the gateway and verify that cogniverse.gateway
-        spans appear in Phoenix. This test is best-effort -- if Phoenix is not
-        available or spans haven't propagated yet, it verifies the gateway
-        call itself succeeded rather than failing the test.
+        from phoenix.client import Client as PhoenixClient
 
-        Uses a prefix that scores as simple (0.446) so the orchestrator is not
-        triggered, keeping the test independent of Ollama availability.
-        """
-        # Run a simple query through the gateway to avoid orchestrator dependency
+        # Run a query through the gateway
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": f"show me cooking videos {unique_id()}",
+                    "query": "show me cooking videos",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
             )
 
-        if resp.status_code == 500:
-            # Gateway may fail if downstream agent crashes; telemetry
-            # span might still have been emitted before the error
-            pass
-        else:
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "success"
-
-        # Check Phoenix for spans (best-effort)
-        spans = self._query_phoenix_spans(
-            project_name=f"cogniverse-{TENANT_ID.replace(':', '-')}-gateway",
-            span_prefix="cogniverse.gateway",
+        assert resp.status_code == 200, (
+            f"Gateway call failed with {resp.status_code}. "
+            f"All services must be running for E2E tests."
         )
 
-        # Telemetry verification is best-effort: Phoenix may not be running
-        # or spans may not have propagated. The primary assertion is that
-        # the gateway call succeeded.
-        if spans:
-            span = spans[0]
-            assert "cogniverse.gateway" in span.get("name", "")
+        # Poll Phoenix for the span (async export has propagation delay)
+        phoenix_client = PhoenixClient(base_url=PHOENIX_URL)
+        # Spans go to tenant-specific project: cogniverse-{tenant_id}
+        project_name = f"cogniverse-{TENANT_ID}"
 
-    def test_phoenix_health_check(self):
-        """Verify Phoenix is reachable (informational)."""
-        try:
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(f"{PHOENIX_URL}/healthz")
-            if resp.status_code == 200:
-                # Phoenix is healthy
-                pass
-            else:
-                pytest.skip(
-                    f"Phoenix not healthy (status={resp.status_code}), "
-                    "telemetry tests are informational"
+        deadline = time.time() + 30
+        found_span = None
+        while time.time() < deadline:
+            try:
+                spans_df = phoenix_client.spans.get_spans_dataframe(
+                    project_identifier=project_name,
+                    limit=50,
                 )
-        except (httpx.ConnectError, httpx.ReadTimeout):
-            pytest.skip("Phoenix not reachable, telemetry tests are informational")
+                if spans_df is not None and not spans_df.empty:
+                    matches = spans_df[
+                        spans_df["name"].str.contains("gateway", case=False, na=False)
+                    ]
+                    if not matches.empty:
+                        found_span = matches.iloc[0]
+                        break
+            except Exception:
+                pass
+            time.sleep(2)
+
+        assert found_span is not None, (
+            f"No gateway spans found in Phoenix project '{project_name}' after 30s. "
+            f"Phoenix is at {PHOENIX_URL}. Span emission or OTLP export is broken."
+        )
+        assert "gateway" in found_span["name"].lower(), (
+            f"Span name should contain 'gateway', got: {found_span['name']}"
+        )

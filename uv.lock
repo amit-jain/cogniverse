@@ -987,8 +987,8 @@ docs = [
 requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], specifier = ">=0.3.0" },
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "arize-phoenix", specifier = ">=12.9.0" },
-    { name = "arize-phoenix-evals", specifier = ">=0.26.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0,<13" },
+    { name = "arize-phoenix-evals", specifier = ">=0.26.0,<3" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.5" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "cogniverse-agents", editable = "libs/agents" },
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arize-phoenix", specifier = ">=12.9.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0,<13" },
     { name = "cogniverse-core", editable = "libs/core" },
     { name = "cogniverse-evaluation", editable = "libs/evaluation" },
     { name = "pandas", specifier = ">=2.0.0" },

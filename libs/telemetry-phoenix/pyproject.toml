@@ -12,7 +12,7 @@ authors = [
 dependencies = [
     "cogniverse-core",
     "cogniverse-evaluation",
-    "arize-phoenix>=12.9.0",
+    "arize-phoenix>=12.9.0,<13",
     "pandas>=2.0.0",
 ]
 
