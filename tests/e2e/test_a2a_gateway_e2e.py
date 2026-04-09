@@ -438,8 +438,8 @@ class TestGatewaySearchPipeline:
         # Temporal info should be present (start_time, end_time)
         if "temporal_info" in result:
             temporal = result["temporal_info"]
-            assert "start_time" in temporal, f"temporal_info missing start_time"
-            assert "end_time" in temporal, f"temporal_info missing end_time"
+            assert "start_time" in temporal, "temporal_info missing start_time"
+            assert "end_time" in temporal, "temporal_info missing end_time"
             assert temporal["end_time"] >= temporal["start_time"], (
                 f"end_time ({temporal['end_time']}) should be >= start_time ({temporal['start_time']})"
             )
@@ -459,11 +459,12 @@ class TestRoutingAgentThin:
     pipeline. The routing_agent no longer does entity extraction or query
     enhancement inline."""
 
-    def test_routing_agent_returns_success(self):
-        """POST to routing_agent/process returns success via gateway pipeline.
+    def test_routing_agent_routes_video_to_search(self):
+        """'show me cooking videos' through routing → gateway classifies as
+        simple video → routes to search_agent → returns Vespa results.
 
-        Query chosen for GLiNER score 0.446 (above 0.4 threshold), ensuring
-        the gateway classifies it as simple and doesn't trigger the orchestrator.
+        This verifies the full routing→gateway→search pipeline produces
+        real search results with correct classification.
         """
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
@@ -480,77 +481,36 @@ class TestRoutingAgentThin:
         data = resp.json()
         assert data["status"] == "success"
 
-        # Content assertion: if routing exposes a recommended_agent, it must be valid
-        if "recommended_agent" in data:
-            assert data["recommended_agent"] in (
-                "search_agent",
-                "summarizer_agent",
-                "detailed_report_agent",
-                "image_search_agent",
-                "audio_analysis_agent",
-                "document_agent",
-                "deep_research_agent",
-                "coding_agent",
-                "text_analysis_agent",
-            ), f"Routing returned unknown agent: {data['recommended_agent']!r}"
-        # Gateway-style response must contain a valid routed_to field
-        if "gateway" in data:
-            gw = data["gateway"]
-            assert gw.get("routed_to") in (
-                "search_agent",
-                "summarizer_agent",
-                "detailed_report_agent",
-                "image_search_agent",
-                "audio_analysis_agent",
-                "document_agent",
-                "deep_research_agent",
-                "coding_agent",
-                "text_analysis_agent",
-                None,  # orchestrator path may not set routed_to
-            ), f"Gateway routed_to is invalid: {gw.get('routed_to')!r}"
+        # Must go through gateway and produce classification
+        gw = data.get("gateway", {})
+        assert gw.get("complexity") == "simple", (
+            f"'cooking videos' should be simple, got {gw.get('complexity')!r}"
+        )
+        assert gw.get("modality") == "video", (
+            f"'cooking videos' should be video modality, got {gw.get('modality')!r}"
+        )
+        assert gw.get("routed_to") == "search_agent", (
+            f"Simple video should route to search_agent, got {gw.get('routed_to')!r}"
+        )
 
-    def test_routing_agent_slim_response(self):
-        """Routing agent response should NOT contain inline entities or
-        enhanced_query at the top level -- those are now handled by
-        upstream A2A agents."""
+        # Must produce downstream search results
+        downstream = data.get("downstream_result", {})
+        assert downstream.get("status") == "success", (
+            f"Downstream search should succeed, got: {downstream.get('status')}"
+        )
+        assert downstream.get("results_count", 0) >= 1, (
+            "Should return search results from ingested data"
+        )
+
+    def test_routing_no_inline_entities(self):
+        """Routing agent response must NOT have top-level entities or
+        enhanced_query — those moved to dedicated A2A agents."""
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
                     "agent_name": "routing_agent",
-                    "query": "Find videos about Tesla cars in San Francisco",
-                    "context": {"tenant_id": TENANT_ID},
-                    "top_k": 5,
-                },
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "success"
-
-        # In the new architecture, routing_agent goes through the gateway
-        # pipeline. The response is a gateway-style response (with gateway
-        # metadata and downstream_result), NOT the old inline response
-        # with top-level entities/enhanced_query.
-        # The gateway field or orchestration_result should be present.
-        has_gateway_shape = (
-            "gateway" in data
-            or "orchestration_result" in data
-            or "downstream_result" in data
-        )
-        assert has_gateway_shape, (
-            f"Routing agent should produce gateway-style response, "
-            f"got keys: {list(data.keys())}"
-        )
-
-    def test_routing_agent_processes_with_metadata(self):
-        """Routing response includes processing_time_ms or similar metadata."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "cooking tutorials",
+                    "query": "find videos about machine learning",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -558,8 +518,42 @@ class TestRoutingAgentThin:
 
         assert resp.status_code == 200
         data = resp.json()
-        # Should have either gateway metadata or message
-        assert "message" in data or "gateway" in data or "orchestration_result" in data
+
+        # These fields were removed from routing agent in the restructuring
+        # They should NOT appear at the top level of the response
+        assert "entities" not in data or data["entities"] == [], (
+            f"Routing agent should not return inline entities, got: {data.get('entities')}"
+        )
+        assert "relationships" not in data or data["relationships"] == [], (
+            "Routing agent should not return inline relationships"
+        )
+        # enhanced_query should not be at top level (it's in downstream if anywhere)
+        assert "enhanced_query" not in data or data.get("agent") != "routing_agent", (
+            "Top-level enhanced_query indicates old inline routing, not A2A architecture"
+        )
+
+    def test_routing_different_modality_routes_correctly(self):
+        """Audio query through routing → gateway → audio_analysis_agent."""
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            resp = client.post(
+                "/agents/routing_agent/process",
+                json={
+                    "agent_name": "routing_agent",
+                    "query": "listen to podcasts about deep learning",
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 3,
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        gw = data.get("gateway", {})
+        assert gw.get("modality") == "audio", (
+            f"'podcasts about deep learning' should be audio, got {gw.get('modality')!r}"
+        )
+        assert gw.get("routed_to") == "audio_analysis_agent", (
+            f"Audio query should route to audio_analysis_agent, got {gw.get('routed_to')!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
