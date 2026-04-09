@@ -1,7 +1,7 @@
 # Routing Module Study Guide
 
 **Package:** `cogniverse_agents` (Implementation Layer)
-**Location:** `libs/agents/cogniverse_agents/routing/`
+**Location:** `libs/agents/cogniverse_agents/`
 
 ---
 
@@ -21,38 +21,36 @@
 ## Module Overview
 
 ### Purpose
-The Routing Module provides intelligent query routing capabilities with multiple strategies, advanced optimization (GRPO), and production-ready features including caching, cross-modal fusion, and query enhancement.
+The Routing Module provides intelligent query routing via A2A agents: `GatewayAgent` for fast GLiNER classification, `OrchestratorAgent` for complex multi-agent coordination, `QueryEnhancementAgent` for query enrichment, and supporting infrastructure in `routing/` for optimization, caching, and cross-modal fusion.
 
 ### Key Features
-- **Tiered Routing**: Fast (GLiNER) → Medium (LLM) → Slow (LangExtract) with confidence thresholds
-- **Multiple Strategies**: GLiNER NER, LLM-based, Keyword, Hybrid, Ensemble, LangExtract
-- **Advanced Optimization**: GRPO (DSPy 3.0) with GEPA, MIPROv2, SIMBA optimizers
-- **Query Enhancement**: SIMBA-based learning with relationship extraction
+- **Gateway Classification**: `GatewayAgent` uses GLiNER (<100ms) to classify simple vs complex queries
+- **Orchestrated Routing**: Complex queries handed to `OrchestratorAgent` (DSPy planner + A2A HTTP)
+- **Query Enhancement**: `QueryEnhancementAgent` enriches queries via `ComposableQueryAnalysisModule`
+- **Advanced Optimization**: GRPO (DSPy 3.0) with GEPA, MIPROv2, SIMBA optimizers (batch jobs)
 - **Cross-Modal Optimization**: Multi-modal fusion benefit prediction
 - **Production Features**: Per-modality caching (LRU), parallel execution, metrics
 
 ### Package Structure
 ```text
-libs/agents/cogniverse_agents/routing/
-├── router.py                           # Comprehensive router (1145 lines)
-├── strategies.py                       # Core routing strategies (1291 lines)
-├── advanced_optimizer.py               # GRPO optimization (1358 lines)
-├── config.py                           # Configuration system (390 lines)
-├── query_enhancement_engine.py         # Query enhancement with SIMBA (345 lines)
-├── cross_modal_optimizer.py            # Multi-modal fusion (685 lines)
-├── modality_cache.py                   # Per-modality caching (300 lines)
-├── modality_optimizer.py               # Per-modality optimization (783 lines)
-├── modality_evaluator.py               # Modality evaluation (521 lines)
-├── modality_metrics.py                 # Performance metrics (361 lines)
-├── xgboost_meta_models.py              # XGBoost meta-learning (619 lines)
-├── contextual_analyzer.py              # Cross-modal context (441 lines)
-├── llm_auto_annotator.py               # LLM annotations (294 lines)
-├── profile_performance_optimizer.py    # Profile optimization (390 lines)
-├── lazy_executor.py                    # Lazy evaluation (309 lines)
-├── routing_span_evaluator.py           # Routing span evaluation
-├── parallel_executor.py                # Parallel agent execution
-├── base.py                             # Base routing classes
-└── ... (20+ additional files for DSPy, optimization, and utilities)
+libs/agents/cogniverse_agents/
+├── gateway_agent.py                    # GLiNER-based query classification (<100ms)
+├── orchestrator_agent.py               # A2A orchestrator (DSPy planner + HTTP dispatch)
+├── query_enhancement_agent.py          # Query enhancement A2A agent
+├── routing_agent.py                    # Thin DSPy routing decision agent
+├── routing/
+│   ├── advanced_optimizer.py           # GRPO optimization (batch jobs)
+│   ├── config.py                       # Configuration system
+│   ├── cross_modal_optimizer.py        # Multi-modal fusion
+│   ├── modality_cache.py               # Per-modality caching (LRU)
+│   ├── modality_optimizer.py           # Per-modality optimization
+│   ├── modality_evaluator.py           # Modality evaluation
+│   ├── modality_metrics.py             # Performance metrics
+│   ├── xgboost_meta_models.py          # XGBoost meta-learning
+│   ├── contextual_analyzer.py          # Cross-modal context
+│   ├── routing_span_evaluator.py       # Routing span evaluation
+│   ├── parallel_executor.py            # Parallel agent execution
+│   └── ... (additional DSPy and utility files)
 ```
 
 ---
@@ -235,106 +233,78 @@ config.save("configs/my_routing.json")
 
 ---
 
-### 2. GLiNERRoutingStrategy (strategies.py:24-381)
+### 2. GatewayAgent (gateway_agent.py)
 
-**Purpose**: Fast NER-based routing using GLiNER for entity detection (Tier 1)
+**Purpose**: Entry-point A2A agent that classifies queries as simple or complex using GLiNER (<100ms)
 
 **Key Features**:
 
-- Entity detection with 17 label types
-- Rule-based classification from entities
+- GLiNER entity detection with configurable label types
+- Rule-based modality and complexity classification
 - Circuit breaker for fault tolerance
-- Performance metrics tracking
+- Returns `GatewayOutput` with `complexity`, `modality`, `routed_to`, `confidence`
 
-**Key Methods**:
+**Key Method**:
 ```python
-async def route(
+async def _process_impl(
     self,
-    query: str,
-    context: dict[str, Any] | None = None
-) -> RoutingDecision:
+    input_data: GatewayInput,
+) -> GatewayOutput:
     """
-    Route query using GLiNER entity detection
+    Classify query complexity and target agent
 
     Process:
     1. Extract entities with GLiNER
     2. Classify modality from entity labels
-    3. Determine generation type from patterns
-    4. Calculate confidence from entity scores
-
-    Returns:
-        RoutingDecision with agent, modality, generation_type
+    3. Determine complexity (simple vs complex)
+    4. Return routing decision with target agent name
     """
 ```
 
-**Entity Classification Logic**:
+**Complexity Classification Logic**:
 ```python
-# Video indicators
-video_entities = ["video_content", "visual_content", "media_content"]
-
-# Text indicators
-text_entities = ["document_content", "text_information", "written_content"]
-
-# Summary indicators
-summary_entities = ["summary_request"]
-
-# Report indicators
-report_entities = ["detailed_analysis", "report_request"]
+# Query classified as complex when any holds:
+# 1. No entities detected by GLiNER
+# 2. Classification confidence below fast_path_confidence_threshold (default: 0.7)
+# 3. Entities span more than one modality (e.g., video + audio)
 ```
 
 **Performance**:
 
-- Latency: 50-100ms
-- Confidence threshold: 0.7
-- Success rate: ~85% on clear queries
+- Latency: <100ms (GLiNER, no LLM call)
+- Confidence threshold: 0.7 (configurable)
+- Simple queries route directly; complex queries go to OrchestratorAgent
 
 ---
 
-### 3. LLMRoutingStrategy (strategies.py:383-670)
+### 3. RoutingAgent (routing_agent.py)
 
-**Purpose**: LLM-based routing with chain-of-thought reasoning (Tier 2)
+**Purpose**: Thin DSPy-based routing decision agent — receives enriched query from orchestration pipeline and outputs agent recommendation
 
 **Key Features**:
 
-- Uses local Ollama LLMs (gemma3:4b)
-- Chain-of-thought prompting
-- JSON structured output
-- Retry logic with exponential backoff
+- Accepts enriched query with entities, relationships, and enhancement context
+- Uses DSPy `ChainOfThought` for structured routing decisions
+- Outputs recommended agent, confidence, and reasoning
 
-**Key Methods**:
+**Key Method**:
 ```python
-async def route(
+async def route_query(
     self,
     query: str,
-    context: dict[str, Any] | None = None
-) -> RoutingDecision:
+    tenant_id: str | None = None,
+) -> RoutingOutput:
     """
-    Route using LLM with chain-of-thought
+    Produce routing decision for an (optionally enriched) query
 
-    Process:
-    1. Format prompt with system instructions
-    2. Call LLM with chain-of-thought mode
-    3. Parse JSON response
-    4. Extract reasoning and confidence
-    5. Create RoutingDecision
+    Returns:
+        RoutingOutput with recommended_agent, confidence, reasoning
     """
-```
-
-**Prompt Template**:
-```python
-system_prompt = """You are a precise routing agent for a multi-modal search system.
-Analyze the user query and determine:
-1. search_modality: "video", "text", or "both"
-2. generation_type: "raw_results", "summary", or "detailed_report"
-3. Provide reasoning for your decision
-
-Use exact JSON format in your response."""
 ```
 
 **Performance**:
 
-- Latency: 500-1000ms
-- Confidence threshold: 0.6
+- Latency: 500-1000ms (LLM-based)
 - Success rate: ~92% on medium complexity queries
 
 ---
@@ -456,68 +426,45 @@ else:
 
 ---
 
-### 5. QueryEnhancementPipeline (query_enhancement_engine.py:21-345)
+### 5. QueryEnhancementAgent (query_enhancement_agent.py)
 
-**Purpose**: Complete query enhancement using ComposableQueryAnalysisModule with SIMBA learning
+**Purpose**: A2A agent that enriches queries via `ComposableQueryAnalysisModule` — part of the orchestration pipeline for complex queries
 
 **Key Features**:
 
 - ComposableQueryAnalysisModule integration (Path A: GLiNER fast, Path B: LLM unified)
-- SIMBA pattern-based enhancement (fast shortcut for known patterns)
 - LLM-generated query variant generation for multi-query fusion
-- Outcome recording for SIMBA learning
+- Invoked by `OrchestratorAgent` during complex query workflows
+- SIMBA optimization runs as Argo batch job (not inline)
 
-**Key Methods**:
+**Key Method**:
 
 ```python
-async def enhance_query_with_relationships(
+async def _process_impl(
     self,
-    query: str,
-    entities: Optional[List[Dict[str, Any]]] = None,
-    relationships: Optional[List[Dict[str, Any]]] = None,
-    search_context: str = "general",
-    entity_labels: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    input_data: QueryEnhancementInput,
+) -> QueryEnhancementOutput:
     """
     Complete end-to-end query enhancement
 
     Process:
-    1. Try SIMBA enhancement (pattern matching from successful past queries)
-    2. Fall back to ComposableQueryAnalysisModule (Path A or Path B)
-    3. Apply include_original flag and build result metadata
+    1. Run ComposableQueryAnalysisModule (Path A or Path B)
+    2. Apply include_original flag and build result metadata
 
-    Returns:
+    Returns QueryEnhancementOutput with:
         {
             "original_query": str,
             "extracted_entities": List[Dict],
             "extracted_relationships": List[Dict],
             "enhanced_query": str,
-            "enhancement_strategy": str,  # "simba" or "composable_A" or "composable_B"
+            "enhancement_strategy": str,  # "composable_A" or "composable_B"
             "quality_score": float,
             "query_variants": List[Dict[str, str]],  # [{"name": str, "query": str}]
-            "simba_applied": bool,
-            "simba_patterns_used": int,
             "processing_metadata": {"enhancement_method": str, "analysis_path": str, ...},
             ...
         }
     """
 
-async def record_enhancement_outcome(
-    self,
-    original_query: str,
-    enhanced_query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]],
-    enhancement_strategy: str,
-    search_quality_improvement: float,
-    routing_confidence_improvement: float,
-    user_satisfaction: Optional[float] = None,
-) -> None:
-    """
-    Record enhancement outcome for SIMBA learning
-
-    SIMBA learns successful patterns and applies them to similar queries
-    """
 ```
 
 **Composable Query Analysis** (`ComposableQueryAnalysisModule`):
@@ -1352,80 +1299,65 @@ flowchart TB
 
 ## Usage Examples
 
-### Example 1: Basic Tiered Routing
+### Example 1: Gateway Classification
 
 ```python
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize strategies with optional dict config (or None for defaults)
-gliner = GLiNERRoutingStrategy()
-llm = LLMRoutingStrategy()
+config_manager = create_default_config_manager()
+deps = GatewayDeps()
+gateway = GatewayAgent(deps=deps, config_manager=config_manager)
 
-# Route a query
+# Classify a query
 query = "Show me videos of robots playing soccer"
+input_data = GatewayInput(query=query, tenant_id="default")
 
-# Try Tier 1 (GLiNER)
-result = await gliner.route(query)
-if result.confidence_score >= 0.7:
-    print(f"Tier 1 success: {result.primary_agent} (conf: {result.confidence_score})")
-else:
-    # Fallback to Tier 2 (LLM)
-    result = await llm.route(query)
-    print(f"Tier 2 success: {result.primary_agent} (conf: {result.confidence_score})")
+result = await gateway._process_impl(input_data)
+print(f"Complexity: {result.complexity}")    # "simple" or "complex"
+print(f"Modality: {result.modality}")
+print(f"Routed to: {result.routed_to}")
+print(f"Confidence: {result.confidence}")
 
-# Output:
-# Tier 1 success: video_search_agent (conf: 0.87)
+# Simple query output:
+# Complexity: simple
+# Modality: video
+# Routed to: video_agent
+# Confidence: 0.87
 ```
 
-### Example 2: Query Enhancement with SIMBA
+### Example 2: Query Enhancement
 
 ```python
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-
-# telemetry_provider obtained from TelemetryManager.get_tenant_provider(tenant_id)
-
-# Initialize pipeline with SIMBA enabled (telemetry_provider required when enable_simba=True)
-pipeline = QueryEnhancementPipeline(
-    enable_simba=True,
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
+from cogniverse_agents.query_enhancement_agent import (
+    QueryEnhancementAgent,
+    QueryEnhancementDeps,
+    QueryEnhancementInput,
 )
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
+deps = QueryEnhancementDeps()
+agent = QueryEnhancementAgent(deps=deps, config_manager=config_manager)
 
 # Enhance query
 query = "AI robot learning to play games"
+input_data = QueryEnhancementInput(query=query, tenant_id="production")
 
-result = await pipeline.enhance_query_with_relationships(
-    query=query,
-    search_context="general"
-)
+result = await agent._process_impl(input_data)
 
-print(f"Original: {result['original_query']}")
-print(f"Enhanced: {result['enhanced_query']}")
-print(f"Strategy: {result['enhancement_strategy']}")
-print(f"Quality: {result['quality_score']}")
-print(f"SIMBA applied: {result['simba_applied']}")
-print(f"Patterns used: {result['simba_patterns_used']}")
+print(f"Original: {result.original_query}")
+print(f"Enhanced: {result.enhanced_query}")
+print(f"Expansion: {result.expansion_terms}")
+print(f"Variants: {result.query_variants}")
+print(f"Confidence: {result.confidence}")
 
 # Output:
 # Original: AI robot learning to play games
-# Enhanced: AI robot learning to play games (machine learning OR reinforcement learning OR game AI) (robotics OR autonomous agent OR intelligent system)
-# Strategy: simba
-# Quality: 0.82
-# SIMBA applied: True
-# Patterns used: 3
-
-# Record outcome for learning
-await pipeline.record_enhancement_outcome(
-    original_query=query,
-    enhanced_query=result['enhanced_query'],
-    entities=result['extracted_entities'],
-    relationships=result['extracted_relationships'],
-    enhancement_strategy=result['enhancement_strategy'],
-    search_quality_improvement=0.35,  # 35% improvement
-    routing_confidence_improvement=0.12,
-    user_satisfaction=0.9
-)
+# Enhanced: AI robot learning to play games (machine learning OR reinforcement learning OR game AI)
+# Expansion: ["reinforcement learning", "game AI", "autonomous agent"]
+# Variants: ["AI robot game training", "robotic game playing agent"]
+# Confidence: 0.82
 ```
 
 ### Example 3: GRPO Optimization
@@ -1728,44 +1660,28 @@ with telemetry.span(
 
 **Circuit Breaker Pattern**:
 ```python
-# GLiNER strategy includes circuit breaker
-class GLiNERRoutingStrategy:
-    def __init__(self, config):
-        self.circuit_breaker = CircuitBreaker(
-            failure_threshold=5,    # Open after 5 failures
-            recovery_timeout=30.0   # Try recovery after 30s
-        )
+# GatewayAgent includes circuit breaker for GLiNER calls
+# If GLiNER fails (circuit open), query is classified as complex
+# and routed to OrchestratorAgent as a safe fallback
 
-    async def route(self, query):
-        try:
-            return self.circuit_breaker.call(self._route_with_gliner, query)
-        except CircuitBreakerOpen:
-            # Fallback to next tier
-            return await self.fallback_strategy.route(query)
+# AgentDispatcher handles gateway failures:
+try:
+    gateway_result = await gateway._process_impl(input_data)
+    if gateway_result.complexity == "complex":
+        return await orchestrator._process_impl(orchestrator_input)
+    return await _execute_downstream_agent(gateway_result)
+except Exception as e:
+    logger.warning(f"Gateway failed: {e}")
+    # Fallback: route to OrchestratorAgent for safe handling
+    return await orchestrator._process_impl(orchestrator_input)
 ```
 
 **Graceful Degradation**:
 ```python
-# Tiered routing provides automatic fallback
-try:
-    # Try Tier 1 (GLiNER - fast)
-    result = await gliner.route(query)
-    if result.confidence_score >= 0.7:
-        return result
-except Exception as e:
-    logger.warning(f"Tier 1 failed: {e}")
-
-try:
-    # Fallback to Tier 2 (LLM - medium)
-    result = await llm.route(query)
-    if result.confidence_score >= 0.6:
-        return result
-except Exception as e:
-    logger.warning(f"Tier 2 failed: {e}")
-
-# Fallback to Tier 3 (LangExtract - slow but reliable)
-result = await langextract.route(query)
-return result  # Always succeeds
+# GatewayAgent classification provides automatic fallback:
+# - If GLiNER confidence < threshold → classify as complex → OrchestratorAgent
+# - If GLiNER raises exception → classify as complex → OrchestratorAgent
+# OrchestratorAgent always succeeds or raises RuntimeError (no silent fallbacks)
 ```
 
 ### Configuration Management

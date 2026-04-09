@@ -142,10 +142,7 @@ Type of content defined by `ContentType` enum: `video`, `audio`, `image`, `text`
 Evaluation metric: average of 1/rank for first relevant result. Higher is better (max 1.0).
 
 ### Multi-Agent Orchestration
-Coordinating multiple agents to complete complex tasks. Managed by `MultiAgentOrchestrator`, which is invoked by `RoutingAgent` when a query triggers >= 3 orchestration signals.
-
-### MultiAgentOrchestrator
-DSPy-powered workflow engine that plans, executes, and aggregates multi-agent workflows. Receives queries from `RoutingAgent` when orchestration is needed. Emits `cogniverse.orchestration` telemetry spans consumed by the dashboard's Orchestration tab.
+Coordinating multiple agents to complete complex tasks. Managed by `OrchestratorAgent`, which is invoked by `AgentDispatcher` when `GatewayAgent` classifies a query as complex.
 
 ### Multi-Vector
 Embedding strategy that produces multiple vectors per document. Used by ColPali for patch-level embeddings.
@@ -168,7 +165,7 @@ Standard for distributed tracing and metrics. Cogniverse uses OpenTelemetry for 
 DSPy component that improves module performance via training. Examples: GEPA, MIPROv2.
 
 ### OrchestratorAgent
-A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning via `OrchestrationModule`. Plans and executes multi-agent workflows independently using `AgentRegistry` for agent discovery and direct A2A HTTP calls. Distinct from `MultiAgentOrchestrator` (which uses its own DSPy planner and cross-modal fusion) and `RoutingAgent` (which is the query entry point that decides whether orchestration is needed).
+A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning via `OrchestrationModule`. Plans and executes multi-agent workflows independently using `AgentRegistry` for agent discovery and direct A2A HTTP calls. Invoked by `AgentDispatcher` when `GatewayAgent` classifies a query as complex. Emits `cogniverse.orchestration` telemetry spans consumed by the dashboard's Orchestration tab.
 
 ---
 
@@ -213,7 +210,7 @@ Component that reorders search results for better relevance. Types: learned, hyb
 Algorithm for combining multiple ranked lists. Used in hybrid search to merge semantic and BM25 results.
 
 ### Routing
-Directing queries to appropriate agents based on modality and content. Implemented by `RoutingAgent`. Simple queries route to a single agent; complex queries (>= 3 orchestration signals) hand off to `MultiAgentOrchestrator` for multi-step execution.
+Directing queries to appropriate agents based on modality and content. Entry point is `GatewayAgent` (GLiNER classification, <100ms). Simple queries route directly to a single execution agent; complex queries hand off to `OrchestratorAgent` for multi-step A2A execution.
 
 ---
 
@@ -254,7 +251,7 @@ Observability data: traces, spans, metrics. Managed by `TelemetryManager` with t
 Isolated organization in multi-tenant system. All data and config is tenant-scoped via `tenant_id`.
 
 ### RoutingTier
-Routing tier levels: `FAST_PATH` (GLiNER for common patterns), `SLOW_PATH` (SmolLM3 + DSPy for complex queries), `LANGEXTRACT` (structured extraction), `FALLBACK` (keyword-based). Balances latency vs quality.
+Routing tier levels within `GatewayAgent`: `FAST_PATH` (GLiNER for common patterns, <100ms), `SLOW_PATH` (LLM + DSPy for complex queries), `LANGEXTRACT` (structured extraction), `FALLBACK` (keyword-based). Balances latency vs quality.
 
 ### Trace
 End-to-end record of a request through the system. Contains multiple spans in a tree structure.
@@ -280,7 +277,7 @@ Model that understands both images and text. Used for generating frame descripti
 ## W
 
 ### Workflow
-Multi-step agent execution plan. Managed by `MultiAgentOrchestrator` with checkpointing support.
+Multi-step agent execution plan. Managed by `OrchestratorAgent` with checkpointing support.
 
 ### WorkflowIntelligence
 System for learning and adapting workflows based on performance. Optimizes agent selection and parameters.

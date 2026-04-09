@@ -317,26 +317,23 @@ flowchart LR
 **Example**:
 ```python
 # Execute multimodal search using orchestrator
-from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 query = "How does photosynthesis work?"
 
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="test",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig())
-)
+config_manager = create_default_config_manager()
+registry = AgentRegistry(config_manager=config_manager)
+deps = OrchestratorDeps()
+orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
-result = await orchestrator.process_complex_query(
-    query=query,
-    context=None,
-    user_id="test_user"
-)
+input_data = OrchestratorInput(query=query, tenant_id="test")
+result = await orchestrator._process_impl(input_data)
 
-# Validate fusion occurred
-assert result["status"] == "completed"
-assert "result" in result
+# Validate orchestration occurred
+assert result is not None
+assert result.result is not None
 # Result contains fused outputs from multiple agents
 ```
 
@@ -423,23 +420,21 @@ assert p95_latency < 1000  # < 1 second
 
 ```python
 # Example: Orchestrator handles failures
-from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="test",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig())
-)
+config_manager = create_default_config_manager()
+registry = AgentRegistry(config_manager=config_manager)
+deps = OrchestratorDeps()
+orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
 # Execute query that may fail
-result = await orchestrator.process_complex_query(
-    query="test query",
-    context=None
-)
+input_data = OrchestratorInput(query="test query", tenant_id="test")
+result = await orchestrator._process_impl(input_data)
 
 # On failure, orchestrator raises RuntimeError (no silent fallbacks)
-assert result["status"] in ["completed", "failed"]
+assert result is not None
 ```
 
 ---

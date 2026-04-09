@@ -32,7 +32,7 @@ graph LR
     subgraph "Execution"
         OD{"<span style='color:#000'>Orchestration<br/>Needed?</span>"}
         DDA["<span style='color:#000'>Downstream<br/>Agent Dispatch</span>"]
-        MAO["<span style='color:#000'>Multi-Agent<br/>Orchestrator</span>"]
+        MAO["<span style='color:#000'>OrchestratorAgent<br/>(A2A HTTP)</span>"]
     end
 
     subgraph "Agents"
@@ -132,7 +132,7 @@ The `ComposableQueryAnalysisModule` (a `dspy.Module`) combines entity extraction
 
 Both paths produce identical output: `entities`, `relationships`, `enhanced_query`, `query_variants` (list of `{name, query}` dicts for multi-query fusion), `confidence`, `path_used`, and `domain_classification`.
 
-The `QueryEnhancementPipeline` wraps the composable module and adds SIMBA (Similarity-Based Memory Augmentation) as a fast-path shortcut: if SIMBA finds successful enhancement patterns from similar past queries, it applies those patterns directly. Otherwise, it falls back to the composable module.
+The `QueryEnhancementAgent` (A2A agent at `cogniverse_agents/query_enhancement_agent.py`) wraps the composable module and handles query enhancement as part of the orchestration pipeline. For batch optimization, SIMBA (Similarity-Based Memory Augmentation) runs as an Argo batch job — it is not an inline fast-path shortcut. The composable module is always used for real-time enhancement.
 
 ### Phase 3: DSPy Routing Decision
 

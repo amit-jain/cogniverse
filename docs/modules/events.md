@@ -142,10 +142,10 @@ async for event in queue.subscribe():
 ### With Orchestrator
 
 ```python
-from cogniverse_agents.orchestrator.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_core.events import get_queue_manager
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Create event queue for this workflow
 manager = get_queue_manager()
@@ -155,15 +155,15 @@ queue = await manager.create_queue(
     tenant_id="tenant1",
 )
 
-# Create orchestrator with event queue (telemetry_manager is REQUIRED)
-orchestrator = MultiAgentOrchestrator(
-    tenant_id="tenant1",
-    telemetry_manager=TelemetryManager(config=TelemetryConfig()),
-    event_queue=queue,  # Events emitted automatically
-)
+# Create orchestrator with event queue (config_manager and registry are REQUIRED)
+config_manager = create_default_config_manager()
+registry = AgentRegistry(config_manager=config_manager)
+deps = OrchestratorDeps()
+orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
-# Process query - events emitted during execution
-result = await orchestrator.process_complex_query("Find videos about cats")
+# Process query via A2A task protocol - events emitted during execution
+input_data = OrchestratorInput(query="Find videos about cats", tenant_id="tenant1")
+result = await orchestrator._process_impl(input_data)
 ```
 
 ### With Ingestion Pipeline

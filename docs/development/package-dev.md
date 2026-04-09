@@ -461,8 +461,10 @@ backend = BackendRegistry.get_search_backend(
 )
 # TelemetryManager is a singleton class - use constructor to get instance
 telemetry = TelemetryManager(config=TelemetryConfig())
-# GLiNERRoutingStrategy accepts optional config dict for labels and thresholds
-routing_strategy = GLiNERRoutingStrategy(config={"gliner_labels": ["video_content", "text_information"]})
+# GatewayAgent classifies queries using GLiNER (no config needed for defaults)
+from cogniverse_agents.gateway_agent import GatewayDeps
+gateway_deps = GatewayDeps()
+gateway = GatewayAgent(deps=gateway_deps, config_manager=config_manager)
 ```
 
 ---
@@ -893,13 +895,10 @@ def test_routing_agent_initialization():
 
     assert agent.deps is not None
 
-async def test_routing_agent_strategy_selection(mocker):
-    """Test strategy selection with mocked LLM"""
+async def test_routing_agent_decision(mocker):
+    """Test routing agent decision with mocked LLM"""
     from cogniverse_agents.routing_agent import RoutingDeps
     from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-    # Mock external dependencies
-    mocker.patch("cogniverse_agents.routing.strategies.GLiNERRoutingStrategy.route")
 
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     deps = RoutingDeps(
@@ -1224,7 +1223,7 @@ uv run pytest tests/agents/ --cov=cogniverse_agents --cov-fail-under=80
 # ✅ Coverage report:
 # cogniverse_agents/routing_agent.py              95%
 # cogniverse_agents/video_agent_refactored.py     87%
-# cogniverse_agents/routing/strategies.py         82%
+# cogniverse_agents/gateway_agent.py              82%
 # TOTAL                                            88%
 ```
 

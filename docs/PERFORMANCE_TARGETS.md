@@ -76,9 +76,9 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Query Enhancement Performance
 | Component | Training Time | Memory | Description |
 |-----------|--------------|--------|-------------|
-| **SIMBA Query Enhancer** | < 30 min | 8GB | Query enhancement using SIMBA optimizer with memory-augmented learning |
+| **QueryEnhancementAgent** | < 30 min | 8GB | Query enhancement via ComposableQueryAnalysisModule (A2A agent) |
 
-> **Note**: SIMBA Query Enhancer (`libs/agents/cogniverse_agents/routing/simba_query_enhancer.py`) uses the `dspy.teleprompt.SIMBA` optimizer for similarity-based memory-augmented query enhancement.
+> **Note**: SIMBA optimization runs as an Argo batch job (not inline). Real-time enhancement is handled by `QueryEnhancementAgent` (`libs/agents/cogniverse_agents/query_enhancement_agent.py`) using `ComposableQueryAnalysisModule`.
 
 ### Target Optimization Impact
 > **Note**: The following are target improvements for when optimization is fully deployed:
