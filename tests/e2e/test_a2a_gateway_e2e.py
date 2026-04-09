@@ -84,13 +84,20 @@ class TestGatewaySimpleRouting:
         assert gw["modality"] == "video", (
             f"Expected video modality for video query, got {gw['modality']!r}"
         )
+        assert gw["generation_type"] == "raw_results", (
+            f"No summary/report keyword → raw_results, got {gw['generation_type']!r}"
+        )
         assert gw["routed_to"] == "search_agent", (
             f"Simple video query should route to search_agent, got {gw['routed_to']!r}"
         )
-        # Threshold is 0.4; this query scores 0.693 so must clear it comfortably
-        assert gw["confidence"] >= 0.4, (
-            f"Simple route should have confidence >= 0.4 (threshold), "
-            f"got {gw['confidence']}"
+        # This query scores 0.693 on deployed model — must clear 0.4 threshold comfortably
+        assert gw["confidence"] >= 0.5, (
+            f"'search for video content about AI' scores 0.693 on deployed model, "
+            f"confidence should be >= 0.5, got {gw['confidence']}"
+        )
+        # Gateway confidence for this query should be ~0.69 (measured on deployed model)
+        assert gw["confidence"] >= 0.6, (
+            f"'search for video content about AI' should score ~0.69, got {gw['confidence']}"
         )
 
     def test_simple_query_includes_downstream_result(self):
@@ -122,21 +129,35 @@ class TestGatewaySimpleRouting:
         assert isinstance(downstream, dict)
         assert downstream.get("status") == "success"
 
-        # Content assertions: downstream search results should be non-empty and ranked
-        if "results" in downstream and downstream.get("results_count", 0) > 0:
-            results = downstream["results"]
-            assert len(results) > 0, "Should find results for video query in ingested data"
-            # Results must be ordered by descending score if score fields exist
-            score_keys = ("score", "relevance", "relevance_score", "_score")
-            score_key = next(
-                (k for k in score_keys if k in results[0]), None
-            )
-            if score_key is not None:
-                scores = [r[score_key] for r in results]
-                assert scores == sorted(scores, reverse=True), (
-                    f"Results should be ranked by {score_key} descending, "
-                    f"got: {scores}"
-                )
+        # Search results must exist and contain real Vespa data
+        assert "results" in downstream, f"Missing 'results' in downstream, keys: {list(downstream.keys())}"
+        results = downstream["results"]
+        assert downstream["results_count"] >= 1, (
+            "Query 'find videos about machine learning' must return results from ingested data"
+        )
+        assert len(results) == downstream["results_count"], (
+            f"results_count ({downstream['results_count']}) doesn't match len(results) ({len(results)})"
+        )
+
+        # Each result must have score + metadata with real video data
+        first = results[0]
+        assert "score" in first, f"Result missing 'score' field: {list(first.keys())}"
+        assert first["score"] > 0, f"First result score should be positive, got {first['score']}"
+        assert "metadata" in first, f"Result missing 'metadata': {list(first.keys())}"
+        meta = first["metadata"]
+        assert "video_id" in meta, f"Result metadata missing video_id: {list(meta.keys())}"
+        assert meta["video_id"] != "", "video_id should not be empty"
+
+        # Results must be ranked — first result score >= last result score
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores, reverse=True), (
+            f"Results not ranked by score descending: {scores}"
+        )
+
+        # Profile used should be the default video profile
+        assert downstream.get("profile") == "video_colpali_smol500_mv_frame", (
+            f"Expected default video profile, got: {downstream.get('profile')}"
+        )
 
     def test_message_field_present(self):
         """Gateway response includes a human-readable message.
@@ -157,12 +178,23 @@ class TestGatewaySimpleRouting:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert "message" in data
-        assert isinstance(data["message"], str)
-        assert len(data["message"]) > 5
-        # Message should be informative, not a bare error string
-        assert data["message"].lower() not in ("error", "failed", "none", "null"), (
-            f"Message should be informative, got: {data['message']!r}"
+
+        # Message must name the target agent and indicate simple routing
+        msg = data["message"]
+        assert "search_agent" in msg or "cooking" in msg.lower(), (
+            f"Message for 'cooking videos' should mention search_agent or cooking, got: {msg!r}"
+        )
+        assert "simple" in msg.lower() or "routed" in msg.lower(), (
+            f"Message should indicate simple routing, got: {msg!r}"
+        )
+
+        # Gateway classification for cooking videos: video modality, simple
+        gw = data.get("gateway", {})
+        assert gw.get("modality") == "video", (
+            f"'cooking videos' should be video modality, got: {gw.get('modality')!r}"
+        )
+        assert gw.get("complexity") == "simple", (
+            f"'cooking videos' with score 0.446 should be simple, got: {gw.get('complexity')!r}"
         )
 
 
@@ -383,27 +415,33 @@ class TestGatewaySearchPipeline:
         data = resp.json()
         downstream = data.get("downstream_result", data)
 
-        if "results" in downstream and downstream.get("results_count", 0) > 0:
-            result = downstream["results"][0]
-            assert isinstance(result, dict)
-            assert len(result) > 1, (
-                f"Result should have multiple fields, got: {list(result.keys())}"
-            )
-            # Content assertions: each result must carry identity and relevance data
-            has_identity = any(
-                k in result for k in ("video_id", "chunk_id", "document_id", "id")
-            )
-            assert has_identity, (
-                f"Result should have an identity field (video_id/chunk_id/id), "
-                f"got: {list(result.keys())}"
-            )
-            has_score = any(
-                k in result
-                for k in ("score", "relevance", "relevance_score", "_score", "rank_score")
-            )
-            assert has_score, (
-                f"Result should have a score/relevance field, "
-                f"got: {list(result.keys())}"
+        # Must have results — ingested data exists for this tenant
+        assert "results" in downstream, f"Missing results, keys: {list(downstream.keys())}"
+        assert downstream["results_count"] >= 1, (
+            "'find videos about machine learning' must return results from ingested data"
+        )
+
+        result = downstream["results"][0]
+
+        # Each result must have: document_id, score, metadata with video_id
+        assert "document_id" in result, f"Result missing document_id: {list(result.keys())}"
+        assert result["document_id"] != "", "document_id should not be empty"
+        assert "score" in result, f"Result missing score: {list(result.keys())}"
+        assert result["score"] > 0, f"Score should be positive, got {result['score']}"
+        assert "metadata" in result, f"Result missing metadata: {list(result.keys())}"
+
+        meta = result["metadata"]
+        assert "video_id" in meta, f"metadata missing video_id: {list(meta.keys())}"
+        assert "segment_id" in meta, f"metadata missing segment_id: {list(meta.keys())}"
+        assert isinstance(meta["segment_id"], int), f"segment_id should be int, got {type(meta['segment_id'])}"
+
+        # Temporal info should be present (start_time, end_time)
+        if "temporal_info" in result:
+            temporal = result["temporal_info"]
+            assert "start_time" in temporal, f"temporal_info missing start_time"
+            assert "end_time" in temporal, f"temporal_info missing end_time"
+            assert temporal["end_time"] >= temporal["start_time"], (
+                f"end_time ({temporal['end_time']}) should be >= start_time ({temporal['start_time']})"
             )
 
 
