@@ -129,36 +129,48 @@
     "entity_extraction_agent": {
       "enabled": true,
       "url": "http://localhost:8000",
-      "capabilities": ["entity_extraction", "ner"],
+      "capabilities": [
+        "entity_extraction",
+        "ner"
+      ],
       "timeout": 15
     },
     "query_enhancement_agent": {
       "enabled": true,
       "url": "http://localhost:8000",
-      "capabilities": ["query_enhancement", "expansion"],
+      "capabilities": [
+        "query_enhancement",
+        "expansion"
+      ],
       "timeout": 15
     },
     "profile_selection_agent": {
       "enabled": true,
       "url": "http://localhost:8000",
-      "capabilities": ["profile_selection"],
+      "capabilities": [
+        "profile_selection"
+      ],
       "timeout": 15
     },
     "orchestrator_agent": {
       "enabled": true,
       "url": "http://localhost:8013",
-      "capabilities": ["orchestration", "planning", "multi_agent_coordination"],
+      "capabilities": [
+        "orchestration",
+        "planning",
+        "multi_agent_coordination"
+      ],
       "timeout": 120
     }
   },
   "llm_config": {
     "primary": {
       "model": "ollama/qwen3:4b",
-      "api_base": "http://localhost:11434",
       "api_key": null,
       "temperature": 0.1,
       "max_tokens": 1000,
-      "adapter_path": null
+      "adapter_path": null,
+      "api_base": "http://localhost:11434"
     },
     "teacher": {
       "model": "claude-3-5-sonnet-20241022",
@@ -287,7 +299,6 @@
   "colpali_model": "vidore/colsmol-500m",
   "embedding_model": "all-MiniLM-L6-v2",
   "local_llm_model": "deepseek-r1:7b",
-  "base_url": "http://localhost:11434",
   "prompts": {
     "artifacts_path": null,
     "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
@@ -1095,5 +1106,6 @@
       "max_message_length": 4096,
       "max_results_per_message": 5
     }
-  }
+  },
+  "base_url": "http://localhost:11434"
 }
