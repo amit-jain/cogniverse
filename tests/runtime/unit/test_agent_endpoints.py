@@ -260,13 +260,13 @@ class TestAgentDispatcherCapabilityRouting:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_dispatch_unsupported_capabilities_raises(self, dispatcher):
-        """Agent with unrecognised capabilities raises ValueError."""
+    async def test_dispatch_unregistered_agent_raises(self, dispatcher):
+        """Agent not in AGENT_CLASSES falls through to generic dispatch and raises."""
         agent_ep = MagicMock()
         agent_ep.capabilities = ["unknown_capability"]
         dispatcher._registry.get_agent.return_value = agent_ep
 
-        with pytest.raises(ValueError, match="no supported execution path"):
+        with pytest.raises(ValueError, match="no registered class"):
             await dispatcher.dispatch(agent_name="weird_agent", query="test")
 
     @pytest.mark.asyncio

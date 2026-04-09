@@ -151,9 +151,13 @@ class AgentDispatcher:
         elif "coding" in capabilities:
             result = await self._execute_coding_task(query, tenant_id, context)
         else:
-            raise ValueError(
-                f"Agent '{agent_name}' has no supported execution path. "
-                f"Capabilities: {agent.capabilities}"
+            # Generic A2A dispatch — any registered agent can be called.
+            # Import the agent class from its registered path, instantiate,
+            # and call _process_impl. This is how preprocessing agents
+            # (entity_extraction, query_enhancement, profile_selection)
+            # are executed when the OrchestratorAgent calls them via HTTP.
+            result = await self._execute_generic_agent(
+                agent_name, query, context, tenant_id
             )
 
         entities = result.get("entities", [])
@@ -203,6 +207,92 @@ class AgentDispatcher:
             )
         except Exception:
             logger.warning("Wiki auto-filing failed (non-fatal)", exc_info=True)
+
+    async def _execute_generic_agent(
+        self,
+        agent_name: str,
+        query: str,
+        context: Dict[str, Any],
+        tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Generic A2A agent execution via dynamic class import.
+
+        Handles any registered agent by importing its class from
+        ConfigLoader.AGENT_CLASSES, instantiating with default deps,
+        and calling process(). This is the path taken by preprocessing
+        agents (entity_extraction, query_enhancement, profile_selection)
+        when the OrchestratorAgent calls them via A2A HTTP.
+        """
+        import importlib
+
+        from cogniverse_runtime.config_loader import ConfigLoader
+
+        class_path = ConfigLoader.AGENT_CLASSES.get(agent_name)
+        if not class_path:
+            raise ValueError(
+                f"Agent '{agent_name}' has no registered class in AGENT_CLASSES"
+            )
+
+        module_path, class_name = class_path.split(":")
+        module = importlib.import_module(module_path)
+        agent_cls = getattr(module, class_name)
+
+        # Find the Deps class — convention: same module, class name ends with "Deps"
+        deps_cls = None
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and attr_name.endswith("Deps")
+                and attr_name != "AgentDeps"
+            ):
+                deps_cls = attr
+                break
+
+        if deps_cls is None:
+            raise ValueError(
+                f"No Deps class found in {module_path} for {agent_name}"
+            )
+
+        # Instantiate with default deps
+        deps = deps_cls()
+        agent = agent_cls(deps=deps)
+        self._init_agent_memory(agent, agent_name, tenant_id)
+
+        # Find the Input class — convention: same module, class name ends with "Input"
+        input_cls = None
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and attr_name.endswith("Input")
+                and attr_name != "AgentInput"
+            ):
+                input_cls = attr
+                break
+
+        if input_cls is None:
+            raise ValueError(
+                f"No Input class found in {module_path} for {agent_name}"
+            )
+
+        # Build input — pass query + tenant_id + any extra context fields
+        input_kwargs = {"query": query}
+        if "tenant_id" in input_cls.model_fields:
+            input_kwargs["tenant_id"] = tenant_id
+
+        # Forward upstream agent results from context (e.g., entities from entity extraction)
+        for key in ("entities", "relationships", "enhanced_query"):
+            if key in context and key in input_cls.model_fields:
+                input_kwargs[key] = context[key]
+
+        typed_input = input_cls(**input_kwargs)
+        result = await agent.process(typed_input)
+
+        # Convert pydantic model to dict
+        if hasattr(result, "model_dump"):
+            return {"status": "success", "agent": agent_name, **result.model_dump()}
+        return {"status": "success", "agent": agent_name, "result": str(result)}
 
     def create_streaming_agent(
         self, agent_name: str, query: str, tenant_id: str
