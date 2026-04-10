@@ -559,3 +559,58 @@ class TestRoutingOptimization:
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
         assert result["examples"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Test: synthetic data merge helper
+# ---------------------------------------------------------------------------
+
+
+class TestSyntheticDataMerge:
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_no_data(self):
+        """Returns empty list when no synthetic data exists."""
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        provider = FakeTelemetryProvider()
+        result = await _load_approved_synthetic_data(provider, "default", "simba")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_filters_by_status(self):
+        """Only returns demos with approved/auto_approved status."""
+        from unittest.mock import AsyncMock, patch
+
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        approved_demo = {
+            "input": '{"query": "test"}',
+            "output": "enhanced",
+            "metadata": {"approval_status": "approved"},
+        }
+        pending_demo = {
+            "input": '{"query": "other"}',
+            "output": "out",
+            "metadata": {"approval_status": "pending"},
+        }
+        auto_approved = {
+            "input": '{"query": "auto"}',
+            "output": "out2",
+            "metadata": {"approval_status": "auto_approved"},
+        }
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_demonstrations = AsyncMock(
+                return_value=[approved_demo, pending_demo, auto_approved]
+            )
+
+            provider = FakeTelemetryProvider()
+            result = await _load_approved_synthetic_data(provider, "default", "simba")
+
+        assert len(result) == 2
+        assert approved_demo in result
+        assert auto_approved in result
+        assert pending_demo not in result

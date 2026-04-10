@@ -437,6 +437,49 @@ async def _query_spans_by_name(
     return spans_df[spans_df["name"] == span_name]
 
 
+async def _load_approved_synthetic_data(
+    telemetry_provider,
+    tenant_id: str,
+    optimizer_type: str,
+) -> list:
+    """Load approved synthetic datasets for an optimizer type.
+
+    Returns list of demo dicts from datasets with status APPROVED or AUTO_APPROVED.
+    Returns empty list if none found or if approval module is not available.
+    """
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    am = ArtifactManager(telemetry_provider, tenant_id)
+    demos = await am.load_demonstrations(f"synthetic_{optimizer_type}")
+    if not demos:
+        return []
+
+    try:
+        from cogniverse_agents.approval.interfaces import ApprovalStatus
+        approved_statuses = {ApprovalStatus.APPROVED.value, ApprovalStatus.AUTO_APPROVED.value}
+    except ImportError:
+        approved_statuses = {"approved", "auto_approved"}
+
+    approved = []
+    for demo in demos:
+        metadata = demo.get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                import json as _json
+                metadata = _json.loads(metadata)
+            except (ValueError, TypeError):
+                metadata = {}
+        status = metadata.get("approval_status", "")
+        if status in approved_statuses:
+            approved.append(demo)
+
+    logger.info(
+        "Loaded %d/%d approved synthetic examples for %s",
+        len(approved), len(demos), optimizer_type,
+    )
+    return approved
+
+
 async def run_simba_optimization(
     tenant_id: str,
     lookback_hours: int = 24,
@@ -504,6 +547,28 @@ async def run_simba_optimization(
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
     logger.info("Built %d training examples for SIMBA compilation", len(trainset))
+
+    # Merge approved synthetic data
+    import json as _json
+
+    synthetic_demos = await _load_approved_synthetic_data(
+        telemetry_provider, tenant_id, "simba"
+    )
+    production_count = len(trainset)
+    for demo in synthetic_demos:
+        inp = demo.get("input", "")
+        if isinstance(inp, str):
+            try:
+                inp = _json.loads(inp)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(inp, dict):
+            example = dspy.Example(**inp).with_inputs("query")
+            trainset.append(example)
+    logger.info(
+        "Merged %d synthetic + %d production = %d total training examples",
+        len(synthetic_demos), production_count, len(trainset),
+    )
 
     # Compile DSPy module
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
@@ -917,6 +982,28 @@ async def run_profile_optimization(
 
     logger.info("Built %d training examples for profile optimization", len(trainset))
 
+    # Merge approved synthetic data
+    import json as _json
+
+    synthetic_demos = await _load_approved_synthetic_data(
+        telemetry_provider, tenant_id, "profile"
+    )
+    production_count = len(trainset)
+    for demo in synthetic_demos:
+        inp = demo.get("input", "")
+        if isinstance(inp, str):
+            try:
+                inp = _json.loads(inp)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(inp, dict):
+            example = dspy.Example(**inp).with_inputs("query")
+            trainset.append(example)
+    logger.info(
+        "Merged %d synthetic + %d production = %d total training examples",
+        len(synthetic_demos), production_count, len(trainset),
+    )
+
     # Compile DSPy module
     from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
     from cogniverse_foundation.config.utils import get_config
@@ -1036,6 +1123,26 @@ async def run_entity_extraction_optimization(
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
     logger.info("Built %d training examples for entity extraction optimization", len(trainset))
+
+    # Merge approved synthetic data
+    synthetic_demos = await _load_approved_synthetic_data(
+        telemetry_provider, tenant_id, "entity_extraction"
+    )
+    production_count = len(trainset)
+    for demo in synthetic_demos:
+        inp = demo.get("input", "")
+        if isinstance(inp, str):
+            try:
+                inp = _json.loads(inp)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(inp, dict):
+            example = dspy.Example(**inp).with_inputs("query")
+            trainset.append(example)
+    logger.info(
+        "Merged %d synthetic + %d production = %d total training examples",
+        len(synthetic_demos), production_count, len(trainset),
+    )
 
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
     from cogniverse_foundation.config.utils import get_config
@@ -1161,6 +1268,28 @@ async def run_routing_optimization(
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
     logger.info("Built %d training examples for routing optimization", len(trainset))
+
+    # Merge approved synthetic data
+    import json as _json
+
+    synthetic_demos = await _load_approved_synthetic_data(
+        telemetry_provider, tenant_id, "routing"
+    )
+    production_count = len(trainset)
+    for demo in synthetic_demos:
+        inp = demo.get("input", "")
+        if isinstance(inp, str):
+            try:
+                inp = _json.loads(inp)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(inp, dict):
+            example = dspy.Example(**inp).with_inputs("query")
+            trainset.append(example)
+    logger.info(
+        "Merged %d synthetic + %d production = %d total training examples",
+        len(synthetic_demos), production_count, len(trainset),
+    )
 
     try:
         from cogniverse_agents.routing_agent import DSPyAdvancedRoutingModule
