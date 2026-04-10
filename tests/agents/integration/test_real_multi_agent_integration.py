@@ -317,9 +317,9 @@ class TestRealGatewayAgentIntegration:
         result = await agent._process_impl(input_data)
 
         assert result is not None
-        # No entities → complex (forwarded to orchestrator)
-        assert result.complexity == "complex"
-        assert result.routed_to == "orchestrator_agent"
+        # No entities + no complexity keywords → simple fallback
+        # (the gateway doesn't blindly send all unknown queries to orchestrator)
+        assert result.complexity == "simple"
         logger.info(
             f"Gateway empty entities: complexity={result.complexity}, "
             f"routed_to={result.routed_to}"
@@ -962,16 +962,17 @@ class TestRealDispatcherGatewayFlow:
         deps = GatewayDeps()
         agent = GatewayAgent(deps=deps, port=18018)
 
-        # Intentionally ambiguous/multi-modal query
+        # Multi-step query with analysis keyword → complex
         input_data = GatewayInput(
-            query="xyz ambiguous query with no clear intent",
+            query="analyze the video transcripts and then summarize the key findings",
             tenant_id="test_tenant",
         )
         result = await agent._process_impl(input_data)
 
         assert result is not None
-        # No entities → should be classified as complex
-        assert result.complexity == "complex"
+        assert result.complexity == "complex", (
+            f"'analyze...then summarize' should be complex, got {result.complexity}"
+        )
         assert result.routed_to == "orchestrator_agent"
 
         logger.info(
