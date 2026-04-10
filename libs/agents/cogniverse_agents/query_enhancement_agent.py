@@ -220,10 +220,10 @@ class QueryEnhancementAgent(
         # Parse lists from comma-separated strings
         self.emit_progress("parsing", "Parsing expansion terms and synonyms...")
         expansion_terms = [
-            t.strip() for t in result.expansion_terms.split(",") if t.strip()
+            t.strip() for t in (result.expansion_terms or "").split(",") if t.strip()
         ]
-        synonyms = [s.strip() for s in result.synonyms.split(",") if s.strip()]
-        context_additions = [c.strip() for c in result.context.split(",") if c.strip()]
+        synonyms = [s.strip() for s in (result.synonyms or "").split(",") if s.strip()]
+        context_additions = [c.strip() for c in (result.context or "").split(",") if c.strip()]
 
         # Parse confidence
         try:
