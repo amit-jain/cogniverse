@@ -12,6 +12,7 @@
 3. [Core Agents](#core-agents)
    - [RoutingAgent](#1-routingagent)
    - [VideoSearchAgent](#2-videosearchagent)
+   - [GatewayAgent](#gateway-gatewayagent)
    - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
    - [ProfileSelectionAgent](#4-profileselectionagent)
    - [EntityExtractionAgent](#5-entityextractionagent)
@@ -627,6 +628,124 @@ results_startup = agent.search("cooking videos", profile="video_colpali_smol500_
 # Only startup's videos returned
 
 # Physical isolation via Vespa schema naming — no cross-tenant data access possible
+```
+
+---
+
+### Gateway: GatewayAgent
+
+**Location**: `libs/agents/cogniverse_agents/gateway_agent.py`
+**Purpose**: Query entry point — classifies queries as simple or complex using GLiNER entity detection, then routes without an LLM call
+**Base**: `A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]`
+**Port**: 8014
+**Target latency**: <100ms (no LLM, model inference only)
+
+#### What It Does
+
+GatewayAgent is the first agent to handle every incoming query. It uses GLiNER zero-shot NER to detect the content modality and generation type, then decides whether the query is simple (direct to a specialist agent) or complex (forward to OrchestratorAgent for multi-step planning). The entire classification happens in a single model inference call — no LLM, no network round-trips.
+
+#### Input / Output
+
+```python
+class GatewayInput(AgentInput):
+    query: str          # User query to classify and route
+    tenant_id: Optional[str]  # Per-request tenant identifier
+
+class GatewayOutput(AgentOutput):
+    query: str          # Original query (passed through)
+    complexity: Literal["simple", "complex"]
+    modality: Literal["video", "text", "audio", "image", "document", "both"]
+    generation_type: Literal["raw_results", "summary", "detailed_report"]
+    routed_to: str      # Target agent name, or "orchestrator_agent"
+    confidence: float   # min(modality_confidence, generation_confidence)
+    reasoning: str      # Human-readable explanation of the routing decision
+```
+
+#### 7 Complexity Signals
+
+`_is_complex()` returns `True` (routes to orchestrator) when **any** of these hold:
+
+| # | Signal | Example |
+|---|--------|---------|
+| 1 | No GLiNER entities detected | GLiNER returns empty list — query unclassifiable |
+| 2 | Low modality confidence | `confidence < fast_path_confidence_threshold` (default 0.4) |
+| 3 | Multiple modalities detected | Query spans both video and document content |
+| 4 | Generation type is `detailed_report` | Always needs search → analyze → write pipeline |
+| 5 | Analysis/synthesis verbs present | "analyze", "compare", "evaluate", "synthesize", etc. |
+| 6 | Multi-step markers present | "then", "after that", "first...next", "followed by", etc. |
+| 7 | Compound query (multiple clauses) | 3+ commas or 2+ " and " separators in query |
+
+#### Routing Logic
+
+Simple queries are resolved via `SIMPLE_ROUTE_MAP` — a lookup on `(modality, generation_type)`:
+
+```python
+SIMPLE_ROUTE_MAP = {
+    ("video", "raw_results"):     "search_agent",
+    ("document", "raw_results"):  "document_agent",
+    ("audio", "raw_results"):     "audio_analysis_agent",
+    ("image", "raw_results"):     "image_search_agent",
+    ("video", "summary"):         "summarizer_agent",
+    ("video", "detailed_report"): "detailed_report_agent",
+    # ... all (modality, generation_type) combinations
+}
+```
+
+Complex queries always route to `"orchestrator_agent"` regardless of modality.
+
+#### GLiNER Labels
+
+GatewayAgent uses 7 focused labels (experimentally tuned — 7 labels yield average top score 0.56 vs 0.41 with 21 labels):
+
+- **Modality labels**: `video_content`, `text_information`, `audio_content`, `image_content`, `document_content`
+- **Generation labels**: `summary_request`, `detailed_report_request`
+
+#### Telemetry
+
+Emits a `cogniverse.gateway` span for every classified query with attributes:
+
+```
+gateway.query            — first 200 chars of query
+gateway.complexity       — "simple" | "complex"
+gateway.modality         — detected modality
+gateway.generation_type  — detected generation type
+gateway.routed_to        — target agent name
+gateway.confidence       — float 0.0–1.0
+```
+
+#### Configuration
+
+```python
+class GatewayDeps(AgentDeps):
+    gliner_model_name: str = "urchade/gliner_large-v2.1"
+    gliner_threshold: float = 0.3           # entity detection confidence floor
+    fast_path_confidence_threshold: float = 0.4  # min confidence for simple routing
+
+deps = GatewayDeps(fast_path_confidence_threshold=0.4)
+gateway = GatewayAgent(deps=deps, port=8014)
+```
+
+#### Usage Example
+
+```python
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
+
+deps = GatewayDeps()
+gateway = GatewayAgent(deps=deps)
+
+result = await gateway._process_impl(
+    GatewayInput(query="Find videos about transformer architecture", tenant_id="acme")
+)
+# result.complexity == "simple"
+# result.modality == "video"
+# result.routed_to == "search_agent"
+
+result = await gateway._process_impl(
+    GatewayInput(query="Compare and analyze transformer vs LSTM architectures across papers and videos")
+)
+# result.complexity == "complex"
+# result.routed_to == "orchestrator_agent"
+# result.reasoning == "Orchestrator needed: multiple modalities detected; analysis keywords: analyze, compare"
 ```
 
 ---
