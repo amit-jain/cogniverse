@@ -8,7 +8,6 @@ DECISION: given pre-enriched data, which agent should handle it?
 """
 
 import logging
-from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -394,55 +393,61 @@ class RoutingAgent(
 
         self.set_tenant_for_context(tenant_id)
 
-        span_context = (
-            self.telemetry_manager.span("cogniverse.routing", tenant_id=tenant_id)
-            if self.telemetry_manager
-            else nullcontext()
-        )
+        with_span = self.telemetry_manager is not None
 
-        with span_context as span:
-            try:
-                routing_info = await self._make_routing_decision(
-                    query=query,
-                    enhanced_query=enhanced_query,
-                    entities=entities,
-                    relationships=relationships,
-                    context=context,
-                    tenant_id=tenant_id,
-                )
+        try:
+            routing_info = await self._make_routing_decision(
+                query=query,
+                enhanced_query=enhanced_query,
+                entities=entities,
+                relationships=relationships,
+                context=context,
+                tenant_id=tenant_id,
+            )
 
-                decision = RoutingOutput(
-                    query=query,
-                    recommended_agent=routing_info["recommended_agent"],
-                    confidence=routing_info["confidence"],
-                    reasoning=routing_info["reasoning"],
-                    fallback_agents=routing_info.get("fallback_agents", []),
-                    metadata={"tenant_id": tenant_id},
-                )
+            decision = RoutingOutput(
+                query=query,
+                recommended_agent=routing_info["recommended_agent"],
+                confidence=routing_info["confidence"],
+                reasoning=routing_info["reasoning"],
+                fallback_agents=routing_info.get("fallback_agents", []),
+                metadata={"tenant_id": tenant_id},
+            )
 
-                if span and hasattr(span, "set_attribute"):
-                    span.set_attribute("routing.query", query)
-                    span.set_attribute("routing.chosen_agent", decision.recommended_agent)
-                    span.set_attribute("routing.confidence", decision.confidence)
-                    span.set_attribute("routing.reasoning", decision.reasoning)
+            if with_span:
+                try:
+                    with self.telemetry_manager.span(
+                        "cogniverse.routing",
+                        tenant_id=tenant_id,
+                        attributes={
+                            "routing.query": query[:200],
+                            "routing.recommended_agent": decision.recommended_agent,
+                            "routing.primary_intent": routing_info.get("primary_intent", ""),
+                            "routing.confidence": decision.confidence,
+                            "routing.reasoning": decision.reasoning[:200],
+                        },
+                    ):
+                        pass
+                except Exception as e:
+                    self.logger.debug("Failed to emit routing span: %s", e)
 
-                self.logger.info(
-                    f"Query routed to {decision.recommended_agent} "
-                    f"(confidence: {decision.confidence:.3f})"
-                )
+            self.logger.info(
+                f"Query routed to {decision.recommended_agent} "
+                f"(confidence: {decision.confidence:.3f})"
+            )
 
-                return decision
+            return decision
 
-            except Exception as e:
-                self.logger.error(f"Routing failed for query '{query}': {e}")
-                return RoutingOutput(
-                    query=query,
-                    recommended_agent="search_agent",
-                    confidence=0.2,
-                    reasoning=f"Fallback routing due to error: {e}",
-                    fallback_agents=["summarizer_agent", "detailed_report_agent"],
-                    metadata={"error": str(e), "fallback": True},
-                )
+        except Exception as e:
+            self.logger.error(f"Routing failed for query '{query}': {e}")
+            return RoutingOutput(
+                query=query,
+                recommended_agent="search_agent",
+                confidence=0.2,
+                reasoning=f"Fallback routing due to error: {e}",
+                fallback_agents=["summarizer_agent", "detailed_report_agent"],
+                metadata={"error": str(e), "fallback": True},
+            )
 
     async def _make_routing_decision(
         self,
@@ -505,6 +510,7 @@ class RoutingAgent(
                 "recommended_agent": recommended_agent,
                 "confidence": self._parse_confidence(raw_confidence),
                 "reasoning": self._extract_reasoning(dspy_result),
+                "primary_intent": getattr(dspy_result, "primary_intent", "search"),
             }
 
         except Exception as e:
@@ -513,6 +519,7 @@ class RoutingAgent(
                 "recommended_agent": "search_agent",
                 "confidence": 0.3,
                 "reasoning": f"Fallback routing due to error: {e}",
+                "primary_intent": "search",
             }
 
     @staticmethod

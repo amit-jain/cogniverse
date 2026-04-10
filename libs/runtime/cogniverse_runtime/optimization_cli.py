@@ -1193,7 +1193,8 @@ async def run_routing_optimization(
         if not isinstance(r_attrs, dict):
             r_attrs = {}
         query = r_attrs.get("query", "")
-        recommended_agent = r_attrs.get("recommended_agent", "")
+        # Handle both new ("recommended_agent") and legacy ("chosen_agent") field names
+        recommended_agent = r_attrs.get("recommended_agent", "") or r_attrs.get("chosen_agent", "")
         primary_intent = r_attrs.get("primary_intent", "")
         confidence = float(r_attrs.get("confidence", 0.0))
 
