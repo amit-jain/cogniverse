@@ -475,9 +475,13 @@ async def run_simba_optimization(
 
     trainset = []
     for _, row in spans_df.iterrows():
-        original = row.get("attributes.query_enhancement.original_query", "")
-        enhanced = row.get("attributes.query_enhancement.enhanced_query", "")
-        confidence = float(row.get("attributes.query_enhancement.confidence", 0.0))
+        # Phoenix stores custom attributes as dict in "attributes.query_enhancement"
+        qe_attrs = row.get("attributes.query_enhancement", {})
+        if not isinstance(qe_attrs, dict):
+            qe_attrs = {}
+        original = qe_attrs.get("original_query", "")
+        enhanced = qe_attrs.get("enhanced_query", "")
+        confidence = float(qe_attrs.get("confidence", 0.0))
 
         if not original or not enhanced:
             continue
@@ -730,22 +734,28 @@ async def run_gateway_thresholds_optimization(
 
     logger.info("Found %d gateway spans", len(spans_df))
 
-    # Analyze classification patterns
-    simple_spans = spans_df[
-        spans_df.get("attributes.gateway.complexity", default="") == "simple"
-    ]
-    complex_spans = spans_df[
-        spans_df.get("attributes.gateway.complexity", default="") == "complex"
-    ]
+    # Phoenix stores custom span attributes as a dict in "attributes.gateway"
+    # column, not as separate flattened columns. Extract fields from the dict.
+    gw_attrs = spans_df.get("attributes.gateway")
+    if gw_attrs is None:
+        logger.info("No attributes.gateway column in spans")
+        return {"status": "no_data", "spans_found": len(spans_df), "reason": "no_gateway_attributes"}
 
-    # Extract confidence scores
-    confidences = spans_df.get("attributes.gateway.confidence", default=None)
-    if confidences is None:
-        logger.info("No confidence data in gateway spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "reason": "no_confidence_data"}
+    # Extract complexity and confidence from the nested dict
+    spans_df = spans_df.copy()
+    spans_df["_complexity"] = gw_attrs.apply(
+        lambda d: d.get("complexity", "") if isinstance(d, dict) else ""
+    )
+    spans_df["_confidence"] = gw_attrs.apply(
+        lambda d: d.get("confidence", None) if isinstance(d, dict) else None
+    )
 
-    confidences = confidences.dropna().astype(float)
+    simple_spans = spans_df[spans_df["_complexity"] == "simple"]
+    complex_spans = spans_df[spans_df["_complexity"] == "complex"]
+
+    confidences = spans_df["_confidence"].dropna().astype(float)
     if confidences.empty:
+        logger.info("No confidence data in gateway spans")
         return {"status": "no_data", "spans_found": len(spans_df), "reason": "no_confidence_data"}
 
     # Check error rates by complexity class
@@ -867,12 +877,16 @@ async def run_profile_optimization(
 
     trainset = []
     for _, row in spans_df.iterrows():
-        query = row.get("attributes.profile_selection.query", "")
-        selected = row.get("attributes.profile_selection.selected_profile", "")
-        modality = row.get("attributes.profile_selection.modality", "video")
-        complexity = row.get("attributes.profile_selection.complexity", "simple")
-        intent = row.get("attributes.profile_selection.intent", "")
-        confidence = float(row.get("attributes.profile_selection.confidence", 0.0))
+        # Phoenix stores custom attributes as dict in "attributes.profile_selection"
+        ps_attrs = row.get("attributes.profile_selection", {})
+        if not isinstance(ps_attrs, dict):
+            ps_attrs = {}
+        query = ps_attrs.get("query", "")
+        selected = ps_attrs.get("selected_profile", "")
+        modality = ps_attrs.get("modality", "video")
+        complexity = ps_attrs.get("complexity", "simple")
+        intent = ps_attrs.get("intent", "")
+        confidence = float(ps_attrs.get("confidence", 0.0))
 
         if not query or not selected:
             continue

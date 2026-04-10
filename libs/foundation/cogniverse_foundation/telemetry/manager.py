@@ -718,4 +718,15 @@ def get_telemetry_manager(
             config_manager = create_default_config_manager()
         config = config_manager.get_telemetry_config(tenant_id)
         _telemetry_manager = TelemetryManager(config)
+
+        # Apply TELEMETRY_OTLP_ENDPOINT env var override (set by Helm chart
+        # in k3d deployments, pointing to cogniverse-phoenix:4317).
+        # Without this, the config defaults to localhost:4317 which is wrong
+        # inside a pod. This mirrors what main.py does at startup.
+        import os
+
+        otlp_override = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
+        if otlp_override and otlp_override != _telemetry_manager.config.otlp_endpoint:
+            _telemetry_manager.config.otlp_endpoint = otlp_override
+            _telemetry_manager._tenant_providers.clear()
     return _telemetry_manager
