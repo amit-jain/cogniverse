@@ -256,7 +256,7 @@ class TestGatewayAgentArtifactRoundTrip:
         import json
 
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
-        from cogniverse_foundation.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tenant_id = "gateway-artifact-roundtrip"
         mgr = ArtifactManager(real_provider, tenant_id)
@@ -283,7 +283,7 @@ class TestGatewayAgentArtifactRoundTrip:
         assert agent.deps.gliner_threshold == 0.3  # default
 
         # Inject telemetry and artifact tenant (simulates what dispatcher does)
-        tm = TelemetryManager.get_instance()
+        tm = get_telemetry_manager()
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
 
@@ -304,12 +304,12 @@ class TestGatewayAgentArtifactRoundTrip:
     async def test_gateway_with_no_artifact_keeps_defaults(self, real_provider):
         """Agent without an artifact in Phoenix should keep default thresholds."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
-        from cogniverse_foundation.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         deps = GatewayDeps()
         agent = GatewayAgent(deps=deps)
 
-        tm = TelemetryManager.get_instance()
+        tm = get_telemetry_manager()
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = "nonexistent-tenant-xyz"
 
@@ -333,7 +333,7 @@ class TestGatewayAgentArtifactRoundTrip:
             GatewayDeps,
             GatewayInput,
         )
-        from cogniverse_foundation.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tenant_id = "gateway-routing-test"
         mgr = ArtifactManager(real_provider, tenant_id)
@@ -372,7 +372,7 @@ class TestGatewayAgentArtifactRoundTrip:
         agent_optimized = GatewayAgent(deps=deps_optimized)
         agent_optimized._gliner_model = mock_model
 
-        tm = TelemetryManager.get_instance()
+        tm = get_telemetry_manager()
         agent_optimized.telemetry_manager = tm
         agent_optimized._artifact_tenant_id = tenant_id
         agent_optimized._load_artifact()
@@ -395,89 +395,94 @@ class TestDSPyAgentArtifactRoundTrip:
 
     @pytest.mark.asyncio
     async def test_entity_extraction_loads_real_dspy_state(self, real_provider):
-        """Save a DSPy module state → EntityExtractionAgent loads it → state applied."""
+        """Save a DSPy module state → EntityExtractionAgent loads it → state applied.
+
+        Uses real EntityExtractionModule (no ChainOfThought mock) so dump_state()
+        produces the actual key 'extractor.predict' with real signature/demos structure.
+        """
         import json
-        from unittest.mock import patch
 
         from cogniverse_agents.entity_extraction_agent import (
             EntityExtractionAgent,
             EntityExtractionDeps,
             EntityExtractionModule,
         )
-        from cogniverse_foundation.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tenant_id = "entity-artifact-roundtrip"
         mgr = ArtifactManager(real_provider, tenant_id)
 
-        # Create a real DSPy module, get its default state, mutate it to
-        # simulate optimization, and save the mutated state as an artifact
-        with patch("dspy.ChainOfThought"):
-            original_module = EntityExtractionModule()
+        # Create a REAL DSPy module (no mocks) to get valid state structure
+        original_module = EntityExtractionModule()
         default_state = original_module.dump_state()
 
-        # Inject fake demos into the state to simulate optimization output
-        optimized_state = default_state.copy()
-        for key in optimized_state:
-            if "predict" in key.lower():
-                optimized_state[key] = dict(optimized_state[key])
-                optimized_state[key]["demos"] = [
-                    {
-                        "query": "find ML transformer papers",
-                        "entities": "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85",
-                        "entity_types": "CONCEPT",
-                    },
-                    {
-                        "query": "latest NVIDIA GPU benchmarks",
-                        "entities": "NVIDIA|ORG|0.95\nGPU|TECHNOLOGY|0.8",
-                        "entity_types": "ORG,TECHNOLOGY",
-                    },
-                ]
+        # The real module state has key 'extractor.predict'
+        assert "extractor.predict" in default_state, (
+            f"Expected 'extractor.predict' key, got: {list(default_state.keys())}"
+        )
+        assert default_state["extractor.predict"]["demos"] == [], (
+            "Fresh module should have 0 demos"
+        )
+
+        # Inject demos to simulate optimization output
+        optimized_state = json.loads(json.dumps(default_state, default=str))
+        optimized_state["extractor.predict"]["demos"] = [
+            {
+                "query": "find ML transformer papers",
+                "entities": "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85",
+                "entity_types": "CONCEPT",
+            },
+            {
+                "query": "latest NVIDIA GPU benchmarks",
+                "entities": "NVIDIA|ORG|0.95\nGPU|TECHNOLOGY|0.8",
+                "entity_types": "ORG,TECHNOLOGY",
+            },
+        ]
 
         # Save to real Phoenix
         state_json = json.dumps(optimized_state, default=str)
         dataset_id = await mgr.save_blob("model", "entity_extraction", state_json)
         assert dataset_id
 
-        # Verify blob round-trips correctly
+        # Verify blob round-trips correctly through real Phoenix
         loaded_json = await mgr.load_blob("model", "entity_extraction")
         assert loaded_json is not None
         loaded_state = json.loads(loaded_json)
+        assert "extractor.predict" in loaded_state
+        assert len(loaded_state["extractor.predict"]["demos"]) == 2
+        assert loaded_state["extractor.predict"]["demos"][0]["query"] == "find ML transformer papers"
+        assert "NVIDIA" in loaded_state["extractor.predict"]["demos"][1]["entities"]
 
-        # Find the predict key and verify demos survived the round-trip
-        predict_key = next(k for k in loaded_state if "predict" in k.lower())
-        assert len(loaded_state[predict_key]["demos"]) == 2
-        assert loaded_state[predict_key]["demos"][0]["query"] == "find ML transformer papers"
-        assert "NVIDIA" in loaded_state[predict_key]["demos"][1]["entities"]
+        # Verify signature survived the round-trip
+        sig_fields = loaded_state["extractor.predict"]["signature"]["fields"]
+        field_prefixes = [f.get("prefix", "").rstrip(":").strip() for f in sig_fields]
+        assert "Query" in field_prefixes
+        assert "Entities" in field_prefixes
 
-        # Now test that the agent loads this artifact correctly
-        with patch("dspy.ChainOfThought"):
-            deps = EntityExtractionDeps()
-            agent = EntityExtractionAgent(deps=deps)
+        # Now test that the agent loads this artifact and its state changes
+        deps = EntityExtractionDeps()
+        agent = EntityExtractionAgent(deps=deps)
 
-        # Agent's module should have empty demos initially
-        agent_state_before = agent.dspy_module.dump_state()
-        predict_key_before = next(
-            (k for k in agent_state_before if "predict" in k.lower()), None
+        # Fresh agent has 0 demos
+        before = agent.dspy_module.dump_state()
+        assert before["extractor.predict"]["demos"] == [], (
+            f"Fresh agent should have 0 demos, got {len(before['extractor.predict']['demos'])}"
         )
-        if predict_key_before:
-            demos_before = agent_state_before[predict_key_before].get("demos", [])
-            # Default module has 0 demos
-            assert len(demos_before) == 0, (
-                f"Fresh module should have 0 demos, got {len(demos_before)}"
-            )
 
-        # Load artifact
-        tm = TelemetryManager.get_instance()
+        # Load artifact from real Phoenix
+        tm = get_telemetry_manager()
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
 
         # Agent's module should now have the 2 demos from the artifact
-        agent_state_after = agent.dspy_module.dump_state()
-        predict_key_after = next(k for k in agent_state_after if "predict" in k.lower())
-        demos_after = agent_state_after[predict_key_after].get("demos", [])
+        after = agent.dspy_module.dump_state()
+        demos_after = after["extractor.predict"]["demos"]
         assert len(demos_after) == 2, (
             f"Agent should have loaded 2 demos from artifact, got {len(demos_after)}"
         )
         assert demos_after[0]["query"] == "find ML transformer papers"
-        assert "NVIDIA" in demos_after[1]["entities"]
+        assert demos_after[0]["entities"] == "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85"
+        assert demos_after[1]["query"] == "latest NVIDIA GPU benchmarks"
+        assert "NVIDIA|ORG|0.95" in demos_after[1]["entities"]
+        assert demos_after[1]["entity_types"] == "ORG,TECHNOLOGY"
