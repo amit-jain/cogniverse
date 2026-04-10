@@ -704,3 +704,102 @@ class TestBatchJobsReadCorrectSpanTypes:
             "No cogniverse.profile_selection spans found in Phoenix. "
             "Run some queries that trigger profile selection first."
         )
+
+
+# ---------------------------------------------------------------------------
+# 5. Entity extraction optimization
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+@skip_if_no_kubectl
+class TestEntityExtractionOptimization:
+    """Verify entity extraction batch job compiles the entity extraction module."""
+
+    def test_entity_extraction_produces_model_artifact(self):
+        """Run --mode entity-extraction, assert it produces a compiled DSPy model."""
+        result = _run_batch_job("entity-extraction")
+
+        assert result["status"] == "success"
+        assert result["spans_found"] > 0
+        assert result["training_examples"] >= 1
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Routing optimization
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+@skip_if_no_kubectl
+class TestRoutingOptimization:
+    """Verify routing batch job compiles the routing decision module."""
+
+    def test_routing_produces_model_artifact(self):
+        """Run --mode routing, assert it produces a compiled DSPy model."""
+        result = _run_batch_job("routing")
+
+        assert result["status"] == "success"
+        assert result["spans_found"] > 0
+        assert result["training_examples"] >= 1
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+
+
+# ---------------------------------------------------------------------------
+# 7. Artifact loading round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+@skip_if_no_kubectl
+class TestArtifactLoadingRoundTrip:
+    """Full loop: batch job → artifact → pod restart → agent loads artifact."""
+
+    def test_gateway_artifact_round_trip(self):
+        """Run gateway-thresholds → verify artifact → restart → verify loaded."""
+        # 1. Run batch job
+        result = _run_batch_job("gateway-thresholds")
+        assert result["status"] == "success"
+
+        # 2. Verify artifact exists with correct content
+        blob = _load_blob_in_pod("config", "gateway_thresholds")
+        assert blob, "Gateway artifact blob is empty"
+        artifact = json.loads(blob)
+        assert "fast_path_confidence_threshold" in artifact
+
+        # 3. Restart runtime pod to trigger artifact loading
+        subprocess.run(
+            [
+                "kubectl", "--context", KUBECTL_CONTEXT,
+                "rollout", "restart", "deployment/cogniverse-runtime",
+                "-n", NAMESPACE,
+            ],
+            check=True, timeout=30,
+        )
+        subprocess.run(
+            [
+                "kubectl", "--context", KUBECTL_CONTEXT,
+                "rollout", "status", DEPLOYMENT,
+                "-n", NAMESPACE, "--timeout=120s",
+            ],
+            check=True, timeout=150,
+        )
+        time.sleep(20)  # Wait for agent initialization + artifact loading
+
+        # 4. Verify agent works after loading artifact
+        resp = httpx.post(
+            f"{RUNTIME}/agents/gateway_agent/process",
+            json={
+                "agent_name": "gateway_agent",
+                "query": "find cooking videos",
+                "context": {"tenant_id": TENANT_ID},
+            },
+            timeout=120.0,
+        )
+        assert resp.status_code == 200, (
+            f"Agent failed after restart: {resp.status_code} {resp.text[:200]}"
+        )
