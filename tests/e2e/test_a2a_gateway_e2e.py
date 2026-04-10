@@ -386,33 +386,22 @@ class TestGatewaySearchPipeline:
         data = resp.json()
         assert data["status"] == "success"
 
-        # For simple routing, downstream_result should contain search results
-        downstream = data.get("downstream_result", data)
-        if "results" in downstream:
-            assert isinstance(downstream["results"], list)
-            assert "results_count" in downstream
-            assert isinstance(downstream["results_count"], int)
-            # Content assertion: confirmed-simple query should yield results
-            assert downstream["results_count"] >= 1, (
-                "Gateway search for 'search for video content about AI' should return "
-                "at least one result from ingested data"
-            )
-            # Verify score ordering when score fields are present
-            results = downstream["results"]
-            if results:
-                score_keys = ("score", "relevance", "relevance_score", "_score")
-                score_key = next(
-                    (k for k in score_keys if k in results[0]), None
-                )
-                if score_key is not None:
-                    scores = [r[score_key] for r in results]
-                    assert scores == sorted(scores, reverse=True), (
-                        f"Gateway search results should be ranked by {score_key} "
-                        f"descending, got: {scores}"
-                    )
-        elif "result" in downstream:
-            # Alternate response shape from some agents
-            assert isinstance(downstream["result"], (dict, list, str))
+        # Simple routing must produce downstream_result with search results
+        assert "downstream_result" in data, (
+            f"Simple query should produce downstream_result, got keys: {list(data.keys())}"
+        )
+        downstream = data["downstream_result"]
+        assert "results" in downstream, (
+            f"Downstream should contain 'results', got keys: {list(downstream.keys())}"
+        )
+        assert downstream["results_count"] >= 1, (
+            "Gateway search for 'search for video content about AI' must return results"
+        )
+        results = downstream["results"]
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores, reverse=True), (
+            f"Results must be ranked by score descending, got: {scores}"
+        )
 
     def test_gateway_search_result_fields(self):
         """Search results from the gateway pipeline should have content fields.

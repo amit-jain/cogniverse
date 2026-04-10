@@ -142,19 +142,19 @@ class TestGatewayWithRealGLiNER:
             )
         )
 
-        # GLiNER detects: summary_request, text_information, document_content (7-label set)
-        # Multiple modality labels from text/document -> "both" -> complex
-        # Or single dominant modality with summary generation type
-        assert result.modality in ("text", "document", "both"), (
-            f"Expected text/document/both for research papers, "
-            f"got {result.modality!r}. Reasoning: {result.reasoning}"
+        # "summarize the research papers into a report" contains "summarize"
+        # which is a complexity keyword → should be classified as complex
+        assert result.complexity == "complex", (
+            f"'summarize' keyword should trigger complex, got {result.complexity!r}"
         )
-        # generation_type should be summary (not raw_results)
-        assert result.generation_type in ("summary", "detailed_report", "raw_results"), (
-            f"Expected summary/detailed_report generation type, "
+        assert result.routed_to == "orchestrator_agent", (
+            f"Complex query should route to orchestrator, got {result.routed_to!r}"
+        )
+        # generation_type should detect summary (not raw_results)
+        assert result.generation_type in ("summary", "detailed_report"), (
+            f"'summarize...report' should detect summary or detailed_report, "
             f"got {result.generation_type!r}"
         )
-        assert 0.0 <= result.confidence <= 1.0
         assert len(result.reasoning) > 10, (
             f"Reasoning should be substantive, got: {result.reasoning!r}"
         )
@@ -463,13 +463,16 @@ class TestRoutingRealDSPy:
 
     @pytest.mark.asyncio
     async def test_routing_with_no_enrichment(self, routing_agent):
-        """Routing should still work with just a raw query."""
+        """Routing with raw query (no entities/enhanced_query) → search_agent."""
         result = await routing_agent.route_query(
             query="show me cooking videos",
             tenant_id="a2a_test",
         )
 
-        assert result.recommended_agent, "Must produce a routing decision"
+        assert result.recommended_agent == "search_agent", (
+            f"'cooking videos' without enrichment should route to search_agent, "
+            f"got {result.recommended_agent!r}. Reasoning: {result.reasoning}"
+        )
         assert result.confidence > 0.0
         assert result.query == "show me cooking videos"
 
@@ -762,16 +765,31 @@ class TestTelemetrySpansInPhoenix:
             "GatewayAgent._emit_gateway_span may not be firing."
         )
 
-        # Verify span attributes contain the actual query text (not empty)
-        if hasattr(span, "attributes") and span.attributes:
-            attrs = span.attributes
-            if isinstance(attrs, dict):
-                gateway_query = attrs.get("gateway.query", "")
-                if gateway_query:
-                    assert "robotics" in gateway_query.lower() or "engineering" in gateway_query.lower(), (
-                        f"Span gateway.query should contain the test query text, "
-                        f"got: {gateway_query!r}"
-                    )
+        # Phoenix DataFrame stores span attributes as dotted column names:
+        # "attributes.gateway" contains {"query": "...", "complexity": "...", ...}
+        gateway_attrs = span.get("attributes.gateway") if hasattr(span, "get") else None
+        if gateway_attrs is None:
+            # Try index-based access for pandas Series
+            try:
+                gateway_attrs = span["attributes.gateway"]
+            except (KeyError, TypeError):
+                gateway_attrs = None
+
+        assert gateway_attrs is not None, (
+            f"Span should have 'attributes.gateway' column. "
+            f"Available columns: {list(span.index) if hasattr(span, 'index') else 'unknown'}"
+        )
+
+        # gateway_attrs is a dict with query, complexity, modality, etc.
+        if isinstance(gateway_attrs, dict):
+            gateway_query = gateway_attrs.get("query", "")
+        else:
+            gateway_query = str(gateway_attrs)
+
+        assert "robotics" in gateway_query.lower() or "engineering" in gateway_query.lower(), (
+            f"Span gateway.query should contain 'robotics' or 'engineering', "
+            f"got: {gateway_query!r}"
+        )
 
 
 def _query_phoenix_for_span(
