@@ -402,26 +402,31 @@ class ProfileSelectionAgent(
 
 
 # FastAPI app for standalone deployment
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
-app = FastAPI(
-    title="ProfileSelectionAgent",
-    description="Autonomous profile selection agent with LLM reasoning",
-    version="1.0.0",
-)
+from fastapi import FastAPI
 
 # Global agent instance
 profile_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global profile_agent
 
     deps = ProfileSelectionDeps()
     profile_agent = ProfileSelectionAgent(deps=deps)
     logger.info("ProfileSelectionAgent started")
+    yield
+
+
+app = FastAPI(
+    title="ProfileSelectionAgent",
+    description="Autonomous profile selection agent with LLM reasoning",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

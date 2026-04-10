@@ -369,26 +369,31 @@ class QueryEnhancementAgent(
 
 
 # FastAPI app for standalone deployment
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
-app = FastAPI(
-    title="QueryEnhancementAgent",
-    description="Autonomous query enhancement agent",
-    version="1.0.0",
-)
+from fastapi import FastAPI
 
 # Global agent instance
 query_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global query_agent
 
     deps = QueryEnhancementDeps()
     query_agent = QueryEnhancementAgent(deps=deps)
     logger.info("QueryEnhancementAgent started")
+    yield
+
+
+app = FastAPI(
+    title="QueryEnhancementAgent",
+    description="Autonomous query enhancement agent",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

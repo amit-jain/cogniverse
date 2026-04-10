@@ -449,26 +449,31 @@ class EntityExtractionAgent(
 
 
 # FastAPI app for standalone deployment
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
-app = FastAPI(
-    title="EntityExtractionAgent",
-    description="Autonomous entity extraction agent",
-    version="1.0.0",
-)
+from fastapi import FastAPI
 
 # Global agent instance
 entity_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global entity_agent
 
     deps = EntityExtractionDeps()
     entity_agent = EntityExtractionAgent(deps=deps)
     logger.info("EntityExtractionAgent started")
+    yield
+
+
+app = FastAPI(
+    title="EntityExtractionAgent",
+    description="Autonomous entity extraction agent",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

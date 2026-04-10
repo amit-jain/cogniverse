@@ -1218,20 +1218,16 @@ class OrchestratorAgent(
 
 
 # FastAPI app for standalone deployment
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
-app = FastAPI(
-    title="OrchestratorAgent",
-    description="Autonomous orchestration agent with planning and action phases",
-    version="1.0.0",
-)
+from fastapi import FastAPI
 
 # Global agent instance
 orchestrator_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global orchestrator_agent
 
@@ -1248,6 +1244,15 @@ async def startup_event():
         deps=deps, registry=registry, config_manager=config_manager
     )
     logger.info("OrchestratorAgent started")
+    yield
+
+
+app = FastAPI(
+    title="OrchestratorAgent",
+    description="Autonomous orchestration agent with planning and action phases",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
