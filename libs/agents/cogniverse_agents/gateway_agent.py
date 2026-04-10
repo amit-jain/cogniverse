@@ -149,6 +149,55 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         super().__init__(deps=deps, config=config)
         self._gliner_model = None
 
+    def _load_artifact(self) -> None:
+        """Load optimized thresholds from artifact store (if available).
+
+        Called by the dispatcher after telemetry_manager and _artifact_tenant_id
+        are injected — not from __init__ (telemetry_manager is not yet available).
+        """
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+        try:
+            import asyncio
+            import json
+            from concurrent.futures import ThreadPoolExecutor
+
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+            tenant_id = getattr(self, "_artifact_tenant_id", "default")
+            provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
+            am = ArtifactManager(provider, tenant_id)
+
+            async def _load() -> Optional[str]:
+                return await am.load_blob("config", "gateway_thresholds")
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                # Called from within an async context — run in a separate thread
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, _load())
+                    blob = future.result()
+            else:
+                blob = asyncio.run(_load())
+
+            if blob:
+                config = json.loads(blob)
+                if "fast_path_confidence_threshold" in config:
+                    self.deps.fast_path_confidence_threshold = config["fast_path_confidence_threshold"]
+                if "gliner_threshold" in config:
+                    self.deps.gliner_threshold = config["gliner_threshold"]
+                logger.info(
+                    "GatewayAgent loaded optimized thresholds: "
+                    f"fast_path={self.deps.fast_path_confidence_threshold}, "
+                    f"gliner={self.deps.gliner_threshold}"
+                )
+        except Exception as e:
+            logger.debug("No gateway artifact to load (using defaults): %s", e)
+
     # ------------------------------------------------------------------
     # Model loading
     # ------------------------------------------------------------------

@@ -422,3 +422,87 @@ class TestTelemetrySpan:
 
         call_kwargs = mock_tm.span.call_args
         assert call_kwargs[1]["tenant_id"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# Artifact loading
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_gateway_loads_artifact_thresholds(self):
+        """GatewayAgent should apply thresholds from artifact if available."""
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        agent = _make_gateway()
+
+        mock_tm = MagicMock()
+        mock_provider = MagicMock()
+        mock_tm.get_provider.return_value = mock_provider
+
+        artifact = {"fast_path_confidence_threshold": 0.55, "gliner_threshold": 0.35}
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
+
+            agent.telemetry_manager = mock_tm
+            agent._load_artifact()
+
+        assert agent.deps.fast_path_confidence_threshold == 0.55
+        assert agent.deps.gliner_threshold == 0.35
+
+    def test_gateway_uses_defaults_without_artifact(self):
+        """GatewayAgent should use default thresholds when no artifact exists."""
+        agent = _make_gateway()
+        assert agent.deps.fast_path_confidence_threshold == 0.4
+        assert agent.deps.gliner_threshold == 0.3
+
+    def test_gateway_no_telemetry_manager_skips_loading(self):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        agent = _make_gateway()
+        agent.telemetry_manager = None
+        agent._load_artifact()  # Should not raise
+        assert agent.deps.fast_path_confidence_threshold == 0.4
+
+    @pytest.mark.asyncio
+    async def test_gateway_partial_artifact(self):
+        """GatewayAgent should apply only thresholds present in artifact."""
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        agent = _make_gateway()
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        artifact = {"fast_path_confidence_threshold": 0.6}
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
+
+            agent.telemetry_manager = mock_tm
+            agent._load_artifact()
+
+        assert agent.deps.fast_path_confidence_threshold == 0.6
+        assert agent.deps.gliner_threshold == 0.3  # unchanged default
+
+    @pytest.mark.asyncio
+    async def test_gateway_artifact_load_failure_uses_defaults(self):
+        """_load_artifact falls back to defaults when artifact load fails."""
+        from unittest.mock import AsyncMock, patch
+
+        agent = _make_gateway()
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            agent.telemetry_manager = mock_tm
+            agent._load_artifact()
+
+        assert agent.deps.fast_path_confidence_threshold == 0.4
+        assert agent.deps.gliner_threshold == 0.3
