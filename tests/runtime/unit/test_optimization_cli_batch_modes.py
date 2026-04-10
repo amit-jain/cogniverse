@@ -137,6 +137,8 @@ class TestCliArgumentParser:
                 "workflow",
                 "gateway-thresholds",
                 "profile",
+                "entity-extraction",
+                "routing",
             ],
             required=True,
         )
@@ -148,7 +150,7 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile"],
+        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing"],
     )
     def test_new_mode_accepted(self, parser, mode):
         args = parser.parse_args(["--mode", mode])
@@ -158,7 +160,7 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile"],
+        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing"],
     )
     def test_new_mode_with_tenant_and_lookback(self, parser, mode):
         args = parser.parse_args(
@@ -452,3 +454,108 @@ class TestWorkflowOptimization:
         assert result["status"] == "success"
         assert result["spans_found"] == 3
         assert result["workflows_extracted"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Test: entity-extraction mode
+# ---------------------------------------------------------------------------
+
+
+class TestEntityExtractionOptimization:
+    """Entity extraction optimization handles missing/empty span data."""
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_no_spans(self, fake_telemetry_manager):
+        from cogniverse_runtime.optimization_cli import (
+            run_entity_extraction_optimization,
+        )
+
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+        with p1, p2:
+            result = await run_entity_extraction_optimization(
+                tenant_id="default", lookback_hours=1
+            )
+        assert result["status"] == "no_data"
+        assert result["spans_found"] == 0
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_spans_no_entities(self):
+        """Spans with entity_count == 0 produce no training examples."""
+        spans_df = _make_spans_df(
+            "cogniverse.entity_extraction",
+            [
+                {
+                    "attributes.entity_extraction": {
+                        "query": "find something",
+                        "entity_count": 0,
+                        "entities": "[]",
+                    }
+                }
+            ],
+        )
+        provider = FakeTelemetryProvider(spans_df)
+        mgr = FakeTelemetryManager(provider)
+
+        from cogniverse_runtime.optimization_cli import (
+            run_entity_extraction_optimization,
+        )
+
+        p1, p2 = _patch_infra(mgr)
+        with p1, p2:
+            result = await run_entity_extraction_optimization(
+                tenant_id="default", lookback_hours=1
+            )
+        assert result["status"] == "no_data"
+        assert result["spans_found"] == 1
+        assert result["examples"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Test: routing mode
+# ---------------------------------------------------------------------------
+
+
+class TestRoutingOptimization:
+    """Routing optimization handles missing/empty span data."""
+
+    @pytest.mark.asyncio
+    async def test_routing_no_spans(self, fake_telemetry_manager):
+        from cogniverse_runtime.optimization_cli import run_routing_optimization
+
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+        with p1, p2:
+            result = await run_routing_optimization(
+                tenant_id="default", lookback_hours=1
+            )
+        assert result["status"] == "no_data"
+        assert result["spans_found"] == 0
+
+    @pytest.mark.asyncio
+    async def test_routing_spans_low_confidence(self):
+        """Routing optimization skips examples with confidence < 0.5."""
+        spans_df = _make_spans_df(
+            "cogniverse.routing",
+            [
+                {
+                    "attributes.routing": {
+                        "query": "search for videos",
+                        "recommended_agent": "search_agent",
+                        "primary_intent": "video_search",
+                        "confidence": 0.3,
+                    }
+                }
+            ],
+        )
+        provider = FakeTelemetryProvider(spans_df)
+        mgr = FakeTelemetryManager(provider)
+
+        from cogniverse_runtime.optimization_cli import run_routing_optimization
+
+        p1, p2 = _patch_infra(mgr)
+        with p1, p2:
+            result = await run_routing_optimization(
+                tenant_id="default", lookback_hours=1
+            )
+        assert result["status"] == "no_data"
+        assert result["spans_found"] == 1
+        assert result["examples"] == 0

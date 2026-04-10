@@ -15,6 +15,8 @@ Usage:
     python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
+    python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
+    python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
 """
 
 import argparse
@@ -968,6 +970,258 @@ async def run_profile_optimization(
         return {"status": "failed", "error": str(e)}
 
 
+async def run_entity_extraction_optimization(
+    tenant_id: str,
+    lookback_hours: int = 24,
+) -> dict:
+    """Entity extraction optimization.
+
+    Reads cogniverse.entity_extraction spans, builds training examples
+    from (query) -> (entities) pairs, compiles the EntityExtractionModule's
+    DSPy module, and saves the optimized module as an artifact.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    _SPAN_NAME_ENTITY_EXTRACTION = "cogniverse.entity_extraction"
+
+    logger.info(
+        "Starting entity extraction optimization for tenant=%s lookback=%dh",
+        tenant_id,
+        lookback_hours,
+    )
+
+    config_manager = create_default_config_manager()
+    telemetry_manager = get_telemetry_manager()
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+    spans_df = await _query_spans_by_name(
+        telemetry_provider, tenant_id, _SPAN_NAME_ENTITY_EXTRACTION, lookback_hours
+    )
+
+    if spans_df.empty:
+        logger.info("No entity_extraction spans found — nothing to optimize")
+        return {"status": "no_data", "spans_found": 0}
+
+    logger.info("Found %d entity_extraction spans", len(spans_df))
+
+    import json as _json
+
+    import dspy
+
+    trainset = []
+    for _, row in spans_df.iterrows():
+        ee_attrs = row.get("attributes.entity_extraction", {})
+        if not isinstance(ee_attrs, dict):
+            ee_attrs = {}
+        query = ee_attrs.get("query", "")
+        entity_count = int(ee_attrs.get("entity_count", 0))
+        entities_json = ee_attrs.get("entities", "[]")
+
+        if not query or entity_count == 0:
+            continue
+
+        if not isinstance(entities_json, str):
+            entities_json = _json.dumps(entities_json)
+
+        example = dspy.Example(
+            query=query,
+            entities=entities_json,
+            entity_types="",
+        ).with_inputs("query")
+        trainset.append(example)
+
+    if not trainset:
+        logger.info("No valid training examples extracted from entity_extraction spans")
+        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+
+    logger.info("Built %d training examples for entity extraction optimization", len(trainset))
+
+    from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+    from cogniverse_foundation.config.utils import get_config
+
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_config = config.get_llm_config()
+    llm_endpoint = llm_config.resolve("optimization")
+
+    dspy.configure(
+        lm=dspy.LM(
+            f"ollama_chat/{llm_endpoint.model}",
+            api_base=llm_endpoint.api_base,
+        )
+    )
+
+    module = EntityExtractionModule()
+
+    from dspy.teleprompt import BootstrapFewShot
+
+    teleprompter = BootstrapFewShot(
+        max_bootstrapped_demos=4,
+        max_labeled_demos=8,
+        max_rounds=1,
+        max_errors=5,
+    )
+
+    try:
+        compiled = teleprompter.compile(module, trainset=trainset)
+
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        dataset_id = await artifact_manager.save_blob(
+            kind="model",
+            key="entity_extraction",
+            content=_json.dumps(compiled.dump_state(), default=str),
+        )
+
+        logger.info("Entity extraction optimization complete — artifact %s", dataset_id)
+        return {
+            "status": "success",
+            "spans_found": len(spans_df),
+            "training_examples": len(trainset),
+            "artifact_id": dataset_id,
+        }
+
+    except Exception as e:
+        logger.error("Entity extraction DSPy compilation failed: %s", e)
+        return {"status": "failed", "error": str(e)}
+
+
+async def run_routing_optimization(
+    tenant_id: str,
+    lookback_hours: int = 24,
+) -> dict:
+    """Routing decision optimization.
+
+    Reads cogniverse.routing spans, builds training examples from
+    (query) -> (recommended_agent, primary_intent) pairs, compiles the
+    DSPyAdvancedRoutingModule, and saves the optimized module as an artifact.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    try:
+        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+    except ImportError:
+        SPAN_NAME_ROUTING = "cogniverse.routing"
+
+    logger.info(
+        "Starting routing optimization for tenant=%s lookback=%dh",
+        tenant_id,
+        lookback_hours,
+    )
+
+    config_manager = create_default_config_manager()
+    telemetry_manager = get_telemetry_manager()
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+    spans_df = await _query_spans_by_name(
+        telemetry_provider, tenant_id, SPAN_NAME_ROUTING, lookback_hours
+    )
+
+    if spans_df.empty:
+        logger.info("No routing spans found — nothing to optimize")
+        return {"status": "no_data", "spans_found": 0}
+
+    logger.info("Found %d routing spans", len(spans_df))
+
+    import dspy
+
+    trainset = []
+    for _, row in spans_df.iterrows():
+        r_attrs = row.get("attributes.routing", {})
+        if not isinstance(r_attrs, dict):
+            r_attrs = {}
+        query = r_attrs.get("query", "")
+        recommended_agent = r_attrs.get("recommended_agent", "")
+        primary_intent = r_attrs.get("primary_intent", "")
+        confidence = float(r_attrs.get("confidence", 0.0))
+
+        if not query or not recommended_agent:
+            continue
+
+        if confidence < 0.5:
+            continue
+
+        example = dspy.Example(
+            query=query,
+            context="",
+            primary_intent=primary_intent,
+            needs_video_search=str(
+                "video" in recommended_agent.lower()
+                or "search" in recommended_agent.lower()
+            ),
+            recommended_agent=recommended_agent,
+            confidence=str(confidence),
+        ).with_inputs("query", "context")
+        trainset.append(example)
+
+    if not trainset:
+        logger.info("No valid training examples extracted from routing spans")
+        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+
+    logger.info("Built %d training examples for routing optimization", len(trainset))
+
+    try:
+        from cogniverse_agents.routing_agent import DSPyAdvancedRoutingModule
+
+        module = DSPyAdvancedRoutingModule(analysis_module=None)
+    except (ImportError, Exception):
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            BasicQueryAnalysisSignature,
+        )
+
+        module = dspy.ChainOfThought(BasicQueryAnalysisSignature)
+
+    from cogniverse_foundation.config.utils import get_config
+
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_config = config.get_llm_config()
+    llm_endpoint = llm_config.resolve("optimization")
+
+    dspy.configure(
+        lm=dspy.LM(
+            f"ollama_chat/{llm_endpoint.model}",
+            api_base=llm_endpoint.api_base,
+        )
+    )
+
+    from dspy.teleprompt import BootstrapFewShot
+
+    teleprompter = BootstrapFewShot(
+        max_bootstrapped_demos=4,
+        max_labeled_demos=8,
+        max_rounds=1,
+        max_errors=5,
+    )
+
+    try:
+        compiled = teleprompter.compile(module, trainset=trainset)
+
+        import json as _json
+
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        dataset_id = await artifact_manager.save_blob(
+            kind="model",
+            key="routing_decision",
+            content=_json.dumps(compiled.dump_state(), default=str),
+        )
+
+        logger.info("Routing optimization complete — artifact %s", dataset_id)
+        return {
+            "status": "success",
+            "spans_found": len(spans_df),
+            "training_examples": len(trainset),
+            "artifact_id": dataset_id,
+        }
+
+    except Exception as e:
+        logger.error("Routing DSPy compilation failed: %s", e)
+        return {"status": "failed", "error": str(e)}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Optimization CLI")
     parser.add_argument(
@@ -982,6 +1236,8 @@ def main():
             "workflow",
             "gateway-thresholds",
             "profile",
+            "entity-extraction",
+            "routing",
         ],
         required=True,
     )
@@ -1000,7 +1256,7 @@ def main():
         "--lookback-hours",
         type=int,
         default=24,
-        help="Hours of span history to analyze (simba, workflow, gateway-thresholds, profile)",
+        help="Hours of span history to analyze (simba, workflow, gateway-thresholds, profile, entity-extraction, routing)",
     )
     args = parser.parse_args()
 
@@ -1050,6 +1306,20 @@ def main():
     elif args.mode == "profile":
         result = asyncio.run(
             run_profile_optimization(
+                tenant_id=args.tenant_id,
+                lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "entity-extraction":
+        result = asyncio.run(
+            run_entity_extraction_optimization(
+                tenant_id=args.tenant_id,
+                lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "routing":
+        result = asyncio.run(
+            run_routing_optimization(
                 tenant_id=args.tenant_id,
                 lookback_hours=args.lookback_hours,
             )
