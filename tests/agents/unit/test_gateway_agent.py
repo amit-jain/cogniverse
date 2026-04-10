@@ -191,13 +191,11 @@ class TestClassification:
 
 
 class TestComplexityDecision:
-    def test_no_entities_with_analysis_keyword_is_complex(self, gateway_agent):
-        """No entities + analysis keyword → complex."""
+    def test_no_entities_is_always_complex(self, gateway_agent):
+        """No entities → always complex, regardless of query content."""
         assert gateway_agent._is_complex("analyze the data", "video", "raw_results", [], 0.0) is True
-
-    def test_no_entities_simple_query_is_simple(self, gateway_agent):
-        """No entities + no complexity signals → simple fallback."""
-        assert gateway_agent._is_complex("find videos", "video", "raw_results", [], 0.0) is False
+        assert gateway_agent._is_complex("find videos", "video", "raw_results", [], 0.0) is True
+        assert gateway_agent._is_complex("hello", "video", "raw_results", [], 0.0) is True
 
     def test_low_confidence_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.35)]
@@ -274,20 +272,11 @@ class TestProcessImpl:
         assert result.routed_to == "orchestrator_agent"
 
     @pytest.mark.asyncio
-    async def test_no_entities_simple_query_is_simple(self, gateway_agent, mock_gliner_model):
-        """No entities + no complexity signals -> simple fallback."""
+    async def test_no_entities_is_always_complex(self, gateway_agent, mock_gliner_model):
+        """No entities → always complex, regardless of query."""
         mock_gliner_model.predict_entities.return_value = []
         result = await gateway_agent._process_impl(
             GatewayInput(query="hello world")
-        )
-        assert result.complexity == "simple"
-
-    @pytest.mark.asyncio
-    async def test_no_entities_analysis_query_is_complex(self, gateway_agent, mock_gliner_model):
-        """No entities + analysis keyword -> complex."""
-        mock_gliner_model.predict_entities.return_value = []
-        result = await gateway_agent._process_impl(
-            GatewayInput(query="analyze the trends in recent data")
         )
         assert result.complexity == "complex"
         assert result.routed_to == "orchestrator_agent"

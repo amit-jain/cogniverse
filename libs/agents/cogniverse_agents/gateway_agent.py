@@ -277,23 +277,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         - Query contains multi-step markers ("then", "after that", "first...next")
         - Query has multiple clauses (3+ commas or 2+ "and")
         """
-        # No entities: check query-level signals before defaulting to complex.
-        # Short generic queries ("search videos", "hello") without analysis
-        # keywords are simple even if GLiNER detects nothing — they default
-        # to search_agent via the modality fallback ("video", 0.0).
+        # No entities → GLiNER can't classify → complex
         if not entities:
-            query_lower = query.lower()
-            query_words = set(query_lower.split())
-            has_complexity_signal = (
-                (query_words & self._COMPLEXITY_KEYWORDS)
-                or any(m in query_lower for m in self._MULTI_STEP_MARKERS)
-                or query_lower.count(",") >= 3
-                or query_lower.count(" and ") >= 2
-            )
-            if has_complexity_signal:
-                return True
-            # No entities AND no complexity signals → simple fallback to default agent
-            return False
+            return True
 
         if confidence < self.deps.fast_path_confidence_threshold:
             return True

@@ -317,9 +317,9 @@ class TestRealGatewayAgentIntegration:
         result = await agent._process_impl(input_data)
 
         assert result is not None
-        # No entities + no complexity keywords → simple fallback
-        # (the gateway doesn't blindly send all unknown queries to orchestrator)
-        assert result.complexity == "simple"
+        # No entities → always complex (per design spec)
+        assert result.complexity == "complex"
+        assert result.routed_to == "orchestrator_agent"
         logger.info(
             f"Gateway empty entities: complexity={result.complexity}, "
             f"routed_to={result.routed_to}"
