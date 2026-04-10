@@ -542,3 +542,54 @@ class TestRelationshipModel:
             "object": "Y",
             "confidence": 0.7,
         }
+
+
+# ---------------------------------------------------------------------------
+# Artifact loading
+# ---------------------------------------------------------------------------
+
+
+class TestEntityExtractionArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_loads_dspy_artifact(self, entity_agent):
+        """EntityExtractionAgent should load optimized DSPy module state."""
+        import json
+        from unittest.mock import AsyncMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        fake_state = {"extractor.predict": {"signature": {"fields": []}, "demos": []}}
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent.dspy_module = MagicMock()
+            entity_agent._load_artifact()
+
+        entity_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+
+    def test_defaults_without_artifact(self, entity_agent):
+        """Agent uses default module when no artifact exists."""
+        assert hasattr(entity_agent, "dspy_module")
+        assert entity_agent.dspy_module is not None
+
+    def test_no_telemetry_skips_loading(self, entity_agent):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        entity_agent.telemetry_manager = None
+        entity_agent._load_artifact()
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_uses_defaults(self, entity_agent):
+        """_load_artifact falls back to defaults when artifact load fails."""
+        from unittest.mock import AsyncMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent._load_artifact()

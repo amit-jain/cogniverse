@@ -300,6 +300,45 @@ class OrchestratorAgent(
             f"OrchestratorAgent initialized with {len(self.registry.agents)} registered agents"
         )
 
+    def _load_artifact(self) -> None:
+        """Load workflow templates and historical data from artifact store.
+
+        Called by the dispatcher after telemetry_manager and _artifact_tenant_id
+        are injected — not from __init__ (telemetry_manager is not yet available).
+
+        Delegates to WorkflowIntelligence.load_historical_data() which loads
+        templates, agent profiles, and query patterns from the artifact store.
+        """
+        if not self.workflow_intelligence:
+            return
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+        try:
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+
+            async def _load():
+                await self.workflow_intelligence.load_historical_data()
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, _load())
+                    future.result()
+            else:
+                asyncio.run(_load())
+
+            logger.info(
+                "OrchestratorAgent loaded %d workflow templates from artifact",
+                len(self.workflow_intelligence.workflow_templates),
+            )
+        except Exception as e:
+            logger.debug("No workflow artifact to load (using defaults): %s", e)
+
     def _ensure_memory_for_tenant(self, tenant_id: str) -> None:
         """Lazily initialize memory for a tenant (first request only)."""
         if tenant_id in self._memory_initialized_tenants:

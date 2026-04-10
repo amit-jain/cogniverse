@@ -214,6 +214,47 @@ class RoutingAgent(
             dspy_module=self.routing_module,
         )
 
+    def _load_artifact(self) -> None:
+        """Load optimized DSPy routing module from artifact store.
+
+        Called by the dispatcher after telemetry_manager and _artifact_tenant_id
+        are injected — not from __init__ (telemetry_manager is not yet available).
+        """
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+        try:
+            import asyncio
+            import json
+            from concurrent.futures import ThreadPoolExecutor
+
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+            tenant_id = getattr(self, "_artifact_tenant_id", "default")
+            provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
+            am = ArtifactManager(provider, tenant_id)
+
+            async def _load():
+                return await am.load_blob("model", "routing_decision")
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, _load())
+                    blob = future.result()
+            else:
+                blob = asyncio.run(_load())
+
+            if blob:
+                state = json.loads(blob)
+                self.routing_module.load_state(state)
+                self.logger.info("RoutingAgent loaded optimized DSPy module from artifact")
+        except Exception as e:
+            self.logger.debug("No routing artifact to load (using defaults): %s", e)
+
     def _initialize_telemetry_manager(self) -> None:
         """Initialize telemetry manager for span emission."""
         if self.telemetry_config and getattr(self.telemetry_config, "enabled", False):

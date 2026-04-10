@@ -902,3 +902,71 @@ class TestOrchestratorIntelligence:
         assert orchestrator_agent.event_queue is None
         # Should not raise
         await orchestrator_agent._emit_event({"type": "test"})
+
+
+# ---------------------------------------------------------------------------
+# Artifact loading
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_loads_workflow_templates(self, mock_agent_registry):
+        """OrchestratorAgent should delegate to workflow_intelligence.load_historical_data."""
+        mock_wi = Mock()
+        mock_wi.load_historical_data = AsyncMock()
+        mock_wi.workflow_templates = {"tmpl_1": Mock()}
+
+        with patch("dspy.ChainOfThought"):
+            agent = OrchestratorAgent(
+                deps=OrchestratorDeps(),
+                registry=mock_agent_registry,
+                config_manager=Mock(),
+                workflow_intelligence=mock_wi,
+            )
+
+        mock_tm = Mock()
+        agent.telemetry_manager = mock_tm
+        agent._load_artifact()
+
+        mock_wi.load_historical_data.assert_called_once()
+
+    def test_no_workflow_intelligence_skips(self, orchestrator_agent):
+        """_load_artifact is a no-op when workflow_intelligence is None."""
+        assert orchestrator_agent.workflow_intelligence is None
+        orchestrator_agent._load_artifact()  # Should not raise
+
+    def test_no_telemetry_skips(self, mock_agent_registry):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        mock_wi = Mock()
+
+        with patch("dspy.ChainOfThought"):
+            agent = OrchestratorAgent(
+                deps=OrchestratorDeps(),
+                registry=mock_agent_registry,
+                config_manager=Mock(),
+                workflow_intelligence=mock_wi,
+            )
+
+        agent.telemetry_manager = None
+        agent._load_artifact()
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_uses_defaults(self, mock_agent_registry):
+        """_load_artifact falls back to defaults when load fails."""
+        mock_wi = Mock()
+        mock_wi.load_historical_data = AsyncMock(
+            side_effect=RuntimeError("connection refused")
+        )
+
+        with patch("dspy.ChainOfThought"):
+            agent = OrchestratorAgent(
+                deps=OrchestratorDeps(),
+                registry=mock_agent_registry,
+                config_manager=Mock(),
+                workflow_intelligence=mock_wi,
+            )
+
+        mock_tm = Mock()
+        agent.telemetry_manager = mock_tm
+        agent._load_artifact()  # Should not raise

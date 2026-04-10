@@ -2301,3 +2301,52 @@ class TestEnhancedQueryEnhancementAgent:
         a2a = qe_agent._dspy_to_a2a_output(result)
         assert a2a["query_variants"] == ["eq", "q a"]
         assert a2a["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Artifact loading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestQueryEnhancementArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_loads_dspy_artifact(self, qe_agent):
+        """QueryEnhancementAgent should load optimized DSPy module state."""
+        import json
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        fake_state = {"enhancer.predict": {"signature": {"fields": []}, "demos": []}}
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+
+            qe_agent.telemetry_manager = mock_tm
+            qe_agent.dspy_module = MagicMock()
+            qe_agent._load_artifact()
+
+        qe_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+
+    def test_defaults_without_artifact(self, qe_agent):
+        """Agent uses default module when no artifact exists."""
+        assert hasattr(qe_agent, "dspy_module")
+        assert qe_agent.dspy_module is not None
+
+    def test_no_telemetry_skips_loading(self, qe_agent):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        qe_agent.telemetry_manager = None
+        qe_agent._load_artifact()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_uses_defaults(self, qe_agent):
+        """_load_artifact falls back to defaults when artifact load fails."""
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            qe_agent.telemetry_manager = mock_tm
+            qe_agent._load_artifact()  # Should not raise

@@ -377,3 +377,54 @@ class TestProfileSelectionAgent:
             ProfileSelectionInput(query="cat videos", tenant_id="t1")
         )
         assert result.selected_profile == "video_colpali_base"
+
+
+# ---------------------------------------------------------------------------
+# Artifact loading
+# ---------------------------------------------------------------------------
+
+
+class TestProfileSelectionArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_loads_dspy_artifact(self, profile_agent):
+        """ProfileSelectionAgent should load optimized DSPy module state."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        fake_state = {"selector.predict": {"signature": {"fields": []}, "demos": []}}
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+
+            profile_agent.telemetry_manager = mock_tm
+            profile_agent.dspy_module = MagicMock()
+            profile_agent._load_artifact()
+
+        profile_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+
+    def test_defaults_without_artifact(self, profile_agent):
+        """Agent uses default module when no artifact exists."""
+        assert hasattr(profile_agent, "dspy_module")
+        assert profile_agent.dspy_module is not None
+
+    def test_no_telemetry_skips_loading(self, profile_agent):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        profile_agent.telemetry_manager = None
+        profile_agent._load_artifact()
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_uses_defaults(self, profile_agent):
+        """_load_artifact falls back to defaults when artifact load fails."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            profile_agent.telemetry_manager = mock_tm
+            profile_agent._load_artifact()
