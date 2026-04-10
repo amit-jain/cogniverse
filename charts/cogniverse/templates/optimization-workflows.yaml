@@ -223,6 +223,195 @@ spec:
         configMap:
           name: {{ $fullName }}-config
 {{- end }}
+{{- if .Values.argo.optimization.agentOptimization.enabled }}
+---
+# Weekly agent optimization — runs all DSPy-based optimizers in parallel,
+# then workflow optimizer, then restarts runtime to pick up new artifacts.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-agent-optimization
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.agentOptimization.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: optimize-all-agents
+    arguments:
+      parameters:
+      - name: tenant-id
+        value: "default"
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    volumes:
+    - name: config
+      configMap:
+        name: {{ $fullName }}-config
+    templates:
+    - name: optimize-all-agents
+      steps:
+      # Step 1: Run all DSPy-based optimizers in parallel
+      - - name: gateway-thresholds
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: gateway-thresholds
+        - name: entity-extraction
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: entity-extraction
+        - name: simba
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: simba
+        - name: routing
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: routing
+        - name: profile
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: profile
+      # Step 2: Workflow optimization (depends on agent artifacts)
+      - - name: workflow
+          template: run-agent-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: workflow
+      # Step 3: Restart runtime to pick up new artifacts
+      - - name: restart-runtime
+          template: restart-deployment
+
+    - name: run-agent-optimizer
+      inputs:
+        parameters:
+        - name: mode
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "{{`{{inputs.parameters.mode}}`}}"
+          - "--tenant-id"
+          - "{{`{{workflow.parameters.tenant-id}}`}}"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        - name: OLLAMA_API_BASE
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+
+    - name: restart-deployment
+      container:
+        image: bitnami/kubectl:latest
+        command: ["kubectl"]
+        args:
+          - "rollout"
+          - "restart"
+          - "deployment/{{ $fullName }}-runtime"
+          - "-n"
+          - "{{ .Release.Namespace }}"
+{{- end }}
+{{- if .Values.argo.optimization.dailyGateway.enabled }}
+---
+# Daily gateway threshold tuning — lightweight, runs just gateway-thresholds
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-daily-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.dailyGateway.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: gateway-optimization
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: gateway-optimization
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "gateway-thresholds"
+          - "--tenant-id"
+          - "default"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+{{- end }}
 {{- if .Values.argo.optimization.scheduledDistillation.enabled }}
 ---
 # Scheduled distillation cron — audit fix #7. Runs ``quality_monitor_cli

@@ -43,6 +43,14 @@ argo:
       enabled: true
       schedule: "0 4 * * *"  # Daily 4 AM UTC
       annotationThreshold: 20
+    # Unified agent optimization — runs all DSPy-based optimizers in parallel
+    agentOptimization:
+      enabled: true
+      schedule: "0 3 * * 0"  # Sunday 3 AM UTC
+    # Daily gateway threshold tuning
+    dailyGateway:
+      enabled: true
+      schedule: "0 4 * * *"  # Daily 4 AM UTC
     # Audit fix #7 — scheduled distillation runs ``quality_monitor_cli --once``
     # to force a strategy distillation pass independent of the quality-drop
     # threshold check. Without this cron, distillation only fired on
