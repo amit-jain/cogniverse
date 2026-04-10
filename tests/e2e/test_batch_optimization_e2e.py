@@ -214,12 +214,21 @@ class TestGatewayThresholds:
             f"simple ({analysis['simple_count']}) + complex ({analysis['complex_count']}) "
             f"should equal total ({analysis['total_spans']})"
         )
-        assert analysis["simple_count"] > 0, "Should have at least some simple spans"
-        assert 0 <= analysis["simple_error_rate"] <= 1, (
-            f"Error rate should be 0-1, got {analysis['simple_error_rate']}"
+        # Most E2E queries are simple video searches → simple should be majority
+        assert analysis["simple_count"] > analysis["complex_count"], (
+            f"Simple ({analysis['simple_count']}) should outnumber complex "
+            f"({analysis['complex_count']}) — most test queries are simple video searches"
         )
-        assert 0 <= analysis["complex_error_rate"] <= 1, (
-            f"Error rate should be 0-1, got {analysis['complex_error_rate']}"
+        assert 0 <= analysis["simple_error_rate"] <= 1
+        assert 0 <= analysis["complex_error_rate"] <= 1
+        # mean_confidence should reflect real GLiNER scores (0.4-0.7 range for simple queries)
+        assert 0.3 < analysis["mean_confidence"] < 0.9, (
+            f"mean_confidence {analysis['mean_confidence']} outside expected 0.3-0.9 range"
+        )
+        # gliner_threshold must be computed (not just default 0.3)
+        assert "gliner_threshold" in artifact, "Missing computed gliner_threshold"
+        assert isinstance(artifact["gliner_threshold"], float), (
+            f"gliner_threshold should be float, got {type(artifact['gliner_threshold'])}"
         )
 
 
@@ -270,18 +279,39 @@ class TestWorkflowOptimization:
         # Parse latest demo and verify it contains real workflow data
         first = json.loads(demos[-1]["input"])
         assert "workflow_id" in first, f"Demo missing workflow_id: {list(first.keys())}"
-        assert "agent_sequence" in first, f"Demo missing agent_sequence: {list(first.keys())}"
-        assert "execution_time" in first, f"Demo missing execution_time: {list(first.keys())}"
-        assert "success" in first, f"Demo missing success flag: {list(first.keys())}"
-        assert isinstance(first["agent_sequence"], list), (
-            f"agent_sequence should be list, got {type(first['agent_sequence'])}"
+        assert first["workflow_id"].startswith("workflow_"), (
+            f"workflow_id should start with 'workflow_', got {first['workflow_id']!r}"
         )
-        assert len(first["agent_sequence"]) >= 1, (
+        assert "query" in first, f"Demo missing query: {list(first.keys())}"
+        assert len(first["query"]) > 5, (
+            f"query should be substantive, got {first['query']!r}"
+        )
+        assert "agent_sequence" in first, "Demo missing agent_sequence"
+        agents = first["agent_sequence"]
+        if isinstance(agents, str):
+            agents = [a.strip() for a in agents.split(",") if a.strip()]
+        assert len(agents) >= 1, (
             f"agent_sequence should have at least 1 agent, got {first['agent_sequence']}"
         )
+        # All agents in the sequence must be real registered agents
+        known_agents = {
+            "search_agent", "summarizer_agent", "detailed_report_agent",
+            "entity_extraction_agent", "query_enhancement_agent",
+            "profile_selection_agent", "routing_agent", "image_search_agent",
+            "audio_analysis_agent", "document_agent", "deep_research_agent",
+            "coding_agent", "text_analysis_agent", "orchestrator_agent",
+            "gateway_agent",
+        }
+        for agent in agents:
+            assert agent in known_agents, (
+                f"Unknown agent '{agent}' in sequence. Known: {sorted(known_agents)}"
+            )
+        assert "execution_time" in first
         assert first["execution_time"] > 0, (
             f"execution_time should be positive, got {first['execution_time']}"
         )
+        assert "success" in first
+        assert isinstance(first["success"], bool)
 
 
 # ---------------------------------------------------------------------------
@@ -305,34 +335,41 @@ class TestSimbaOptimization:
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
     def test_simba_artifact_contains_dspy_module(self):
-        """SIMBA artifact must be a valid DSPy module with query enhancement signature."""
+        """SIMBA artifact must be a valid DSPy QueryEnhancement module."""
         _run_batch_job("simba")  # ensure artifact exists
 
         blob = _load_blob_in_pod("model", "simba_query_enhancement")
         assert blob, "SIMBA artifact blob is empty"
 
         artifact = json.loads(blob)
+        assert len(artifact) >= 1, "Empty DSPy module artifact"
 
-        # DSPy serialized module has a key like "enhancer.predict" or similar
-        # with "signature" containing field definitions
-        assert len(artifact) >= 1, f"Empty DSPy module artifact: {artifact}"
-
-        # Find the signature in any module key
+        # Find the DSPy signature — should have query enhancement fields
         found_signature = False
         for key, value in artifact.items():
             if isinstance(value, dict) and "signature" in value:
                 sig = value["signature"]
-                assert "fields" in sig, f"Signature missing 'fields': {list(sig.keys())}"
+                assert "fields" in sig, "Signature missing 'fields'"
 
                 field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
+
+                # Must have query input
                 assert "query" in field_names, (
-                    f"DSPy signature should have 'query' field, got: {field_names}"
+                    f"SIMBA signature missing 'query' input, got: {field_names}"
                 )
+                # Must have enhanced_query output (that's what SIMBA optimizes)
+                assert "enhanced_query" in field_names or "enhanced query" in field_names, (
+                    f"SIMBA signature missing 'enhanced_query' output, got: {field_names}"
+                )
+                # Signature instructions should mention enhancement
+                instructions = sig.get("instructions", "")
+                assert instructions, "Signature should have non-empty instructions"
+
                 found_signature = True
                 break
 
         assert found_signature, (
-            f"No DSPy signature found in artifact keys: {list(artifact.keys())}"
+            f"No DSPy signature found in SIMBA artifact keys: {list(artifact.keys())}"
         )
 
 
@@ -357,26 +394,39 @@ class TestProfileOptimization:
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
     def test_profile_artifact_contains_dspy_module(self):
-        """Profile artifact must be a valid DSPy module with profile selection signature."""
+        """Profile artifact must be a valid DSPy ProfileSelection module."""
         _run_batch_job("profile")  # ensure artifact exists
 
         blob = _load_blob_in_pod("model", "profile_selection")
         assert blob, "Profile artifact blob is empty"
 
         artifact = json.loads(blob)
-        assert len(artifact) >= 1, f"Empty DSPy module artifact: {artifact}"
+        assert len(artifact) >= 1, "Empty DSPy module artifact"
 
         # Find signature with profile selection fields
         found_signature = False
         for key, value in artifact.items():
             if isinstance(value, dict) and "signature" in value:
                 sig = value["signature"]
-                assert "fields" in sig, f"Signature missing 'fields': {list(sig.keys())}"
+                assert "fields" in sig, "Signature missing 'fields'"
 
                 field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
+
+                # Must have query input
                 assert "query" in field_names, (
-                    f"Profile DSPy signature should have 'query' field, got: {field_names}"
+                    f"Profile signature missing 'query' input, got: {field_names}"
                 )
+                # Must have selected_profile output (the whole point of this agent)
+                assert "selected_profile" in field_names or "selected profile" in field_names, (
+                    f"Profile signature missing 'selected_profile' output, got: {field_names}"
+                )
+                # Signature instructions should mention profile selection
+                instructions = sig.get("instructions", "")
+                assert "profile" in instructions.lower(), (
+                    f"Profile signature instructions should mention 'profile', "
+                    f"got: {instructions!r}"
+                )
+
                 found_signature = True
                 break
 
