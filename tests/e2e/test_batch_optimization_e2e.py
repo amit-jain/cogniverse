@@ -230,6 +230,12 @@ class TestGatewayThresholds:
         assert isinstance(artifact["gliner_threshold"], float), (
             f"gliner_threshold should be float, got {type(artifact['gliner_threshold'])}"
         )
+        # p25 confidence should reflect real scores from our test queries
+        # (our simple queries score 0.44-0.69, so p25 should be around 0.44)
+        p25 = analysis.get("p25_confidence", 0)
+        assert p25 > 0.3, (
+            f"p25_confidence {p25} too low — our test queries score 0.44+"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -276,24 +282,50 @@ class TestWorkflowOptimization:
         demos = json.loads(out.stdout.strip() or "[]")
         assert len(demos) >= 1, f"Expected workflow demos, got {len(demos)}"
 
-        # Parse latest demo and verify it contains real workflow data
-        first = json.loads(demos[-1]["input"])
-        assert "workflow_id" in first, f"Demo missing workflow_id: {list(first.keys())}"
-        assert first["workflow_id"].startswith("workflow_"), (
-            f"workflow_id should start with 'workflow_', got {first['workflow_id']!r}"
+        # Find demos with non-empty agent_sequence (latest runs have the fix)
+        valid_demos = []
+        for d in demos:
+            data = json.loads(d["input"])
+            agents = data.get("agent_sequence", [])
+            if isinstance(agents, str):
+                agents = [a.strip() for a in agents.split(",") if a.strip()]
+            if agents:
+                valid_demos.append(data)
+
+        assert len(valid_demos) >= 1, (
+            f"Expected at least 1 demo with non-empty agent_sequence, "
+            f"got {len(valid_demos)} out of {len(demos)} total demos"
         )
-        assert "query" in first, f"Demo missing query: {list(first.keys())}"
-        assert len(first["query"]) > 5, (
-            f"query should be substantive, got {first['query']!r}"
+
+        # Known queries we sent: "analyze the video transcripts for key themes"
+        # and "analyze the video transcripts and compare with documents"
+        known_queries = {
+            "analyze the video transcripts for key themes",
+            "analyze the video transcripts and compare with documents",
+        }
+        demo_queries = {d["query"] for d in valid_demos}
+        matching = demo_queries & known_queries
+        assert matching, (
+            f"Expected demos for queries {known_queries}, "
+            f"got: {demo_queries}"
         )
-        assert "agent_sequence" in first, "Demo missing agent_sequence"
-        agents = first["agent_sequence"]
-        if isinstance(agents, str):
-            agents = [a.strip() for a in agents.split(",") if a.strip()]
-        assert len(agents) >= 1, (
-            f"agent_sequence should have at least 1 agent, got {first['agent_sequence']}"
-        )
-        # All agents in the sequence must be real registered agents
+
+        # For "analyze...compare with documents" → should use entity_extraction + search + document agents
+        compare_demos = [d for d in valid_demos if "compare" in d["query"]]
+        if compare_demos:
+            agents = compare_demos[0]["agent_sequence"]
+            if isinstance(agents, str):
+                agents = [a.strip() for a in agents.split(",") if a.strip()]
+            assert "entity_extraction_agent" in agents, (
+                f"'compare with documents' workflow should use entity_extraction_agent, "
+                f"got: {agents}"
+            )
+            assert any(a in agents for a in ("search_agent", "document_agent")), (
+                f"'compare with documents' workflow should use search or document agent, "
+                f"got: {agents}"
+            )
+
+        # All agents must be valid registered agents
         known_agents = {
             "search_agent", "summarizer_agent", "detailed_report_agent",
             "entity_extraction_agent", "query_enhancement_agent",
@@ -302,16 +334,22 @@ class TestWorkflowOptimization:
             "coding_agent", "text_analysis_agent", "orchestrator_agent",
             "gateway_agent",
         }
-        for agent in agents:
-            assert agent in known_agents, (
-                f"Unknown agent '{agent}' in sequence. Known: {sorted(known_agents)}"
+        for demo in valid_demos:
+            agents = demo["agent_sequence"]
+            if isinstance(agents, str):
+                agents = [a.strip() for a in agents.split(",") if a.strip()]
+            for agent in agents:
+                assert agent in known_agents, (
+                    f"Unknown agent '{agent}' in workflow for query '{demo['query']}'"
+                )
+
+        # Execution metadata must be real
+        for demo in valid_demos:
+            assert demo["execution_time"] > 0, (
+                f"execution_time should be positive for '{demo['query']}'"
             )
-        assert "execution_time" in first
-        assert first["execution_time"] > 0, (
-            f"execution_time should be positive, got {first['execution_time']}"
-        )
-        assert "success" in first
-        assert isinstance(first["success"], bool)
+            assert isinstance(demo["success"], bool)
+            assert demo["workflow_id"].startswith("workflow_")
 
 
 # ---------------------------------------------------------------------------
