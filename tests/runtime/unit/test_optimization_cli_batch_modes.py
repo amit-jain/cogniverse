@@ -128,9 +128,6 @@ class TestCliArgumentParser:
         parser.add_argument(
             "--mode",
             choices=[
-                "once",
-                "full",
-                "dspy",
                 "cleanup",
                 "triggered",
                 "simba",

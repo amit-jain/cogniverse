@@ -1,22 +1,20 @@
 """CLI entry point for optimization — called by Argo CronWorkflows.
 
-Runs OptimizationOrchestrator.run_once() as a one-shot batch job.
-The runtime API server no longer runs optimization as a background task.
+Per-agent batch optimization modes. Each mode reads production spans from
+Phoenix, builds DSPy training examples, compiles optimized modules, and
+saves artifacts via ArtifactManager. Agents load artifacts at startup.
 
 Usage:
-    python -m cogniverse_runtime.optimization_cli --mode once
-    python -m cogniverse_runtime.optimization_cli --mode full
-    python -m cogniverse_runtime.optimization_cli --mode dspy
-    python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
-    python -m cogniverse_runtime.optimization_cli --mode triggered \
-        --tenant-id default --agents search,summary \
-        --trigger-dataset optimization-trigger-default-20260403_040000
     python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
     python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
+    python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+    python -m cogniverse_runtime.optimization_cli --mode triggered \
+        --tenant-id default --agents search,summary \
+        --trigger-dataset optimization-trigger-default-20260403_040000
 """
 
 import argparse
@@ -1356,9 +1354,6 @@ def main():
     parser.add_argument(
         "--mode",
         choices=[
-            "once",
-            "full",
-            "dspy",
             "cleanup",
             "triggered",
             "simba",
