@@ -14,7 +14,9 @@ Requires live k3d stack via `cogniverse up` with:
 
 import json
 import subprocess
+import time
 
+import httpx
 import pytest
 
 from tests.e2e.conftest import (
@@ -28,6 +30,144 @@ NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
 LOOKBACK_HOURS = 48
+RUNTIME = "http://localhost:28000"
+
+
+# ---------------------------------------------------------------------------
+# Module-scoped fixture: generate spans for all batch job tests
+# ---------------------------------------------------------------------------
+
+ENHANCEMENT_QUERIES = [
+    "ML transformer videos", "find AI tutorials", "deep learning frameworks",
+    "neural network architecture", "computer vision applications",
+    "NLP text processing", "reinforcement learning robotics",
+    "generative AI models", "transfer learning techniques", "autoML tools",
+    "object detection algorithms", "semantic segmentation methods",
+    "speech recognition systems", "recommendation engines", "time series forecasting",
+    "graph neural networks", "attention mechanisms explained", "CNN architectures",
+    "RNN LSTM tutorials", "GAN image generation",
+]
+
+PROFILE_QUERIES = [
+    "find basketball highlights", "cooking tutorial videos", "robotics engineering",
+    "music production content", "science experiments", "yoga workout videos",
+    "photography tutorials", "coding bootcamp recordings", "language learning videos",
+    "art history lectures", "wildlife documentary", "architecture design videos",
+    "gardening how-to", "chess strategy tutorials", "piano lessons online",
+    "fitness training clips", "travel vlog compilation", "astronomy lectures",
+    "medical education videos", "business strategy talks",
+]
+
+COMPLEX_QUERIES = [
+    "analyze the video transcripts for key themes",
+    "compare videos and documents about neural networks then summarize",
+    "investigate the relationship between AI research papers and video tutorials",
+]
+
+
+def _call_agent(agent_name: str, query: str) -> bool:
+    """Call an agent endpoint. Returns True on success."""
+    try:
+        resp = httpx.post(
+            f"{RUNTIME}/agents/{agent_name}/process",
+            json={
+                "agent_name": agent_name,
+                "query": query,
+                "context": {"tenant_id": TENANT_ID},
+                "top_k": 3,
+            },
+            timeout=120.0,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def generate_spans_for_batch_jobs():
+    """Generate enough spans in Phoenix for all batch job tests.
+
+    Calls agent endpoints to produce:
+    - 100+ cogniverse.gateway spans (simple queries)
+    - 100+ cogniverse.query_enhancement spans
+    - 100+ cogniverse.profile_selection spans
+    - 3+ cogniverse.orchestration spans (complex queries)
+
+    Runs once per module, before any batch job test.
+    """
+    # Check if runtime is available
+    try:
+        r = httpx.get(f"{RUNTIME}/health", timeout=5.0)
+        if r.status_code != 200:
+            pytest.skip("Runtime not available")
+    except Exception:
+        pytest.skip("Runtime not available")
+
+    # Generate gateway spans (simple queries go through gateway)
+    simple_queries = [
+        "find videos about machine learning",
+        "search for video content about AI",
+        "show me cooking videos",
+        "find images of neural network architectures",
+        "listen to podcasts about deep learning",
+    ]
+    for q in simple_queries:
+        _call_agent("gateway_agent", q)
+
+    # Generate entity extraction spans (direct calls)
+    entity_queries = [
+        "Obama speaking at MIT about climate change",
+        "Tesla cars driving in San Francisco",
+        "Python programming with TensorFlow",
+        "Google acquiring DeepMind in London",
+        "Elon Musk presenting at Stanford University",
+    ]
+    for q in entity_queries:
+        _call_agent("entity_extraction_agent", q)
+
+    # Generate search spans (direct calls — produces search.execute,
+    # encoder.colpali.encode, search_service.search spans)
+    search_queries = [
+        "machine learning tutorials",
+        "cooking recipe videos",
+        "robotics engineering demos",
+        "music theory lectures",
+        "wildlife nature footage",
+    ]
+    for q in search_queries:
+        _call_agent("search_agent", q)
+
+    # Generate routing spans (routing goes through gateway in the new
+    # architecture, producing cogniverse.routing spans along the way)
+    routing_queries = [
+        "find videos about deep learning",
+        "search for audio recordings",
+        "show me image galleries",
+        "find document archives",
+        "search for video content",
+    ]
+    for q in routing_queries:
+        _call_agent("routing_agent", q)
+
+    # Generate query enhancement spans (100+)
+    for i in range(100):
+        q = f"{ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]} variant {i}"
+        _call_agent("query_enhancement_agent", q)
+
+    # Generate profile selection spans (100+)
+    for i in range(100):
+        q = f"{PROFILE_QUERIES[i % len(PROFILE_QUERIES)]} variant {i}"
+        _call_agent("profile_selection_agent", q)
+
+    # Generate orchestration spans (complex queries — these also produce
+    # entity_extraction, routing, and search spans via the A2A pipeline)
+    for q in COMPLEX_QUERIES:
+        _call_agent("gateway_agent", q)
+
+    # Wait for Phoenix to ingest spans
+    time.sleep(15)
+
+    yield
 
 
 def _kubectl_available() -> bool:
