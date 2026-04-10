@@ -208,6 +208,20 @@ class TestGatewayThresholds:
             f"Invalid threshold in artifact: {threshold}"
         )
 
+        # Analysis must have correct breakdown
+        analysis = artifact["analysis"]
+        assert analysis["simple_count"] + analysis["complex_count"] == analysis["total_spans"], (
+            f"simple ({analysis['simple_count']}) + complex ({analysis['complex_count']}) "
+            f"should equal total ({analysis['total_spans']})"
+        )
+        assert analysis["simple_count"] > 0, "Should have at least some simple spans"
+        assert 0 <= analysis["simple_error_rate"] <= 1, (
+            f"Error rate should be 0-1, got {analysis['simple_error_rate']}"
+        )
+        assert 0 <= analysis["complex_error_rate"] <= 1, (
+            f"Error rate should be 0-1, got {analysis['complex_error_rate']}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 2. Workflow optimization
@@ -221,20 +235,52 @@ class TestWorkflowOptimization:
     """Verify workflow batch job extracts orchestration patterns."""
 
     def test_workflow_produces_demonstrations(self):
-        """Run --mode workflow, assert it extracts workflows and saves demos."""
+        """Run --mode workflow, assert demos contain real workflow data."""
         result = _run_batch_job("workflow")
 
-        assert result["status"] == "success", (
-            f"Expected status='success', got '{result.get('status')}': {result}"
+        assert result["status"] == "success"
+        assert result["spans_found"] > 0
+        assert result["workflows_extracted"] >= 1
+        assert result["execution_demos_saved"] >= 1
+
+    def test_workflow_artifact_contains_real_data(self):
+        """Workflow demos must contain agent_sequence, execution_time, success."""
+        _run_batch_job("workflow")  # ensure artifact exists
+
+        script = (
+            "import asyncio, json; "
+            "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+            "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+            f"tm = get_telemetry_manager(); "
+            f"tp = tm.get_provider(tenant_id='{TENANT_ID}'); "
+            f"am = ArtifactManager(tp, '{TENANT_ID}'); "
+            "demos = asyncio.get_event_loop().run_until_complete("
+            "  am.load_demonstrations('workflow')); "
+            "print(json.dumps(demos) if demos else '[]')"
         )
-        assert result["spans_found"] > 0, (
-            f"Expected spans_found > 0, got {result.get('spans_found')}"
+        out = subprocess.run(
+            ["kubectl", "--context", KUBECTL_CONTEXT,
+             "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+             "--", "python3", "-c", script],
+            capture_output=True, text=True, timeout=60,
         )
-        assert result["workflows_extracted"] >= 1, (
-            f"Expected workflows_extracted >= 1, got {result.get('workflows_extracted')}"
+        demos = json.loads(out.stdout.strip() or "[]")
+        assert len(demos) >= 1, f"Expected workflow demos, got {len(demos)}"
+
+        # Parse latest demo and verify it contains real workflow data
+        first = json.loads(demos[-1]["input"])
+        assert "workflow_id" in first, f"Demo missing workflow_id: {list(first.keys())}"
+        assert "agent_sequence" in first, f"Demo missing agent_sequence: {list(first.keys())}"
+        assert "execution_time" in first, f"Demo missing execution_time: {list(first.keys())}"
+        assert "success" in first, f"Demo missing success flag: {list(first.keys())}"
+        assert isinstance(first["agent_sequence"], list), (
+            f"agent_sequence should be list, got {type(first['agent_sequence'])}"
         )
-        assert result["execution_demos_saved"] >= 1, (
-            f"Expected execution_demos_saved >= 1, got {result.get('execution_demos_saved')}"
+        assert len(first["agent_sequence"]) >= 1, (
+            f"agent_sequence should have at least 1 agent, got {first['agent_sequence']}"
+        )
+        assert first["execution_time"] > 0, (
+            f"execution_time should be positive, got {first['execution_time']}"
         )
 
 
@@ -253,17 +299,40 @@ class TestSimbaOptimization:
         """Run --mode simba, assert it produces a compiled DSPy model."""
         result = _run_batch_job("simba")
 
-        assert result["status"] == "success", (
-            f"Expected status='success', got '{result.get('status')}': {result}"
-        )
-        assert result["spans_found"] > 0, (
-            f"Expected spans_found > 0, got {result.get('spans_found')}"
-        )
-        assert result["training_examples"] >= 1, (
-            f"Expected training_examples >= 1, got {result.get('training_examples')}"
-        )
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"], (
-            f"Expected non-empty artifact_id, got {result.get('artifact_id')!r}"
+        assert result["status"] == "success"
+        assert result["spans_found"] > 0
+        assert result["training_examples"] >= 1
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+
+    def test_simba_artifact_contains_dspy_module(self):
+        """SIMBA artifact must be a valid DSPy module with query enhancement signature."""
+        _run_batch_job("simba")  # ensure artifact exists
+
+        blob = _load_blob_in_pod("model", "simba_query_enhancement")
+        assert blob, "SIMBA artifact blob is empty"
+
+        artifact = json.loads(blob)
+
+        # DSPy serialized module has a key like "enhancer.predict" or similar
+        # with "signature" containing field definitions
+        assert len(artifact) >= 1, f"Empty DSPy module artifact: {artifact}"
+
+        # Find the signature in any module key
+        found_signature = False
+        for key, value in artifact.items():
+            if isinstance(value, dict) and "signature" in value:
+                sig = value["signature"]
+                assert "fields" in sig, f"Signature missing 'fields': {list(sig.keys())}"
+
+                field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
+                assert "query" in field_names, (
+                    f"DSPy signature should have 'query' field, got: {field_names}"
+                )
+                found_signature = True
+                break
+
+        assert found_signature, (
+            f"No DSPy signature found in artifact keys: {list(artifact.keys())}"
         )
 
 
@@ -282,17 +351,37 @@ class TestProfileOptimization:
         """Run --mode profile, assert it produces a compiled DSPy model."""
         result = _run_batch_job("profile")
 
-        assert result["status"] == "success", (
-            f"Expected status='success', got '{result.get('status')}': {result}"
-        )
-        assert result["spans_found"] > 0, (
-            f"Expected spans_found > 0, got {result.get('spans_found')}"
-        )
-        assert result["training_examples"] >= 1, (
-            f"Expected training_examples >= 1, got {result.get('training_examples')}"
-        )
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"], (
-            f"Expected non-empty artifact_id, got {result.get('artifact_id')!r}"
+        assert result["status"] == "success"
+        assert result["spans_found"] > 0
+        assert result["training_examples"] >= 1
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+
+    def test_profile_artifact_contains_dspy_module(self):
+        """Profile artifact must be a valid DSPy module with profile selection signature."""
+        _run_batch_job("profile")  # ensure artifact exists
+
+        blob = _load_blob_in_pod("model", "profile_selection")
+        assert blob, "Profile artifact blob is empty"
+
+        artifact = json.loads(blob)
+        assert len(artifact) >= 1, f"Empty DSPy module artifact: {artifact}"
+
+        # Find signature with profile selection fields
+        found_signature = False
+        for key, value in artifact.items():
+            if isinstance(value, dict) and "signature" in value:
+                sig = value["signature"]
+                assert "fields" in sig, f"Signature missing 'fields': {list(sig.keys())}"
+
+                field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
+                assert "query" in field_names, (
+                    f"Profile DSPy signature should have 'query' field, got: {field_names}"
+                )
+                found_signature = True
+                break
+
+        assert found_signature, (
+            f"No DSPy signature found in profile artifact keys: {list(artifact.keys())}"
         )
 
 

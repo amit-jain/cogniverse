@@ -179,7 +179,7 @@ class OrchestrationEvaluator:
                 return None
 
             orchestration_pattern = orch_attrs.get("pattern")
-            agents_str = orch_attrs.get("agents_used", "")
+            agents_str = orch_attrs.get("agent_sequence", orch_attrs.get("agents_used", ""))
             agent_sequence = agents_str.split(",") if agents_str else []
 
             execution_order_str = orch_attrs.get("execution_order", "")
