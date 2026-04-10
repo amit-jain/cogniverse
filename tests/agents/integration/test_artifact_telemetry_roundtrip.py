@@ -500,3 +500,161 @@ class TestDSPyAgentArtifactRoundTrip:
         assert demos_after[1]["query"] == "latest NVIDIA GPU benchmarks"
         assert "NVIDIA|ORG|0.95" in demos_after[1]["entities"]
         assert demos_after[1]["entity_types"] == "ORG,TECHNOLOGY"
+
+    @pytest.mark.asyncio
+    async def test_routing_agent_loads_real_dspy_state(self, real_provider):
+        """Save routing DSPy state → RoutingAgent loads it → module state changes.
+
+        Uses real DSPyAdvancedRoutingModule. The module has key 'router.predict'.
+        Verifies demo injection survives the full Phoenix round-trip.
+        """
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "routing-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Create real routing module to get valid state structure
+        # (mock only _configure_dspy to avoid needing an LLM endpoint)
+        def _mock_configure_dspy(self_agent, deps_arg):
+            self_agent._dspy_lm = MagicMock()
+
+        with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
+            agent_for_state = RoutingAgent(
+                deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
+            )
+
+        default_state = agent_for_state.routing_module.dump_state()
+        assert "router.predict" in default_state
+        assert default_state["router.predict"]["demos"] == []
+
+        # Inject demos that simulate real routing decisions
+        optimized_state = json.loads(json.dumps(default_state, default=str))
+        optimized_state["router.predict"]["demos"] = [
+            {
+                "query": "find basketball highlights",
+                "context": "",
+                "primary_intent": "video_search",
+                "needs_video_search": "True",
+                "recommended_agent": "search_agent",
+                "confidence": "0.9",
+            },
+            {
+                "query": "compare AI papers with lecture notes",
+                "context": "",
+                "primary_intent": "compare",
+                "needs_video_search": "True",
+                "recommended_agent": "orchestrator_agent",
+                "confidence": "0.85",
+            },
+        ]
+
+        # Save to real Phoenix
+        state_json = json.dumps(optimized_state, default=str)
+        dataset_id = await mgr.save_blob("model", "routing_decision", state_json)
+        assert dataset_id
+
+        # Verify round-trip through Phoenix preserves demo content
+        loaded_json = await mgr.load_blob("model", "routing_decision")
+        assert loaded_json is not None
+        loaded_state = json.loads(loaded_json)
+        assert len(loaded_state["router.predict"]["demos"]) == 2
+        assert loaded_state["router.predict"]["demos"][0]["recommended_agent"] == "search_agent"
+        assert loaded_state["router.predict"]["demos"][1]["primary_intent"] == "compare"
+
+        # Create fresh agent and verify 0 demos
+        with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
+            agent = RoutingAgent(
+                deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
+            )
+
+        before = agent.routing_module.dump_state()
+        assert before["router.predict"]["demos"] == []
+
+        # Load artifact from real Phoenix
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Verify the routing module now has the 2 demos
+        after = agent.routing_module.dump_state()
+        demos_after = after["router.predict"]["demos"]
+        assert len(demos_after) == 2, (
+            f"Routing agent should have 2 demos, got {len(demos_after)}"
+        )
+        assert demos_after[0]["query"] == "find basketball highlights"
+        assert demos_after[0]["recommended_agent"] == "search_agent"
+        assert demos_after[0]["primary_intent"] == "video_search"
+        assert demos_after[1]["query"] == "compare AI papers with lecture notes"
+        assert demos_after[1]["recommended_agent"] == "orchestrator_agent"
+        assert demos_after[1]["confidence"] == "0.85"
+
+
+class TestDispatcherArtifactWiring:
+    """Verify AgentDispatcher.dispatch() triggers _load_artifact on agents."""
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_generic_path_calls_load_artifact(self, real_provider):
+        """Generic agent dispatch path should inject tenant and call _load_artifact."""
+        import json
+        from pathlib import Path
+
+        from cogniverse_core.common.agent_models import AgentEndpoint
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        tenant_id = "dispatcher-wiring-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save a real artifact that the entity extraction agent will load
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+
+        module = EntityExtractionModule()
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        state["extractor.predict"]["demos"] = [
+            {
+                "query": "dispatcher wiring test query",
+                "entities": "WIRING_TEST|CONCEPT|1.0",
+                "entity_types": "CONCEPT",
+            },
+        ]
+        await mgr.save_blob("model", "entity_extraction", json.dumps(state, default=str))
+
+        # Set up dispatcher with real dependencies (same as runtime startup)
+        config_manager = create_default_config_manager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        registry = AgentRegistry(
+            tenant_id="default", config_manager=config_manager
+        )
+
+        registry.register_agent(AgentEndpoint(
+            name="entity_extraction_agent",
+            url="http://localhost:8010",
+            capabilities=["entity_extraction", "named_entity_recognition"],
+        ))
+
+        dispatcher = AgentDispatcher(
+            agent_registry=registry,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+        # Dispatch — this should create the agent, inject telemetry +
+        # _artifact_tenant_id, and call _load_artifact()
+        result = await dispatcher.dispatch(
+            agent_name="entity_extraction_agent",
+            query="test entity extraction",
+            context={"tenant_id": tenant_id},
+        )
+
+        assert result["status"] == "success", (
+            f"Dispatch failed: {result}"
+        )
+        assert result["agent"] == "entity_extraction_agent"
