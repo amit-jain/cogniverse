@@ -322,9 +322,10 @@ class TestGatewayAgentArtifactRoundTrip:
     async def test_gateway_threshold_affects_routing_decision(self, real_provider):
         """Changing fast_path_confidence_threshold changes which queries go to orchestrator.
 
-        A query that produces a GLiNER confidence of ~0.5 should be:
-        - "simple" with default threshold 0.4 (0.5 > 0.4)
-        - "complex" with raised threshold 0.8 (0.5 < 0.8)
+        Uses real GLiNER model — no mocks. "cat videos on youtube" produces
+        GLiNER confidence ~0.8 for video_content. With default threshold 0.4,
+        that's "simple" (0.8 > 0.4). With artifact threshold 0.95, that's
+        "complex" (0.8 < 0.95) → routed to orchestrator_agent.
         """
         import json
 
@@ -347,47 +348,60 @@ class TestGatewayAgentArtifactRoundTrip:
             "config", "gateway_thresholds", json.dumps(high_threshold_config)
         )
 
-        # Create agent with default thresholds, run a borderline query
-        deps_default = GatewayDeps()
-        agent_default = GatewayAgent(deps=deps_default)
-        # Mock GLiNER to return a medium-confidence entity
-        from unittest.mock import MagicMock
-        mock_model = MagicMock()
-        mock_model.predict_entities.return_value = [
-            {"text": "videos", "label": "video_content", "score": 0.6}
-        ]
-        agent_default._gliner_model = mock_model
+        # Query that real GLiNER scores ~0.8 for video_content
+        test_query = "cat videos on youtube"
+
+        # --- Agent with DEFAULT thresholds (0.4) ---
+        agent_default = GatewayAgent(deps=GatewayDeps())
+        # Real GLiNER model loads on first use (lazy)
 
         result_default = await agent_default._process_impl(
-            GatewayInput(query="find videos")
+            GatewayInput(query=test_query)
         )
-        # With default 0.4 threshold, confidence 0.6 should be "simple"
+        # GLiNER scores ~0.8 for this query. With default 0.4 → simple
         assert result_default.complexity == "simple", (
-            f"With default 0.4 threshold, 0.6 confidence should be simple, "
-            f"got {result_default.complexity}"
+            f"With default 0.4 threshold, '{test_query}' should be simple, "
+            f"got {result_default.complexity} (confidence={result_default.confidence:.3f})"
+        )
+        assert result_default.modality == "video"
+        assert result_default.routed_to == "search_agent"
+        # Capture the real confidence for diagnostic assertions
+        real_confidence = result_default.confidence
+        assert real_confidence > 0.4, (
+            f"GLiNER confidence {real_confidence:.3f} should be > 0.4 for '{test_query}'"
+        )
+        assert real_confidence < 0.95, (
+            f"GLiNER confidence {real_confidence:.3f} should be < 0.95 for '{test_query}'"
         )
 
-        # Now create another agent and load the high-threshold artifact
-        deps_optimized = GatewayDeps()
-        agent_optimized = GatewayAgent(deps=deps_optimized)
-        agent_optimized._gliner_model = mock_model
+        # --- Agent with OPTIMIZED thresholds (0.95 from artifact) ---
+        agent_optimized = GatewayAgent(deps=GatewayDeps())
+        # Share the already-loaded GLiNER model (avoid re-download)
+        agent_optimized._gliner_model = agent_default._gliner_model
 
         tm = get_telemetry_manager()
         agent_optimized.telemetry_manager = tm
         agent_optimized._artifact_tenant_id = tenant_id
         agent_optimized._load_artifact()
 
-        assert agent_optimized.deps.fast_path_confidence_threshold == 0.95
+        assert agent_optimized.deps.fast_path_confidence_threshold == 0.95, (
+            f"Expected 0.95 from artifact, got {agent_optimized.deps.fast_path_confidence_threshold}"
+        )
 
         result_optimized = await agent_optimized._process_impl(
-            GatewayInput(query="find videos")
+            GatewayInput(query=test_query)
         )
-        # With 0.95 threshold, 0.6 confidence should be "complex"
+        # Same query, same GLiNER model, but 0.95 threshold → complex
         assert result_optimized.complexity == "complex", (
-            f"With 0.95 threshold, 0.6 confidence should be complex, "
-            f"got {result_optimized.complexity}"
+            f"With 0.95 threshold, '{test_query}' (confidence={result_optimized.confidence:.3f}) "
+            f"should be complex, got {result_optimized.complexity}"
         )
         assert result_optimized.routed_to == "orchestrator_agent"
+        # Confidence should be identical — same query, same model
+        assert abs(result_optimized.confidence - real_confidence) < 0.01, (
+            f"Same query should produce same confidence: "
+            f"default={real_confidence:.3f}, optimized={result_optimized.confidence:.3f}"
+        )
 
 
 class TestDSPyAgentArtifactRoundTrip:
