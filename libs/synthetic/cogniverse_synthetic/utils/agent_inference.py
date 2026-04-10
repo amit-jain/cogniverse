@@ -93,10 +93,8 @@ class AgentInferrer:
             Agent name
         """
         modality_upper = modality.upper()
-        agent = self.MODALITY_TO_AGENT.get(
-            modality_upper,
-            "video_search_agent",  # Default fallback
-        )
+        default = self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
+        agent = self.MODALITY_TO_AGENT.get(modality_upper, default)
 
         logger.debug(f"Inferred agent '{agent}' from modality '{modality}'")
         return agent
@@ -126,13 +124,13 @@ class AgentInferrer:
 
         # Infer modality from schema/embedding
         if "video" in schema_name or "video" in embedding_type:
-            return "video_search_agent"
+            return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
         elif "document" in schema_name or "text" in embedding_type:
-            return "document_agent"
+            return self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
         elif "image" in schema_name or "image" in embedding_type:
-            return "image_search_agent"
+            return self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
         elif "audio" in schema_name or "audio" in embedding_type:
-            return "audio_search_agent"
+            return self.MODALITY_TO_AGENT.get("AUDIO", "audio_search_agent")
 
         # Check description for content type hints
         description = content.get(
@@ -216,19 +214,18 @@ class AgentInferrer:
         if any(word in task_lower for word in ["find", "search", "locate", "show"]):
             # Determine modality from keywords
             if any(word in task_lower for word in ["video", "tutorial", "demo"]):
-                return "video_search_agent"
+                return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
             elif any(word in task_lower for word in ["document", "paper", "article"]):
-                return "document_agent"
+                return self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
             elif any(word in task_lower for word in ["image", "diagram", "chart"]):
-                return "image_search_agent"
+                return self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
             elif any(word in task_lower for word in ["audio", "podcast", "recording"]):
-                return "audio_search_agent"
+                return self.MODALITY_TO_AGENT.get("AUDIO", "audio_search_agent")
             else:
-                # Default to video search
-                return "video_search_agent"
+                return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
 
         # Default
-        return "video_search_agent"
+        return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
 
     def get_compatible_agents(self, modality: str) -> List[str]:
         """
@@ -246,7 +243,7 @@ class AgentInferrer:
             if modality.upper() in info["modalities"]:
                 compatible.append(agent_name)
 
-        return compatible if compatible else ["video_search_agent"]
+        return compatible if compatible else [self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")]
 
     def validate_agent_sequence(self, agent_sequence: List[str]) -> bool:
         """
@@ -268,12 +265,8 @@ class AgentInferrer:
                 return False
 
         # Check that primary agent (search) comes before secondary agents (summarizer, etc.)
-        search_agents = {
-            "video_search_agent",
-            "document_agent",
-            "image_search_agent",
-            "audio_search_agent",
-        }
+        # Derived from config — all modality-mapped agents are considered search agents
+        search_agents = set(self.MODALITY_TO_AGENT.values())
         secondary_agents = {"summarizer", "detailed_report"}
 
         # If we have secondary agents, should have a search agent first
