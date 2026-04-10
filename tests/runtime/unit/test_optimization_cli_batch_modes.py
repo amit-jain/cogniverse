@@ -359,8 +359,8 @@ class TestGatewayThresholdAnalysis:
 
         assert result["status"] == "success"
         thresholds = result["thresholds"]
-        # Threshold should have been raised from default 0.7
-        assert thresholds["fast_path_confidence_threshold"] > 0.7
+        # Threshold should have been raised from default 0.4
+        assert thresholds["fast_path_confidence_threshold"] > 0.4
         assert "artifact_id" in result
 
     @pytest.mark.asyncio
@@ -396,9 +396,9 @@ class TestGatewayThresholdAnalysis:
             )
 
         assert result["status"] == "success"
-        # Threshold should stay at default since no high error rates
+        # Threshold should stay at default (0.4) since no high error rates
         threshold = result["thresholds"]["fast_path_confidence_threshold"]
-        assert 0.6 <= threshold <= 0.75
+        assert 0.3 <= threshold <= 0.5
 
 
 # ---------------------------------------------------------------------------

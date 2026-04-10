@@ -27,46 +27,6 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 
-async def run_optimization(mode: str) -> dict:
-    """Run optimization in the specified mode."""
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    config_manager = create_default_config_manager()
-
-    telemetry_manager = get_telemetry_manager()
-    telemetry_provider = telemetry_manager.get_provider(tenant_id="default")
-
-    from cogniverse_agents.routing.optimization_orchestrator import (
-        OptimizationOrchestrator,
-    )
-
-    llm_config = config_manager.get_llm_config()
-    llm_endpoint = llm_config.resolve("optimization")
-
-    orchestrator = OptimizationOrchestrator(
-        llm_config=llm_endpoint,
-        telemetry_provider=telemetry_provider,
-        tenant_id="default",
-    )
-
-    if mode == "once":
-        return await orchestrator.run_once()
-    elif mode == "full":
-        result = await orchestrator.run_once()
-        return result
-    elif mode == "dspy":
-        from cogniverse_agents.routing.optimizer import AdvancedRoutingOptimizer
-
-        optimizer = AdvancedRoutingOptimizer(
-            llm_config=llm_endpoint,
-            config_manager=config_manager,
-        )
-        return await optimizer.run_optimization()
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
-
-
 async def run_triggered_optimization(
     tenant_id: str,
     agents: list[str],
@@ -849,7 +809,7 @@ async def run_gateway_thresholds_optimization(
     # If simple queries have high error rate, raise the fast-path threshold
     # (send more queries to orchestrator). If complex queries rarely fail,
     # we can lower it to keep more queries on the fast path.
-    current_threshold = 0.7  # default from GatewayDeps
+    current_threshold = 0.4  # default from GatewayDeps.fast_path_confidence_threshold
     mean_confidence = float(confidences.mean())
 
     if simple_error_rate > 0.2:
@@ -1066,9 +1026,8 @@ async def run_entity_extraction_optimization(
     DSPy module, and saves the optimized module as an artifact.
     """
     from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.telemetry.config import SPAN_NAME_ENTITY_EXTRACTION
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    _SPAN_NAME_ENTITY_EXTRACTION = "cogniverse.entity_extraction"
 
     logger.info(
         "Starting entity extraction optimization for tenant=%s lookback=%dh",
@@ -1081,7 +1040,7 @@ async def run_entity_extraction_optimization(
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, _SPAN_NAME_ENTITY_EXTRACTION, lookback_hours
+        telemetry_provider, tenant_id, SPAN_NAME_ENTITY_EXTRACTION, lookback_hours
     )
 
     if spans_df.empty:
@@ -1203,12 +1162,8 @@ async def run_routing_optimization(
     DSPyAdvancedRoutingModule, and saves the optimized module as an artifact.
     """
     from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    try:
-        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-    except ImportError:
-        SPAN_NAME_ROUTING = "cogniverse.routing"
 
     logger.info(
         "Starting routing optimization for tenant=%s lookback=%dh",
@@ -1449,7 +1404,7 @@ def main():
             )
         )
     else:
-        result = asyncio.run(run_optimization(args.mode))
+        raise ValueError(f"Unknown mode: {args.mode}")
 
     print(json.dumps(result, indent=2, default=str))
     sys.exit(0)

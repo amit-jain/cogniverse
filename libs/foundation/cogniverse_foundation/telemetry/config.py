@@ -16,6 +16,7 @@ SPAN_NAME_ORCHESTRATION = "cogniverse.orchestration"
 SPAN_NAME_QUERY_ENHANCEMENT = "cogniverse.query_enhancement"
 SPAN_NAME_GATEWAY = "cogniverse.gateway"
 SPAN_NAME_PROFILE_SELECTION = "cogniverse.profile_selection"
+SPAN_NAME_ENTITY_EXTRACTION = "cogniverse.entity_extraction"
 
 # Service name constants
 SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"

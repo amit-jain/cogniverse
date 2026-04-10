@@ -205,10 +205,17 @@ spec:
   successfulJobsHistoryLimit: 5
   failedJobsHistoryLimit: 3
   workflowSpec:
-    entrypoint: gateway-optimization
+    entrypoint: daily-gateway-pipeline
     serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
     templates:
-    - name: gateway-optimization
+    - name: daily-gateway-pipeline
+      steps:
+      - - name: optimize-gateway
+          template: run-gateway
+      - - name: restart-runtime
+          template: restart-deployment
+
+    - name: run-gateway
       container:
         image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
         imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
@@ -239,6 +246,18 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
+
+    - name: restart-deployment
+      container:
+        image: bitnami/kubectl:latest
+        command: ["kubectl"]
+        args:
+          - "rollout"
+          - "restart"
+          - "deployment/{{ $fullName }}-runtime"
+          - "-n"
+          - "{{ .Release.Namespace }}"
+
       volumes:
       - name: config
         configMap:
