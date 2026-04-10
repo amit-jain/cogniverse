@@ -505,8 +505,10 @@ async def run_simba_optimization(
 
     # Compile DSPy module
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+    from cogniverse_foundation.config.utils import get_config
 
-    llm_config = config_manager.get_llm_config()
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
     dspy.configure(
@@ -915,8 +917,10 @@ async def run_profile_optimization(
 
     # Compile DSPy module
     from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+    from cogniverse_foundation.config.utils import get_config
 
-    llm_config = config_manager.get_llm_config()
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
     dspy.configure(

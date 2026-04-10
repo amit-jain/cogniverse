@@ -261,6 +261,11 @@ class AgentDispatcher:
         agent = agent_cls(deps=deps)
         self._init_agent_memory(agent, agent_name, tenant_id)
 
+        # Inject global TelemetryManager for span emission
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        agent.telemetry_manager = get_telemetry_manager()
+
         # Find the Input class — convention: same module, class name ends with "Input"
         input_cls = None
         for attr_name in dir(module):
@@ -549,6 +554,10 @@ class AgentDispatcher:
         if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
             deps = GatewayDeps()
             self._gateway_agent = GatewayAgent(deps=deps)
+            # Inject global TelemetryManager for span emission
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+            self._gateway_agent.telemetry_manager = get_telemetry_manager()
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
         result = await self._gateway_agent._process_impl(input_data)
@@ -607,6 +616,8 @@ class AgentDispatcher:
             config_manager=self._config_manager,
         )
         self._init_agent_memory(agent, "orchestrator_agent", tenant_id)
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+        agent.telemetry_manager = get_telemetry_manager()
 
         input_data = OrchestratorInput(
             query=query,
