@@ -58,10 +58,63 @@ PROFILE_QUERIES = [
     "medical education videos", "business strategy talks",
 ]
 
+ENTITY_QUERIES = [
+    "Obama speaking at MIT about climate change",
+    "Tesla cars driving in San Francisco near Google",
+    "Python programming with TensorFlow for deep learning",
+    "Google acquiring DeepMind in London",
+    "Elon Musk presenting at Stanford University",
+    "Microsoft Azure running PyTorch models",
+    "Amazon AWS hosting Kubernetes clusters",
+    "Apple releasing new MacBook with M4 chip",
+    "NASA launching Artemis mission to Mars",
+    "UNESCO declaring World Heritage sites in Japan",
+    "Netflix producing documentaries about coral reefs",
+    "OpenAI releasing GPT models in San Francisco",
+    "Toyota manufacturing robots in Nagoya factory",
+    "Samsung developing OLED displays in Seoul",
+    "SpaceX Starship launching from Texas",
+    "MIT researchers publishing papers on quantum computing",
+    "Harvard Medical School studying gene therapy",
+    "CERN operating Large Hadron Collider in Geneva",
+    "Boeing testing autonomous drones in Seattle",
+    "Nvidia designing GPU architectures in Santa Clara",
+]
+
+GATEWAY_QUERIES = [
+    "find videos about machine learning",
+    "search for video content about AI",
+    "show me cooking videos",
+    "find images of neural network architectures",
+    "listen to podcasts about deep learning",
+    "find PDF documents about Python",
+    "show me robotics tutorials",
+    "search for audio recordings of bird songs",
+    "find basketball highlights",
+    "search for video content about climate change",
+    "find documentary footage of wildlife",
+    "search for lecture recordings about physics",
+    "show me guitar tutorial videos",
+    "find photography editing tutorials",
+    "search for meditation audio guides",
+    "find cooking recipe demonstrations",
+    "search for language learning content",
+    "show me fitness workout videos",
+    "find architecture design presentations",
+    "search for music theory lectures",
+]
+
 COMPLEX_QUERIES = [
     "analyze the video transcripts for key themes",
     "compare videos and documents about neural networks then summarize",
     "investigate the relationship between AI research papers and video tutorials",
+    "evaluate the quality of machine learning course videos and create a report",
+    "synthesize findings from multiple robotics engineering lectures",
+    "analyze trends in deep learning research and summarize progress",
+    "compare cooking technique videos then write a detailed guide",
+    "review all physics lecture recordings and identify common topics",
+    "examine the relationship between AI ethics papers and tutorial content",
+    "analyze video transcripts about climate change and create a summary report",
 ]
 
 
@@ -103,64 +156,32 @@ def generate_spans_for_batch_jobs():
     except Exception:
         pytest.skip("Runtime not available")
 
-    # Generate gateway spans (simple queries go through gateway)
-    simple_queries = [
-        "find videos about machine learning",
-        "search for video content about AI",
-        "show me cooking videos",
-        "find images of neural network architectures",
-        "listen to podcasts about deep learning",
-    ]
-    for q in simple_queries:
+    # Generate 100+ spans for EVERY agent type.
+    # Each batch job needs enough training data for BootstrapFewShot
+    # to produce demos. 100 spans → ~8 demos in practice.
+
+    # Gateway spans (100+) — simple queries through gateway
+    for i in range(100):
+        q = f"{GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]} run {i}"
         _call_agent("gateway_agent", q)
 
-    # Generate entity extraction spans (direct calls)
-    entity_queries = [
-        "Obama speaking at MIT about climate change",
-        "Tesla cars driving in San Francisco",
-        "Python programming with TensorFlow",
-        "Google acquiring DeepMind in London",
-        "Elon Musk presenting at Stanford University",
-    ]
-    for q in entity_queries:
+    # Entity extraction spans (100+)
+    for i in range(100):
+        q = f"{ENTITY_QUERIES[i % len(ENTITY_QUERIES)]} case {i}"
         _call_agent("entity_extraction_agent", q)
 
-    # Generate search spans (direct calls — produces search.execute,
-    # encoder.colpali.encode, search_service.search spans)
-    search_queries = [
-        "machine learning tutorials",
-        "cooking recipe videos",
-        "robotics engineering demos",
-        "music theory lectures",
-        "wildlife nature footage",
-    ]
-    for q in search_queries:
-        _call_agent("search_agent", q)
-
-    # Generate routing spans (routing goes through gateway in the new
-    # architecture, producing cogniverse.routing spans along the way)
-    routing_queries = [
-        "find videos about deep learning",
-        "search for audio recordings",
-        "show me image galleries",
-        "find document archives",
-        "search for video content",
-    ]
-    for q in routing_queries:
-        _call_agent("routing_agent", q)
-
-    # Generate query enhancement spans (100+)
+    # Query enhancement spans (100+)
     for i in range(100):
         q = f"{ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]} variant {i}"
         _call_agent("query_enhancement_agent", q)
 
-    # Generate profile selection spans (100+)
+    # Profile selection spans (100+)
     for i in range(100):
         q = f"{PROFILE_QUERIES[i % len(PROFILE_QUERIES)]} variant {i}"
         _call_agent("profile_selection_agent", q)
 
-    # Generate orchestration spans (complex queries — these also produce
-    # entity_extraction, routing, and search spans via the A2A pipeline)
+    # Orchestration spans (10+ complex queries — each also produces
+    # entity_extraction, routing, and search spans via A2A pipeline)
     for q in COMPLEX_QUERIES:
         _call_agent("gateway_agent", q)
 
