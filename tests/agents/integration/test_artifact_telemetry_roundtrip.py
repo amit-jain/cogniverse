@@ -240,3 +240,244 @@ class TestOptimizerExperienceRoundTrip:
         assert len(optimizer2.experiences) == 1
         assert optimizer2.experiences[0].query == "find cats in videos"
         assert optimizer2.experiences[0].chosen_agent == "video_search"
+
+
+# ---------------------------------------------------------------------------
+# Agent artifact loading round-trip — real Phoenix, real agents
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayAgentArtifactRoundTrip:
+    """Save threshold config to real Phoenix → GatewayAgent loads it → routing changes."""
+
+    @pytest.mark.asyncio
+    async def test_gateway_loads_real_artifact_and_applies_thresholds(self, real_provider):
+        """Full round-trip: save thresholds → load via _load_artifact → verify deps changed."""
+        import json
+
+        from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+        tenant_id = "gateway-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save a threshold config with specific values different from defaults
+        optimized_config = {
+            "fast_path_confidence_threshold": 0.65,
+            "gliner_threshold": 0.42,
+        }
+        dataset_id = await mgr.save_blob(
+            "config", "gateway_thresholds", json.dumps(optimized_config)
+        )
+        assert dataset_id, "Failed to save threshold config to Phoenix"
+
+        # Verify the blob is loadable (sanity check)
+        loaded_blob = await mgr.load_blob("config", "gateway_thresholds")
+        assert loaded_blob is not None
+        assert json.loads(loaded_blob) == optimized_config
+
+        # Create a GatewayAgent with defaults
+        deps = GatewayDeps()
+        agent = GatewayAgent(deps=deps)
+        assert agent.deps.fast_path_confidence_threshold == 0.4  # default
+        assert agent.deps.gliner_threshold == 0.3  # default
+
+        # Inject telemetry and artifact tenant (simulates what dispatcher does)
+        tm = TelemetryManager.get_instance()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+
+        # Load artifact — this should update deps
+        agent._load_artifact()
+
+        # Verify the agent now has the optimized thresholds, not defaults
+        assert agent.deps.fast_path_confidence_threshold == 0.65, (
+            f"Expected 0.65, got {agent.deps.fast_path_confidence_threshold} — "
+            "artifact loading did not apply the threshold"
+        )
+        assert agent.deps.gliner_threshold == 0.42, (
+            f"Expected 0.42, got {agent.deps.gliner_threshold} — "
+            "artifact loading did not apply the gliner threshold"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gateway_with_no_artifact_keeps_defaults(self, real_provider):
+        """Agent without an artifact in Phoenix should keep default thresholds."""
+        from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+        deps = GatewayDeps()
+        agent = GatewayAgent(deps=deps)
+
+        tm = TelemetryManager.get_instance()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = "nonexistent-tenant-xyz"
+
+        agent._load_artifact()
+
+        assert agent.deps.fast_path_confidence_threshold == 0.4
+        assert agent.deps.gliner_threshold == 0.3
+
+    @pytest.mark.asyncio
+    async def test_gateway_threshold_affects_routing_decision(self, real_provider):
+        """Changing fast_path_confidence_threshold changes which queries go to orchestrator.
+
+        A query that produces a GLiNER confidence of ~0.5 should be:
+        - "simple" with default threshold 0.4 (0.5 > 0.4)
+        - "complex" with raised threshold 0.8 (0.5 < 0.8)
+        """
+        import json
+
+        from cogniverse_agents.gateway_agent import (
+            GatewayAgent,
+            GatewayDeps,
+            GatewayInput,
+        )
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+        tenant_id = "gateway-routing-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save a HIGH threshold that pushes borderline queries to orchestrator
+        high_threshold_config = {
+            "fast_path_confidence_threshold": 0.95,
+            "gliner_threshold": 0.3,
+        }
+        await mgr.save_blob(
+            "config", "gateway_thresholds", json.dumps(high_threshold_config)
+        )
+
+        # Create agent with default thresholds, run a borderline query
+        deps_default = GatewayDeps()
+        agent_default = GatewayAgent(deps=deps_default)
+        # Mock GLiNER to return a medium-confidence entity
+        from unittest.mock import MagicMock
+        mock_model = MagicMock()
+        mock_model.predict_entities.return_value = [
+            {"text": "videos", "label": "video_content", "score": 0.6}
+        ]
+        agent_default._gliner_model = mock_model
+
+        result_default = await agent_default._process_impl(
+            GatewayInput(query="find videos")
+        )
+        # With default 0.4 threshold, confidence 0.6 should be "simple"
+        assert result_default.complexity == "simple", (
+            f"With default 0.4 threshold, 0.6 confidence should be simple, "
+            f"got {result_default.complexity}"
+        )
+
+        # Now create another agent and load the high-threshold artifact
+        deps_optimized = GatewayDeps()
+        agent_optimized = GatewayAgent(deps=deps_optimized)
+        agent_optimized._gliner_model = mock_model
+
+        tm = TelemetryManager.get_instance()
+        agent_optimized.telemetry_manager = tm
+        agent_optimized._artifact_tenant_id = tenant_id
+        agent_optimized._load_artifact()
+
+        assert agent_optimized.deps.fast_path_confidence_threshold == 0.95
+
+        result_optimized = await agent_optimized._process_impl(
+            GatewayInput(query="find videos")
+        )
+        # With 0.95 threshold, 0.6 confidence should be "complex"
+        assert result_optimized.complexity == "complex", (
+            f"With 0.95 threshold, 0.6 confidence should be complex, "
+            f"got {result_optimized.complexity}"
+        )
+        assert result_optimized.routed_to == "orchestrator_agent"
+
+
+class TestDSPyAgentArtifactRoundTrip:
+    """Save DSPy module state to real Phoenix → agent loads it → module state changes."""
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_loads_real_dspy_state(self, real_provider):
+        """Save a DSPy module state → EntityExtractionAgent loads it → state applied."""
+        import json
+        from unittest.mock import patch
+
+        from cogniverse_agents.entity_extraction_agent import (
+            EntityExtractionAgent,
+            EntityExtractionDeps,
+            EntityExtractionModule,
+        )
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+        tenant_id = "entity-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Create a real DSPy module, get its default state, mutate it to
+        # simulate optimization, and save the mutated state as an artifact
+        with patch("dspy.ChainOfThought"):
+            original_module = EntityExtractionModule()
+        default_state = original_module.dump_state()
+
+        # Inject fake demos into the state to simulate optimization output
+        optimized_state = default_state.copy()
+        for key in optimized_state:
+            if "predict" in key.lower():
+                optimized_state[key] = dict(optimized_state[key])
+                optimized_state[key]["demos"] = [
+                    {
+                        "query": "find ML transformer papers",
+                        "entities": "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85",
+                        "entity_types": "CONCEPT",
+                    },
+                    {
+                        "query": "latest NVIDIA GPU benchmarks",
+                        "entities": "NVIDIA|ORG|0.95\nGPU|TECHNOLOGY|0.8",
+                        "entity_types": "ORG,TECHNOLOGY",
+                    },
+                ]
+
+        # Save to real Phoenix
+        state_json = json.dumps(optimized_state, default=str)
+        dataset_id = await mgr.save_blob("model", "entity_extraction", state_json)
+        assert dataset_id
+
+        # Verify blob round-trips correctly
+        loaded_json = await mgr.load_blob("model", "entity_extraction")
+        assert loaded_json is not None
+        loaded_state = json.loads(loaded_json)
+
+        # Find the predict key and verify demos survived the round-trip
+        predict_key = next(k for k in loaded_state if "predict" in k.lower())
+        assert len(loaded_state[predict_key]["demos"]) == 2
+        assert loaded_state[predict_key]["demos"][0]["query"] == "find ML transformer papers"
+        assert "NVIDIA" in loaded_state[predict_key]["demos"][1]["entities"]
+
+        # Now test that the agent loads this artifact correctly
+        with patch("dspy.ChainOfThought"):
+            deps = EntityExtractionDeps()
+            agent = EntityExtractionAgent(deps=deps)
+
+        # Agent's module should have empty demos initially
+        agent_state_before = agent.dspy_module.dump_state()
+        predict_key_before = next(
+            (k for k in agent_state_before if "predict" in k.lower()), None
+        )
+        if predict_key_before:
+            demos_before = agent_state_before[predict_key_before].get("demos", [])
+            # Default module has 0 demos
+            assert len(demos_before) == 0, (
+                f"Fresh module should have 0 demos, got {len(demos_before)}"
+            )
+
+        # Load artifact
+        tm = TelemetryManager.get_instance()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Agent's module should now have the 2 demos from the artifact
+        agent_state_after = agent.dspy_module.dump_state()
+        predict_key_after = next(k for k in agent_state_after if "predict" in k.lower())
+        demos_after = agent_state_after[predict_key_after].get("demos", [])
+        assert len(demos_after) == 2, (
+            f"Agent should have loaded 2 demos from artifact, got {len(demos_after)}"
+        )
+        assert demos_after[0]["query"] == "find ML transformer papers"
+        assert "NVIDIA" in demos_after[1]["entities"]

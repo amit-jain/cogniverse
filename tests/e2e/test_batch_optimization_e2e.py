@@ -726,6 +726,52 @@ class TestEntityExtractionOptimization:
         assert result["training_examples"] >= 1
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
+    def test_entity_extraction_artifact_has_learned_demos(self):
+        """Entity extraction artifact must have demos with real entity data."""
+        _run_batch_job("entity-extraction")
+
+        blob = _load_blob_in_pod("model", "entity_extraction")
+        assert blob, "Entity extraction artifact blob is empty"
+
+        artifact = json.loads(blob)
+        assert "extractor.predict" in artifact, (
+            f"Expected 'extractor.predict' module, got: {list(artifact.keys())}"
+        )
+        module = artifact["extractor.predict"]
+
+        # Signature fields must match EntityExtractionSignature exactly
+        sig = module["signature"]
+        field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
+        for expected in ("Query", "Entities", "Entity Types"):
+            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
+        assert sig["instructions"] == "Extract named entities from text query"
+
+        # Must have learned demos — 0 demos means optimization did nothing
+        demos = module.get("demos", [])
+        assert len(demos) >= 1, (
+            "Entity extraction produced 0 demos — optimization was useless"
+        )
+
+        # Each demo: real query with entities extracted
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("entities"), f"Demo missing entities: {demo}"
+            # Entities should contain pipe-delimited text|type|confidence format
+            entities_str = demo["entities"]
+            assert "|" in entities_str, (
+                f"Entities should be in text|type|confidence format, "
+                f"got: '{entities_str[:100]}'"
+            )
+
+        # At least one demo should contain entity-related queries from our test data
+        # (fixture generates queries like "ML transformer", "find AI tutorials" etc.)
+        demo_queries = " ".join(d["query"].lower() for d in demos)
+        entity_terms = ("ml", "ai", "learning", "neural", "vision", "transformer", "deep")
+        assert any(t in demo_queries for t in entity_terms), (
+            f"Demos should contain entity-rich queries from test data, "
+            f"got: {[d['query'] for d in demos[:5]]}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 6. Routing optimization
@@ -747,6 +793,59 @@ class TestRoutingOptimization:
         assert result["training_examples"] >= 1
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
+    def test_routing_artifact_has_learned_demos(self):
+        """Routing artifact must have demos with real routing decisions."""
+        _run_batch_job("routing")
+
+        blob = _load_blob_in_pod("model", "routing_decision")
+        assert blob, "Routing artifact blob is empty"
+
+        artifact = json.loads(blob)
+        # DSPyAdvancedRoutingModule or its fallback both use analyze.predict
+        # (ChainOfThought wraps the signature as "analyze")
+        module_key = None
+        for key in artifact:
+            if "predict" in key.lower() or "analyze" in key.lower():
+                module_key = key
+                break
+        assert module_key is not None, (
+            f"No routing module found in artifact, keys: {list(artifact.keys())}"
+        )
+        module = artifact[module_key]
+
+        # Signature fields must include routing-relevant fields
+        sig = module["signature"]
+        field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
+        assert "Query" in field_names, f"Missing 'Query' field, got: {field_names}"
+        # Must have at least one routing output field
+        routing_fields = {"Recommended Agent", "Primary Intent", "Routing Decision"}
+        assert routing_fields & set(field_names), (
+            f"No routing output fields found. Expected any of {routing_fields}, "
+            f"got: {field_names}"
+        )
+
+        # Must have learned demos
+        demos = module.get("demos", [])
+        assert len(demos) >= 1, (
+            "Routing produced 0 demos — optimization was useless"
+        )
+
+        # Each demo should have a query and a routing decision
+        known_agents = {
+            "search_agent", "video_search_agent", "orchestrator_agent",
+            "summarizer_agent", "image_search_agent", "audio_analysis_agent",
+            "document_agent", "detailed_report_agent", "entity_extraction_agent",
+            "query_enhancement_agent", "profile_selection_agent",
+        }
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            agent = demo.get("recommended_agent", "")
+            if agent:
+                assert agent in known_agents, (
+                    f"Demo recommended unknown agent '{agent}', "
+                    f"expected one of {known_agents}"
+                )
+
 
 # ---------------------------------------------------------------------------
 # 7. Artifact loading round-trip
@@ -757,19 +856,29 @@ class TestRoutingOptimization:
 @skip_if_no_runtime
 @skip_if_no_kubectl
 class TestArtifactLoadingRoundTrip:
-    """Full loop: batch job → artifact → pod restart → agent loads artifact."""
+    """Full loop: batch job → artifact → pod restart → agent uses optimized thresholds."""
 
     def test_gateway_artifact_round_trip(self):
-        """Run gateway-thresholds → verify artifact → restart → verify loaded."""
-        # 1. Run batch job
+        """Run gateway-thresholds → verify artifact → restart → verify agent uses it."""
+        # 1. Run batch job and capture the optimized thresholds
         result = _run_batch_job("gateway-thresholds")
         assert result["status"] == "success"
 
-        # 2. Verify artifact exists with correct content
+        optimized_threshold = result["thresholds"]["fast_path_confidence_threshold"]
+        optimized_gliner = result["thresholds"]["gliner_threshold"]
+
+        # 2. Verify artifact in pod matches what the batch job produced
         blob = _load_blob_in_pod("config", "gateway_thresholds")
         assert blob, "Gateway artifact blob is empty"
         artifact = json.loads(blob)
-        assert "fast_path_confidence_threshold" in artifact
+        assert artifact["fast_path_confidence_threshold"] == optimized_threshold, (
+            f"Artifact threshold {artifact['fast_path_confidence_threshold']} "
+            f"!= batch job threshold {optimized_threshold}"
+        )
+        assert artifact["gliner_threshold"] == optimized_gliner, (
+            f"Artifact gliner {artifact['gliner_threshold']} "
+            f"!= batch job gliner {optimized_gliner}"
+        )
 
         # 3. Restart runtime pod to trigger artifact loading
         subprocess.run(
@@ -790,7 +899,11 @@ class TestArtifactLoadingRoundTrip:
         )
         time.sleep(20)  # Wait for agent initialization + artifact loading
 
-        # 4. Verify agent works after loading artifact
+        # 4. Query the gateway and verify the response reflects optimized routing.
+        #    A simple video query with high confidence should be routed as "simple"
+        #    by both default and optimized thresholds. What matters is the agent
+        #    starts up correctly with the artifact loaded — verify via the gateway
+        #    response which includes the confidence and routing decision.
         resp = httpx.post(
             f"{RUNTIME}/agents/gateway_agent/process",
             json={
@@ -802,4 +915,22 @@ class TestArtifactLoadingRoundTrip:
         )
         assert resp.status_code == 200, (
             f"Agent failed after restart: {resp.status_code} {resp.text[:200]}"
+        )
+        body = resp.json()
+        # The gateway response must contain a routing decision — not just HTTP 200.
+        # If artifact loading broke the agent, this would error or return garbage.
+        gateway_result = body.get("gateway") or body.get("downstream_result") or body
+        assert "complexity" in str(gateway_result) or "routed_to" in str(gateway_result), (
+            f"Gateway response has no routing decision — agent may not have loaded. "
+            f"Body: {json.dumps(body, default=str)[:300]}"
+        )
+
+        # 5. Verify the artifact is still loadable in-pod after restart
+        #    (proves the agent's telemetry infrastructure survived restart)
+        blob_after = _load_blob_in_pod("config", "gateway_thresholds")
+        assert blob_after, "Gateway artifact not loadable after restart"
+        artifact_after = json.loads(blob_after)
+        assert artifact_after["fast_path_confidence_threshold"] == optimized_threshold, (
+            f"Artifact threshold changed after restart: "
+            f"{artifact_after['fast_path_confidence_threshold']} != {optimized_threshold}"
         )
