@@ -372,42 +372,46 @@ class TestSimbaOptimization:
         assert result["training_examples"] >= 1
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
-    def test_simba_artifact_contains_dspy_module(self):
-        """SIMBA artifact must be a valid DSPy QueryEnhancement module."""
-        _run_batch_job("simba")  # ensure artifact exists
+    def test_simba_artifact_has_learned_demos(self):
+        """SIMBA artifact must have demos with real query→enhanced_query pairs."""
+        _run_batch_job("simba")
 
         blob = _load_blob_in_pod("model", "simba_query_enhancement")
         assert blob, "SIMBA artifact blob is empty"
 
         artifact = json.loads(blob)
-        assert len(artifact) >= 1, "Empty DSPy module artifact"
+        assert "enhancer.predict" in artifact, (
+            f"Expected 'enhancer.predict' module, got: {list(artifact.keys())}"
+        )
+        module = artifact["enhancer.predict"]
 
-        # Find the DSPy signature — should have query enhancement fields
-        found_signature = False
-        for key, value in artifact.items():
-            if isinstance(value, dict) and "signature" in value:
-                sig = value["signature"]
-                assert "fields" in sig, "Signature missing 'fields'"
+        # Signature fields must match QueryEnhancementSignature exactly
+        sig = module["signature"]
+        field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
+        for expected in ("Query", "Enhanced Query", "Expansion Terms", "Synonyms", "Confidence"):
+            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
+        assert sig["instructions"] == "Enhance query with synonyms, context, and related terms"
 
-                field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
+        # Must have learned demos — 0 demos means optimization did nothing
+        demos = module.get("demos", [])
+        assert len(demos) >= 1, (
+            "SIMBA produced 0 demos — optimization was useless"
+        )
 
-                # Must have query input
-                assert "query" in field_names, (
-                    f"SIMBA signature missing 'query' input, got: {field_names}"
-                )
-                # Must have enhanced_query output (that's what SIMBA optimizes)
-                assert "enhanced_query" in field_names or "enhanced query" in field_names, (
-                    f"SIMBA signature missing 'enhanced_query' output, got: {field_names}"
-                )
-                # Signature instructions should mention enhancement
-                instructions = sig.get("instructions", "")
-                assert instructions, "Signature should have non-empty instructions"
+        # Each demo: real query with a DIFFERENT enhanced version
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("enhanced_query"), f"Demo missing enhanced_query: {demo}"
+            assert demo["enhanced_query"] != demo["query"], (
+                f"Enhanced should differ from original: '{demo['query']}'"
+            )
 
-                found_signature = True
-                break
-
-        assert found_signature, (
-            f"No DSPy signature found in SIMBA artifact keys: {list(artifact.keys())}"
+        # At least one demo should contain an ML-related query (our test data)
+        demo_queries = " ".join(d["query"].lower() for d in demos)
+        ml_terms = ("learning", "neural", "ai", "detection", "vision", "nlp", "reinforcement")
+        assert any(t in demo_queries for t in ml_terms), (
+            f"Demos should contain ML-related queries from our test data, "
+            f"got: {[d['query'] for d in demos[:5]]}"
         )
 
 
@@ -431,46 +435,53 @@ class TestProfileOptimization:
         assert result["training_examples"] >= 1
         assert isinstance(result["artifact_id"], str) and result["artifact_id"]
 
-    def test_profile_artifact_contains_dspy_module(self):
-        """Profile artifact must be a valid DSPy ProfileSelection module."""
-        _run_batch_job("profile")  # ensure artifact exists
+    def test_profile_artifact_has_learned_demos(self):
+        """Profile artifact must have demos with real query→profile pairs."""
+        _run_batch_job("profile")
 
         blob = _load_blob_in_pod("model", "profile_selection")
         assert blob, "Profile artifact blob is empty"
 
         artifact = json.loads(blob)
-        assert len(artifact) >= 1, "Empty DSPy module artifact"
-
-        # Find signature with profile selection fields
-        found_signature = False
-        for key, value in artifact.items():
-            if isinstance(value, dict) and "signature" in value:
-                sig = value["signature"]
-                assert "fields" in sig, "Signature missing 'fields'"
-
-                field_names = [f.get("prefix", "").rstrip(":").strip().lower() for f in sig["fields"]]
-
-                # Must have query input
-                assert "query" in field_names, (
-                    f"Profile signature missing 'query' input, got: {field_names}"
-                )
-                # Must have selected_profile output (the whole point of this agent)
-                assert "selected_profile" in field_names or "selected profile" in field_names, (
-                    f"Profile signature missing 'selected_profile' output, got: {field_names}"
-                )
-                # Signature instructions should mention profile selection
-                instructions = sig.get("instructions", "")
-                assert "profile" in instructions.lower(), (
-                    f"Profile signature instructions should mention 'profile', "
-                    f"got: {instructions!r}"
-                )
-
-                found_signature = True
-                break
-
-        assert found_signature, (
-            f"No DSPy signature found in profile artifact keys: {list(artifact.keys())}"
+        assert "selector.predict" in artifact, (
+            f"Expected 'selector.predict' module, got: {list(artifact.keys())}"
         )
+        module = artifact["selector.predict"]
+
+        # Signature fields must match ProfileSelectionSignature
+        sig = module["signature"]
+        field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
+        for expected in ("Query", "Available Profiles", "Selected Profile", "Modality"):
+            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
+        assert sig["instructions"] == "Select optimal backend profile based on query analysis"
+
+        # Must have learned demos
+        demos = module.get("demos", [])
+        assert len(demos) >= 1, (
+            "Profile produced 0 demos — optimization was useless"
+        )
+
+        # Known Vespa profiles
+        known_profiles = {
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_videoprism_base_mv_chunk_30s",
+            "video_videoprism_large_mv_chunk_30s",
+        }
+
+        # Each demo: real query selecting a known profile
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("selected_profile"), f"Demo missing selected_profile: {demo}"
+            assert demo["selected_profile"] in known_profiles, (
+                f"Demo selected unknown profile '{demo['selected_profile']}', "
+                f"expected one of {known_profiles}"
+            )
+            # available_profiles should list the 4 known profiles
+            avail = demo.get("available_profiles", "")
+            assert "video_colpali" in avail, (
+                f"available_profiles should contain known profiles, got: {avail[:100]}"
+            )
 
 
 # ---------------------------------------------------------------------------
