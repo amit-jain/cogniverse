@@ -319,11 +319,13 @@ class TestGatewayThresholdAnalysis:
         for i in range(5):
             rows.append(
                 {
-                    "attributes.gateway.complexity": "simple",
-                    "attributes.gateway.confidence": 0.8,
-                    "attributes.gateway.modality": "video",
-                    "attributes.gateway.generation_type": "raw_results",
-                    "attributes.gateway.routed_to": "search_agent",
+                    "attributes.gateway": {
+                        "complexity": "simple",
+                        "confidence": 0.8,
+                        "modality": "video",
+                        "generation_type": "raw_results",
+                        "routed_to": "search_agent",
+                    },
                     "status_code": "ERROR" if i < 3 else "OK",
                 }
             )
@@ -331,11 +333,13 @@ class TestGatewayThresholdAnalysis:
         for _ in range(2):
             rows.append(
                 {
-                    "attributes.gateway.complexity": "complex",
-                    "attributes.gateway.confidence": 0.4,
-                    "attributes.gateway.modality": "video",
-                    "attributes.gateway.generation_type": "raw_results",
-                    "attributes.gateway.routed_to": "orchestrator_agent",
+                    "attributes.gateway": {
+                        "complexity": "complex",
+                        "confidence": 0.4,
+                        "modality": "video",
+                        "generation_type": "raw_results",
+                        "routed_to": "orchestrator_agent",
+                    },
                     "status_code": "OK",
                 }
             )
@@ -367,11 +371,13 @@ class TestGatewayThresholdAnalysis:
         for _ in range(10):
             rows.append(
                 {
-                    "attributes.gateway.complexity": "simple",
-                    "attributes.gateway.confidence": 0.75,
-                    "attributes.gateway.modality": "video",
-                    "attributes.gateway.generation_type": "raw_results",
-                    "attributes.gateway.routed_to": "search_agent",
+                    "attributes.gateway": {
+                        "complexity": "simple",
+                        "confidence": 0.75,
+                        "modality": "video",
+                        "generation_type": "raw_results",
+                        "routed_to": "search_agent",
+                    },
                     "status_code": "OK",
                 }
             )

@@ -265,6 +265,9 @@ class AgentDispatcher:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         agent.telemetry_manager = get_telemetry_manager()
+        agent._artifact_tenant_id = tenant_id
+        if hasattr(agent, "_load_artifact"):
+            agent._load_artifact()
 
         # Find the Input class — convention: same module, class name ends with "Input"
         input_cls = None
@@ -558,6 +561,8 @@ class AgentDispatcher:
             from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
             self._gateway_agent.telemetry_manager = get_telemetry_manager()
+            self._gateway_agent._artifact_tenant_id = tenant_id
+            self._gateway_agent._load_artifact()
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
         result = await self._gateway_agent._process_impl(input_data)
@@ -618,6 +623,8 @@ class AgentDispatcher:
         self._init_agent_memory(agent, "orchestrator_agent", tenant_id)
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         agent.telemetry_manager = get_telemetry_manager()
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
 
         input_data = OrchestratorInput(
             query=query,
