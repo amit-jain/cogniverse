@@ -395,6 +395,43 @@ async def _query_spans_by_name(
     return spans_df[spans_df["name"] == span_name]
 
 
+def _create_teleprompter(trainset_size: int):
+    """Select DSPy optimizer based on training set size.
+
+    Uses BootstrapFewShot for small sets (< 50 examples) and
+    COPRO for larger sets (>= 50) which can leverage more data.
+    """
+    from dspy.teleprompt import BootstrapFewShot
+
+    if trainset_size >= 50:
+        try:
+            from dspy.teleprompt import COPRO
+
+            logger.info(
+                "Using COPRO optimizer for %d examples (>= 50 threshold)",
+                trainset_size,
+            )
+            return COPRO(
+                prompt_model=None,  # uses the configured LM
+                metric=None,
+                breadth=5,
+                depth=2,
+                init_temperature=1.0,
+            )
+        except (ImportError, Exception) as e:
+            logger.info("COPRO unavailable (%s), falling back to BootstrapFewShot", e)
+
+    logger.info(
+        "Using BootstrapFewShot optimizer for %d examples", trainset_size
+    )
+    return BootstrapFewShot(
+        max_bootstrapped_demos=4,
+        max_labeled_demos=8,
+        max_rounds=1,
+        max_errors=5,
+    )
+
+
 async def _load_approved_synthetic_data(
     telemetry_provider,
     tenant_id: str,
@@ -545,14 +582,7 @@ async def run_simba_optimization(
 
     module = QueryEnhancementModule()
 
-    from dspy.teleprompt import BootstrapFewShot
-
-    teleprompter = BootstrapFewShot(
-        max_bootstrapped_demos=4,
-        max_labeled_demos=8,
-        max_rounds=1,
-        max_errors=5,
-    )
+    teleprompter = _create_teleprompter(len(trainset))
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -979,14 +1009,7 @@ async def run_profile_optimization(
 
     module = ProfileSelectionModule()
 
-    from dspy.teleprompt import BootstrapFewShot
-
-    teleprompter = BootstrapFewShot(
-        max_bootstrapped_demos=4,
-        max_labeled_demos=8,
-        max_rounds=1,
-        max_errors=5,
-    )
+    teleprompter = _create_teleprompter(len(trainset))
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -1117,14 +1140,7 @@ async def run_entity_extraction_optimization(
 
     module = EntityExtractionModule()
 
-    from dspy.teleprompt import BootstrapFewShot
-
-    teleprompter = BootstrapFewShot(
-        max_bootstrapped_demos=4,
-        max_labeled_demos=8,
-        max_rounds=1,
-        max_errors=5,
-    )
+    teleprompter = _create_teleprompter(len(trainset))
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -1269,14 +1285,7 @@ async def run_routing_optimization(
         )
     )
 
-    from dspy.teleprompt import BootstrapFewShot
-
-    teleprompter = BootstrapFewShot(
-        max_bootstrapped_demos=4,
-        max_labeled_demos=8,
-        max_rounds=1,
-        max_errors=5,
-    )
+    teleprompter = _create_teleprompter(len(trainset))
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -1305,6 +1314,112 @@ async def run_routing_optimization(
         return {"status": "failed", "error": str(e)}
 
 
+async def run_synthetic_generation(
+    tenant_id: str,
+    optimizer_types: list[str] | None = None,
+    count: int = 50,
+) -> dict:
+    """Generate synthetic training data for optimizer types.
+
+    Uses SyntheticDataService to create training examples, then saves
+    them as demonstrations via ArtifactManager for later merge into
+    batch optimization jobs.
+    """
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    if optimizer_types is None:
+        optimizer_types = ["simba", "routing", "profile", "workflow"]
+
+    logger.info(
+        "Starting synthetic generation for tenant=%s types=%s count=%d",
+        tenant_id, optimizer_types, count,
+    )
+
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    telemetry_manager = get_telemetry_manager()
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    am = ArtifactManager(telemetry_provider, tenant_id)
+
+    results = {}
+    for opt_type in optimizer_types:
+        try:
+            from cogniverse_synthetic.schemas import SyntheticDataRequest
+            from cogniverse_synthetic.service import SyntheticDataService
+
+            backend_config = config.get("backend", {})
+            generator_config = config.get("synthetic", {})
+
+            # Create backend instance for content sampling
+            from cogniverse_foundation.config.unified_config import (
+                BackendConfig,
+                SyntheticGeneratorConfig,
+            )
+
+            bc = BackendConfig(**backend_config) if isinstance(backend_config, dict) else backend_config
+            gc = SyntheticGeneratorConfig(**generator_config) if isinstance(generator_config, dict) else generator_config
+
+            from cogniverse_runtime.backend_factory import create_backend
+
+            backend = create_backend(config_manager, tenant_id)
+
+            service = SyntheticDataService(
+                backend=backend,
+                backend_config=bc,
+                generator_config=gc,
+            )
+
+            request = SyntheticDataRequest(
+                optimizer=opt_type,
+                count=count,
+                tenant_id=tenant_id,
+            )
+            response = await service.generate(request)
+
+            # Save as demonstrations with approval_status=pending
+            demos = []
+            for example in response.examples:
+                demos.append({
+                    "input": json.dumps(example.input_data, default=str),
+                    "output": json.dumps(example.output_data, default=str),
+                    "metadata": json.dumps({
+                        "approval_status": "pending",
+                        "optimizer_type": opt_type,
+                        "generated_at": datetime.now().isoformat(),
+                    }),
+                })
+
+            if demos:
+                dataset_id = await am.save_demonstrations(
+                    f"synthetic_{opt_type}", demos
+                )
+                results[opt_type] = {
+                    "status": "success",
+                    "examples_generated": len(demos),
+                    "dataset_id": dataset_id,
+                }
+            else:
+                results[opt_type] = {"status": "no_data", "examples_generated": 0}
+
+            logger.info("Generated %d synthetic examples for %s", len(demos), opt_type)
+
+        except Exception as e:
+            logger.error("Synthetic generation failed for %s: %s", opt_type, e)
+            results[opt_type] = {"status": "failed", "error": str(e)}
+
+    return {
+        "status": "success" if any(r["status"] == "success" for r in results.values()) else "failed",
+        "results": results,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Optimization CLI")
     parser.add_argument(
@@ -1318,6 +1433,7 @@ def main():
             "profile",
             "entity-extraction",
             "routing",
+            "synthetic",
         ],
         required=True,
     )
@@ -1402,6 +1518,16 @@ def main():
             run_routing_optimization(
                 tenant_id=args.tenant_id,
                 lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "synthetic":
+        optimizer_types = ["simba", "routing", "profile", "workflow"]
+        if args.agents:
+            optimizer_types = [a.strip() for a in args.agents.split(",")]
+        result = asyncio.run(
+            run_synthetic_generation(
+                tenant_id=args.tenant_id,
+                optimizer_types=optimizer_types,
             )
         )
     else:

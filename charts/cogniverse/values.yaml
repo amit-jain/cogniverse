@@ -51,6 +51,10 @@ argo:
     dailyGateway:
       enabled: true
       schedule: "0 4 * * *"  # Daily 4 AM UTC
+    # Synthetic data generation for optimizer training sets
+    syntheticGeneration:
+      enabled: true
+      schedule: "0 1 * * 6"  # Saturday 1 AM UTC
     # Audit fix #7 — scheduled distillation runs ``quality_monitor_cli --once``
     # to force a strategy distillation pass independent of the quality-drop
     # threshold check. Without this cron, distillation only fired on

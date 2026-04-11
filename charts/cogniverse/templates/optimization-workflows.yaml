@@ -142,6 +142,8 @@ spec:
           - "{{`{{inputs.parameters.mode}}`}}"
           - "--tenant-id"
           - "{{`{{workflow.parameters.tenant-id}}`}}"
+          - "--lookback-hours"
+          - "48"
         env:
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
@@ -258,6 +260,77 @@ spec:
           - "-n"
           - "{{ .Release.Namespace }}"
 
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+{{- end }}
+{{- if .Values.argo.optimization.syntheticGeneration.enabled }}
+---
+# Saturday synthetic data generation — creates training data for all optimizer types
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-synthetic-generation
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.syntheticGeneration.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: generate-synthetic
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: generate-synthetic
+      container:
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "synthetic"
+          - "--tenant-id"
+          - "default"
+          - "--agents"
+          - "simba,routing,profile,workflow"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        - name: LLM_ENDPOINT
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        - name: OLLAMA_API_BASE
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
       volumes:
       - name: config
         configMap:
