@@ -1040,7 +1040,8 @@ class TestArtifactAffectsBehavior:
                 QueryEnhancementInput(query="ML papers")
             )
 
-        # The enhanced query should be different from the original
+        # The demos teach: "ML papers" → "machine learning research papers and publications"
+        # The LLM should produce an enhanced query that reflects this demo knowledge.
         assert result.enhanced_query != "ML papers", (
             f"Enhanced query should differ from original, got: '{result.enhanced_query}'"
         )
@@ -1048,8 +1049,21 @@ class TestArtifactAffectsBehavior:
             f"Enhanced query should be longer than original, "
             f"got: '{result.enhanced_query}' ({len(result.enhanced_query)} chars)"
         )
-        assert isinstance(result.enhanced_query, str) and result.enhanced_query.strip(), (
-            "Enhanced query should be a non-empty string"
+        # The enhanced query should contain terms from the demo's expansion —
+        # "machine learning" or "research" or "papers" (the demo maps ML → machine learning)
+        enhanced_lower = result.enhanced_query.lower()
+        assert any(term in enhanced_lower for term in ("machine learning", "research", "paper", "publication")), (
+            f"Enhanced query should contain demo expansion terms "
+            f"(machine learning, research, papers, publications), "
+            f"got: '{result.enhanced_query}'"
+        )
+        # expansion_terms should be populated (the demo provides them)
+        assert result.expansion_terms, (
+            f"expansion_terms should be non-empty, got: {result.expansion_terms}"
+        )
+        # confidence should be a real value (not 0.0 default)
+        assert result.confidence > 0.0, (
+            f"Confidence should be > 0, got {result.confidence}"
         )
 
     @pytest.mark.asyncio
@@ -1130,17 +1144,19 @@ class TestArtifactAffectsBehavior:
             )
         )
 
-        known_agents = {
-            "search_agent", "video_search_agent", "orchestrator_agent",
-            "summarizer_agent", "image_search_agent", "audio_analysis_agent",
-            "document_agent", "detailed_report_agent", "entity_extraction_agent",
-            "query_enhancement_agent", "profile_selection_agent",
-        }
-        assert result.recommended_agent in known_agents, (
-            f"recommended_agent '{result.recommended_agent}' not in known agents"
+        # The demos teach: "find basketball highlights" → search_agent with confidence 0.9
+        # With few-shot demos, the LLM should follow the pattern.
+        assert result.recommended_agent == "search_agent", (
+            f"Demos teach 'find basketball highlights' → search_agent, "
+            f"but got '{result.recommended_agent}'. "
+            f"Reasoning: {result.reasoning}"
         )
-        assert result.confidence > 0.0, (
-            f"Confidence should be > 0, got {result.confidence}"
+        assert result.confidence >= 0.5, (
+            f"Demos have confidence 0.9, agent should be confident, got {result.confidence}"
+        )
+        # reasoning should explain why search_agent was chosen
+        assert result.reasoning and len(result.reasoning) > 10, (
+            f"Reasoning should be substantive, got: '{result.reasoning}'"
         )
 
     @pytest.mark.asyncio
@@ -1208,14 +1224,33 @@ class TestArtifactAffectsBehavior:
                 EntityExtractionInput(query="Netflix producing AI documentaries")
             )
 
-        assert result.entities, (
-            "Expected non-empty entities list from DSPy fallback"
+        # The demos teach: "Netflix producing AI documentaries" → Netflix=ORG, AI=CONCEPT
+        # The DSPy fallback with these demos should extract those entities.
+        assert result.path_used == "dspy", (
+            f"Expected dspy path (GLiNER disabled), got '{result.path_used}'"
         )
         assert result.entity_count > 0, (
             f"Expected entity_count > 0, got {result.entity_count}"
         )
-        assert result.path_used == "dspy", (
-            f"Expected dspy path, got '{result.path_used}'"
+        assert result.entities, (
+            "Expected non-empty entities list from DSPy fallback"
+        )
+        # Check that known entities from the query were extracted
+        entity_texts = [e.text.lower() for e in result.entities]
+        entity_types = [e.type.upper() for e in result.entities]
+        assert any("netflix" in t for t in entity_texts), (
+            f"Should extract 'Netflix' from 'Netflix producing AI documentaries', "
+            f"got entities: {[(e.text, e.type) for e in result.entities]}"
+        )
+        # At least one entity should have a real type (ORG, CONCEPT, PERSON, etc.)
+        valid_types = {"ORG", "ORGANIZATION", "CONCEPT", "PERSON", "PLACE", "LOCATION", "TECHNOLOGY", "EVENT", "PRODUCT"}
+        assert any(t in valid_types for t in entity_types), (
+            f"Entity types should include known types like ORG/CONCEPT, "
+            f"got: {entity_types}"
+        )
+        assert result.has_entities is True, "has_entities should be True"
+        assert result.dominant_types, (
+            f"dominant_types should be non-empty, got: {result.dominant_types}"
         )
 
     @pytest.mark.asyncio
@@ -1288,6 +1323,8 @@ class TestArtifactAffectsBehavior:
                 ProfileSelectionInput(query="find cooking videos")
             )
 
+        # The demo teaches: video queries → video_colpali_smol500_mv_frame
+        # The LLM should follow the demo pattern for "find cooking videos".
         known_profiles = {
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_mv_chunk_30s",
@@ -1295,10 +1332,23 @@ class TestArtifactAffectsBehavior:
             "video_videoprism_large_mv_chunk_30s",
         }
         assert result.selected_profile in known_profiles, (
-            f"selected_profile '{result.selected_profile}' not in known profiles"
+            f"selected_profile '{result.selected_profile}' not in known profiles. "
+            f"Reasoning: {result.reasoning}"
         )
         assert result.confidence > 0.0, (
             f"Confidence should be > 0, got {result.confidence}"
+        )
+        # The query is about video — modality should reflect that
+        assert result.modality == "video", (
+            f"'find cooking videos' should have modality 'video', got '{result.modality}'"
+        )
+        # reasoning should explain the selection
+        assert result.reasoning and len(result.reasoning) > 10, (
+            f"Reasoning should be substantive, got: '{result.reasoning}'"
+        )
+        # query_intent should be populated
+        assert result.query_intent, (
+            f"query_intent should be non-empty, got: '{result.query_intent}'"
         )
 
     @pytest.mark.asyncio
