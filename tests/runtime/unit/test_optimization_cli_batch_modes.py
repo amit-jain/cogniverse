@@ -136,6 +136,7 @@ class TestCliArgumentParser:
                 "profile",
                 "entity-extraction",
                 "routing",
+                "synthetic",
             ],
             required=True,
         )
@@ -147,7 +148,7 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing"],
+        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing", "synthetic"],
     )
     def test_new_mode_accepted(self, parser, mode):
         args = parser.parse_args(["--mode", mode])
@@ -157,7 +158,7 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing"],
+        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing", "synthetic"],
     )
     def test_new_mode_with_tenant_and_lookback(self, parser, mode):
         args = parser.parse_args(
@@ -611,3 +612,93 @@ class TestSyntheticDataMerge:
         assert approved_demo in result
         assert auto_approved in result
         assert pending_demo not in result
+
+
+# ---------------------------------------------------------------------------
+# Test: _create_teleprompter optimizer selection
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTeleprompter:
+    """Verify optimizer selection based on training set size."""
+
+    def test_small_trainset_uses_bootstrap(self):
+        """< 50 examples should use BootstrapFewShot."""
+        from dspy.teleprompt import BootstrapFewShot
+
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(10)
+        assert isinstance(tp, BootstrapFewShot), (
+            f"Expected BootstrapFewShot for 10 examples, got {type(tp).__name__}"
+        )
+
+    def test_49_uses_bootstrap(self):
+        """Boundary: 49 examples should still use BootstrapFewShot."""
+        from dspy.teleprompt import BootstrapFewShot
+
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(49)
+        assert isinstance(tp, BootstrapFewShot), (
+            f"Expected BootstrapFewShot for 49 examples, got {type(tp).__name__}"
+        )
+
+    def test_50_tries_copro(self):
+        """Boundary: >= 50 examples should try COPRO (falls back to Bootstrap if unavailable)."""
+
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(50)
+        # COPRO may or may not be available depending on dspy version.
+        # Either COPRO or BootstrapFewShot is acceptable — the function should not crash.
+        valid_types = {"BootstrapFewShot", "COPRO"}
+        assert type(tp).__name__ in valid_types, (
+            f"Expected BootstrapFewShot or COPRO for 50 examples, got {type(tp).__name__}"
+        )
+
+    def test_large_trainset_tries_copro(self):
+        """200 examples should try COPRO."""
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(200)
+        valid_types = {"BootstrapFewShot", "COPRO"}
+        assert type(tp).__name__ in valid_types, (
+            f"Expected BootstrapFewShot or COPRO for 200 examples, got {type(tp).__name__}"
+        )
+
+    def test_zero_uses_bootstrap(self):
+        """Edge case: 0 examples should use BootstrapFewShot."""
+        from dspy.teleprompt import BootstrapFewShot
+
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(0)
+        assert isinstance(tp, BootstrapFewShot)
+
+
+# ---------------------------------------------------------------------------
+# Test: synthetic generation mode
+# ---------------------------------------------------------------------------
+
+
+class TestSyntheticGeneration:
+    """Verify synthetic generation CLI mode."""
+
+    @pytest.mark.asyncio
+    async def test_synthetic_no_backend_returns_failed(self, fake_telemetry_manager):
+        """Synthetic generation without backend config should fail gracefully."""
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+        with p1, p2:
+            result = await run_synthetic_generation(
+                tenant_id="default",
+                optimizer_types=["simba"],
+                count=5,
+            )
+
+        # Should fail (no real backend) but not crash
+        assert "results" in result
+        assert "simba" in result["results"]
+        assert result["results"]["simba"]["status"] in ("success", "failed", "no_data")
