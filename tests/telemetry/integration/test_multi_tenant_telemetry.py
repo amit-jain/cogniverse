@@ -475,13 +475,13 @@ class TestPhoenixIntegrationWithRealServer:
         wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
         # Query Phoenix API to verify tenant isolation
-        import phoenix as px
+        from phoenix.client import Client
 
-        client = px.Client(endpoint=phoenix_config.provider_config["http_endpoint"])
+        client = Client(base_url=phoenix_config.provider_config["http_endpoint"])
 
         # Verify tenant-alpha spans — filter to this run's spans by name prefix
         alpha_project = phoenix_config.get_project_name("tenant-alpha", "routing")
-        all_alpha_spans = client.get_spans_dataframe(project_name=alpha_project)
+        all_alpha_spans = client.spans.get_spans_dataframe(project_identifier=alpha_project)
         assert all_alpha_spans is not None, f"No spans found in project {alpha_project}"
         alpha_spans = all_alpha_spans[
             all_alpha_spans["name"].str.startswith(f"alpha_op_{run_id}_")
@@ -492,7 +492,7 @@ class TestPhoenixIntegrationWithRealServer:
 
         # Verify tenant-beta spans — filter to this run's spans by name prefix
         beta_project = phoenix_config.get_project_name("tenant-beta", "routing")
-        all_beta_spans = client.get_spans_dataframe(project_name=beta_project)
+        all_beta_spans = client.spans.get_spans_dataframe(project_identifier=beta_project)
         assert all_beta_spans is not None, f"No spans found in project {beta_project}"
         beta_spans = all_beta_spans[
             all_beta_spans["name"].str.startswith(f"beta_op_{run_id}_")

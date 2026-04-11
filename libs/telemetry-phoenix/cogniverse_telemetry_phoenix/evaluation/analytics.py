@@ -13,8 +13,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import phoenix as px
 import plotly.graph_objects as go
+from phoenix.client import Client as _PhoenixSyncClient
 from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class PhoenixAnalytics:
 
     def __init__(self, telemetry_url: str = "http://localhost:6006"):
         self.telemetry_url = telemetry_url
-        self.client = px.Client(endpoint=telemetry_url)
+        self.client = _PhoenixSyncClient(base_url=telemetry_url)
         self._cache = {}
 
     def get_traces(
@@ -79,8 +79,8 @@ class PhoenixAnalytics:
         try:
             kwargs = {"start_time": start_time, "end_time": end_time, "limit": limit}
             if project_name:
-                kwargs["project_name"] = project_name
-            spans_df = self.client.get_spans_dataframe(**kwargs)
+                kwargs["project_identifier"] = project_name
+            spans_df = self.client.spans.get_spans_dataframe(**kwargs)
         except Exception as e:
             logger.error(f"Failed to fetch spans: {e}")
             return []

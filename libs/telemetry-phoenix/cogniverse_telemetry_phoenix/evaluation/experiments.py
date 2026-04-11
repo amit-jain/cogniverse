@@ -10,8 +10,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-import phoenix as px
-from phoenix.experiments import run_experiment
+from phoenix.client import Client as _PhoenixClient
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +148,10 @@ class PhoenixExperimentPlugin:
             Experiment results with Phoenix tracking
         """
         config = config or {}
-        client = px.Client()
+        client = _PhoenixClient()
 
         # Get dataset from Phoenix (Phoenix as storage)
-        dataset = client.get_dataset(name=dataset_name)
+        dataset = client.datasets.get_dataset(dataset=dataset_name)
         if not dataset:
             raise ValueError(f"Dataset '{dataset_name}' not found in Phoenix")
 
@@ -176,7 +175,7 @@ class PhoenixExperimentPlugin:
             f"Running Inspect AI evaluation tracked by Phoenix experiment: {experiment_name}"
         )
 
-        result = run_experiment(
+        result = client.experiments.run_experiment(
             dataset=dataset,
             task=phoenix_task,  # Inspect logic wrapped for Phoenix
             evaluators=evaluators,  # Can include both Phoenix and Inspect evaluators

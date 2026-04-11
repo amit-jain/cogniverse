@@ -6,10 +6,30 @@ Provides Phoenix-specific evaluator base classes and result types.
 
 from typing import Any, Dict, Optional
 
-from phoenix.experiments.evaluators.base import Evaluator as PhoenixEvaluator
-from phoenix.experiments.types import EvaluationResult
+from phoenix.client.resources.experiments.types import (
+    BaseEvaluator as PhoenixEvaluator,
+)
 
 from cogniverse_evaluation.providers.base import EvaluatorFramework
+
+
+class EvaluationResult(dict):
+    """Dict subclass that supports attribute access for backward compatibility.
+
+    Phoenix v14 ExperimentEvaluation is a TypedDict (plain dict), but the
+    codebase accesses result.score, result.label everywhere. This class
+    bridges both worlds: dict-compatible for Phoenix, attribute-accessible
+    for internal evaluators.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'EvaluationResult' has no attribute '{name}'") from None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
 
 
 class PhoenixEvaluatorFramework(EvaluatorFramework):
@@ -24,7 +44,7 @@ class PhoenixEvaluatorFramework(EvaluatorFramework):
         Return Phoenix's base evaluator class.
 
         Returns:
-            phoenix.experiments.evaluators.base.Evaluator
+            phoenix.client.resources.experiments.types.BaseEvaluator
         """
         return PhoenixEvaluator
 
@@ -33,7 +53,7 @@ class PhoenixEvaluatorFramework(EvaluatorFramework):
         Return Phoenix's evaluation result type.
 
         Returns:
-            phoenix.experiments.types.EvaluationResult
+            EvaluationResult (dict subclass with attribute access)
         """
         return EvaluationResult
 
@@ -54,7 +74,7 @@ class PhoenixEvaluatorFramework(EvaluatorFramework):
             metadata: Additional metadata
 
         Returns:
-            Phoenix EvaluationResult instance
+            EvaluationResult with both dict and attribute access
         """
         return EvaluationResult(
             score=score, label=label, explanation=explanation, metadata=metadata or {}

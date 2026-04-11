@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict
 
 import pandas as pd
-import phoenix as px
+from phoenix.client import Client as PhoenixSyncClient
 
 from cogniverse_evaluation.providers.base import MonitoringProvider
 
@@ -22,7 +22,7 @@ class PhoenixMonitoringProvider(MonitoringProvider):
     Provides monitoring operations using Phoenix client.
     """
 
-    def __init__(self, phoenix_client: px.Client):
+    def __init__(self, phoenix_client: PhoenixSyncClient):
         """
         Initialize Phoenix monitoring provider.
 
@@ -79,8 +79,8 @@ class PhoenixMonitoringProvider(MonitoringProvider):
             start_time = end_time - timedelta(minutes=window_minutes)
 
             # Get recent spans
-            spans_df = self.client.get_spans_dataframe(
-                project_name=project, start_time=start_time, end_time=end_time
+            spans_df = self.client.spans.get_spans_dataframe(
+                project_identifier=project, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:

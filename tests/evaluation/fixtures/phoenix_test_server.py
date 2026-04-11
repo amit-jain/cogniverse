@@ -7,8 +7,8 @@ import socket
 import subprocess
 import tempfile
 
-import phoenix as px
 import pytest
+from phoenix.client import Client as _PhoenixSyncClient
 
 from tests.utils.async_polling import wait_for_phoenix_processing
 
@@ -54,8 +54,8 @@ class PhoenixTestServer:
         for i in range(max_retries):
             try:
                 # Try to connect to Phoenix
-                client = px.Client(endpoint=self.base_url)
-                _ = client.get_spans_dataframe(limit=1)
+                client = _PhoenixSyncClient(base_url=self.base_url)
+                _ = client.spans.get_spans_dataframe(limit=1)
                 # If successful, server is ready
                 break
             except Exception:
@@ -89,7 +89,7 @@ class PhoenixTestServer:
 
     def get_client(self):
         """Get Phoenix client connected to test server."""
-        return px.Client(endpoint=self.base_url)
+        return _PhoenixSyncClient(base_url=self.base_url)
 
     def __enter__(self):
         return self.start()

@@ -303,10 +303,10 @@ class ExperimentTracker:
         # Try to use existing dataset if not forcing new
         if dataset_name and not force_new:
             try:
-                import phoenix as px
+                from phoenix.client import Client as PhoenixSyncClient
 
-                sync_client = px.Client(endpoint=self.provider.http_endpoint)
-                existing = sync_client.get_dataset(name=final_dataset_name)
+                sync_client = PhoenixSyncClient(base_url=self.provider.http_endpoint)
+                existing = sync_client.datasets.get_dataset(dataset=final_dataset_name)
                 if existing is not None:
                     logger.info(f"Using existing dataset: {final_dataset_name}")
                     self.dataset_url = self.provider.get_dataset_url(final_dataset_name)

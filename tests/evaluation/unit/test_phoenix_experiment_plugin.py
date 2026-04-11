@@ -230,20 +230,20 @@ class TestPhoenixExperimentPlugin:
         """Test successful Inspect AI evaluation with Phoenix tracking."""
         mock_client = Mock()
         mock_dataset = Mock()
-        mock_client.get_dataset.return_value = mock_dataset
+        mock_client.datasets.get_dataset.return_value = mock_dataset
 
         mock_result = {"experiment_id": "test_exp", "results": "success"}
+        mock_client.experiments.run_experiment.return_value = mock_result
 
         # Create a mock evaluator that will pass Phoenix validation
         mock_evaluator = Mock()
         mock_evaluator.__call__ = Mock(return_value={"score": 0.8})
 
         with (
-            patch("phoenix.Client", return_value=mock_client),
             patch(
-                "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
-                return_value=mock_result,
-            ) as mock_run_exp,
+                "cogniverse_telemetry_phoenix.evaluation.experiments._PhoenixClient",
+                return_value=mock_client,
+            ),
             patch(
                 "cogniverse_evaluation.core.solvers.create_retrieval_solver"
             ) as mock_solver,
@@ -257,14 +257,14 @@ class TestPhoenixExperimentPlugin:
             )
 
             assert result == mock_result
-            mock_client.get_dataset.assert_called_once_with(name="test_dataset")
+            mock_client.datasets.get_dataset.assert_called_once_with(dataset="test_dataset")
             mock_solver.assert_called_once_with(
                 ["profile1"], ["strategy1"], {"top_k": 5}
             )
-            mock_run_exp.assert_called_once()
+            mock_client.experiments.run_experiment.assert_called_once()
 
             # Check experiment call arguments
-            call_args = mock_run_exp.call_args
+            call_args = mock_client.experiments.run_experiment.call_args
             assert call_args[1]["dataset"] == mock_dataset
             assert "task" in call_args[1]
             assert call_args[1]["evaluators"] == []
@@ -280,9 +280,12 @@ class TestPhoenixExperimentPlugin:
     def test_run_inspect_with_phoenix_tracking_dataset_not_found(self):
         """Test error handling when dataset is not found."""
         mock_client = Mock()
-        mock_client.get_dataset.return_value = None
+        mock_client.datasets.get_dataset.return_value = None
 
-        with patch("phoenix.Client", return_value=mock_client):
+        with patch(
+            "cogniverse_telemetry_phoenix.evaluation.experiments._PhoenixClient",
+            return_value=mock_client,
+        ):
             with pytest.raises(ValueError, match="Dataset 'nonexistent' not found"):
                 PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
                     dataset_name="nonexistent",
@@ -300,14 +303,14 @@ class TestPhoenixExperimentPlugin:
         mock_dataset.id = "test_dataset_id"
         mock_dataset.name = "test_dataset"
         mock_dataset.examples = []
-        mock_client.get_dataset.return_value = mock_dataset
+        mock_client.datasets.get_dataset.return_value = mock_dataset
         mock_result = {"success": True}
+        mock_client.experiments.run_experiment.return_value = mock_result
 
         with (
-            patch("phoenix.Client", return_value=mock_client),
             patch(
-                "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
-                return_value=mock_result,
+                "cogniverse_telemetry_phoenix.evaluation.experiments._PhoenixClient",
+                return_value=mock_client,
             ),
             patch("cogniverse_evaluation.core.solvers.create_retrieval_solver"),
         ):

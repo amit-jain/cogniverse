@@ -520,7 +520,7 @@ class TestEvaluateAgentSpans:
 class TestGetAgentBaseline:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_baseline(self, monitor):
-        with patch("phoenix.Client") as mock_client:
+        with patch("phoenix.client.Client") as mock_client:
             mock_client.side_effect = Exception("no connection")
             result = await monitor._get_agent_baseline(AgentType.SEARCH)
         assert result is None

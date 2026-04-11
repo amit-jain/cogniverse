@@ -59,15 +59,15 @@ async def run_triggered_optimization(
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     # Load trigger dataset from Phoenix
-    import phoenix as px
+    from phoenix.client import Client as PhoenixSyncClient
 
     system_config = config_manager.get_system_config()
     if phoenix_endpoint is None:
         phoenix_endpoint = system_config.telemetry_url
-    sync_client = px.Client(endpoint=phoenix_endpoint)
+    sync_client = PhoenixSyncClient(base_url=phoenix_endpoint)
 
     try:
-        dataset = sync_client.get_dataset(name=trigger_dataset)
+        dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset)
         trigger_df = dataset.as_dataframe()
 
         # Phoenix wraps columns under input/output dicts — flatten

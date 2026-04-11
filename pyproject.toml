@@ -1,3 +1,6 @@
+[tool.uv]
+prerelease = "allow"
+
 [tool.uv.workspace]
 members = ["libs/*"]
 
@@ -5,7 +8,7 @@ members = ["libs/*"]
 name = "cogniverse"
 version = "0.1.0"
 description = "Add your description here"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "litellm==1.73.0",
     "modal>=1.0.5",
@@ -27,8 +30,8 @@ dependencies = [
     # Evaluation Framework Dependencies
     "inspect-ai>=0.3.0",
     "ragas>=0.1.0",
-    "arize-phoenix>=12.9.0,<13",  # TODO: upgrade to 14.x with evals 3.0+ (breaking changes)
-    "arize-phoenix-evals>=0.26.0,<3",  # 3.0 removed phoenix.evals.models namespace
+    "arize-phoenix>=14.0.0,<15",  # TODO: upgrade to 14.x with evals 3.0+ (breaking changes)
+    "arize-phoenix-evals>=3.0.0,<4",  # 3.0 removed phoenix.evals.models namespace
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation>=0.41b0",

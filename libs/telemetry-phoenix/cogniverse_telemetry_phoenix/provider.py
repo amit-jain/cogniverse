@@ -271,16 +271,15 @@ class PhoenixAnnotationStore(AnnotationStore):
                 return
 
             # Import SpanEvaluations from Phoenix
-            import phoenix as px
-            from phoenix.trace import SpanEvaluations
+            from phoenix.client import Client
 
-            # Create SpanEvaluations object
-            span_evals = SpanEvaluations(eval_name=eval_name, dataframe=evaluations_df)
-
-            # Upload to Phoenix using synchronous client
-            # Phoenix's log_evaluations is synchronous, not async
-            sync_client = px.Client(endpoint=self.http_endpoint)
-            sync_client.log_evaluations(span_evals)
+            # Upload evaluations as span annotations via sync client
+            sync_client = Client(base_url=self.http_endpoint)
+            sync_client.spans.log_span_annotations_dataframe(
+                dataframe=evaluations_df,
+                annotation_name=eval_name,
+                annotator_kind="CODE",
+            )
 
             logger.info(
                 f"Uploaded {len(evaluations_df)} evaluations for '{eval_name}' "
@@ -336,29 +335,27 @@ class PhoenixDatasetStore(DatasetStore):
             metadata_keys = metadata.get("metadata_keys", [])
             description = metadata.get("description", "")
 
-            # Use Phoenix synchronous client for upload_dataset
-            # AsyncClient doesn't support all upload_dataset parameters yet
-            import phoenix as px
+            from phoenix.client import Client
 
-            sync_client = px.Client(endpoint=self.http_endpoint)
+            sync_client = Client(base_url=self.http_endpoint)
             try:
-                dataset = sync_client.upload_dataset(
-                    dataset_name=name,
+                dataset = sync_client.datasets.create_dataset(
+                    name=name,
                     dataframe=data,
-                    input_keys=input_keys if input_keys else None,
-                    output_keys=output_keys if output_keys else None,
-                    metadata_keys=metadata_keys if metadata_keys else None,
+                    input_keys=input_keys if input_keys else (),
+                    output_keys=output_keys if output_keys else (),
+                    metadata_keys=metadata_keys if metadata_keys else (),
                     dataset_description=description if description else None,
                 )
             except Exception as create_err:
                 if "already exists" in str(create_err):
                     # Dataset exists — append a new version
-                    dataset = sync_client.append_to_dataset(
-                        dataset_name=name,
+                    dataset = sync_client.datasets.add_examples_to_dataset(
+                        dataset=name,
                         dataframe=data,
-                        input_keys=input_keys if input_keys else None,
-                        output_keys=output_keys if output_keys else None,
-                        metadata_keys=metadata_keys if metadata_keys else None,
+                        input_keys=input_keys if input_keys else (),
+                        output_keys=output_keys if output_keys else (),
+                        metadata_keys=metadata_keys if metadata_keys else (),
                     )
                 else:
                     raise
@@ -384,13 +381,11 @@ class PhoenixDatasetStore(DatasetStore):
             DataFrame with dataset records
         """
         try:
-            # Phoenix v12: sync Client has get_dataset() directly,
-            # but AsyncClient moved it under .datasets sub-client
-            import phoenix as px
+            from phoenix.client import Client
 
-            sync_client = px.Client(endpoint=self.http_endpoint)
-            dataset = sync_client.get_dataset(name=name)
-            df = dataset.as_dataframe()
+            sync_client = Client(base_url=self.http_endpoint)
+            dataset = sync_client.datasets.get_dataset(dataset=name)
+            df = dataset.to_dataframe()
 
             logger.debug(f"Retrieved dataset '{name}' with {len(df)} records")
             return df
@@ -412,11 +407,11 @@ class PhoenixDatasetStore(DatasetStore):
         try:
             # Try to load existing dataset
             try:
-                import phoenix as px
+                from phoenix.client import Client
 
-                sync_client = px.Client(endpoint=self.http_endpoint)
-                existing_dataset = sync_client.get_dataset(name=name)
-                existing_df = existing_dataset.as_dataframe()
+                sync_client = Client(base_url=self.http_endpoint)
+                existing_dataset = sync_client.datasets.get_dataset(dataset=name)
+                existing_df = existing_dataset.to_dataframe()
 
                 # Concatenate and create versioned dataset
                 combined_df = pd.concat([existing_df, data], ignore_index=True)
@@ -427,8 +422,8 @@ class PhoenixDatasetStore(DatasetStore):
                 version_suffix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                 versioned_name = f"{name}_v{version_suffix}"
 
-                sync_client.upload_dataset(
-                    dataset_name=versioned_name,
+                sync_client.datasets.create_dataset(
+                    name=versioned_name,
                     dataframe=combined_df,
                 )
 
@@ -720,14 +715,14 @@ class PhoenixProvider(TelemetryProvider):
         Returns:
             Phoenix Client instance
         """
-        import phoenix as px
+        from phoenix.client import Client
 
         if not self._http_endpoint:
             raise RuntimeError(
                 "PhoenixProvider not initialized - call initialize() first"
             )
 
-        return px.Client(endpoint=self._http_endpoint)
+        return Client(base_url=self._http_endpoint)
 
     @contextmanager
     def session_context(self, session_id: str) -> Generator[None, None, None]:

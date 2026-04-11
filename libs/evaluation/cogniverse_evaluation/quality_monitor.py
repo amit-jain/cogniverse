@@ -727,11 +727,11 @@ class QualityMonitor:
     def _last_golden_baseline_mrr(self) -> Optional[float]:
         """Load the last golden baseline MRR from Phoenix dataset."""
         try:
-            import phoenix as px
+            from phoenix.client import Client as PhoenixSyncClient
 
-            sync_client = px.Client(endpoint=self.phoenix_http_endpoint)
+            sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
             dataset_name = f"quality-baseline-{self.tenant_id}"
-            dataset = sync_client.get_dataset(name=dataset_name)
+            dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
             df = dataset.as_dataframe()
             if df.empty:
                 return None
@@ -915,11 +915,11 @@ class QualityMonitor:
     async def _get_agent_baseline(self, agent_type: AgentType) -> Optional[float]:
         """Load the last live eval baseline for an agent from Phoenix."""
         try:
-            import phoenix as px
+            from phoenix.client import Client as PhoenixSyncClient
 
-            sync_client = px.Client(endpoint=self.phoenix_http_endpoint)
+            sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
             dataset_name = f"quality-baseline-{self.tenant_id}"
-            dataset = sync_client.get_dataset(name=dataset_name)
+            dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
             df = dataset.as_dataframe()
 
             if df.empty:

@@ -344,9 +344,9 @@ def phoenix_container():
 @pytest.fixture
 def phoenix_client(phoenix_container):
     """Phoenix client for querying spans from Docker container"""
-    import phoenix as px
+    from phoenix.client import Client
 
-    return px.Client(endpoint="http://localhost:16006")
+    return Client(base_url="http://localhost:16006")
 
 
 @pytest.fixture

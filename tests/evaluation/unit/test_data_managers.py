@@ -232,7 +232,7 @@ class TestTraceManager:
             # Create mock provider structure
             mock_provider = Mock()
             mock_provider.telemetry.traces.get_spans = AsyncMock(
-                return_value=mock_phoenix_client.get_spans_dataframe()
+                return_value=mock_phoenix_client.spans.get_spans_dataframe()
             )
             mock_storage.provider = mock_provider
             from cogniverse_evaluation.data.storage import ConnectionState
@@ -243,7 +243,7 @@ class TestTraceManager:
             manager = TraceManager()
             # Mock get_traces_for_evaluation to return the mock dataframe directly
             manager.storage.get_traces_for_evaluation = Mock(
-                return_value=mock_phoenix_client.get_spans_dataframe()
+                return_value=mock_phoenix_client.spans.get_spans_dataframe()
             )
             # Mock the removed methods that TraceManager still expects
             manager.storage.update_trace_metadata = Mock(return_value=True)

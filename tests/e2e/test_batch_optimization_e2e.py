@@ -658,9 +658,9 @@ class TestBatchJobsReadCorrectSpanTypes:
     @pytest.fixture(autouse=True)
     def _phoenix_client(self):
         """Create a Phoenix client for span queries."""
-        import phoenix as px
+        from phoenix.client import Client
 
-        self.client = px.Client(endpoint=PHOENIX_URL)
+        self.client = Client(base_url=PHOENIX_URL)
 
     def _project_has_spans_named(self, span_name: str) -> bool:
         """Check if the tenant's Phoenix project has spans with the given name.
@@ -670,7 +670,7 @@ class TestBatchJobsReadCorrectSpanTypes:
         """
         project_name = f"cogniverse-{TENANT_ID}"
         try:
-            df = self.client.get_spans_dataframe(project_name=project_name)
+            df = self.client.spans.get_spans_dataframe(project_identifier=project_name)
             if df is not None and not df.empty and "name" in df.columns:
                 return span_name in df["name"].values
         except Exception:

@@ -205,51 +205,47 @@ class TestBatchSolver:
     @pytest.mark.asyncio
     async def test_trace_loader_with_ids(self, mock_phoenix_client):
         """Test loading specific trace IDs."""
-        with patch("phoenix.Client", return_value=mock_phoenix_client):
-            solver = create_batch_solver(trace_ids=["trace1", "trace2"], config={})
+        solver = create_batch_solver(trace_ids=["trace1", "trace2"], config={})
 
-            state = Mock()
-            state.outputs = {}
-            state.metadata = {}
-            generate = Mock()
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        generate = Mock()
 
-            result = await solver(state, generate)
+        result = await solver(state, generate)
 
-            assert result is not None
+        assert result is not None
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_trace_loader_recent_traces(self, mock_phoenix_client):
         """Test loading recent traces."""
-        with patch("phoenix.Client", return_value=mock_phoenix_client):
-            solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
+        solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
 
-            state = Mock()
-            state.outputs = {}
-            state.metadata = {}
-            generate = Mock()
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        generate = Mock()
 
-            result = await solver(state, generate)
+        result = await solver(state, generate)
 
-            assert result is not None
+        assert result is not None
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_trace_loader_empty_result(self, mock_phoenix_client):
         """Test handling empty trace results."""
+        solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
 
-        with patch("phoenix.Client", return_value=mock_phoenix_client):
-            solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        generate = Mock()
 
-            state = Mock()
-            state.outputs = {}
-            state.metadata = {}
-            generate = Mock()
+        result = await solver(state, generate)
 
-            result = await solver(state, generate)
-
-            assert result is not None
-            assert len(result.outputs) == 0
+        assert result is not None
+        assert len(result.outputs) == 0
 
 
 class TestLiveSolver:
@@ -259,36 +255,34 @@ class TestLiveSolver:
     @pytest.mark.asyncio
     async def test_live_trace_solver_continuous(self, mock_phoenix_client):
         """Test continuous polling for new traces."""
-        with patch("phoenix.Client", return_value=mock_phoenix_client):
-            with patch("asyncio.sleep") as mock_sleep:
-                mock_sleep.side_effect = [None, KeyboardInterrupt()]
+        with patch("asyncio.sleep") as mock_sleep:
+            mock_sleep.side_effect = [None, KeyboardInterrupt()]
 
-                solver = create_live_solver(
-                    config={"poll_interval": 1, "continuous": True}
-                )
-
-                state = Mock()
-                state.outputs = {}
-                state.metadata = {}
-                generate = Mock()
-
-                try:
-                    await solver(state, generate)
-                except KeyboardInterrupt:
-                    pass
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_live_trace_solver_single_poll(self, mock_phoenix_client):
-        """Test single poll mode."""
-        with patch("phoenix.Client", return_value=mock_phoenix_client):
-            solver = create_live_solver(config={"continuous": False})
+            solver = create_live_solver(
+                config={"poll_interval": 1, "continuous": True}
+            )
 
             state = Mock()
             state.outputs = {}
             state.metadata = {}
             generate = Mock()
 
-            result = await solver(state, generate)
+            try:
+                await solver(state, generate)
+            except KeyboardInterrupt:
+                pass
 
-            assert result is not None
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_live_trace_solver_single_poll(self, mock_phoenix_client):
+        """Test single poll mode."""
+        solver = create_live_solver(config={"continuous": False})
+
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        generate = Mock()
+
+        result = await solver(state, generate)
+
+        assert result is not None

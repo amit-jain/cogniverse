@@ -129,24 +129,24 @@ def phoenix_test_server():
 @pytest.fixture
 def phoenix_client(phoenix_test_server):
     """Get Phoenix client connected to test server."""
-    import phoenix as px
+    from phoenix.client import Client
 
-    return px.Client(endpoint=phoenix_test_server.base_url)
+    return Client(base_url=phoenix_test_server.base_url)
 
 
 @pytest.fixture
 def mock_phoenix_client():
     """Mock Phoenix client for testing.
 
-    Patches phoenix.Client (used as px.Client in task.py) to return
+    Patches phoenix.client.Client (used in task.py) to return
     mock datasets with as_dataframe() returning a proper DataFrame.
     """
-    with patch("phoenix.Client") as mock_client_class:
+    with patch("phoenix.client.Client") as mock_client_class:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
 
         # Mock dataset with as_dataframe() returning DataFrame
-        # task.py calls: sync_client.get_dataset(name=...).as_dataframe()
+        # task.py calls: sync_client.datasets.get_dataset(dataset=...).as_dataframe()
         mock_dataset = MagicMock()
         mock_dataset.id = "test_dataset_id"
         mock_dataset.name = "test_dataset"
@@ -184,8 +184,8 @@ def mock_phoenix_client():
                 },
             ]
         )
-        mock_client.get_dataset.return_value = mock_dataset
-        mock_client.upload_dataset.return_value = mock_dataset
+        mock_client.datasets.get_dataset.return_value = mock_dataset
+        mock_client.datasets.create_dataset.return_value = mock_dataset
 
         # Mock spans dataframe
         mock_df = pd.DataFrame(
@@ -201,7 +201,7 @@ def mock_phoenix_client():
                 }
             ]
         )
-        mock_client.get_spans_dataframe.return_value = mock_df
+        mock_client.spans.get_spans_dataframe.return_value = mock_df
 
         yield mock_client
 
@@ -744,7 +744,7 @@ def search_evaluator_provider(phoenix_container):
     get_evaluation_provider() to return a real PhoenixEvaluationProvider
     wired to the test Phoenix instance.
     """
-    import phoenix as px
+    from phoenix.client import Client
 
     from cogniverse_evaluation.providers.registry import (
         set_evaluation_provider,
@@ -754,7 +754,7 @@ def search_evaluator_provider(phoenix_container):
     )
 
     phoenix_endpoint = "http://localhost:16006"
-    sync_client = px.Client(endpoint=phoenix_endpoint)
+    sync_client = Client(base_url=phoenix_endpoint)
 
     # Upload real test dataset to Phoenix (idempotent — skip if already exists)
     test_df = pd.DataFrame(
@@ -772,8 +772,8 @@ def search_evaluator_provider(phoenix_container):
         ]
     )
     try:
-        sync_client.upload_dataset(
-            dataset_name="test_dataset",
+        sync_client.datasets.create_dataset(
+            name="test_dataset",
             dataframe=test_df,
             input_keys=["query", "expected_videos", "query_type"],
             output_keys=[],

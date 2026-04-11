@@ -118,9 +118,9 @@ class TestPhoenixDatasets:
 
     def test_create_and_read_baseline_dataset(self):
         """Create an eval baseline dataset in Phoenix, read it back."""
-        import phoenix as px
+        from phoenix.client import Client
 
-        client = px.Client(endpoint=PHOENIX)
+        client = Client(base_url=PHOENIX)
         import pandas as pd
 
         df = pd.DataFrame([{
@@ -133,14 +133,14 @@ class TestPhoenixDatasets:
 
         dataset_name = "e2e-quality-baseline-test"
         try:
-            client.upload_dataset(
-                dataset_name=dataset_name,
+            client.datasets.create_dataset(
+                name=dataset_name,
                 dataframe=df,
                 input_keys=["timestamp"],
                 output_keys=["mean_mrr", "mean_ndcg", "mean_precision_at_5"],
             )
 
-            readback = client.get_dataset(name=dataset_name)
+            readback = client.datasets.get_dataset(dataset=dataset_name)
             readback_df = readback.as_dataframe()
             assert len(readback_df) >= 1
         except Exception as e:

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import phoenix as px
+from phoenix.client import Client as PhoenixSyncClient
 
 from cogniverse_evaluation.providers.base import AnalyticsProvider
 
@@ -23,7 +23,7 @@ class PhoenixAnalyticsProvider(AnalyticsProvider):
     Provides analytics operations using Phoenix client.
     """
 
-    def __init__(self, phoenix_client: px.Client):
+    def __init__(self, phoenix_client: PhoenixSyncClient):
         """
         Initialize Phoenix analytics provider.
 

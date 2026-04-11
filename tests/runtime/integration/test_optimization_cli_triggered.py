@@ -34,7 +34,7 @@ def trigger_dataset_in_phoenix(real_telemetry):
     """Store a trigger dataset in real Phoenix, return the dataset name."""
     import uuid
 
-    import phoenix as px
+    from phoenix.client import Client
 
     unique = uuid.uuid4().hex[:8]
     dataset_name = f"optimization-trigger-default-{unique}"
@@ -54,9 +54,9 @@ def trigger_dataset_in_phoenix(real_telemetry):
         ]
     )
 
-    sync_client = px.Client(endpoint="http://localhost:16006")
-    sync_client.upload_dataset(
-        dataset_name=dataset_name,
+    sync_client = Client(base_url="http://localhost:16006")
+    sync_client.datasets.create_dataset(
+        name=dataset_name,
         dataframe=df,
         input_keys=["agent", "category", "query"],
         output_keys=["score", "output"],
@@ -76,10 +76,10 @@ class TestTriggeredOptimization:
     ):
         """Verify trigger dataset stored in Phoenix is readable — same path
         optimization_cli uses to load training data."""
-        import phoenix as px
+        from phoenix.client import Client
 
-        sync_client = px.Client(endpoint="http://localhost:16006")
-        dataset = sync_client.get_dataset(name=trigger_dataset_in_phoenix)
+        sync_client = Client(base_url="http://localhost:16006")
+        dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
         df = dataset.as_dataframe()
 
         # Flatten Phoenix nested format if needed
@@ -110,12 +110,12 @@ class TestTriggeredOptimization:
         Uses the module-scoped memory_manager fixture (real Mem0MemoryManager backed
         by the shared Vespa Docker instance) so add_memory calls hit real storage.
         """
-        import phoenix as px
+        from phoenix.client import Client
 
         from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
 
-        sync_client = px.Client(endpoint="http://localhost:16006")
-        dataset = sync_client.get_dataset(name=trigger_dataset_in_phoenix)
+        sync_client = Client(base_url="http://localhost:16006")
+        dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
         trigger_df = dataset.as_dataframe()
 
         # Flatten Phoenix format

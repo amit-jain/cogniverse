@@ -56,14 +56,14 @@ def evaluation_task(
     # Load dataset from Phoenix using sync client directly
     # (avoids nested asyncio.run issues when called from async context)
     import pandas as pd
-    import phoenix as px
+    from phoenix.client import Client as PhoenixSyncClient
 
     from cogniverse_evaluation.providers import get_evaluation_provider
 
     provider = get_evaluation_provider()
 
-    sync_client = px.Client(endpoint=provider.http_endpoint)
-    phoenix_dataset = sync_client.get_dataset(name=dataset_name)
+    sync_client = PhoenixSyncClient(base_url=provider.http_endpoint)
+    phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
     if phoenix_dataset is None:
         raise ValueError(f"Dataset '{dataset_name}' not found or empty")
     dataset_data = phoenix_dataset.as_dataframe()

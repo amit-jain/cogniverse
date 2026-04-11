@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 import phoenix as px
+from phoenix.client import Client as _PhoenixSyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -321,8 +322,9 @@ class RetrievalMonitor:
     def export_traces(self, output_path: str):
         """Export collected traces to file"""
         try:
-            traces = px.Client().get_trace_dataset()
-            traces.save(output_path)
+            client = _PhoenixSyncClient()
+            traces_df = client.spans.get_spans_dataframe()
+            traces_df.to_parquet(output_path)
             logger.info(f"Exported traces to {output_path}")
         except Exception as e:
             logger.error(f"Failed to export traces: {e}")

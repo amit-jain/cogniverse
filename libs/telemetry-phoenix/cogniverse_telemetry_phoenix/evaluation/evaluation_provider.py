@@ -8,10 +8,11 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from phoenix.experiments.types import EvaluationResult
-
 from cogniverse_evaluation.providers.base import EvaluationProvider
-from cogniverse_telemetry_phoenix.evaluation.framework import PhoenixEvaluatorFramework
+from cogniverse_telemetry_phoenix.evaluation.framework import (
+    EvaluationResult,
+    PhoenixEvaluatorFramework,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +160,13 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             logger.info(f"Creating Phoenix dataset: {name} with {len(data)} examples")
 
             import pandas as pd
-            import phoenix as px
+            from phoenix.client import Client
 
             df = pd.DataFrame(data)
 
-            sync_client = px.Client(endpoint=self.http_endpoint)
-            dataset = sync_client.upload_dataset(
-                dataset_name=name,
+            sync_client = Client(base_url=self.http_endpoint)
+            dataset = sync_client.datasets.create_dataset(
+                name=name,
                 dataframe=df,
                 dataset_description=description or f"Dataset: {name}",
             )
