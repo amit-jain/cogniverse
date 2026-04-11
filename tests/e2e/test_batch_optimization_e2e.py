@@ -1076,3 +1076,62 @@ class TestArtifactLoadingRoundTrip:
                 f"Demo selected unknown profile '{demo['selected_profile']}', "
                 f"expected one of {known_profiles}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 8. Synthetic data generation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+@skip_if_no_kubectl
+class TestSyntheticGeneration:
+    """Verify --mode synthetic runs inside the pod."""
+
+    def test_synthetic_mode_runs(self):
+        """Run --mode synthetic for one optimizer type, verify structured result."""
+        result = subprocess.run(
+            [
+                "kubectl", "--context", KUBECTL_CONTEXT,
+                "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+                "--",
+                "python3", "-m", "cogniverse_runtime.optimization_cli",
+                "--mode", "synthetic",
+                "--tenant-id", TENANT_ID,
+                "--agents", "simba",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+
+        stdout = result.stdout.strip()
+
+        brace_depth = 0
+        json_start = None
+        json_end = None
+        for i in range(len(stdout) - 1, -1, -1):
+            if stdout[i] == "}":
+                if brace_depth == 0:
+                    json_end = i + 1
+                brace_depth += 1
+            elif stdout[i] == "{":
+                brace_depth -= 1
+                if brace_depth == 0:
+                    json_start = i
+                    break
+
+        assert json_start is not None, (
+            f"No JSON in synthetic output. rc={result.returncode}, "
+            f"stderr={result.stderr[-300:]}, stdout={stdout[-300:]}"
+        )
+        output = json.loads(stdout[json_start:json_end])
+
+        assert "results" in output, (
+            f"Synthetic output missing 'results' key: {output}"
+        )
+        assert "simba" in output["results"], (
+            f"Synthetic output missing 'simba' result: {output['results']}"
+        )
+        assert output["results"]["simba"]["status"] in ("success", "failed", "no_data"), (
+            f"Unexpected status: {output['results']['simba']}"
+        )
