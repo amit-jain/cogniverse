@@ -947,6 +947,18 @@ class TestDispatcherArtifactWiring:
             f"Gateway dispatch failed: {result}"
         )
 
+        # Verify the dispatcher actually applied the artifact threshold.
+        # The cached _gateway_agent should have our optimized values.
+        gw_agent = dispatcher._gateway_agent
+        assert gw_agent.deps.fast_path_confidence_threshold == 0.72, (
+            f"Dispatcher should have loaded threshold 0.72 from artifact, "
+            f"got {gw_agent.deps.fast_path_confidence_threshold}"
+        )
+        assert gw_agent.deps.gliner_threshold == 0.38, (
+            f"Dispatcher should have loaded gliner_threshold 0.38 from artifact, "
+            f"got {gw_agent.deps.gliner_threshold}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Behavior tests — loaded artifacts change actual agent output
@@ -1287,4 +1299,75 @@ class TestArtifactAffectsBehavior:
         )
         assert result.confidence > 0.0, (
             f"Confidence should be > 0, got {result.confidence}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_template_affects_planning(self, real_provider):
+        """Loaded workflow template should be matched and injected into plan context.
+
+        Saves a template with query_patterns that match "find cooking videos",
+        then verifies WorkflowIntelligence._find_matching_template returns it
+        with correct task_sequence. This is the function OrchestratorAgent calls
+        at planning time to inject template context into the DSPy planner.
+        """
+        import json
+        from datetime import datetime
+
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+
+        tenant_id = "behavior-orchestrator-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save template with patterns designed to match "find cooking videos"
+        template_id = "tmpl_behavior_001"
+        await mgr.save_blob(
+            "workflow", "template_index", json.dumps([template_id])
+        )
+        template_data = {
+            "template_id": template_id,
+            "name": "video_search_with_entities",
+            "description": "Extract entities then search videos",
+            "query_patterns": [
+                "find cooking videos",
+                "find sports videos",
+                "find music videos",
+            ],
+            "task_sequence": [
+                {"agent": "entity_extraction_agent", "timeout": 30},
+                {"agent": "search_agent", "timeout": 60},
+            ],
+            "expected_execution_time": 5.0,
+            "success_rate": 0.9,
+            "usage_count": 50,
+            "created_at": datetime.now().isoformat(),
+            "last_used": None,
+        }
+        await mgr.save_blob(
+            "workflow", f"template_{template_id}", json.dumps(template_data)
+        )
+
+        # Create WorkflowIntelligence and load from real Phoenix
+        wi = WorkflowIntelligence(real_provider, tenant_id)
+        await wi.load_historical_data()
+
+        assert template_id in wi.workflow_templates, (
+            f"Template not loaded, got: {list(wi.workflow_templates.keys())}"
+        )
+
+        # Verify template matching works — "find cooking videos" is an exact pattern
+        matched = wi._find_matching_template("find cooking videos")
+        assert matched is not None, (
+            "Template should match 'find cooking videos' (exact pattern match)"
+        )
+        assert matched.template_id == template_id
+        assert matched.name == "video_search_with_entities"
+        assert len(matched.task_sequence) == 2
+        assert matched.task_sequence[0]["agent"] == "entity_extraction_agent"
+        assert matched.task_sequence[1]["agent"] == "search_agent"
+
+        # Verify non-matching query does NOT match
+        no_match = wi._find_matching_template("explain quantum physics theory")
+        assert no_match is None, (
+            f"'explain quantum physics theory' should NOT match video template, "
+            f"got: {no_match.name if no_match else None}"
         )
