@@ -594,6 +594,221 @@ class TestDSPyAgentArtifactRoundTrip:
         assert demos_after[1]["recommended_agent"] == "orchestrator_agent"
         assert demos_after[1]["confidence"] == "0.85"
 
+    @pytest.mark.asyncio
+    async def test_query_enhancement_loads_real_dspy_state(self, real_provider):
+        """Save SIMBA DSPy state → QueryEnhancementAgent loads it → demos applied."""
+        import json
+
+        from cogniverse_agents.query_enhancement_agent import (
+            QueryEnhancementAgent,
+            QueryEnhancementDeps,
+            QueryEnhancementModule,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "enhancement-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        module = QueryEnhancementModule()
+        default_state = module.dump_state()
+        assert "enhancer.predict" in default_state
+        assert default_state["enhancer.predict"]["demos"] == []
+
+        optimized_state = json.loads(json.dumps(default_state, default=str))
+        optimized_state["enhancer.predict"]["demos"] = [
+            {
+                "query": "find ML papers",
+                "enhanced_query": "find machine learning research papers and publications",
+                "expansion_terms": "machine learning, research, publications",
+                "synonyms": "ML, artificial intelligence",
+                "confidence": "0.9",
+                "reasoning": "Expanded ML to full form and added related terms",
+            },
+            {
+                "query": "cat videos",
+                "enhanced_query": "cat and kitten video content compilation",
+                "expansion_terms": "kitten, feline, pet",
+                "synonyms": "cat, kitten, feline",
+                "confidence": "0.85",
+                "reasoning": "Added related animal terms",
+            },
+        ]
+
+        await mgr.save_blob(
+            "model", "simba_query_enhancement", json.dumps(optimized_state, default=str)
+        )
+
+        # Verify round-trip
+        loaded = json.loads(await mgr.load_blob("model", "simba_query_enhancement"))
+        assert len(loaded["enhancer.predict"]["demos"]) == 2
+        assert loaded["enhancer.predict"]["demos"][0]["enhanced_query"] == (
+            "find machine learning research papers and publications"
+        )
+
+        # Fresh agent, load artifact, verify state changed
+        agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        assert agent.dspy_module.dump_state()["enhancer.predict"]["demos"] == []
+
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        after = agent.dspy_module.dump_state()
+        demos = after["enhancer.predict"]["demos"]
+        assert len(demos) == 2, f"Expected 2 demos, got {len(demos)}"
+        assert demos[0]["query"] == "find ML papers"
+        assert demos[0]["enhanced_query"] == "find machine learning research papers and publications"
+        assert demos[1]["query"] == "cat videos"
+        assert demos[1]["synonyms"] == "cat, kitten, feline"
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_loads_real_dspy_state(self, real_provider):
+        """Save profile DSPy state → ProfileSelectionAgent loads it → demos applied."""
+        import json
+
+        from cogniverse_agents.profile_selection_agent import (
+            ProfileSelectionAgent,
+            ProfileSelectionDeps,
+            ProfileSelectionModule,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "profile-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        module = ProfileSelectionModule()
+        default_state = module.dump_state()
+        assert "selector.predict" in default_state
+        assert default_state["selector.predict"]["demos"] == []
+
+        optimized_state = json.loads(json.dumps(default_state, default=str))
+        optimized_state["selector.predict"]["demos"] = [
+            {
+                "query": "find basketball highlights",
+                "available_profiles": "video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": "0.9",
+                "reasoning": "Short clip search works best with frame-level ColPali",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "simple",
+            },
+        ]
+
+        await mgr.save_blob(
+            "model", "profile_selection", json.dumps(optimized_state, default=str)
+        )
+
+        loaded = json.loads(await mgr.load_blob("model", "profile_selection"))
+        assert len(loaded["selector.predict"]["demos"]) == 1
+        assert loaded["selector.predict"]["demos"][0]["selected_profile"] == (
+            "video_colpali_smol500_mv_frame"
+        )
+
+        deps = ProfileSelectionDeps(
+            available_profiles=["video_colpali_smol500_mv_frame"],
+        )
+        agent = ProfileSelectionAgent(deps=deps)
+        assert agent.dspy_module.dump_state()["selector.predict"]["demos"] == []
+
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        after = agent.dspy_module.dump_state()
+        demos = after["selector.predict"]["demos"]
+        assert len(demos) == 1, f"Expected 1 demo, got {len(demos)}"
+        assert demos[0]["selected_profile"] == "video_colpali_smol500_mv_frame"
+        assert demos[0]["query_intent"] == "video_search"
+        assert demos[0]["modality"] == "video"
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_loads_workflow_templates(self, real_provider):
+        """Save workflow data → OrchestratorAgent loads via load_historical_data."""
+        import json
+        from unittest.mock import Mock, patch
+
+        from cogniverse_agents.orchestrator_agent import (
+            OrchestratorAgent,
+            OrchestratorDeps,
+        )
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "orchestrator-artifact-roundtrip"
+
+        # WorkflowIntelligence creates its own ArtifactManager from the provider.
+        # Save workflow template data that load_historical_data() will pick up.
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save a template index + template blob (the format load_historical_data expects)
+        template_id = "tmpl_test_001"
+        await mgr.save_blob(
+            "workflow", "template_index", json.dumps([template_id])
+        )
+        from datetime import datetime
+
+        template_data = {
+            "template_id": template_id,
+            "name": "video_search_template",
+            "description": "Search for video content with entity extraction",
+            "query_patterns": ["find * videos", "search for * content"],
+            "task_sequence": [
+                {"agent": "entity_extraction_agent", "timeout": 30},
+                {"agent": "search_agent", "timeout": 60},
+            ],
+            "expected_execution_time": 5.0,
+            "success_rate": 0.85,
+            "usage_count": 10,
+            "created_at": datetime.now().isoformat(),
+            "last_used": None,
+        }
+        await mgr.save_blob(
+            "workflow", f"template_{template_id}", json.dumps(template_data)
+        )
+
+        # Create WorkflowIntelligence with the same provider+tenant
+        wi = WorkflowIntelligence(real_provider, tenant_id)
+        assert len(wi.workflow_templates) == 0  # nothing loaded yet
+
+        await wi.load_historical_data()
+        assert template_id in wi.workflow_templates, (
+            f"Template {template_id} not loaded, got: {list(wi.workflow_templates.keys())}"
+        )
+        loaded_tmpl = wi.workflow_templates[template_id]
+        assert loaded_tmpl.name == "video_search_template"
+        assert loaded_tmpl.success_rate == 0.85
+        assert loaded_tmpl.usage_count == 10
+        assert len(loaded_tmpl.task_sequence) == 2
+        assert loaded_tmpl.task_sequence[0]["agent"] == "entity_extraction_agent"
+
+        # Now test via OrchestratorAgent._load_artifact
+        wi2 = WorkflowIntelligence(real_provider, tenant_id)
+        mock_registry = Mock()
+        mock_registry.agents = {}
+        mock_registry.list_agents = Mock(return_value=[])
+
+        with patch("dspy.ChainOfThought"):
+            agent = OrchestratorAgent(
+                deps=OrchestratorDeps(),
+                registry=mock_registry,
+                config_manager=Mock(),
+                workflow_intelligence=wi2,
+            )
+
+        assert len(agent.workflow_intelligence.workflow_templates) == 0
+
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        assert template_id in agent.workflow_intelligence.workflow_templates, (
+            f"OrchestratorAgent._load_artifact did not load template {template_id}"
+        )
+
 
 class TestDispatcherArtifactWiring:
     """Verify AgentDispatcher.dispatch() triggers _load_artifact on agents."""
@@ -606,9 +821,9 @@ class TestDispatcherArtifactWiring:
 
         from cogniverse_core.common.agent_models import AgentEndpoint
         from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         tenant_id = "dispatcher-wiring-test"
         mgr = ArtifactManager(real_provider, tenant_id)
