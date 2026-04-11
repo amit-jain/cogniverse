@@ -46,7 +46,17 @@ class AgentInferrer:
                 if modality not in self.MODALITY_TO_AGENT:
                     self.MODALITY_TO_AGENT[modality] = name
 
-        # Content type heuristic — not in config, derived from modality mappings
+        # Role-based agent mappings from config (with fallbacks)
+        self.ROLE_AGENTS = {
+            "summarizer": agents_config.get("summarizer_agent", {}).get("name", "summarizer_agent"),
+            "detailed_report": agents_config.get("detailed_report_agent", {}).get("name", "detailed_report_agent"),
+        }
+        # Also check if config explicitly provides role mappings
+        for name, cfg in agents_config.items():
+            for role in cfg.get("roles", []):
+                self.ROLE_AGENTS[role] = name
+
+        # Content type heuristic — derived from modality mappings, not hardcoded
         self.CONTENT_TYPE_TO_AGENT = {}
         video_agent = self.MODALITY_TO_AGENT.get("VIDEO", "search_agent")
         doc_agent = self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
@@ -164,26 +174,25 @@ class AgentInferrer:
         """
         primary_agent = self.infer_from_modality(modality)
 
+        summarizer = self.ROLE_AGENTS.get("summarizer", "summarizer_agent")
+        report = self.ROLE_AGENTS.get("detailed_report", "detailed_report_agent")
+
         if query_complexity == "simple":
-            # Single agent workflow
             return [primary_agent]
 
         elif query_complexity == "moderate":
-            # Search + summarization
             if task_type == "summarize":
-                return [primary_agent, "summarizer"]
+                return [primary_agent, summarizer]
             else:
                 return [primary_agent]
 
         else:  # complex
-            # Full analysis workflow
             if task_type == "analyze":
-                return [primary_agent, "summarizer", "detailed_report"]
+                return [primary_agent, summarizer, report]
             elif task_type == "summarize":
-                return [primary_agent, "summarizer"]
+                return [primary_agent, summarizer]
             else:
-                # Default complex workflow
-                return [primary_agent, "detailed_report"]
+                return [primary_agent, report]
 
     def get_agent_for_task(self, task_description: str) -> str:
         """
@@ -197,18 +206,21 @@ class AgentInferrer:
         """
         task_lower = task_description.lower()
 
+        summarizer = self.ROLE_AGENTS.get("summarizer", "summarizer_agent")
+        report = self.ROLE_AGENTS.get("detailed_report", "detailed_report_agent")
+
         # Check for summarization keywords
         if any(
             word in task_lower for word in ["summarize", "summary", "condense", "brief"]
         ):
-            return "summarizer"
+            return summarizer
 
         # Check for analysis/reporting keywords
         if any(
             word in task_lower
             for word in ["analyze", "analysis", "report", "detailed", "deep dive"]
         ):
-            return "detailed_report"
+            return report
 
         # Check for search keywords
         if any(word in task_lower for word in ["find", "search", "locate", "show"]):
@@ -267,7 +279,7 @@ class AgentInferrer:
         # Check that primary agent (search) comes before secondary agents (summarizer, etc.)
         # Derived from config — all modality-mapped agents are considered search agents
         search_agents = set(self.MODALITY_TO_AGENT.values())
-        secondary_agents = {"summarizer", "detailed_report"}
+        secondary_agents = set(self.ROLE_AGENTS.values())
 
         # If we have secondary agents, should have a search agent first
         has_secondary = any(a in secondary_agents for a in agent_sequence)

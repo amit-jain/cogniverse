@@ -5,6 +5,7 @@ Provides intelligent summarization of search results with visual content analysi
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -855,18 +856,13 @@ and structure summary based on identified themes and content categories.
 
 
 # --- FastAPI Server ---
-app = FastAPI(
-    title="Summarizer Agent",
-    description="Intelligent summarization agent with VLM integration and full A2A support",
-    version="2.0.0",
-)
 
 # Global agent instance
 summarizer_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(application):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global summarizer_agent
 
@@ -877,6 +873,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize summarizer agent: {e}")
         raise
+    yield
+
+
+app = FastAPI(
+    title="Summarizer Agent",
+    description="Intelligent summarization agent with VLM integration and full A2A support",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

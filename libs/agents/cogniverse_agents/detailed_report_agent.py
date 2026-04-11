@@ -4,6 +4,7 @@ Generates comprehensive detailed reports with visual and technical analysis.
 """
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -933,18 +934,13 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
 
 # --- FastAPI Server ---
-app = FastAPI(
-    title="Detailed Report Agent",
-    description="Generates comprehensive detailed reports with visual and technical analysis",
-    version="2.0.0",
-)
 
 # Global agent instance
 detailed_report_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(application):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global detailed_report_agent
 
@@ -955,6 +951,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize detailed report agent: {e}")
         raise
+    yield
+
+
+app = FastAPI(
+    title="Detailed Report Agent",
+    description="Generates comprehensive detailed reports with visual and technical analysis",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

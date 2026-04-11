@@ -5,6 +5,7 @@ Single SearchService instance handles all profiles via encoder caching.
 """
 
 import logging
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -17,12 +18,6 @@ from cogniverse_agents.search.service import SearchService
 from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="Video Search Agent (Refactored)",
-    description="Video search agent using unified search architecture",
-    version="3.0.0",
-)
 
 
 class VideoSearchAgent:
@@ -124,8 +119,8 @@ class VideoSearchAgent:
 video_agent: Optional[VideoSearchAgent] = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(application):
     """Initialize agent on startup."""
     global video_agent
 
@@ -146,6 +141,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize agent: {e}")
         raise
+    yield
+
+
+app = FastAPI(
+    title="Video Search Agent (Refactored)",
+    description="Video search agent using unified search architecture",
+    version="3.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")

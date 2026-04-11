@@ -17,6 +17,7 @@ Enhanced with:
 
 import logging
 import tempfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -1882,18 +1883,12 @@ class SearchAgent(
     # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
-app = FastAPI(
-    title="Generic Multi-Modal Search Agent",
-    description="Search agent with support for text, video, image, audio, and document queries",
-    version="4.0.0",
-)
-
 # Global agent instance
 search_agent = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(application):
     """Initialize agent on startup.
 
     Agents are tenant-agnostic: no TENANT_ID or PROFILE env vars.
@@ -1920,6 +1915,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize search agent: {e}")
         raise
+    yield
+
+
+app = FastAPI(
+    title="Generic Multi-Modal Search Agent",
+    description="Search agent with support for text, video, image, audio, and document queries",
+    version="4.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
