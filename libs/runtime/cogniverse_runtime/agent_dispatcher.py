@@ -613,16 +613,31 @@ class AgentDispatcher:
             OrchestratorDeps,
             OrchestratorInput,
         )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         deps = OrchestratorDeps()
+        tm = get_telemetry_manager()
+
+        # Create WorkflowIntelligence so OrchestratorAgent can load
+        # workflow templates from the artifact store at startup.
+        workflow_intelligence = None
+        if tm is not None:
+            try:
+                from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+
+                provider = tm.get_provider(tenant_id=tenant_id)
+                workflow_intelligence = WorkflowIntelligence(provider, tenant_id)
+            except Exception as e:
+                logger.debug("WorkflowIntelligence init failed (non-fatal): %s", e)
+
         agent = OrchestratorAgent(
             deps=deps,
             registry=self._registry,
             config_manager=self._config_manager,
+            workflow_intelligence=workflow_intelligence,
         )
         self._init_agent_memory(agent, "orchestrator_agent", tenant_id)
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-        agent.telemetry_manager = get_telemetry_manager()
+        agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
 

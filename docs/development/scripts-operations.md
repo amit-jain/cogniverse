@@ -65,10 +65,10 @@ scripts/
 │   └── setup_video_processing.py    # Video processing setup
 │
 ├── Optimization & Experiments
-│   ├── run_module_optimization.py    # DSPy module optimization workflow
 │   ├── run_experiments_with_visualization.py  # Phoenix experiments
 │   ├── optimize_system.py            # System-wide optimization
 │   └── auto_optimization_trigger.py  # Automated optimization trigger
+│   (optimization_cli module replaces deleted run_module_optimization.py)
 │
 ├── Dataset Management
 │   ├── manage_datasets.py            # Dataset CRUD operations
@@ -151,9 +151,9 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Start["<span style='color:#000'>run_optimization.py<br/>Complete Optimization & Deployment</span>"]
+    Start["<span style='color:#000'>optimization_cli module<br/>Per-Agent Optimization CLI</span>"]
 
-    Step1["<span style='color:#000'>Step 1: Run Orchestrator<br/>• Execute optimization<br/>• Generate prompt artifacts<br/>• Timeout: 2 hours</span>"]
+    Step1["<span style='color:#000'>Step 1: Run Agent Optimization<br/>• Execute per-agent optimizer<br/>• Generate prompt artifacts<br/>• Modes: simba/gateway-thresholds/routing/etc.</span>"]
 
     Step2["<span style='color:#000'>Step 2: Upload to Modal<br/>• Upload artifacts to Modal volume<br/>• Path: /artifacts/*.json</span>"]
 
@@ -587,124 +587,27 @@ http://localhost:8000
 
 ---
 
-### 5. run_module_optimization.py
+### 5. cogniverse_runtime.optimization_cli
 
-**Purpose:** Complete optimization and deployment workflow for agentic router
+**Purpose:** Per-agent optimization CLI with automatic DSPy optimizer selection and synthetic data generation
 
-**Location:** `scripts/run_module_optimization.py`
+**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
-**Workflow Steps:**
+**What Gets Optimized (Modes):**
 
-**Step 1: Run Orchestrator**
-```python
-def run_orchestrator(config_path="config.json"):
-    # Note: Orchestrator implementation details may vary
-    # The actual script runs optimization logic and generates artifacts
-    cmd = [sys.executable, "-m", "src.optimizer.orchestrator", "--config", config_path]
+- `simba` - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
 
-    result = subprocess.run(
-        cmd,
-        cwd=Path(__file__).parent.parent,
-        capture_output=True,
-        text=True,
-        timeout=7200  # 2 hour timeout
-    )
+- `gateway-thresholds` - Gateway confidence threshold tuning
 
-    # Find artifacts file
-    artifacts_path = Path("optimization_results/unified_router_prompt_artifact.json")
-    return str(artifacts_path)
-```
-
-**Step 2: Upload Artifacts to Modal**
-```python
-def upload_artifacts_to_modal(artifacts_path):
-    # Create Modal volume and upload artifacts
-    cmd = [
-        "modal", "volume", "put",
-        "optimization-artifacts",  # Volume name
-        artifacts_path,
-        "/artifacts/unified_router_prompt_artifact.json"
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    return result.returncode == 0
-```
-
-**Step 3: Deploy Production API**
-```python
-def deploy_production_api():
-    # Check if HuggingFace secret exists
-    result = subprocess.run(["modal", "secret", "list"],
-                           capture_output=True, text=True)
-
-    if "huggingface-token" not in result.stdout:
-        # Create secret from environment
-        hf_token = os.getenv("HF_TOKEN")
-        subprocess.run(["modal", "secret", "create",
-                       "huggingface-token", f"HF_TOKEN={hf_token}"])
-
-    # Deploy to Modal (uses SDK packages)
-    cmd = ["modal", "deploy", "scripts/modal_vlm_service.py"]
-    result = subprocess.run(cmd, timeout=600)
-
-    return "https://cogniverse-production.modal.run"
-```
-
-**Step 4: Test Production API**
-```python
-def test_production_api(api_url):
-    test_cases = [
-        {
-            "query": "Show me how to cook pasta",
-            "expected_modality": "video",
-            "expected_type": "raw_results"
-        },
-        {
-            "query": "Create a detailed report on climate change",
-            "expected_modality": "text",
-            "expected_type": "detailed_report"
-        }
-    ]
-
-    for test_case in test_cases:
-        response = requests.post(
-            api_url,
-            json={"user_query": test_case["query"]},
-            timeout=30
-        )
-        # Verify response format and routing decisions
-```
-
-**Command Line Options:**
-```bash
-python scripts/run_optimization.py \
-  --config config.json \
-  --skip-upload    # Skip uploading to Modal
-  --skip-deploy    # Skip deploying production API
-  --skip-test      # Skip testing the API
-```
-
----
-
-### 5a. run_module_optimization.py
-
-**Purpose:** Optimize routing/workflow modules with automatic DSPy optimizer selection and synthetic data generation
-
-**Location:** `scripts/run_module_optimization.py` (442 lines)
-
-**What Gets Optimized (Modules):**
-
-- `modality` - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
-
-- `cross_modal` - Multi-modal fusion decisions
+- `entity-extraction` - Entity extraction optimization
 
 - `routing` - Entity-based advanced routing
 
 - `workflow` - Multi-agent workflow orchestration
 
-- `unified` - Combined routing + workflow planning
+- `profile` - Search profile selection
 
-- `all` - All modules sequentially
+- `cleanup` - Remove stale optimization logs
 
 **How They Get Optimized:**
 
@@ -718,187 +621,40 @@ python scripts/run_optimization.py \
 
 - \> 1000 examples → GEPA
 
-**Module Optimization Functions:**
-
-**optimize_modality():**
-```python
-async def optimize_modality(
-    tenant_id: str,
-    use_synthetic: bool = False,
-    lookback_hours: int = 24,
-    min_confidence: float = 0.7,
-    force_training: bool = False,
-) -> Dict[str, Any]:
-    """
-    Optimize per-modality routing
-
-    Returns:
-        {
-            "module": "modality",
-            "results_by_modality": {
-                "VIDEO": {"trained": true, "accuracy": 0.89, ...},
-                "DOCUMENT": {...},
-                ...
-            },
-            "summary": {
-                "total_modalities": 4,
-                "trained_count": 3,
-                "skipped_count": 1
-            }
-        }
-    """
-    optimizer = ModalityOptimizer(tenant_id=tenant_id)
-    results = await optimizer.optimize_all_modalities(
-        lookback_hours=lookback_hours,
-        min_confidence=min_confidence
-    )
-    return results
-```
-
-**optimize_cross_modal():**
-```python
-async def optimize_cross_modal(
-    tenant_id: str,
-    use_synthetic: bool = False,
-    lookback_hours: int = 24,
-) -> Dict[str, Any]:
-    """
-    Optimize cross-modal fusion decisions
-
-    Uses CrossModalOptimizer to learn when to:
-    - Fuse results from multiple modalities
-    - Use single modality only
-    - Weight different modalities
-    """
-    optimizer = CrossModalOptimizer(tenant_id=tenant_id)
-    results = await optimizer.optimize()
-    return results
-```
-
-**optimize_routing():**
-```python
-async def optimize_routing(
-    tenant_id: str,
-    use_synthetic: bool = False,
-    lookback_hours: int = 24,
-) -> Dict[str, Any]:
-    """
-    Optimize advanced entity-based routing
-
-    Uses AdvancedRoutingOptimizer to improve routing based on:
-    - Named entities in query
-    - Entity relationships
-    - Query complexity
-    """
-    optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
-    results = await optimizer.optimize()
-    return results
-```
-
-**optimize_all_modules():**
-```python
-async def optimize_all_modules(
-    tenant_id: str,
-    use_synthetic: bool = False,
-    lookback_hours: int = 24,
-    min_confidence: float = 0.7,
-) -> Dict[str, Any]:
-    """
-    Optimize all modules sequentially
-
-    Returns:
-        {
-            "module": "all",
-            "summary": {
-                "total_modules": 5,
-                "successful": 4,
-                "failed": 0,
-                "not_implemented": 1
-            },
-            "results": {
-                "modality": {...},
-                "cross_modal": {...},
-                "routing": {...},
-                "workflow": {"status": "not_implemented"},
-                "unified": {"status": "not_implemented"}
-            }
-        }
-    """
-    # Runs each optimizer with error handling
-```
-
 **Command Line Usage:**
 
-**Optimize specific module:**
 ```bash
-# Optimize modality routing
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id default \
-  --output results.json
+# Optimize modality routing (SIMBA)
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode simba \
+  --tenant-id default
 
-# Optimize cross-modal fusion
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-  --module cross_modal \
-  --tenant-id acme_corp \
-  --use-synthetic-data \
-  --lookback-hours 48 \
-  --output results.json
-```
+# Optimize gateway thresholds
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode gateway-thresholds \
+  --tenant-id acme_corp
 
-**Optimize all modules:**
-```bash
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-  --module all \
-  --tenant-id default \
-  --use-synthetic-data \
-  --min-confidence 0.8 \
-  --max-iterations 200 \
-  --output results.json
+# Optimize entity-based routing
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode routing \
+  --tenant-id default
+
+# Clean up old logs
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode cleanup \
+  --log-retention-days 7
 ```
 
 **Command Line Options:**
 ```bash
---module CHOICE              # modality|cross_modal|routing|workflow|unified|all (required)
+--mode CHOICE                # simba|gateway-thresholds|entity-extraction|routing|workflow|profile|cleanup (required)
 --tenant-id ID               # Tenant identifier (default: default)
---use-synthetic-data         # Generate synthetic training data if insufficient Phoenix traces
---lookback-hours HOURS       # Hours to look back for Phoenix spans (default: 24)
---min-confidence FLOAT       # Minimum confidence threshold (default: 0.7)
---force-training             # Force training regardless of XGBoost decision
---max-iterations NUM         # Maximum DSPy training iterations (default: 100)
---output PATH                # Output JSON file path (default: /tmp/optimization_results.json)
-```
-
-**Output Format:**
-```json
-{
-  "module": "modality",
-  "tenant_id": "default",
-  "timestamp": "2025-10-22T10:30:00",
-  "duration_seconds": 245.3,
-  "success": true,
-  "results": {
-    "results_by_modality": {
-      "VIDEO": {
-        "trained": true,
-        "baseline_accuracy": 0.77,
-        "optimized_accuracy": 0.89,
-        "improvement": 0.12,
-        "training_examples": 156
-      }
-    },
-    "summary": {
-      "total_modalities": 4,
-      "trained_count": 3,
-      "skipped_count": 1
-    }
-  }
-}
+--log-retention-days DAYS    # Days to retain logs (cleanup mode, default: 7)
 ```
 
 **Integration with Argo Workflows:**
 
-This script is used by Argo Workflows for batch optimization:
+The `optimization_cli` module is used by Argo Workflows for batch optimization:
 
 ```yaml
 # workflows/batch-optimization.yaml
@@ -908,20 +664,18 @@ This script is used by Argo Workflows for batch optimization:
     command: ["/bin/bash", "-c"]
     args:
       - |
-        JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-          --module {{inputs.parameters.optimizer-type}} \
-          --tenant-id {{workflow.parameters.tenant-id}} \
-          --use-synthetic-data \
-          --output /tmp/optimization_results.json
+        uv run python -m cogniverse_runtime.optimization_cli \
+          --mode {{inputs.parameters.optimizer-mode}} \
+          --tenant-id {{workflow.parameters.tenant-id}}
 ```
 
 **Scheduled Execution:**
 
 See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization:
 
-- **Weekly**: Sunday 3 AM UTC (all modules)
+- **Weekly**: Sunday 3 AM UTC (all modes)
 
-- **Daily**: 4 AM UTC (routing module only)
+- **Daily**: 4 AM UTC (routing mode only)
 
 ---
 
@@ -1368,26 +1122,20 @@ User Command
 ```text
 User Command
     │
-    ├─> run_optimization.py
+    ├─> python -m cogniverse_runtime.optimization_cli --mode <MODE> --tenant-id <TENANT>
     │       │
-    │       ├─> Step 1: Run Orchestrator
-    │       │   • Execute: python -m src.optimizer.orchestrator
-    │       │   • Timeout: 2 hours
-    │       │   • Output: optimization_results/unified_router_prompt_artifact.json
-    │       │   • Contains: optimized prompts, chain-of-thought examples
+    │       ├─> Step 1: Run Per-Agent Optimizer
+    │       │   • Mode: simba | gateway-thresholds | entity-extraction | routing | workflow | profile
+    │       │   • Collects Phoenix spans for the agent
+    │       │   • Selects DSPy optimizer based on training data size
+    │       │   • Output: artifacts saved to optimization output directory
     │       │
     │       ├─> Step 2: Upload Artifacts to Modal
-    │       │   IF --skip-upload:
-    │       │       • Skip this step
-    │       │   ELSE:
     │       │       • modal volume put optimization-artifacts
     │       │       • Target: /artifacts/unified_router_prompt_artifact.json
     │       │       • Timeout: 5 minutes
     │       │
     │       ├─> Step 3: Deploy Production API
-    │       │   IF --skip-deploy:
-    │       │       • Skip this step
-    │       │   ELSE:
     │       │       ├─> Check HuggingFace Secret
     │       │       │   • modal secret list
     │       │       │   IF not exists:
@@ -1399,22 +1147,10 @@ User Command
     │       │           • Timeout: 10 minutes
     │       │           • Return: API URL
     │       │
-    │       ├─> Step 4: Test Production API
-    │       │   IF --skip-test:
-    │       │       • Skip this step
-    │       │   ELSE:
-    │       │       FOR each test_case:
-    │       │           • POST {api_url} with query
-    │       │           • Verify: search_modality, generation_type
-    │       │           • Check: latency, HTTP status
-    │       │           • Print: ✅ or ❌
-    │       │
     │       └─> Print Summary
     │           • Total time
     │           • Artifacts path
     │           • API URL
-    │           • Test results
-    │           • Usage example (curl command)
     │
     └─> Exit with Status Code
 ```
@@ -1639,53 +1375,19 @@ uv run python scripts/run_experiments_with_visualization.py \
 # ✅ All experiments completed!
 ```
 
-### Example 6: Complete Optimization Workflow
+### Example 6: Per-Agent Optimization
 
 ```bash
-# Run full optimization and deployment
-python scripts/run_optimization.py --config config.json
+# Optimize each agent mode for a tenant
+uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme_corp
 
-# Output:
-# 🎯 Agentic Router Complete Optimization & Deployment
-# ============================================================
-#
-# 🚀 Starting Orchestrator Optimization...
-# ============================================================
-# [Orchestrator runs for ~30-60 minutes...]
-# ✅ Orchestrator completed successfully
-# 📄 Artifacts found: optimization_results/unified_router_prompt_artifact.json
-#
-# 📤 Uploading artifacts to Modal volume...
-# ✅ Artifacts uploaded to Modal volume
-#
-# 🚀 Deploying Production API...
-# ⚠️  Modal secret 'huggingface-token' not found
-# 📝 Creating Modal secret...
-# ✅ Modal secret created successfully
-# ✅ Production API deployed successfully
-# 🌐 API URL: https://agentic-router-production-route.modal.run
-#
-# 🧪 Testing Production API...
-#   Test 1: 'Show me how to cook pasta'
-#     ✅ video/raw_results (125.3ms)
-#   Test 2: 'Create a detailed report on climate change'
-#     ✅ text/detailed_report (98.7ms)
-#   Test 3: 'What's the summary of the AI paper?'
-#     ✅ text/summary (87.2ms)
-# ✅ All API tests completed
-#
-# ============================================================
-# 🎉 DEPLOYMENT COMPLETE!
-# ============================================================
-# ⏱️  Total time: 45.3 minutes
-# 📄 Artifacts: optimization_results/unified_router_prompt_artifact.json
-# 🌐 API URL: https://agentic-router-production-route.modal.run
-# ✅ Tests: Passed
-#
-# 🔗 Usage:
-# curl -X POST https://agentic-router-production-route.modal.run \
-#   -H 'Content-Type: application/json' \
-#   -d '{"user_query": "Show me cooking videos"}'
+# Clean up old logs afterward
+uv run python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
 ```
 
 ### Example 7: Dataset Management

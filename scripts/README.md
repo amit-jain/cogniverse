@@ -228,55 +228,54 @@ uv run python scripts/demo_routing_unified.py \
 
 ### Core Optimization Workflows
 
-#### `run_module_optimization.py` - DSPy Module Optimization
-**Optimize routing/workflow modules with automatic DSPy optimizer selection**
+#### `cogniverse_runtime.optimization_cli` - Per-Agent Optimization CLI
+**Optimize individual agents with automatic DSPy optimizer selection**
 
 ```bash
-# Optimize modality routing (all modalities: video, image, audio, document, text)
-uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id default \
-  --lookback-hours 24 \
-  --min-confidence 0.7 \
-  --output results/modality_optimization.json
+# Optimize modality routing via SIMBA
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode simba \
+  --tenant-id default
 
-# Optimize cross-modal fusion
-uv run python scripts/run_module_optimization.py \
-  --module cross_modal \
-  --tenant-id default \
-  --use-synthetic-data \
-  --output results/cross_modal.json
+# Optimize gateway thresholds
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode gateway-thresholds \
+  --tenant-id default
 
-# Optimize entity-based routing
-uv run python scripts/run_module_optimization.py \
-  --module routing \
-  --tenant-id default \
-  --lookback-hours 48 \
-  --max-iterations 100
+# Optimize entity extraction
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode entity-extraction \
+  --tenant-id default
 
-# Optimize ALL modules
-uv run python scripts/run_module_optimization.py \
-  --module all \
-  --tenant-id default \
-  --use-synthetic-data \
-  --lookback-hours 24 \
-  --force-training \
-  --output results/full_optimization.json
+# Optimize cross-modal / entity-based routing
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode routing \
+  --tenant-id default
 
-# With Phoenix dataset
-uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id acme_corp \
-  --dataset-name golden_queries_v2 \
-  --max-iterations 200
+# Optimize workflow orchestration
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode workflow \
+  --tenant-id default
+
+# Optimize search profile selection
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode profile \
+  --tenant-id acme_corp
+
+# Clean up old optimization logs
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode cleanup \
+  --log-retention-days 7
 ```
 
-**Modules Supported:**
-- **modality**: Per-modality routing (VIDEO, IMAGE, AUDIO, DOCUMENT, TEXT)
-- **cross_modal**: Cross-modal fusion decisions
+**Modes Supported:**
+- **simba**: Per-modality routing (VIDEO, IMAGE, AUDIO, DOCUMENT, TEXT)
+- **gateway-thresholds**: Gateway confidence threshold tuning
+- **entity-extraction**: Entity extraction optimization
 - **routing**: Advanced entity-based routing
-- **workflow**: Workflow orchestration (pending implementation)
-- **unified**: Unified routing + workflow (pending implementation)
+- **workflow**: Workflow orchestration
+- **profile**: Search profile selection
+- **cleanup**: Remove stale optimization logs
 
 **DSPy Optimizers (Automatic Selection):**
 - **BootstrapFewShot**: Fast, few-shot learning (cold start)
@@ -543,29 +542,6 @@ uv run python scripts/deploy_production.py \
 
 ---
 
-#### `run_optimization.py` - Full Optimization + Deployment Workflow
-**Complete end-to-end optimization and deployment pipeline**
-
-```bash
-# Full workflow (optimization + deployment + testing)
-uv run python scripts/run_optimization.py
-
-# With custom config
-uv run python scripts/run_optimization.py \
-  --config config/optimization.json
-
-# Skip specific steps
-uv run python scripts/run_optimization.py \
-  --skip-upload \
-  --skip-test
-```
-
-**Workflow Steps:**
-1. Run orchestrator optimization
-2. Upload artifacts to Modal volume
-3. Deploy production API
-4. Test deployed system
-
 ---
 
 #### `deploy_all_schemas.py` - Deploy Vespa Schemas
@@ -801,13 +777,11 @@ uv run python scripts/ingest_images.py \
 ### Optimization & Deployment Workflow
 
 ```bash
-# 1. Optimize modules with synthetic data
-uv run python scripts/run_module_optimization.py \
-  --module all \
-  --tenant-id acme_corp \
-  --use-synthetic-data \
-  --lookback-hours 72 \
-  --output results/optimization_$(date +%Y%m%d).json
+# 1. Optimize all agent modes
+uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id acme_corp
+uv run python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme_corp
 
 # 2. Review optimization results
 cat results/optimization_*.json | jq '.summary'
@@ -891,7 +865,7 @@ uv run python scripts/<script>.py [OPTIONS]
 
 # Examples
 uv run python scripts/run_ingestion.py --help
-uv run python scripts/run_module_optimization.py --module modality --tenant-id default
+uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
 uv run streamlit run scripts/phoenix_dashboard.py
 ```
 
@@ -972,10 +946,10 @@ bash scripts/start_phoenix.sh
 | Category | Count | Key Scripts |
 |----------|-------|-------------|
 | **Ingestion** | 5 | `run_ingestion.py`, `ingest_documents.py`, `ingest_audio.py`, `ingest_images.py` |
-| **Optimization** | 4 | `run_module_optimization.py`, `auto_optimization_trigger.py`, `optimize_system.py` |
+| **Optimization** | 3 | `optimization_cli` (module), `auto_optimization_trigger.py`, `optimize_system.py` |
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
-| **Deployment** | 4 | `deploy_production.py`, `deploy_all_schemas.py`, `run_optimization.py` |
+| **Deployment** | 3 | `deploy_production.py`, `deploy_all_schemas.py` |
 | **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_vespa_embeddings.py`, `embedding_atlas_tab.py` |
 | **Setup** | 5 | `setup_system.py`, `start_phoenix.py`, `run_servers.sh`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |

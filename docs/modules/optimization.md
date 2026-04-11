@@ -1318,46 +1318,49 @@ def get_health() -> Dict[str, Any]:
 
 The optimization module includes production-ready deployment infrastructure with CLI tools and Argo Workflows for batch and scheduled optimization.
 
-#### CLI Script: `run_module_optimization.py`
+#### CLI: `cogniverse_runtime.optimization_cli`
 
-**Command-line interface for module optimization:**
+**Command-line interface for per-agent optimization:**
 
 ```bash
-# Optimize specific module
-uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id default \
-  --use-synthetic-data \
-  --output results.json
+# Optimize modality routing (SIMBA)
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode simba \
+  --tenant-id default
 
-# Optimize all modules
-uv run python scripts/run_module_optimization.py \
-  --module all \
-  --tenant-id default \
-  --lookback-hours 48 \
-  --min-confidence 0.8 \
-  --output results.json
+# Optimize gateway thresholds
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode gateway-thresholds \
+  --tenant-id default
 
-# Note: JAX_PLATFORM_NAME=cpu prefix only needed if using VideoPrism profiles
+# Optimize entity-based routing
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode routing \
+  --tenant-id default
+
+# Optimize workflow orchestration
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode workflow \
+  --tenant-id default
+
+# Optimize search profile selection
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode profile \
+  --tenant-id default
+
+# Clean up old optimization logs
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode cleanup \
+  --log-retention-days 7
 ```
 
 **Available Options:**
 
-- `--module`: Which module to optimize (modality/cross_modal/routing/workflow/unified/all)
+- `--mode`: Which agent to optimize (simba/gateway-thresholds/entity-extraction/routing/workflow/profile/cleanup)
 
 - `--tenant-id`: Tenant identifier (default: "default")
 
-- `--use-synthetic-data`: Generate synthetic training data if insufficient Phoenix traces
-
-- `--lookback-hours`: Hours to look back for Phoenix spans (default: 24)
-
-- `--min-confidence`: Minimum confidence threshold for span collection (default: 0.7)
-
-- `--force-training`: Force training regardless of XGBoost decision
-
-- `--max-iterations`: Maximum DSPy training iterations (default: 100)
-
-- `--output`: Output JSON file path (default: /tmp/optimization_results.json)
+- `--log-retention-days`: Days to retain logs (cleanup mode, default: 7)
 
 **Automatic DSPy Optimizer Selection:**
 The CLI automatically selects the best DSPy optimizer based on training data size:

@@ -624,10 +624,13 @@ uv run python scripts/run_experiments_with_visualization.py \
 uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
-# Optimization CLI — standard modes
-python -m cogniverse_runtime.optimization_cli --mode once
-python -m cogniverse_runtime.optimization_cli --mode full
-python -m cogniverse_runtime.optimization_cli --mode dspy
+# Optimization CLI — per-agent batch modes
+python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
 
 # Optimization CLI — triggered mode (called by Argo when quality degrades)

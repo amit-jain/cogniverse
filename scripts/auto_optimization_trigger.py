@@ -183,12 +183,11 @@ class AutoOptimizationTrigger:
         )
 
         cmd = [
-            "python",
-            "scripts/run_module_optimization.py",
-            "--module", self.module,
+            "python", "-m",
+            "cogniverse_runtime.optimization_cli",
+            "--mode", self.module,
             "--tenant-id", self.tenant_id,
             "--lookback-hours", str(lookback_hours),
-            "--output", f"/tmp/auto_opt_{self.tenant_id}_{self.module}_results.json"
         ]
 
         try:
