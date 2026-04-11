@@ -644,28 +644,27 @@ class TestCreateTeleprompter:
             f"Expected BootstrapFewShot for 49 examples, got {type(tp).__name__}"
         )
 
-    def test_50_tries_copro(self):
-        """Boundary: >= 50 examples should try COPRO (falls back to Bootstrap if unavailable)."""
+    def test_50_uses_scaled_bootstrap(self):
+        """Boundary: >= 50 examples should use scaled BootstrapFewShot."""
+        from dspy.teleprompt import BootstrapFewShot
 
         from cogniverse_runtime.optimization_cli import _create_teleprompter
 
         tp = _create_teleprompter(50)
-        # COPRO may or may not be available depending on dspy version.
-        # Either COPRO or BootstrapFewShot is acceptable — the function should not crash.
-        valid_types = {"BootstrapFewShot", "COPRO"}
-        assert type(tp).__name__ in valid_types, (
-            f"Expected BootstrapFewShot or COPRO for 50 examples, got {type(tp).__name__}"
-        )
+        assert isinstance(tp, BootstrapFewShot)
+        assert tp.max_bootstrapped_demos == 8
+        assert tp.max_labeled_demos == 16
 
-    def test_large_trainset_tries_copro(self):
-        """200 examples should try COPRO."""
+    def test_large_trainset_uses_scaled_bootstrap(self):
+        """200 examples should use scaled BootstrapFewShot with more demos."""
+        from dspy.teleprompt import BootstrapFewShot
+
         from cogniverse_runtime.optimization_cli import _create_teleprompter
 
         tp = _create_teleprompter(200)
-        valid_types = {"BootstrapFewShot", "COPRO"}
-        assert type(tp).__name__ in valid_types, (
-            f"Expected BootstrapFewShot or COPRO for 200 examples, got {type(tp).__name__}"
-        )
+        assert isinstance(tp, BootstrapFewShot)
+        assert tp.max_bootstrapped_demos == 8
+        assert tp.max_labeled_demos == 16
 
     def test_zero_uses_bootstrap(self):
         """Edge case: 0 examples should use BootstrapFewShot."""

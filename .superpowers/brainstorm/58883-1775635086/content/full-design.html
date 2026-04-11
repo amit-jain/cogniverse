@@ -1,0 +1,462 @@
+<h2>A2A Architecture Restructuring — Full Design</h2>
+<p class="subtitle">Finalized design: telemetry-first, Argo batch optimization, clean A2A agent separation</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>1. Architecture Overview</h3>
+<div class="mockup">
+<div class="mockup-header">Query Flow — New Architecture</div>
+<div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 2.2;">
+
+<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+<span style="background:#ef4444; color:white; padding:4px 12px; border-radius:6px;">User Query</span>
+<span style="color:#888;">→</span>
+<span style="background:#22c55e; color:white; padding:4px 12px; border-radius:6px;">GatewayAgent (GLiNER, &lt;100ms)</span>
+</div>
+
+<div style="margin-top:16px; margin-left:40px;">
+<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+<span style="color:#22c55e; font-weight:bold;">SIMPLE</span>
+<span style="color:#888;">→</span>
+<span style="background:#3b82f6; color:white; padding:4px 12px; border-radius:6px;">execution agent directly</span>
+<span style="color:#888; font-size:11px;">(search, summarizer, etc.)</span>
+</div>
+</div>
+
+<div style="margin-top:12px; margin-left:40px;">
+<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+<span style="color:#f97316; font-weight:bold;">COMPLEX</span>
+<span style="color:#888;">→</span>
+<span style="background:#8b5cf6; color:white; padding:4px 12px; border-radius:6px; font-weight:bold;">OrchestratorAgent</span>
+</div>
+<div style="margin-left:60px; margin-top:8px; border-left: 2px solid #8b5cf6; padding-left: 16px;">
+<div style="color:#666; font-size:11px; margin-bottom:8px;">LLM planner decides steps dynamically:</div>
+<div style="display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;">
+<span style="background:#06b6d4; color:white; padding:2px 10px; border-radius:4px; font-size:12px;">1</span>
+<span style="background:#0891b2; color:white; padding:4px 10px; border-radius:6px;">EntityExtractionAgent</span>
+<span style="color:#888; font-size:11px;">(GLiNER + SpaCy + LLM)</span>
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;">
+<span style="background:#06b6d4; color:white; padding:2px 10px; border-radius:4px; font-size:12px;">2</span>
+<span style="background:#0891b2; color:white; padding:4px 10px; border-radius:6px;">QueryEnhancementAgent</span>
+<span style="color:#888; font-size:11px;">(DSPy + optimized module from artifacts)</span>
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;">
+<span style="background:#06b6d4; color:white; padding:2px 10px; border-radius:4px; font-size:12px;">3</span>
+<span style="background:#f59e0b; color:#000; padding:4px 10px; border-radius:6px;">RoutingAgent</span>
+<span style="color:#888; font-size:11px;">(thin DSPy decision + learned optimizer)</span>
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;">
+<span style="background:#06b6d4; color:white; padding:2px 10px; border-radius:4px; font-size:12px;">4</span>
+<span style="background:#0891b2; color:white; padding:4px 10px; border-radius:6px;">ProfileSelectionAgent</span>
+<span style="color:#888; font-size:11px;">(Vespa profile picker)</span>
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;">
+<span style="background:#06b6d4; color:white; padding:2px 10px; border-radius:4px; font-size:12px;">5</span>
+<span style="background:#3b82f6; color:white; padding:4px 10px; border-radius:6px;">Execution agents</span>
+<span style="color:#888; font-size:11px;">(search, summarizer, report, etc.)</span>
+</div>
+<div style="margin-top:8px; color:#666; font-size:11px;">
++ streaming, checkpoints, cross-modal fusion, workflow intelligence, cancellation
+</div>
+</div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>2. Agent Inventory</h3>
+
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:16px;">
+
+<!-- GatewayAgent -->
+<div style="background:#1a2e1a; border:1px solid #22c55e; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#22c55e; color:#000; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">GatewayAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">NEW</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>Question:</strong> Simple or complex?<br>
+<strong>How:</strong> GLiNER classification, no LLM<br>
+<strong>Source:</strong> Extracted from ComprehensiveRouter fast path<br>
+<strong>Emits:</strong> <code>cogniverse.gateway</code> span
+</div>
+</div>
+
+<!-- OrchestratorAgent -->
+<div style="background:#1a1a2e; border:1px solid #8b5cf6; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#8b5cf6; color:white; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">OrchestratorAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">ENHANCED</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>Question:</strong> What pipeline, what order?<br>
+<strong>How:</strong> DSPy LLM planner<br>
+<strong>Gains:</strong> Streaming, checkpoints, fusion, workflow intelligence, cancellation<br>
+<strong>Emits:</strong> <code>cogniverse.orchestration</code> span with agent_sequence, execution_time, success<br>
+<strong>Loads:</strong> Workflow templates from artifacts at startup
+</div>
+</div>
+
+<!-- EntityExtractionAgent -->
+<div style="background:#1a2e2e; border:1px solid #0891b2; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#0891b2; color:white; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">EntityExtractionAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">ENHANCED</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>Gains:</strong> GLiNER NER + SpaCy deps + LLM relationships<br>
+<strong>Input:</strong> query<br>
+<strong>Output:</strong> entities, relationships, types<br>
+<strong>Emits:</strong> <code>cogniverse.entity_extraction</code> span
+</div>
+</div>
+
+<!-- QueryEnhancementAgent -->
+<div style="background:#1a2e2e; border:1px solid #0891b2; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#0891b2; color:white; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">QueryEnhancementAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">ENHANCED</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>How:</strong> DSPy ChainOfThought with optimized module from artifacts<br>
+<strong>Input:</strong> query + entities + relationships<br>
+<strong>Output:</strong> enhanced_query, variants, expansions<br>
+<strong>Emits:</strong> <code>cogniverse.query_enhancement</code> span<br>
+<strong>No inline SIMBA</strong> — optimization is Argo batch
+</div>
+</div>
+
+<!-- ProfileSelectionAgent -->
+<div style="background:#1a2e2e; border:1px solid #0891b2; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#0891b2; color:white; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">ProfileSelectionAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">WIRED IN</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>Question:</strong> Which Vespa profile?<br>
+<strong>How:</strong> DSPy intent/modality/complexity classification<br>
+<strong>Input:</strong> query + modality + complexity<br>
+<strong>Output:</strong> selected_profile, reasoning<br>
+<strong>Emits:</strong> <code>cogniverse.profile_selection</code> span
+</div>
+</div>
+
+<!-- RoutingAgent -->
+<div style="background:#2e2e1a; border:1px solid #f59e0b; border-radius:8px; padding:16px;">
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+<span style="background:#f59e0b; color:#000; padding:3px 10px; border-radius:5px; font-weight:bold; font-size:12px;">RoutingAgent</span>
+<span style="background:#333; color:#aaa; padding:1px 6px; border-radius:3px; font-size:10px;">GUTTED 1200→~200 LOC</span>
+</div>
+<div style="color:#ccc; font-size:12px; line-height:1.6;">
+<strong>Question:</strong> Which execution agent(s)?<br>
+<strong>How:</strong> DSPy ChainOfThought with learned optimizer<br>
+<strong>Keeps:</strong> AdvancedRoutingOptimizer, AdaptiveThresholdLearner<br>
+<strong>Removed:</strong> All inline entity extraction, query enhancement, GLiNER, SIMBA<br>
+<strong>Emits:</strong> <code>cogniverse.routing</code> span (already exists)
+</div>
+</div>
+
+</div>
+
+<div style="color:#888; font-size:12px; margin-top:4px;">
+<strong>Execution agents (unchanged):</strong> search_agent, summarizer_agent, detailed_report_agent, image_search_agent, audio_analysis_agent, document_agent, deep_research_agent, coding_agent, text_analysis_agent
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>3. Telemetry-First Learning Architecture</h3>
+<p class="subtitle">Agents emit spans. Argo batch jobs read spans and optimize. No inline optimization loops.</p>
+
+<div class="mockup">
+<div class="mockup-header">Request Path vs Batch Path</div>
+<div class="mockup-body" style="padding:24px;">
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+
+<!-- Request path -->
+<div>
+<h4 style="color:#22c55e; margin-top:0;">Request Path (agents)</h4>
+<div style="font-size:13px; color:#ccc; line-height:1.8;">
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#22c55e;">1.</span> Agent does work
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#22c55e;">2.</span> Emits telemetry span with attributes
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#22c55e;">3.</span> Returns result
+</div>
+<div style="margin-top:12px; padding:10px; background:#1a2e1a; border-radius:6px; font-size:12px;">
+<strong>What agents load at startup:</strong><br>
+• Optimized DSPy modules (from artifacts)<br>
+• Workflow templates (from artifacts)<br>
+• Strategies from Mem0 (via MemoryAwareMixin)<br>
+<br>
+<strong>What agents do NOT do:</strong><br>
+• <span style="color:#ef4444;">No SIMBA.compile()</span><br>
+• <span style="color:#ef4444;">No DSPy teleprompter optimization</span><br>
+• <span style="color:#ef4444;">No in-memory pattern banks</span><br>
+• <span style="color:#ef4444;">No inline recording to separate stores</span>
+</div>
+</div>
+</div>
+
+<!-- Batch path -->
+<div>
+<h4 style="color:#f59e0b; margin-top:0;">Batch Path (Argo CronWorkflows)</h4>
+<div style="font-size:13px; color:#ccc; line-height:1.8;">
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#f59e0b;">1.</span> Read spans from Phoenix
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#f59e0b;">2.</span> QualityMonitor scores them
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#f59e0b;">3.</span> Run optimizations
+</div>
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+<span style="color:#f59e0b;">4.</span> Save artifacts + strategies
+</div>
+<div style="margin-top:12px; padding:10px; background:#2e2e1a; border-radius:6px; font-size:12px;">
+<strong>Optimization jobs:</strong><br>
+• <strong>SIMBA:</strong> Read enhancement spans → build training set → compile DSPy module → save artifact<br>
+• <strong>Routing:</strong> Read routing spans → GEPA/MIPROv2 → save optimized module<br>
+• <strong>Workflow:</strong> Read orchestration spans → generate templates → save artifacts<br>
+• <strong>Strategy:</strong> Read scored spans → distill strategies → store in Mem0<br>
+• <strong>Thresholds:</strong> Read routing spans → update adaptive thresholds → save config
+</div>
+</div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- Span table -->
+<div style="margin-top:16px;">
+<table style="width:100%; border-collapse:collapse; font-size:12px;">
+<thead>
+<tr style="border-bottom:2px solid #444;">
+<th style="text-align:left; padding:8px; color:#aaa;">Agent</th>
+<th style="text-align:left; padding:8px; color:#aaa;">Span Name</th>
+<th style="text-align:left; padding:8px; color:#aaa;">Key Attributes</th>
+<th style="text-align:left; padding:8px; color:#aaa;">Argo Job Reads</th>
+</tr>
+</thead>
+<tbody>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">GatewayAgent</td>
+<td style="padding:8px;"><code>cogniverse.gateway</code></td>
+<td style="padding:8px; color:#888;">query, complexity, modality, routed_to</td>
+<td style="padding:8px; color:#888;">Threshold optimizer</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">EntityExtractionAgent</td>
+<td style="padding:8px;"><code>cogniverse.entity_extraction</code></td>
+<td style="padding:8px; color:#888;">query, entities, relationships, entity_count</td>
+<td style="padding:8px; color:#888;">Entity extraction optimizer</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">QueryEnhancementAgent</td>
+<td style="padding:8px;"><code>cogniverse.query_enhancement</code></td>
+<td style="padding:8px; color:#888;">original_query, enhanced_query, strategy_used, variants</td>
+<td style="padding:8px; color:#888;">SIMBA optimizer</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">RoutingAgent</td>
+<td style="padding:8px;"><code>cogniverse.routing</code></td>
+<td style="padding:8px; color:#888;">query, recommended_agent, confidence, reasoning</td>
+<td style="padding:8px; color:#888;">Routing optimizer (GEPA/MIPROv2)</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">ProfileSelectionAgent</td>
+<td style="padding:8px;"><code>cogniverse.profile_selection</code></td>
+<td style="padding:8px; color:#888;">query, selected_profile, modality, reasoning</td>
+<td style="padding:8px; color:#888;">Profile optimizer</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">OrchestratorAgent</td>
+<td style="padding:8px;"><code>cogniverse.orchestration</code></td>
+<td style="padding:8px; color:#888;">workflow_id, query, agent_sequence, execution_time, success, parallel_efficiency</td>
+<td style="padding:8px; color:#888;">Workflow optimizer</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>4. Memory & Learning Systems</h3>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
+<!-- Mem0 -->
+<div style="background:#1a1a2e; border:1px solid #6366f1; border-radius:8px; padding:16px;">
+<h4 style="color:#6366f1; margin-top:0;">Mem0 Persistent Memory</h4>
+<div style="color:#ccc; font-size:12px; line-height:1.7;">
+<strong>What:</strong> Per-tenant, per-agent interaction history backed by Vespa<br>
+<strong>Used by:</strong> Any agent via MemoryAwareMixin<br>
+<strong>Request path:</strong> <code>get_relevant_context(query)</code> + <code>inject_context_into_prompt()</code><br>
+<strong>Contains:</strong> Past interactions, successes, failures<br>
+<strong>Architecture change:</strong> None — works via mixin, moves with each agent
+</div>
+</div>
+
+<!-- Strategy Learner -->
+<div style="background:#2e1a2e; border:1px solid #a855f7; border-radius:8px; padding:16px;">
+<h4 style="color:#a855f7; margin-top:0;">Strategy Learner</h4>
+<div style="color:#ccc; font-size:12px; line-height:1.7;">
+<strong>What:</strong> Distills Phoenix traces into reusable strategies<br>
+<strong>Input:</strong> Phoenix scored spans (NOT Mem0)<br>
+<strong>Output:</strong> Strategies stored in Mem0<br>
+<strong>Runs:</strong> Argo batch job (<code>optimization_cli --mode triggered</code>)<br>
+<strong>Retrieved by:</strong> Any agent via <code>get_strategies(query)</code><br>
+<strong>Architecture change:</strong> None — already a batch job
+</div>
+</div>
+
+<!-- DSPy Optimizers -->
+<div style="background:#2e2e1a; border:1px solid #eab308; border-radius:8px; padding:16px;">
+<h4 style="color:#eab308; margin-top:0;">DSPy Optimizers (GEPA/MIPROv2/SIMBA/Bootstrap)</h4>
+<div style="color:#ccc; font-size:12px; line-height:1.7;">
+<strong>What:</strong> Compile optimized DSPy modules from training data<br>
+<strong>Input:</strong> Phoenix spans (query enhancement, routing, orchestration)<br>
+<strong>Output:</strong> Optimized DSPy module artifacts<br>
+<strong>Runs:</strong> Argo batch job<br>
+<strong>Loaded by:</strong> Agents at startup from artifact store<br>
+<strong style="color:#ef4444;">Change:</strong> SIMBA inline optimization REMOVED from QueryEnhancementAgent. All compilation is batch-only.
+</div>
+</div>
+
+<!-- Workflow Intelligence -->
+<div style="background:#1a2e1a; border:1px solid #22c55e; border-radius:8px; padding:16px;">
+<h4 style="color:#22c55e; margin-top:0;">Workflow Intelligence</h4>
+<div style="color:#ccc; font-size:12px; line-height:1.7;">
+<strong>What:</strong> Learns orchestration patterns from past workflows<br>
+<strong>Input:</strong> Phoenix orchestration spans<br>
+<strong>Output:</strong> Workflow templates + agent performance profiles (artifacts)<br>
+<strong>Runs:</strong> Argo batch job<br>
+<strong>Loaded by:</strong> OrchestratorAgent at startup<br>
+<strong style="color:#ef4444;">Change:</strong> Inline DSPy optimization REMOVED. OrchestratorAgent only loads templates, never runs optimization.
+</div>
+</div>
+
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>5. What Gets Deleted / Gutted</h3>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+<div style="background:#2e1a1a; border:1px solid #ef4444; border-radius:8px; padding:16px;">
+<h4 style="color:#ef4444; margin-top:0;">Files Deleted</h4>
+<ul style="color:#ccc; font-size:12px; line-height:1.8; padding-left:18px;">
+<li><code>orchestrator/multi_agent_orchestrator.py</code> — replaced by enhanced OrchestratorAgent</li>
+<li><code>routing/router.py</code> — ComprehensiveRouter extracted into GatewayAgent</li>
+<li><code>routing/strategies.py</code> — GLiNER strategy moves to GatewayAgent</li>
+<li><code>routing/query_enhancement_engine.py</code> — moves into QueryEnhancementAgent</li>
+<li><code>routing/simba_query_enhancer.py</code> — inline pattern bank eliminated; SIMBA optimization is Argo-only</li>
+</ul>
+</div>
+<div style="background:#2e1a1a; border:1px solid #ef4444; border-radius:8px; padding:16px;">
+<h4 style="color:#ef4444; margin-top:0;">Code Removed from routing_agent.py</h4>
+<ul style="color:#ccc; font-size:12px; line-height:1.8; padding-left:18px;">
+<li>GLiNER initialization + entity extraction (~200 LOC)</li>
+<li>SpaCy dependency analysis (~100 LOC)</li>
+<li>ComposableQueryAnalysisModule init + usage (~150 LOC)</li>
+<li>QueryEnhancementPipeline + SIMBA init (~200 LOC)</li>
+<li>All inline query enrichment logic (~350 LOC)</li>
+<li><strong>Total: ~1000 lines removed, ~200 remain</strong></li>
+</ul>
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>6. Dispatch Layer Changes</h3>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; padding:16px;">
+<h4 style="color:#888; margin-top:0;">config_loader.py — Add 4 agents</h4>
+<pre style="color:#ccc; font-size:11px; line-height:1.6; margin:0; overflow-x:auto;"><code>"gateway_agent": "cogniverse_agents.gateway_agent:GatewayAgent",
+"entity_extraction_agent": "cogniverse_agents.entity_extraction_agent:EntityExtractionAgent",
+"query_enhancement_agent": "cogniverse_agents.query_enhancement_agent:QueryEnhancementAgent",
+"profile_selection_agent": "cogniverse_agents.profile_selection_agent:ProfileSelectionAgent",
+"orchestrator_agent": "cogniverse_agents.orchestrator_agent:OrchestratorAgent",</code></pre>
+</div>
+<div style="background:#1a1a1a; border:1px solid #555; border-radius:8px; padding:16px;">
+<h4 style="color:#888; margin-top:0;">agent_dispatcher.py — New entry point</h4>
+<div style="color:#ccc; font-size:12px; line-height:1.7;">
+<strong>Current:</strong> <code>dispatch()</code> → routing_agent → maybe MultiAgentOrchestrator<br><br>
+<strong>New:</strong> <code>dispatch()</code> → GatewayAgent<br>
+→ SIMPLE: direct to execution agent<br>
+→ COMPLEX: OrchestratorAgent coordinates all A2A agents via HTTP
+</div>
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+<h3>7. Key Design Decisions</h3>
+
+<table style="width:100%; border-collapse:collapse; font-size:12px;">
+<thead>
+<tr style="border-bottom:2px solid #444;">
+<th style="text-align:left; padding:8px; color:#aaa;">Decision</th>
+<th style="text-align:left; padding:8px; color:#aaa;">Choice</th>
+<th style="text-align:left; padding:8px; color:#aaa;">Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">Entry point model</td>
+<td style="padding:8px; color:#22c55e;">Tiered: GatewayAgent triage</td>
+<td style="padding:8px; color:#888;">GLiNER fast path for simple queries, full orchestration for complex</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">Orchestrator planning</td>
+<td style="padding:8px; color:#22c55e;">Full LLM-planned pipeline</td>
+<td style="padding:8px; color:#888;">Dynamic agent selection per query, not fixed sequence</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">RoutingAgent separate?</td>
+<td style="padding:8px; color:#22c55e;">Yes, keep separate</td>
+<td style="padding:8px; color:#888;">2,300 LOC of routing-specific optimization (GEPA/MIPROv2) would be lost if folded</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">Learning architecture</td>
+<td style="padding:8px; color:#22c55e;">Telemetry-first</td>
+<td style="padding:8px; color:#888;">Agents emit spans, Argo batch jobs optimize. No inline optimization loops.</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">SIMBA inline pattern bank</td>
+<td style="padding:8px; color:#ef4444;">Eliminated</td>
+<td style="padding:8px; color:#888;">Anti-pattern: SIMBA.compile() in request path. Batch-only via Argo.</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">WorkflowIntelligence inline optimization</td>
+<td style="padding:8px; color:#ef4444;">Eliminated</td>
+<td style="padding:8px; color:#888;">Anti-pattern: DSPy optimization in request path. Batch-only via Argo.</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">Migration strategy</td>
+<td style="padding:8px; color:#22c55e;">Big bang</td>
+<td style="padding:8px; color:#888;">Not production — build new, swap everything at once</td>
+</tr>
+<tr style="border-bottom:1px solid #333;">
+<td style="padding:8px; color:#ccc;">MultiAgentOrchestrator features</td>
+<td style="padding:8px; color:#22c55e;">All 5 ported to OrchestratorAgent</td>
+<td style="padding:8px; color:#888;">Streaming, checkpoints, fusion, workflow intelligence, cancellation</td>
+</tr>
+</tbody>
+</table>
+</div>

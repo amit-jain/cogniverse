@@ -800,20 +800,58 @@ class TestRoutingOptimization:
         lacked query/recommended_agent attributes. We need spans from the
         current code which emits the full attribute dict.
         """
+        # Generate routing spans by calling routing_agent inside the pod directly.
+        # The REST API dispatcher routes routing_agent through gateway/orchestrator
+        # paths that skip the actual RoutingAgent, so we use kubectl exec to
+        # instantiate and call RoutingAgent.route_query() directly.
         routing_queries = [
-            "compare machine learning frameworks for video analysis",
-            "analyze the latest deep learning research trends",
-            "find tutorials about neural network architectures",
-            "explain how transformer models process video data",
-            "summarize recent advances in computer vision",
-            "review the best object detection algorithms",
-            "investigate speech recognition approaches for podcasts",
-            "evaluate reinforcement learning for robotics",
-            "compare NLP techniques for text summarization",
-            "assess transfer learning methods for image classification",
+            "find basketball highlights",
+            "show me cooking videos",
+            "search for AI tutorial content",
+            "find music video clips",
+            "look for science experiment videos",
+            "find yoga workout content",
+            "search photography tutorials",
+            "find coding bootcamp recordings",
+            "look for language learning videos",
+            "find art history lectures",
         ]
-        for q in routing_queries:
-            _call_agent("gateway_agent", q)
+        script = (
+            "import asyncio; "
+            "from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps; "
+            "from cogniverse_foundation.config.utils import create_default_config_manager, get_config; "
+            "from cogniverse_foundation.telemetry.config import TelemetryConfig; "
+            "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+            "cm = create_default_config_manager(); "
+            "config = get_config(tenant_id='default', config_manager=cm); "
+            "llm_config = config.get_llm_config().resolve('routing_agent'); "
+            "deps = RoutingDeps(telemetry_config=TelemetryConfig(enabled=True), llm_config=llm_config); "
+            "agent = RoutingAgent(deps=deps); "
+            "tm = get_telemetry_manager(); "
+            "agent.telemetry_manager = tm; "
+            "queries = QUERIES; "
+            "async def run(): \n"
+            "    for q in queries:\n"
+            "        try:\n"
+            "            await agent.route_query(query=q, tenant_id='TENANT')\n"
+            "        except Exception as e:\n"
+            "            pass\n"
+            "asyncio.run(run()); "
+            "print(f'Generated {len(queries)} routing spans')"
+        )
+        script = script.replace("QUERIES", repr(routing_queries))
+        script = script.replace("TENANT", TENANT_ID)
+        try:
+            subprocess.run(
+                [
+                    "kubectl", "--context", KUBECTL_CONTEXT,
+                    "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+                    "--", "python3", "-c", script,
+                ],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception:
+            pass
         time.sleep(10)  # Wait for Phoenix ingestion
 
     def test_routing_produces_model_artifact(self):

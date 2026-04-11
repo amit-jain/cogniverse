@@ -396,33 +396,28 @@ async def _query_spans_by_name(
 
 
 def _create_teleprompter(trainset_size: int):
-    """Select DSPy optimizer based on training set size.
+    """Select DSPy optimizer config based on training set size.
 
-    Uses BootstrapFewShot for small sets (< 50 examples) and
-    COPRO for larger sets (>= 50) which can leverage more data.
+    Scales BootstrapFewShot parameters for larger training sets:
+    - < 50 examples: 4 bootstrapped demos, 8 labeled, 1 round
+    - >= 50 examples: 8 bootstrapped demos, 16 labeled, 2 rounds
     """
     from dspy.teleprompt import BootstrapFewShot
 
     if trainset_size >= 50:
-        try:
-            from dspy.teleprompt import COPRO
-
-            logger.info(
-                "Using COPRO optimizer for %d examples (>= 50 threshold)",
-                trainset_size,
-            )
-            return COPRO(
-                prompt_model=None,  # uses the configured LM
-                metric=None,
-                breadth=5,
-                depth=2,
-                init_temperature=1.0,
-            )
-        except (ImportError, Exception) as e:
-            logger.info("COPRO unavailable (%s), falling back to BootstrapFewShot", e)
+        logger.info(
+            "Using scaled BootstrapFewShot for %d examples (>= 50 threshold)",
+            trainset_size,
+        )
+        return BootstrapFewShot(
+            max_bootstrapped_demos=8,
+            max_labeled_demos=16,
+            max_rounds=2,
+            max_errors=10,
+        )
 
     logger.info(
-        "Using BootstrapFewShot optimizer for %d examples", trainset_size
+        "Using BootstrapFewShot for %d examples", trainset_size
     )
     return BootstrapFewShot(
         max_bootstrapped_demos=4,
