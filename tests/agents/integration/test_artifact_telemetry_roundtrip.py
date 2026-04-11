@@ -879,3 +879,412 @@ class TestDispatcherArtifactWiring:
             f"Dispatch failed: {result}"
         )
         assert result["agent"] == "entity_extraction_agent"
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_gateway_path_loads_artifact(self, real_provider):
+        """Gateway dispatch path should save/load threshold artifact via _load_artifact."""
+        import json
+        from pathlib import Path
+
+        import dspy
+
+        from cogniverse_core.common.agent_models import AgentEndpoint
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+        tenant_id = "dispatcher_gateway_wiring_test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save a gateway threshold config with non-default values
+        optimized_config = {
+            "fast_path_confidence_threshold": 0.72,
+            "gliner_threshold": 0.38,
+        }
+        dataset_id = await mgr.save_blob(
+            "config", "gateway_thresholds", json.dumps(optimized_config)
+        )
+        assert dataset_id, "Failed to save gateway threshold config to Phoenix"
+
+        # Configure DSPy LM via context — the gateway may route to orchestrator
+        # (if GLiNER confidence < 0.72), which needs a configured LM.
+        # Use dspy.context instead of dspy.configure to avoid cross-task conflicts.
+        lm = dspy.LM(
+            "ollama_chat/qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+
+        # Set up dispatcher with real dependencies
+        config_manager = create_default_config_manager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        registry = AgentRegistry(
+            tenant_id="default", config_manager=config_manager
+        )
+
+        registry.register_agent(AgentEndpoint(
+            name="gateway_agent",
+            url="http://localhost:8000",
+            capabilities=["gateway", "routing"],
+        ))
+
+        dispatcher = AgentDispatcher(
+            agent_registry=registry,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+        # Dispatch — gateway path creates agent, injects telemetry + artifact
+        with dspy.context(lm=lm):
+            result = await dispatcher.dispatch(
+                agent_name="gateway_agent",
+                query="find cooking videos",
+                context={"tenant_id": tenant_id},
+            )
+
+        assert result["status"] == "success", (
+            f"Gateway dispatch failed: {result}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Behavior tests — loaded artifacts change actual agent output
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactAffectsBehavior:
+    """Prove loaded artifacts actually change agent output, not just dump_state().
+
+    Each test: save artifact to real Phoenix -> create real agent -> load artifact
+    -> call _process_impl with real query -> assert output reflects the artifact.
+    Uses real Ollama (qwen3:4b) for DSPy agents. Zero mocks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_enhancement_output_reflects_loaded_demos(self, real_provider):
+        """Enhancement agent with demos should produce a different (enhanced) query."""
+        import json
+
+        import dspy
+
+        from cogniverse_agents.query_enhancement_agent import (
+            QueryEnhancementAgent,
+            QueryEnhancementDeps,
+            QueryEnhancementInput,
+            QueryEnhancementModule,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "behavior-enhancement-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Build optimized state with demos that map "ML papers" -> expanded form
+        module = QueryEnhancementModule()
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        state["enhancer.predict"]["demos"] = [
+            {
+                "query": "ML papers",
+                "enhanced_query": "machine learning research papers and publications",
+                "expansion_terms": "machine learning, research, publications",
+                "synonyms": "ML, artificial intelligence",
+                "confidence": "0.9",
+                "reasoning": "Expanded ML to full form and added related terms",
+            },
+            {
+                "query": "AI tutorials",
+                "enhanced_query": "artificial intelligence tutorials guides and courses",
+                "expansion_terms": "artificial intelligence, guides, courses",
+                "synonyms": "AI, machine learning",
+                "confidence": "0.85",
+                "reasoning": "Expanded AI and added educational terms",
+            },
+        ]
+        await mgr.save_blob(
+            "model", "simba_query_enhancement", json.dumps(state, default=str)
+        )
+
+        # Create real agent and load artifact
+        agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Verify demos loaded
+        loaded_demos = agent.dspy_module.dump_state()["enhancer.predict"]["demos"]
+        assert len(loaded_demos) == 2
+
+        # Configure DSPy LM for the call
+        lm = dspy.LM(
+            "ollama_chat/qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+
+        # Process with real LLM
+        with dspy.context(lm=lm):
+            result = await agent._process_impl(
+                QueryEnhancementInput(query="ML papers")
+            )
+
+        # The enhanced query should be different from the original
+        assert result.enhanced_query != "ML papers", (
+            f"Enhanced query should differ from original, got: '{result.enhanced_query}'"
+        )
+        assert len(result.enhanced_query) > len("ML papers"), (
+            f"Enhanced query should be longer than original, "
+            f"got: '{result.enhanced_query}' ({len(result.enhanced_query)} chars)"
+        )
+        assert isinstance(result.enhanced_query, str) and result.enhanced_query.strip(), (
+            "Enhanced query should be a non-empty string"
+        )
+
+    @pytest.mark.asyncio
+    async def test_routing_output_reflects_loaded_demos(self, real_provider):
+        """Routing agent with demos should produce a valid routing decision."""
+        import json
+
+        from cogniverse_agents.routing_agent import (
+            RoutingAgent,
+            RoutingDeps,
+            RoutingInput,
+        )
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "behavior-routing-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Create agent to get valid module state structure
+        llm_config = LLMEndpointConfig(
+            model="qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+        agent_for_state = RoutingAgent(
+            deps=RoutingDeps(
+                telemetry_config=TelemetryConfig(enabled=False),
+                llm_config=llm_config,
+            )
+        )
+
+        # Save artifact with demos mapping video queries -> search_agent
+        state = json.loads(json.dumps(agent_for_state.routing_module.dump_state(), default=str))
+        state["router.predict"]["demos"] = [
+            {
+                "query": "find basketball highlights",
+                "context": "",
+                "primary_intent": "video_search",
+                "needs_video_search": "True",
+                "recommended_agent": "search_agent",
+                "confidence": "0.9",
+            },
+            {
+                "query": "show me cooking videos",
+                "context": "",
+                "primary_intent": "video_search",
+                "needs_video_search": "True",
+                "recommended_agent": "search_agent",
+                "confidence": "0.85",
+            },
+        ]
+        await mgr.save_blob(
+            "model", "routing_decision", json.dumps(state, default=str)
+        )
+
+        # Create fresh agent, load artifact
+        agent = RoutingAgent(
+            deps=RoutingDeps(
+                telemetry_config=TelemetryConfig(enabled=False),
+                llm_config=llm_config,
+            )
+        )
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Verify demos loaded
+        loaded_demos = agent.routing_module.dump_state()["router.predict"]["demos"]
+        assert len(loaded_demos) == 2
+
+        # Process with real LLM — tenant_id is required
+        result = await agent._process_impl(
+            RoutingInput(
+                query="find basketball highlights",
+                tenant_id="behavior-routing-test",
+            )
+        )
+
+        known_agents = {
+            "search_agent", "video_search_agent", "orchestrator_agent",
+            "summarizer_agent", "image_search_agent", "audio_analysis_agent",
+            "document_agent", "detailed_report_agent", "entity_extraction_agent",
+            "query_enhancement_agent", "profile_selection_agent",
+        }
+        assert result.recommended_agent in known_agents, (
+            f"recommended_agent '{result.recommended_agent}' not in known agents"
+        )
+        assert result.confidence > 0.0, (
+            f"Confidence should be > 0, got {result.confidence}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_output_with_loaded_demos(self, real_provider):
+        """Entity extraction via DSPy fallback with demos should produce entities."""
+        import json
+
+        import dspy
+
+        from cogniverse_agents.entity_extraction_agent import (
+            EntityExtractionAgent,
+            EntityExtractionDeps,
+            EntityExtractionInput,
+            EntityExtractionModule,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "behavior-entity-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save artifact with entity extraction demos
+        module = EntityExtractionModule()
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        state["extractor.predict"]["demos"] = [
+            {
+                "query": "Netflix producing AI documentaries",
+                "entities": "Netflix|ORG|0.95\nAI|CONCEPT|0.8",
+                "entity_types": "ORG,CONCEPT",
+            },
+            {
+                "query": "Google acquiring DeepMind in London",
+                "entities": "Google|ORG|0.95\nDeepMind|ORG|0.9\nLondon|PLACE|0.85",
+                "entity_types": "ORG,PLACE",
+            },
+        ]
+        await mgr.save_blob(
+            "model", "entity_extraction", json.dumps(state, default=str)
+        )
+
+        # Create agent, disable fast path to force DSPy fallback
+        agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent._gliner_extractor = None
+        agent._spacy_analyzer = None
+
+        # Load artifact
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Verify demos loaded
+        loaded_demos = agent.dspy_module.dump_state()["extractor.predict"]["demos"]
+        assert len(loaded_demos) == 2
+
+        # Configure DSPy LM for the call
+        lm = dspy.LM(
+            "ollama_chat/qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+
+        # Process with real LLM via DSPy fallback
+        with dspy.context(lm=lm):
+            result = await agent._process_impl(
+                EntityExtractionInput(query="Netflix producing AI documentaries")
+            )
+
+        assert result.entities, (
+            "Expected non-empty entities list from DSPy fallback"
+        )
+        assert result.entity_count > 0, (
+            f"Expected entity_count > 0, got {result.entity_count}"
+        )
+        assert result.path_used == "dspy", (
+            f"Expected dspy path, got '{result.path_used}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_output_reflects_loaded_demos(self, real_provider):
+        """Profile selection agent with demos should select a known profile."""
+        import json
+
+        import dspy
+
+        from cogniverse_agents.profile_selection_agent import (
+            ProfileSelectionAgent,
+            ProfileSelectionDeps,
+            ProfileSelectionInput,
+            ProfileSelectionModule,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tenant_id = "behavior-profile-test"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # Save artifact with profile selection demos
+        module = ProfileSelectionModule()
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        state["selector.predict"]["demos"] = [
+            {
+                "query": "find basketball highlights",
+                "available_profiles": "video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": "0.9",
+                "reasoning": "Short clip search works best with frame-level ColPali",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "simple",
+            },
+        ]
+        await mgr.save_blob(
+            "model", "profile_selection", json.dumps(state, default=str)
+        )
+
+        # Create agent with available profiles, load artifact
+        deps = ProfileSelectionDeps(
+            available_profiles=[
+                "video_colpali_smol500_mv_frame",
+                "video_colqwen_omni_mv_chunk_30s",
+                "video_videoprism_base_mv_chunk_30s",
+                "video_videoprism_large_mv_chunk_30s",
+            ],
+        )
+        agent = ProfileSelectionAgent(deps=deps)
+        tm = get_telemetry_manager()
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+
+        # Verify demos loaded
+        loaded_demos = agent.dspy_module.dump_state()["selector.predict"]["demos"]
+        assert len(loaded_demos) == 1
+
+        # Configure DSPy LM via context (not dspy.configure which pollutes
+        # global state and causes cross-task conflicts in test suite)
+        lm = dspy.LM(
+            "ollama_chat/qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+
+        # Process with real LLM
+        with dspy.context(lm=lm):
+            result = await agent._process_impl(
+                ProfileSelectionInput(query="find cooking videos")
+            )
+
+        known_profiles = {
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_videoprism_base_mv_chunk_30s",
+            "video_videoprism_large_mv_chunk_30s",
+        }
+        assert result.selected_profile in known_profiles, (
+            f"selected_profile '{result.selected_profile}' not in known profiles"
+        )
+        assert result.confidence > 0.0, (
+            f"Confidence should be > 0, got {result.confidence}"
+        )

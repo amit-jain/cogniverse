@@ -973,3 +973,106 @@ class TestArtifactLoadingRoundTrip:
             f"Artifact threshold changed after restart: "
             f"{artifact_after['fast_path_confidence_threshold']} != {optimized_threshold}"
         )
+
+    def test_simba_artifact_round_trip(self):
+        """Run simba batch job -> verify artifact blob has correct structure and is loadable."""
+        # 1. Run batch job
+        result = _run_batch_job("simba")
+        assert result["status"] == "success"
+        assert result["training_examples"] >= 1
+
+        # 2. Verify artifact blob exists and has correct structure
+        blob = _load_blob_in_pod("model", "simba_query_enhancement")
+        assert blob, "SIMBA artifact blob is empty after batch job"
+
+        artifact = json.loads(blob)
+        assert "enhancer.predict" in artifact, (
+            f"Expected 'enhancer.predict' module, got: {list(artifact.keys())}"
+        )
+
+        # Must have learned demos
+        demos = artifact["enhancer.predict"].get("demos", [])
+        assert len(demos) >= 1, "SIMBA artifact has 0 demos"
+
+        # Each demo should have query and enhanced_query
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("enhanced_query"), f"Demo missing enhanced_query: {demo}"
+            assert demo["enhanced_query"] != demo["query"], (
+                f"Enhanced should differ from original: '{demo['query']}'"
+            )
+
+        # 3. Verify the artifact is loadable in-pod (proves it survives restart
+        #    since test_gateway_artifact_round_trip already restarted the pod)
+        blob_check = _load_blob_in_pod("model", "simba_query_enhancement")
+        assert blob_check, "SIMBA artifact not loadable in pod"
+        reloaded = json.loads(blob_check)
+        assert len(reloaded["enhancer.predict"].get("demos", [])) == len(demos), (
+            "SIMBA artifact demo count changed between loads"
+        )
+
+    def test_entity_extraction_artifact_survives_restart(self):
+        """Verify entity_extraction artifact is loadable after the gateway restart."""
+        # Run batch job to ensure artifact exists
+        result = _run_batch_job("entity-extraction")
+        assert result["status"] == "success"
+        assert result["training_examples"] >= 1
+
+        # Load the artifact — the gateway test already restarted the pod,
+        # so this proves the artifact persists across restarts
+        blob = _load_blob_in_pod("model", "entity_extraction")
+        assert blob, "Entity extraction artifact not loadable after restart"
+
+        artifact = json.loads(blob)
+        assert "extractor.predict" in artifact, (
+            f"Expected 'extractor.predict' module, got: {list(artifact.keys())}"
+        )
+
+        demos = artifact["extractor.predict"].get("demos", [])
+        assert len(demos) >= 1, "Entity extraction artifact has 0 demos"
+
+        # Verify demo structure: each should have query and entities
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("entities"), f"Demo missing entities: {demo}"
+            entities_str = demo["entities"]
+            has_pipe = "|" in entities_str
+            has_json = entities_str.strip().startswith("[")
+            assert has_pipe or has_json, (
+                f"Entities should be pipe-delimited or JSON, got: '{entities_str[:100]}'"
+            )
+
+    def test_profile_artifact_survives_restart(self):
+        """Verify profile selection artifact is loadable after the gateway restart."""
+        # Run batch job to ensure artifact exists
+        result = _run_batch_job("profile")
+        assert result["status"] == "success"
+        assert result["training_examples"] >= 1
+
+        # Load the artifact — proves persistence across the gateway restart
+        blob = _load_blob_in_pod("model", "profile_selection")
+        assert blob, "Profile selection artifact not loadable after restart"
+
+        artifact = json.loads(blob)
+        assert "selector.predict" in artifact, (
+            f"Expected 'selector.predict' module, got: {list(artifact.keys())}"
+        )
+
+        demos = artifact["selector.predict"].get("demos", [])
+        assert len(demos) >= 1, "Profile selection artifact has 0 demos"
+
+        known_profiles = {
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_videoprism_base_mv_chunk_30s",
+            "video_videoprism_large_mv_chunk_30s",
+        }
+
+        # Verify demo structure: each should have query and selected_profile
+        for demo in demos:
+            assert demo.get("query"), f"Demo missing query: {demo}"
+            assert demo.get("selected_profile"), f"Demo missing selected_profile: {demo}"
+            assert demo["selected_profile"] in known_profiles, (
+                f"Demo selected unknown profile '{demo['selected_profile']}', "
+                f"expected one of {known_profiles}"
+            )
