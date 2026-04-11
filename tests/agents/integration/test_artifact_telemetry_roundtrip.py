@@ -505,28 +505,32 @@ class TestDSPyAgentArtifactRoundTrip:
     async def test_routing_agent_loads_real_dspy_state(self, real_provider):
         """Save routing DSPy state → RoutingAgent loads it → module state changes.
 
-        Uses real DSPyAdvancedRoutingModule. The module has key 'router.predict'.
-        Verifies demo injection survives the full Phoenix round-trip.
+        Uses real RoutingAgent with real DSPy LM (Ollama qwen3:4b) — no mocks.
+        The routing module has key 'router.predict'. Verifies demo injection
+        survives the full Phoenix round-trip.
         """
         import json
-        from unittest.mock import MagicMock, patch
 
         from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.telemetry.config import TelemetryConfig
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tenant_id = "routing-artifact-roundtrip"
         mgr = ArtifactManager(real_provider, tenant_id)
 
-        # Create real routing module to get valid state structure
-        # (mock only _configure_dspy to avoid needing an LLM endpoint)
-        def _mock_configure_dspy(self_agent, deps_arg):
-            self_agent._dspy_lm = MagicMock()
-
-        with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
-            agent_for_state = RoutingAgent(
-                deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
+        # Create real routing agent with real DSPy LM — no mocks
+        llm_config = LLMEndpointConfig(
+            model="qwen3:4b",
+            api_base="http://localhost:11434",
+            extra_body={"think": False},
+        )
+        agent_for_state = RoutingAgent(
+            deps=RoutingDeps(
+                telemetry_config=TelemetryConfig(enabled=False),
+                llm_config=llm_config,
             )
+        )
 
         default_state = agent_for_state.routing_module.dump_state()
         assert "router.predict" in default_state
@@ -566,11 +570,13 @@ class TestDSPyAgentArtifactRoundTrip:
         assert loaded_state["router.predict"]["demos"][0]["recommended_agent"] == "search_agent"
         assert loaded_state["router.predict"]["demos"][1]["primary_intent"] == "compare"
 
-        # Create fresh agent and verify 0 demos
-        with patch.object(RoutingAgent, "_configure_dspy", _mock_configure_dspy):
-            agent = RoutingAgent(
-                deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
+        # Create fresh agent with real LM and verify 0 demos
+        agent = RoutingAgent(
+            deps=RoutingDeps(
+                telemetry_config=TelemetryConfig(enabled=False),
+                llm_config=llm_config,
             )
+        )
 
         before = agent.routing_module.dump_state()
         assert before["router.predict"]["demos"] == []
