@@ -55,7 +55,6 @@ _AGENT_CLASSES = _discover_agent_classes()
 _AGENTS_WITHOUT_MEMORY = {
     "AudioAnalysisAgent",  # pure speech-to-text + retrieval
     "ImageSearchAgent",  # pure ColPali retrieval
-    "VideoSearchAgent",  # standalone class in video_agent_refactored.py
 }
 
 

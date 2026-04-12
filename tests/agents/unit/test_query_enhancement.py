@@ -4,23 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # DSPy imports
 import dspy
-import pandas as pd
 import pytest
 from pydantic import Field
 
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
-from cogniverse_agents.dspy_integration_mixin import (
-    DSPyDetailedReportMixin,
-    DSPyIntegrationMixin,
-    DSPyQueryAnalysisMixin,
-    DSPyRoutingMixin,
-    DSPySummaryMixin,
-)
 from cogniverse_agents.optimizer.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing.dspy_relationship_router import (
     ComposableQueryAnalysisModule,
     DSPyAdvancedRoutingModule,
@@ -28,8 +19,6 @@ from cogniverse_agents.routing.dspy_relationship_router import (
 )
 from cogniverse_agents.routing.dspy_routing_signatures import (
     BasicQueryAnalysisSignature,
-    QueryReformulationSignature,
-    UnifiedExtractionReformulationSignature,
 )
 from cogniverse_agents.routing.relationship_extraction_tools import (
     GLiNERRelationshipExtractor,
@@ -42,44 +31,6 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.config.utils import create_default_config_manager
-
-
-def _make_mock_telemetry_provider():
-    """Create a mock TelemetryProvider with in-memory DatasetStore and ExperimentStore."""
-    provider = MagicMock()
-
-    datasets: dict[str, pd.DataFrame] = {}
-
-    async def create_dataset(name, data, metadata=None):
-        datasets[name] = data
-        return f"ds-{name}"
-
-    async def get_dataset(name):
-        if name not in datasets:
-            raise KeyError(f"Dataset {name} not found")
-        return datasets[name]
-
-    provider.datasets = MagicMock()
-    provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
-    provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
-
-    provider.experiments = MagicMock()
-    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
-    provider.experiments.log_run = AsyncMock(return_value="run-test")
-
-    return provider
-
-
-def _make_mixin(**kwargs):
-    """Create DSPyIntegrationMixin with default test params."""
-    defaults = {
-        "tenant_id": "test_tenant",
-        "agent_type": "query_analysis",
-        "telemetry_provider": _make_mock_telemetry_provider(),
-    }
-    defaults.update(kwargs)
-    return DSPyIntegrationMixin(**defaults)
 
 
 # Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
@@ -129,186 +80,6 @@ class SimpleDSPyA2AAgent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
 
 # Alias for backward compatibility with tests
 DSPyA2AAgentBase = A2AAgent
-
-
-@pytest.mark.unit
-class TestDSPyIntegrationMixin:
-    """Test the base DSPy integration mixin."""
-
-    @pytest.mark.ci_fast
-    def test_mixin_initialization(self):
-        """Test mixin initialization without optimized prompts."""
-        mixin = _make_mixin()
-
-        assert hasattr(mixin, "dspy_optimized_prompts")
-        assert hasattr(mixin, "dspy_enabled")
-        assert hasattr(mixin, "optimization_cache")
-        assert mixin.dspy_optimized_prompts == {}
-        assert not mixin.dspy_enabled
-
-    @pytest.mark.ci_fast
-    def test_agent_type_explicit(self):
-        """Test that agent_type is stored from constructor."""
-        mixin = _make_mixin(agent_type="agent_routing")
-        assert mixin._dspy_agent_type == "agent_routing"
-
-        mixin2 = _make_mixin(agent_type="summary_generation")
-        assert mixin2._dspy_agent_type == "summary_generation"
-
-    def test_get_optimized_prompt_no_optimization(self):
-        """Test prompt retrieval when no optimization is available."""
-        mixin = _make_mixin()
-
-        default_prompt = "This is a default prompt"
-        result = mixin.get_optimized_prompt("test_key", default_prompt)
-
-        assert result == default_prompt
-
-    def test_get_optimized_prompt_with_optimization(self):
-        """Test prompt retrieval with available optimization."""
-        mixin = _make_mixin()
-        mixin.dspy_enabled = True
-        mixin.dspy_optimized_prompts = {"test_key": "This is an optimized prompt"}
-
-        result = mixin.get_optimized_prompt("test_key", "default")
-        assert result == "This is an optimized prompt"
-
-        # Test fallback to default
-        result = mixin.get_optimized_prompt("missing_key", "default")
-        assert result == "default"
-
-    def test_get_dspy_metadata(self):
-        """Test DSPy metadata retrieval."""
-        mixin = _make_mixin()
-
-        # Without optimization
-        metadata = mixin.get_dspy_metadata()
-        assert not metadata["enabled"]
-        assert metadata["agent_type"] == "query_analysis"
-        assert metadata["tenant_id"] == "test_tenant"
-
-        # With optimization
-        mixin.dspy_enabled = True
-        mixin.dspy_optimized_prompts = {"key1": "prompt1", "key2": "prompt2"}
-
-        metadata = mixin.get_dspy_metadata()
-        assert metadata["enabled"]
-        assert "agent_type" in metadata
-        assert "prompt_keys" in metadata
-        assert len(metadata["prompt_keys"]) == 2
-
-    def test_apply_dspy_optimization(self):
-        """Test DSPy optimization application to prompt templates."""
-        mixin = _make_mixin()
-
-        template = "Hello {name}, this is a {type} prompt"
-        context = {"name": "Alice", "type": "test"}
-
-        # Without optimization
-        result = mixin.apply_dspy_optimization(template, context)
-        assert result == "Hello Alice, this is a test prompt"
-
-        # With optimization
-        mixin.dspy_enabled = True
-        mixin.dspy_optimized_prompts = {
-            "template": "Optimized hello {name}, {type} prompt"
-        }
-
-        result = mixin.apply_dspy_optimization(template, context)
-        assert result == "Optimized hello Alice, test prompt"
-
-    @pytest.mark.asyncio
-    async def test_test_dspy_optimization(self):
-        """Test the DSPy optimization testing functionality."""
-        mixin = _make_mixin()
-
-        # Without optimization
-        result = await mixin.test_dspy_optimization({"test": "input"})
-        assert "error" in result
-
-        # With optimization
-        mixin.dspy_enabled = True
-        mixin.dspy_optimized_prompts = {"system": "optimized system prompt"}
-
-        result = await mixin.test_dspy_optimization({"test": "input"})
-        assert result["dspy_enabled"]
-        assert result["test_completed"]
-        assert "prompt_analysis" in result
-
-
-@pytest.mark.unit
-class TestDSPySpecializedMixins:
-    """Test specialized DSPy mixins for different agent types."""
-
-    def test_query_analysis_mixin(self):
-        """Test DSPy query analysis mixin."""
-        mixin = DSPyQueryAnalysisMixin(
-            tenant_id="test_tenant",
-            agent_type="query_analysis",
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-
-        prompt = mixin.get_optimized_analysis_prompt(
-            "Show me videos of robots", "user context"
-        )
-
-        assert "Show me videos of robots" in prompt
-        assert "user context" in prompt
-        assert "intent" in prompt.lower()
-        assert "complexity" in prompt.lower()
-
-    def test_routing_mixin(self):
-        """Test DSPy routing mixin."""
-        mixin = DSPyRoutingMixin(
-            tenant_id="test_tenant",
-            agent_type="agent_routing",
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-
-        analysis_result = {"intent": "search", "complexity": "simple"}
-        available_agents = ["video_search", "text_search"]
-
-        prompt = mixin.get_optimized_routing_prompt(
-            "Find videos", analysis_result, available_agents
-        )
-
-        assert "Find videos" in prompt
-        assert "search" in prompt
-        assert "video_search" in prompt
-
-    def test_summary_mixin(self):
-        """Test DSPy summary mixin."""
-        mixin = DSPySummaryMixin(
-            tenant_id="test_tenant",
-            agent_type="summary_generation",
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-
-        prompt = mixin.get_optimized_summary_prompt(
-            "Long content to summarize...", "brief", "executive"
-        )
-
-        assert "Long content to summarize..." in prompt
-        assert "brief" in prompt
-        assert "executive" in prompt
-
-    def test_detailed_report_mixin(self):
-        """Test DSPy detailed report mixin."""
-        mixin = DSPyDetailedReportMixin(
-            tenant_id="test_tenant",
-            agent_type="detailed_report",
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-
-        search_results = [{"title": "Result 1"}, {"title": "Result 2"}]
-
-        prompt = mixin.get_optimized_report_prompt(
-            search_results, "business analysis", "comprehensive"
-        )
-
-        assert "business analysis" in prompt
-        assert "comprehensive" in prompt
-        assert "executive summary" in prompt.lower()
 
 
 @pytest.mark.unit
@@ -398,29 +169,6 @@ class TestDSPyAgentIntegration:
         # Should have report generation capabilities
         assert hasattr(agent, "generate_report_with_routing_decision")
         assert callable(agent.generate_report_with_routing_decision)
-
-    @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
-    def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
-        """Test DSPy integration in QueryAnalysisToolV3."""
-
-        mock_routing_agent.return_value = Mock()
-
-        tool = QueryAnalysisToolV3(
-            enable_agent_integration=False,
-            config_manager=create_default_config_manager(),
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-
-        # Should have DSPy capabilities
-        assert hasattr(tool, "dspy_enabled")
-        assert hasattr(tool, "get_optimized_prompt")
-        assert hasattr(tool, "get_optimized_analysis_prompt")
-
-        # Test DSPy metadata
-        metadata = tool.get_dspy_metadata()
-        assert "enabled" in metadata
-        assert metadata["agent_type"] == "query_analysis"
-
 
 @pytest.mark.unit
 class TestDSPyAgentOptimizer:
@@ -569,161 +317,6 @@ class TestDSPyAgentOptimizer:
         assert prompts["signature"] == "Mock signature"
         assert "module_type" in metrics
         assert isinstance(demos, list)
-
-
-@pytest.mark.unit
-class TestDSPyPromptOptimization:
-    """Test actual DSPy prompt optimization with mocked components."""
-
-    def test_optimized_prompt_loading_from_telemetry(self):
-        """Test loading optimized prompts from telemetry DatasetStore."""
-        provider = _make_mock_telemetry_provider()
-
-        # Pre-populate the mock dataset store with prompts
-        prompts_df = pd.DataFrame(
-            [
-                {"name": "system", "value": "Optimized system prompt"},
-                {"name": "signature", "value": "Optimized signature"},
-            ]
-        )
-        # Manually insert into mock store via side effect
-        original_get = provider.datasets.get_dataset.side_effect
-
-        async def get_with_data(name):
-            if name == "dspy-prompts-test_tenant-query_analysis":
-                return prompts_df
-            return await original_get(name)
-
-        provider.datasets.get_dataset = AsyncMock(side_effect=get_with_data)
-
-        agent = DSPyQueryAnalysisMixin(
-            tenant_id="test_tenant",
-            agent_type="query_analysis",
-            telemetry_provider=provider,
-        )
-
-        assert agent.dspy_enabled
-        assert agent.dspy_optimized_prompts == {
-            "system": "Optimized system prompt",
-            "signature": "Optimized signature",
-        }
-
-        # Test prompt retrieval
-        prompt = agent.get_optimized_prompt("system", "default")
-        assert prompt == "Optimized system prompt"
-
-    @pytest.mark.asyncio
-    async def test_optimization_integration_test(self):
-        """Test integration between optimization and agent usage."""
-        agent = DSPyQueryAnalysisMixin(
-            tenant_id="test_tenant",
-            agent_type="query_analysis",
-            telemetry_provider=_make_mock_telemetry_provider(),
-        )
-        # Manually set optimized prompts
-        agent.dspy_enabled = True
-        agent.dspy_optimized_prompts = {
-            "analysis": "Optimized analysis: {query} with {context}"
-        }
-
-        # Test optimization test
-        result = await agent.test_dspy_optimization({"test": "input"})
-
-        assert result["dspy_enabled"]
-        assert result["test_completed"]
-        assert "prompt_analysis" in result
-
-        # Test prompt application
-        optimized = agent.apply_dspy_optimization(
-            "Analysis: {query} with {context}",
-            {"query": "test query", "context": "test context"},
-        )
-
-        # Should use fallback since no 'template' key exists
-        assert optimized == "Analysis: test query with test context"
-
-
-def mock_open_for_path(file_path):
-    """Helper to mock open for specific file path."""
-    original_open = open
-
-    def mock_open(*args, **kwargs):
-        if args[0] == file_path or str(args[0]) == file_path:
-            with original_open(file_path, "r") as f:
-                content = f.read()
-            from io import StringIO
-
-            return StringIO(content)
-        return original_open(*args, **kwargs)
-
-    return mock_open
-
-
-@pytest.mark.integration
-@pytest.mark.unit
-class TestDSPyEndToEndIntegration:
-    """End-to-end integration tests for DSPy optimization."""
-
-    @pytest.mark.asyncio
-    @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
-    @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.BootstrapFewShot")
-    async def test_full_optimization_pipeline(
-        self, mock_teleprompter, mock_create_dspy_lm
-    ):
-        """Test the complete optimization pipeline."""
-        # Mock DSPy components
-        mock_lm = Mock()
-        mock_create_dspy_lm.return_value = mock_lm
-
-        mock_compiled_module = Mock()
-        mock_teleprompter_instance = Mock()
-        mock_teleprompter_instance.compile.return_value = mock_compiled_module
-        mock_teleprompter.return_value = mock_teleprompter_instance
-
-        # Create optimizer
-        optimizer = DSPyAgentPromptOptimizer()
-        endpoint_config = LLMEndpointConfig(model="smollm3:8b")
-        assert optimizer.initialize_language_model(endpoint_config=endpoint_config)
-
-        # Create pipeline
-        pipeline = DSPyAgentOptimizerPipeline(optimizer)
-
-        # Run optimization (mocked)
-        optimized_modules = await pipeline.optimize_all_modules()
-
-        # Should have optimized all modules
-        expected_modules = [
-            "query_analysis",
-            "agent_routing",
-            "summary_generation",
-            "detailed_report",
-        ]
-        for module_name in expected_modules:
-            assert module_name in optimized_modules
-
-    @pytest.mark.asyncio
-    async def test_agent_integration_with_mocked_optimization(self):
-        """Test agent integration with mocked optimization results."""
-
-        # Test QueryAnalysisToolV3 with direct prompt setting
-
-        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            tool = QueryAnalysisToolV3(
-                enable_agent_integration=False,
-                config_manager=create_default_config_manager(),
-                telemetry_provider=_make_mock_telemetry_provider(),
-            )
-
-            # Manually set the optimization data (flat dict format)
-            tool.dspy_optimized_prompts = {"system": "Optimized query analysis prompt"}
-            tool.dspy_enabled = True
-
-            metadata = tool.get_dspy_metadata()
-            assert metadata["enabled"]
-            assert (
-                tool.get_optimized_prompt("system", "default")
-                == "Optimized query analysis prompt"
-            )
 
 
 # DSPy 3.0 + A2A Integration Tests
@@ -879,74 +472,6 @@ class TestDSPy30RoutingSignatures:
         assert decision.search_modality == "multimodal"
         assert decision.primary_agent == "video_search"
         assert "parallel" in decision.reasoning
-
-
-@pytest.mark.unit
-class TestDSPyRedundancyAnalysis:
-    """Analyze what becomes redundant with Phase 1 implementation.
-
-    Documents the old files/classes that can be removed once Phase 1 is complete.
-    """
-
-    def test_old_vs_new_dspy_integration_approach(self):
-        """Document the difference between old mixin and new A2A base approach"""
-        # OLD APPROACH (DSPyIntegrationMixin):
-        # - Mixin added to existing agents
-        # - File-based prompt loading
-        # - DSPy 2.x features only
-        # - No A2A protocol integration
-        # - Manual prompt optimization pipeline
-
-        # NEW APPROACH (DSPyA2AAgentBase):
-        # - Base class for new agent architecture
-        # - A2A protocol integrated from ground up
-        # - DSPy 3.0 features (GRPO, SIMBA, async, MLflow)
-        # - Automatic A2A ↔ DSPy conversion
-        # - Native multi-modal support
-
-        redundant_files_after_phase1 = [
-            "src/app/agents/dspy_integration_mixin.py",  # Replaced by dspy_a2a_agent_base.py
-            # Note: dspy_agent_optimizer.py will be replaced in Phase 6 with new optimization
-        ]
-
-        redundant_classes_after_phase1 = [
-            "DSPyIntegrationMixin",  # Replaced by DSPyA2AAgentBase
-            "DSPyQueryAnalysisMixin",  # Functionality moved to signatures
-            "DSPyRoutingMixin",  # Functionality moved to signatures
-            "DSPySummaryMixin",  # Functionality moved to signatures
-            "DSPyDetailedReportMixin",  # Functionality moved to signatures
-        ]
-
-        # This test documents the redundancy for future cleanup
-        assert len(redundant_files_after_phase1) >= 1
-        assert len(redundant_classes_after_phase1) >= 5
-
-    def test_signature_creation_old_vs_new(self):
-        """Document old signature creation vs new DSPy 3.0 signatures"""
-        # OLD: Manual signature creation in dspy_agent_optimizer.py
-        # - create_query_analysis_signature()
-        # - create_agent_routing_signature()
-        # - create_summary_generation_signature()
-        # - create_detailed_report_signature()
-
-        # NEW: Pre-defined DSPy 3.0 signatures in dspy_routing_signatures.py
-        # - BasicQueryAnalysisSignature (replaces create_query_analysis_signature)
-        # - AdvancedRoutingSignature (enhanced routing with relationships)
-        # - QueryReformulationSignature (Path A: GLiNER fast path)
-        # - UnifiedExtractionReformulationSignature (Path B: LLM unified path)
-        # - MultiAgentOrchestrationSignature (new capability)
-        # - MetaRoutingSignature (new capability)
-        # - AdaptiveThresholdSignature (new capability)
-
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            AdvancedRoutingSignature,
-        )
-
-        # Verify new signatures exist and work
-        assert BasicQueryAnalysisSignature is not None
-        assert AdvancedRoutingSignature is not None
-        assert QueryReformulationSignature is not None
-        assert UnifiedExtractionReformulationSignature is not None
 
 
 # Relationship Extraction Engine Tests

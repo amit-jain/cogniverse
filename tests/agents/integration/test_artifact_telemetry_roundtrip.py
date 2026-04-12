@@ -13,7 +13,6 @@ import asyncio
 
 import pytest
 
-from cogniverse_agents.dspy_integration_mixin import DSPyIntegrationMixin
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -140,62 +139,6 @@ class TestTenantIsolation:
 
         assert (await mgr_a.load_prompts("router")) == {"system": "A's prompt"}
         assert (await mgr_b.load_prompts("router")) == {"system": "B's prompt"}
-
-
-class TestMixinAutoLoad:
-    """Verify DSPyIntegrationMixin auto-loads prompts from real Phoenix."""
-
-    @pytest.mark.asyncio
-    async def test_mixin_loads_saved_prompts_on_init(self, real_provider):
-        """Mixin constructor loads existing prompts from Phoenix."""
-        tenant_id = "mixin-autoload-test"
-        agent_type = "query_analysis"
-
-        # Pre-save prompts to real Phoenix
-        mgr = ArtifactManager(real_provider, tenant_id=tenant_id)
-        await mgr.save_prompts(
-            agent_type,
-            {
-                "system": "Optimized analysis prompt",
-                "template": "Analyze: {query}",
-            },
-        )
-
-        # Mixin should auto-load on init
-        mixin = DSPyIntegrationMixin(
-            tenant_id=tenant_id,
-            agent_type=agent_type,
-            telemetry_provider=real_provider,
-        )
-
-        # Allow async callback to complete
-        await asyncio.sleep(0.5)
-
-        assert mixin.dspy_enabled is True
-        assert mixin.dspy_optimized_prompts == {
-            "system": "Optimized analysis prompt",
-            "template": "Analyze: {query}",
-        }
-
-        assert mixin.get_optimized_prompt("system", "fallback") == (
-            "Optimized analysis prompt"
-        )
-        assert mixin.get_optimized_prompt("missing_key", "fallback") == "fallback"
-
-    @pytest.mark.asyncio
-    async def test_mixin_without_prompts_stays_disabled(self, real_provider):
-        """Mixin with no saved prompts in Phoenix keeps dspy_enabled=False."""
-        mixin = DSPyIntegrationMixin(
-            tenant_id="empty-mixin-tenant-xyz",
-            agent_type="query_analysis",
-            telemetry_provider=real_provider,
-        )
-
-        await asyncio.sleep(0.5)
-
-        assert mixin.dspy_enabled is False
-        assert mixin.dspy_optimized_prompts == {}
-        assert mixin.get_optimized_prompt("system", "default") == "default"
 
 
 class TestOptimizerExperienceRoundTrip:

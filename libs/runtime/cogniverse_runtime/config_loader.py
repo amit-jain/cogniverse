@@ -22,12 +22,11 @@ AGENT_CAPABILITIES: Dict[str, List[str]] = {}
 class ConfigLoader:
     """Loads backends and agents from configuration."""
 
-    # Mapping of backend types to Python packages
+    # Mapping of backend types to Python packages.
+    # To add a new backend, create a package implementing the Backend interface
+    # (see cogniverse_sdk.interfaces.backend) and register it here.
     BACKEND_PACKAGES = {
         "vespa": "cogniverse_vespa",
-        "milvus": "cogniverse_milvus",  # Future third-party extension
-        "pinecone": "cogniverse_pinecone",  # Future third-party extension
-        "weaviate": "cogniverse_weaviate",  # Future third-party extension
     }
 
     # Mapping of agent types to classes (for import validation)

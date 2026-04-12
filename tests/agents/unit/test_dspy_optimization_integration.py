@@ -11,7 +11,6 @@ from cogniverse_agents.optimizer.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -328,7 +327,9 @@ class TestDSPyAgentIntegration:
 
             with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
                 telemetry_config = TelemetryConfig(enabled=False)
-                from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+                from cogniverse_foundation.config.unified_config import (
+                    LLMEndpointConfig,
+                )
                 deps = RoutingDeps(
                     telemetry_config=telemetry_config,
                     llm_config=LLMEndpointConfig(model="test/mock"),
@@ -341,172 +342,8 @@ class TestDSPyAgentIntegration:
                 assert agent is not None
                 assert hasattr(agent, "route_query")
 
-    def test_query_analysis_tool_with_optimized_prompts(
-        self, temp_optimized_prompts_dir, config_manager
-    ):
-        """Test QueryAnalysisToolV3 with loaded optimized prompts."""
-
-        mock_prompts = {
-            "compiled_prompts": {
-                "system": "Optimized system prompt for query analysis",
-                "signature": "QueryAnalysisSignature with optimized fields",
-            },
-            "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
-        }
-
-        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            tool = QueryAnalysisToolV3(
-                config_manager=config_manager,
-                telemetry_provider=_make_mock_telemetry_provider(),
-                enable_agent_integration=False,
-            )
-
-            # Simulate prompts loaded from telemetry
-            tool.dspy_optimized_prompts = mock_prompts
-            tool.dspy_enabled = True
-
-            assert tool.dspy_enabled
-            assert "compiled_prompts" in tool.dspy_optimized_prompts
-
-            analysis_prompt = tool.get_optimized_analysis_prompt(
-                "Analyze this complex query", "business context"
-            )
-
-            assert "Analyze this complex query" in analysis_prompt
-            assert "business context" in analysis_prompt
-
-
 class TestDSPyEndToEndOptimization:
     """End-to-end integration tests for DSPy optimization."""
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_optimization_to_agent_integration_pipeline(
-        self, temp_optimized_prompts_dir, mock_openai_compatible_api, config_manager
-    ):
-        """Test complete pipeline from optimization to agent integration."""
-        # Initialize optimizer with real LM
-        optimizer = DSPyAgentPromptOptimizer()
-        optimizer.initialize_language_model(
-            LLMEndpointConfig(
-                model="ollama/qwen2.5:1.5b", api_base="http://localhost:11434"
-            )
-        )
-
-        # Create mock compiled modules that can extract prompts
-        def create_mock_module(module_type):
-            mock_module = Mock()
-            if module_type == "query_analysis":
-                mock_module.generate_analysis = Mock()
-                mock_module.generate_analysis.signature = (
-                    "Optimized query analysis signature"
-                )
-            elif module_type == "agent_routing":
-                mock_module.generate_routing = Mock()
-                mock_module.generate_routing.signature = "Optimized routing signature"
-            elif module_type == "summary_generation":
-                mock_module.generate_summary = Mock()
-                mock_module.generate_summary.signature = "Optimized summary signature"
-            elif module_type == "detailed_report":
-                mock_module.generate_report = Mock()
-                mock_module.generate_report.signature = "Optimized report signature"
-
-            mock_module.demos = [Mock(), Mock()]  # Few-shot examples
-            return mock_module
-
-        compiled_modules = {
-            "query_analysis": create_mock_module("query_analysis"),
-            "agent_routing": create_mock_module("agent_routing"),
-            "summary_generation": create_mock_module("summary_generation"),
-            "detailed_report": create_mock_module("detailed_report"),
-        }
-
-        pipeline = DSPyAgentOptimizerPipeline(optimizer)
-        pipeline.compiled_modules = compiled_modules
-
-        # Save optimized prompts via telemetry
-        mock_provider = _make_mock_telemetry_provider()
-        await pipeline.save_optimized_prompts(
-            tenant_id="test-tenant", telemetry_provider=mock_provider
-        )
-
-        # Load agents with optimized prompts (simulate by setting prompts directly)
-        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            agent = QueryAnalysisToolV3(
-                config_manager=config_manager,
-                telemetry_provider=_make_mock_telemetry_provider(),
-                enable_agent_integration=False,
-            )
-
-        # Simulate prompts loaded from telemetry
-        agent.dspy_optimized_prompts = {
-            "compiled_prompts": {
-                "signature": "Optimized query_analysis signature",
-                "few_shot_examples": ["Example 1", "Example 2"],
-            },
-            "metadata": {"test": True},
-        }
-        agent.dspy_enabled = True
-
-        assert agent.dspy_enabled
-        assert "compiled_prompts" in agent.dspy_optimized_prompts
-
-        metadata = agent.get_dspy_metadata()
-        assert metadata["enabled"]
-        assert "agent_type" in metadata
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_performance_comparison_optimized_vs_default(self, config_manager):
-        """Test performance comparison between optimized and default prompts."""
-
-        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            agent_default = QueryAnalysisToolV3(
-                config_manager=config_manager,
-                telemetry_provider=_make_mock_telemetry_provider(),
-                enable_agent_integration=False,
-            )
-
-            agent_optimized = QueryAnalysisToolV3(
-                config_manager=config_manager,
-                telemetry_provider=_make_mock_telemetry_provider(),
-                enable_agent_integration=False,
-            )
-            agent_optimized.dspy_enabled = True
-            agent_optimized.dspy_optimized_prompts = {
-                "compiled_prompts": {
-                    "system": "Optimized analysis: {query} -> Intent: {intent}",
-                    "examples": "Example 1\nExample 2\nExample 3",
-                },
-                "metadata": {"optimization_score": 0.92},
-            }
-
-            test_query = "Find videos about machine learning"
-
-            default_prompt = agent_default.get_optimized_analysis_prompt(
-                test_query, "test context"
-            )
-            optimized_prompt = agent_optimized.get_optimized_analysis_prompt(
-                test_query, "test context"
-            )
-
-            assert test_query in default_prompt
-            assert test_query in optimized_prompt
-
-            assert len(default_prompt) > 0
-            assert len(optimized_prompt) > 0
-
-            default_metadata = agent_default.get_dspy_metadata()
-            optimized_metadata = agent_optimized.get_dspy_metadata()
-
-            assert not default_metadata["enabled"]
-            assert optimized_metadata["enabled"]
-            # optimization_score is stored in dspy_optimized_prompts["metadata"]
-            assert (
-                "optimization_score"
-                in agent_optimized.dspy_optimized_prompts["metadata"]
-            )
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
