@@ -1,5 +1,6 @@
 [tool.uv]
-prerelease = "allow"
+# Only allow pre-releases for graphql-core (required by arize-phoenix 14.x)
+prerelease = "if-necessary-or-explicit"
 
 [tool.uv.workspace]
 members = ["libs/*"]
@@ -10,7 +11,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "litellm==1.73.0",
+    "litellm>=1.83.0,<2",
     "modal>=1.0.5",
     # Machine Learning Dependencies
     "jax>=0.7.0",
@@ -30,8 +31,9 @@ dependencies = [
     # Evaluation Framework Dependencies
     "inspect-ai>=0.3.0",
     "ragas>=0.1.0",
-    "arize-phoenix>=14.0.0,<15",  # TODO: upgrade to 14.x with evals 3.0+ (breaking changes)
-    "arize-phoenix-evals>=3.0.0,<4",  # 3.0 removed phoenix.evals.models namespace
+    "arize-phoenix>=14.0.0,<15",
+    "graphql-core>=3.3.0a0",  # pre-release required by arize-phoenix 14.x
+    "arize-phoenix-evals>=3.0.0,<4",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation>=0.41b0",
