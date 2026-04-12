@@ -2017,7 +2017,7 @@ success, failed = ingest_videos_for_tenant("acme", frames_acme)
 ### Example 4: Agent Integration
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -2025,8 +2025,9 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Agent is profile-agnostic and tenant-agnostic at construction
-agent = VideoSearchAgent(
+# Agent is tenant-agnostic at construction; profile set via deps
+agent = SearchAgent(
+    deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -2037,7 +2038,7 @@ agent = VideoSearchAgent(
 # 3. Initializes search with tenant schema
 # 4. All searches automatically scoped to tenant
 
-results = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)  # synchronous
+results = agent.search_by_text(query="cooking videos", tenant_id="acme", top_k=10)  # synchronous
 # Searches video_colpali_smol500_mv_frame_acme
 ```
 

@@ -39,43 +39,55 @@ curl http://localhost:6006/                   # Phoenix
 
 ---
 
-## 3. Run Your First Search
+## 3. Deploy Schemas & Create a Tenant
+
+Before ingesting or searching, deploy the Vespa schemas and create a tenant:
+
+```bash
+# Deploy all base schemas to Vespa
+uv run python scripts/deploy_all_schemas.py
+
+# Create a tenant (auto-provisions org + deploys tenant-scoped schemas)
+curl -X POST http://localhost:8000/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "quickstart",
+    "created_by": "admin",
+    "base_schemas": ["video_colpali_smol500_mv_frame"]
+  }'
+```
+
+> **Note:** The tenant management API is available on the main Runtime (port 8000) at `/admin/tenants`, or as a standalone service on port 9000 if run separately.
+
+---
+
+## 4. Run Your First Search
 
 ```python
 # quick_search.py
-from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# NOTE: Backend must be initialized with schemas deployed before searching
-# Run: uv run python scripts/deploy_all_schemas.py first
+# Requires: schemas deployed and tenant created (see step 3)
 
-# Initialize configuration
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Get shared search backend from registry (handles instantiation and caching)
-backend = BackendRegistry.get_search_backend(
-    name="vespa",
-    config_manager=config_manager,
-    schema_loader=schema_loader
+# Create agent with dependencies
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# Search by text — tenant_id is required per-request
+results = agent.search_by_text(
+    query="machine learning tutorial",
+    tenant_id="quickstart",
+    top_k=10,
 )
 
-# Execute a search — tenant_id is required in query_dict
-results = backend.search({
-    "query": "machine learning tutorial",
-    "type": "video",
-    "top_k": 10,
-    "profile": "video_colpali_smol500_mv_frame",
-    "tenant_id": "quickstart",
-})
-
-# Results are SearchResult objects with document and score
 for result in results:
-    doc_id = result.document.id
-    score = result.score
-    print(f"- {doc_id}: {score:.2f}")
+    print(f"- {result.get('documentid', 'unknown')}: {result.get('relevance', 0):.2f}")
 ```
 
 ```bash
@@ -84,52 +96,35 @@ uv run python quick_search.py
 
 ---
 
-## 4. Process a Video
+## 5. Process a Video
 
-```python
-# ingest_video.py
-import asyncio
-from pathlib import Path
-from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-
-# Initialize dependencies
-config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-# Create pipeline with required parameters
-pipeline = VideoIngestionPipeline(
-    tenant_id="quickstart",
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-    schema_name="video_colpali_smol500_mv_frame"
-)
-
-async def main():
-    # Process a single video
-    result = await pipeline.process_video_async(Path("my_video.mp4"))
-
-    # Result is a dict with: video_id, video_path, duration, status, results
-    print(f"Processed: {result.get('video_id', 'unknown')}")
-    print(f"Status: {result.get('status', 'unknown')}")
-    print(f"Duration: {result.get('duration', 0):.1f}s")
-
-    # Access strategy results (populated by processing strategies)
-    if result.get('results'):
-        for strategy_name, strategy_result in result['results'].items():
-            print(f"  {strategy_name}: {strategy_result}")
-
-asyncio.run(main())
-```
+The easiest way to ingest videos is via the CLI script:
 
 ```bash
-uv run python ingest_video.py
+# Ingest a single directory of videos
+uv run python scripts/run_ingestion.py \
+  --video_dir data/testset/evaluation/sample_videos \
+  --backend vespa \
+  --profile video_colpali_smol500_mv_frame
+
+# Ingest with multiple profiles for richer retrieval
+uv run python scripts/run_ingestion.py \
+  --video_dir data/testset/evaluation/sample_videos \
+  --backend vespa \
+  --profile video_colpali_smol500_mv_frame \
+           video_videoprism_base_mv_chunk_30s
+
+# Test mode — limited frames for faster iteration
+uv run python scripts/run_ingestion.py \
+  --video_dir data/testset/evaluation/sample_videos \
+  --backend vespa \
+  --profile video_colpali_smol500_mv_frame \
+  --test-mode --max-frames 1
 ```
 
 ---
 
-## 5. Start the Runtime Server
+## 6. Start the Runtime Server
 
 ```bash
 # Start FastAPI server
@@ -151,7 +146,7 @@ curl -X POST http://localhost:8000/search/ \
 
 ---
 
-## 6. View in Dashboard
+## 7. View in Dashboard
 
 ```bash
 # Start Streamlit dashboard

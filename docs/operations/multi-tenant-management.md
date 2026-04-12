@@ -441,7 +441,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Agent as VideoSearchAgent
+    participant Agent as SearchAgent
     participant SearchClient as TenantAwareVespaSearchClient
     participant Parser as parse_tenant_id()
     participant SchemaManager as VespaSchemaManager
@@ -658,8 +658,8 @@ parse_tenant_id("acme:")     # ValueError: both org and tenant parts must be non
 All agents implement a factory function for tenant-aware instantiation:
 
 ```python
-# Video Search Agent (implementation layer)
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+# Search Agent (implementation layer)
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -667,8 +667,9 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# ONE agent serves ALL tenants — profile and tenant_id are per-request
-agent = VideoSearchAgent(
+# ONE agent serves ALL tenants — tenant_id is per-request
+agent = SearchAgent(
+    deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -744,7 +745,7 @@ result = await pipeline.process_video_async(
 ### Video Search with Tenant Isolation
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent  # Implementation layer
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps  # Implementation layer
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -752,17 +753,17 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# ONE agent serves ALL tenants — no profile or tenant_id at construction
-agent = VideoSearchAgent(
+# ONE agent serves ALL tenants — tenant_id is a per-request parameter
+agent = SearchAgent(
+    deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
 
 # Search (automatically isolated to acme:production) - synchronous
-# profile and tenant_id are PER-REQUEST parameters on search()
-results = agent.search(
+# tenant_id is a PER-REQUEST parameter on search_by_text()
+results = agent.search_by_text(
     query="machine learning tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="acme:production",
     top_k=10,
 )

@@ -1051,7 +1051,7 @@ from cogniverse_vespa.ingestion_client import VespaPyClient
 ```python
 # Agents (all at package root)
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.document_agent import DocumentAgent
 from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
 from cogniverse_agents.image_search_agent import ImageSearchAgent

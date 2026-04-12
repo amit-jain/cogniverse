@@ -121,6 +121,28 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 - **Knowledge Graph**: Run `cogniverse index ./path --type code` to build a searchable knowledge graph — see [Knowledge Graph](user/knowledge-graph.md)
 - **Learn More**: Continue reading this guide
 
+### CLI Reference
+
+The `cogniverse` CLI manages the full stack:
+
+| Command | Purpose |
+|---------|---------|
+| `cogniverse up` | Deploy all services (Vespa, Phoenix, Ollama, Runtime, Dashboard) via k3d |
+| `cogniverse up --messaging` | Deploy with Telegram gateway enabled |
+| `cogniverse down` | Stop all services |
+| `cogniverse down --keep-data` | Stop services but preserve volumes |
+| `cogniverse status` | Show health of all services |
+| `cogniverse logs <service>` | View logs (`runtime`, `vespa`, `dashboard`, `phoenix`, `ollama`) |
+| `cogniverse logs <service> --follow` | Stream logs in real-time |
+| `cogniverse code` | Interactive coding agent REPL |
+| `cogniverse index <path> --type code` | Build a knowledge graph from code |
+| `cogniverse graph stats` | Show knowledge graph statistics |
+| `cogniverse graph search <query>` | Search the knowledge graph |
+| `cogniverse graph neighbors <node>` | Find related nodes |
+| `cogniverse graph path <src> <dst>` | Find path between nodes |
+| `cogniverse sandbox sync` | Sync code to Deno sandbox |
+| `cogniverse sandbox status` | Check sandbox state |
+
 ---
 
 ## Core Features
@@ -131,38 +153,34 @@ Search videos using different modalities:
 
 #### Text-to-Video Search
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# Initialize agent with config manager and schema loader (both required)
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader
-)
 
-# Search with text (synchronous, not async)
-# profile and tenant_id are per-request parameters on search()
-results = agent.search(
+# Create agent — profile sets the default embedding model
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# Search by text (synchronous) — tenant_id is per-request
+results = agent.search_by_text(
     query="machine learning tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
-    top_k=10
+    top_k=10,
 )
 
 for result in results:
-    print(f"Video: {result.document.metadata.get('video_id')}")
-    print(f"Score: {result.score}")
-    print(f"Frames: {result.document.metadata.get('frame_ids', [])}")
+    print(f"Video: {result.get('video_id', 'unknown')}")
+    print(f"Score: {result.get('relevance', 0):.2f}")
 ```
 
 #### Multi-Profile Search
 ```python
-# Search across different embedding profiles
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+# Search across different embedding profiles using ensemble mode
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchInput
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -170,50 +188,49 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Single agent instance handles all profiles (profile is per-request)
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader
+# Create agent with a default profile
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# Single profile search
+colpali_results = agent.search_by_text(
+    query="cooking tutorial",
+    tenant_id="default",
+    top_k=10,
 )
 
-# ColPali profile for semantic understanding
-colpali_results = agent.search(
-    query="cooking tutorial",
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    top_k=10
-)
+# Search with a different profile via SearchInput for ensemble
+videoprism_deps = SearchAgentDeps(profile="video_videoprism_base_mv_chunk_30s")
+videoprism_agent = SearchAgent(deps=videoprism_deps, config_manager=config_manager, schema_loader=schema_loader)
 
-# VideoPrism profile for visual similarity
-videoprism_results = agent.search(
+videoprism_results = videoprism_agent.search_by_text(
     query="cooking tutorial",
-    profile="video_videoprism_base_mv_chunk_30s",
     tenant_id="default",
-    top_k=10
+    top_k=10,
 )
 ```
 
 #### Date-Filtered Search
 ```python
 # Search with date filters
-results = agent.search(
+results = agent.search_by_text(
     query="machine learning tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
     top_k=10,
     start_date="2024-01-01",
-    end_date="2024-12-31"
+    end_date="2024-12-31",
 )
 ```
 
 ### 2. Intelligent Query Routing
 
-Cogniverse automatically routes queries to the optimal search strategy:
+Cogniverse automatically routes queries to the optimal execution agent:
 
 ```python
+import asyncio
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # Initialize routing agent with deps
 deps = RoutingDeps(
@@ -225,16 +242,18 @@ deps = RoutingDeps(
 )
 routing_agent = RoutingAgent(deps=deps)
 
-# Route query (automatic strategy selection)
-# Note: route_query is async, must be called within async function
-decision = await routing_agent.route_query(
-    query="cooking recipes with pasta"
-)
+async def main():
+    # Route query (async — decides which agent should handle this)
+    decision = await routing_agent.route_query(
+        query="cooking recipes with pasta",
+        tenant_id="default",
+    )
 
-print(f"Recommended Agent: {decision.recommended_agent}")
-print(f"Confidence: {decision.confidence}")
-print(f"Detected Entities: {decision.entities}")
-print(f"Reasoning: {decision.reasoning}")
+    print(f"Recommended Agent: {decision.recommended_agent}")
+    print(f"Confidence: {decision.confidence}")
+    print(f"Reasoning: {decision.reasoning}")
+
+asyncio.run(main())
 ```
 
 **Routing Features:**
@@ -271,24 +290,21 @@ uv run python scripts/run_ingestion.py \
 Combine multiple search methods for better results:
 
 ```python
-# Available strategies:
+# Available ranking strategies (from RankingStrategy enum):
 strategies = [
-    "bm25_only",           # Text-only BM25
-    "float_float",         # Dense embeddings only
-    "binary_binary",       # Binary embeddings (fast)
-    "hybrid_float_bm25",   # BM25 + dense (recommended)
-    "phased",              # Two-phase ranking
-    "float_binary",        # Dense with binary fallback
-    "bm25_float_rerank",   # BM25 then dense rerank
+    "bm25_only",           # Text-only BM25 (fastest for keyword queries)
+    "float_float",         # Dense float embeddings (highest visual accuracy)
+    "binary_binary",       # Binary embeddings (fastest visual search)
+    "float_binary",        # Float query, binary index (speed/accuracy balance)
+    "phased",              # Two-phase: binary retrieval, float reranking
+    "hybrid_float_bm25",   # Visual + text hybrid (best overall accuracy)
+    "hybrid_binary_bm25",  # Fast hybrid (binary visual + text)
+    "hybrid_bm25_binary",  # Text-first with binary visual rerank
+    "hybrid_bm25_float",   # Text-first with precise float rerank
 ]
 
-# Use hybrid search (synchronous call)
-results = agent.search(
-    query="tutorial",
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="default",
-    top_k=20
-)
+# Strategies are selected at the Vespa backend level via the ranking parameter
+# The SearchAgent handles this automatically based on profile configuration
 ```
 
 ### 5. Memory-Aware Search
@@ -464,53 +480,46 @@ curl -X POST http://localhost:8000/search/ \
 Use the Python SDK for scripting:
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# Initialize with config manager and schema loader (both required)
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader
-)
 
-# Search (synchronous - no await needed)
-# profile and tenant_id are per-request parameters
-results = agent.search(
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# search_by_text is synchronous — no await needed
+results = agent.search_by_text(
     query="cooking pasta",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
-    top_k=10
+    top_k=10,
 )
 
-# Process results (SearchResult objects have .document and .score)
 for result in results:
-    print(f"Video: {result.document.metadata.get('video_id')}")
-    print(f"Score: {result.score:.2f}")
+    print(f"Video: {result.get('video_id', 'unknown')}")
+    print(f"Score: {result.get('relevance', 0):.2f}")
 ```
 
 #### Advanced Search Options
 
 ```python
 # Search with date filters
-results = agent.search(
+results = agent.search_by_text(
     query="tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
     top_k=10,
-    start_date="2024-01-01",  # Filter by upload date
-    end_date="2024-12-31"
+    start_date="2024-01-01",
+    end_date="2024-12-31",
 )
 
-# Search with more results
-results = agent.search(
+# Search with more results for client-side filtering
+results = agent.search_by_text(
     query="Python tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
-    top_k=50  # Get more candidates for client-side filtering
+    top_k=50,
 )
 ```
 
@@ -691,43 +700,43 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 ### DSPy Optimization
 
-Optimize routing agent using DSPy:
+Optimize routing and search agents via the optimization CLI:
 
-```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+```bash
+# Run a full routing optimization cycle
+python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
 
-# Initialize orchestrator with configuration
-orchestrator = OptimizationOrchestrator(
-    tenant_id="default",
-    span_eval_interval_minutes=15,
-    annotation_interval_minutes=30,
-    confidence_threshold=0.6,
-    min_annotations_for_optimization=50
-)
+# Optimize gateway confidence thresholds
+python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
 
-# Run one complete optimization cycle (for testing)
-# Note: run_once is async, must be called within async function
-results = await orchestrator.run_once()
+# Optimize entity extraction
+python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
 
-print(f"Span Evaluation: {results['span_evaluation']}")
-print(f"Annotation Requests: {results['annotation_requests']}")
-print(f"Annotations Generated: {results.get('annotations_generated', 0)}")
-print(f"Feedback Loop: {results['feedback_loop']}")
+# Optimize profile performance
+python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
 
-# Or start continuous optimization (for production)
-# await orchestrator.start()  # Runs continuously (also async)
+# Full optimization workflow (all modes)
+python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
+
+# Triggered optimization (run when quality degrades)
+python -m cogniverse_runtime.optimization_cli --mode triggered \
+  --tenant-id default --runtime-url http://localhost:8000
+
+# Cleanup old logs
+python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
 ```
 
-**Optimization Results:**
-```text
-Baseline Routing Accuracy: 78.5%
-Optimized Routing Accuracy: 92.3%
-Improvement: +13.8%
+Available optimization modes:
 
-Optimization Method: GEPA (Experience-Guided)
-Training Examples: 5,000 synthetic + 2,000 real
-Training Time: 45 minutes
-```
+| Mode | What It Optimizes |
+|------|-------------------|
+| `routing` | DSPy routing module with SIMBA/MIPROv2 |
+| `gateway-thresholds` | GLiNER confidence thresholds |
+| `entity-extraction` | Entity extraction accuracy |
+| `profile` | Profile performance ranking |
+| `workflow` | Full end-to-end optimization pipeline |
+| `triggered` | On-demand when quality monitor fires |
+| `cleanup` | Purge old optimization logs |
 
 ### Batch Processing
 
@@ -1121,29 +1130,27 @@ GET /health
 
 ### Python SDK Reference
 
-#### VideoSearchAgent
+#### SearchAgent
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader
-)
 
-# Search method (profile and tenant_id are per-request parameters)
-results = agent.search(
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# search_by_text — tenant_id is per-request
+results = agent.search_by_text(
     query="machine learning",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
     top_k=10,
     start_date="2024-01-01",  # Optional
-    end_date="2024-12-31"     # Optional
+    end_date="2024-12-31",    # Optional
 )
 ```
 

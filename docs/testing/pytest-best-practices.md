@@ -303,10 +303,10 @@ def test_core_package_imports():
 def test_agents_package_imports():
     """Verify cogniverse_agents package imports work"""
     from cogniverse_agents.routing_agent import RoutingAgent
-    from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+    from cogniverse_agents.search_agent import SearchAgent
 
     assert RoutingAgent is not None
-    assert VideoSearchAgent is not None
+    assert SearchAgent is not None
 
 def test_retrieval_package_imports():
     """Verify cogniverse_vespa package imports work"""
@@ -399,7 +399,7 @@ def test_layered_architecture_dependencies():
 # tests/test_tenant_isolation.py
 import pytest
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
 def test_tenant_config_isolation():
     """Verify each tenant gets isolated configuration"""
@@ -418,16 +418,16 @@ def test_tenant_schema_naming():
 
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    agent = VideoSearchAgent(
+    agent = SearchAgent(
+        deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
 
     # Agent's search service should target tenant-specific schema
-    # profile and tenant_id are per-request on search()
-    results = agent.search(
+    # tenant_id is per-request on search_by_text()
+    results = agent.search_by_text(
         query="test",
-        profile="video_colpali_smol500_mv_frame",
         tenant_id="acme_corp",
         top_k=5,
     )

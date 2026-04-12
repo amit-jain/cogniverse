@@ -766,27 +766,27 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 ### 7.1 Individual Agent Testing
 
-**Test VideoSearchAgent:**
+**Test SearchAgent:**
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# config_manager and schema_loader are REQUIRED for VideoSearchAgent
+# config_manager and schema_loader are REQUIRED for SearchAgent
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Initialize agent (inherits from core layer base classes)
-agent = VideoSearchAgent(
+agent = SearchAgent(
+    deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
 
-# Run search (synchronous) — profile and tenant_id are per-request
-result = agent.search(
+# Run search (synchronous) — tenant_id is per-request
+result = agent.search_by_text(
     query="machine learning tutorials",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="default",
     top_k=10,
 )
@@ -1435,7 +1435,7 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 ```python
 # Complete routing + search workflow
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -1459,11 +1459,12 @@ print(f"Routing: {decision.recommended_agent}")
 if decision.recommended_agent == "video_search_agent":
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    agent = VideoSearchAgent(
+    agent = SearchAgent(
+        deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
-    results = agent.search(query="machine learning", profile="video_colpali_smol500_mv_frame", tenant_id="default", top_k=5)
+    results = agent.search_by_text(query="machine learning", tenant_id="default", top_k=5)
     print(f"Found {len(results)} results")
 ```
 

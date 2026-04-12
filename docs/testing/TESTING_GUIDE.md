@@ -262,17 +262,17 @@ class TestSearchAgent:
 
 ### Async Tests
 
-Use `@pytest.mark.asyncio` for async tests. Note that VideoSearchAgent.search() is synchronous:
+Use `@pytest.mark.asyncio` for async tests. Note that SearchAgent.search_by_text() is synchronous:
 
 ```python
 import pytest
 from concurrent.futures import ThreadPoolExecutor
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.config_store import ConfigStore
 from unittest.mock import MagicMock
 
-class TestVideoSearchAgent:
+class TestSearchAgent:
 
     @pytest.fixture
     def mock_config_store(self):
@@ -295,24 +295,25 @@ class TestVideoSearchAgent:
 
     @pytest.fixture
     def agent(self, config_manager, schema_loader):
-        """Create VideoSearchAgent with config manager and schema loader."""
-        return VideoSearchAgent(
+        """Create SearchAgent with config manager and schema loader."""
+        return SearchAgent(
+            deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
 
     def test_search(self, agent):
         """Test search operation (synchronous)."""
-        result = agent.search("test query", profile="video_colpali_smol500_mv_frame", tenant_id="test", top_k=5)
+        result = agent.search_by_text(query="test query", tenant_id="test", top_k=5)
         assert result is not None
 
     def test_concurrent_searches(self, agent):
         """Test concurrent search operations using threads."""
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = [
-                executor.submit(agent.search, "query1", "video_colpali_smol500_mv_frame", "test", 5),
-                executor.submit(agent.search, "query2", "video_colpali_smol500_mv_frame", "test", 5),
-                executor.submit(agent.search, "query3", "video_colpali_smol500_mv_frame", "test", 5),
+                executor.submit(agent.search_by_text, query="query1", tenant_id="test", top_k=5),
+                executor.submit(agent.search_by_text, query="query2", tenant_id="test", top_k=5),
+                executor.submit(agent.search_by_text, query="query3", tenant_id="test", top_k=5),
             ]
             results = [f.result() for f in futures]
 

@@ -144,7 +144,7 @@ cogniverse/
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_agents/
 │   │       ├── routing_agent.py  # DSPy routing & optimization
-│   │       ├── video_agent_refactored.py  # Multi-modal search & reranking
+│   │       ├── search_agent.py            # Multi-modal search & reranking
 │   │       └── tools/            # Agent tools
 │   ├── vespa/                    # cogniverse_vespa
 │   │   ├── pyproject.toml
@@ -575,7 +575,7 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 # ===== IMPLEMENTATION LAYER =====
 # Agents - Routing and Search
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.agent_registry import AgentRegistry
 

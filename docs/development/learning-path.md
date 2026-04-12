@@ -101,7 +101,7 @@ Foundation Layer
 **Key Files**:
 
 - `libs/agents/cogniverse_agents/routing_agent.py` — RoutingAgent
-- `libs/agents/cogniverse_agents/video_agent_refactored.py` — VideoSearchAgent
+- `libs/agents/cogniverse_agents/search_agent.py` — SearchAgent
 - `libs/agents/cogniverse_agents/orchestrator_agent.py` — OrchestratorAgent (A2A entry point with DSPy planning)
 
 ---

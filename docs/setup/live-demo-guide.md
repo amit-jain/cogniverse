@@ -283,12 +283,14 @@ The system supports 7 ranking strategies, from simple keyword matching to hybrid
 | Strategy | Technique | When to Use |
 |----------|-----------|-------------|
 | `bm25_only` | BM25 text matching | Baseline, keyword queries |
-| `bm25_binary` | BM25 + binary embedding pre-filter | Fast approximate matching |
-| `bm25_float` | BM25 + float embedding scoring | Accurate semantic matching |
-| `bm25_float_rerank` | BM25 + float + cross-encoder rerank | Highest quality, slowest |
-| `semantic_only` | Pure embedding similarity | Visual queries with no text signal |
-| `hybrid_rrf` | Reciprocal Rank Fusion (BM25 + semantic) | Balanced keyword + semantic |
-| `hybrid_weighted` | Weighted combination of signals | Tunable precision/recall trade-off |
+| `float_float` | Dense float embeddings | Highest visual accuracy |
+| `binary_binary` | Binary embeddings | Fastest visual search |
+| `float_binary` | Float query, binary index | Speed/accuracy balance |
+| `phased` | Binary retrieval → float reranking | Optimized two-phase |
+| `hybrid_float_bm25` | Visual + text hybrid | Best overall accuracy |
+| `hybrid_bm25_float` | Text-first + precise float rerank | Text-heavy queries |
+| `hybrid_binary_bm25` | Fast hybrid (binary visual + text) | Low-latency hybrid |
+| `hybrid_bm25_binary` | Text-first + binary visual rerank | Fast text-first hybrid |
 
 ### Run the Comprehensive Query Test
 
@@ -337,79 +339,67 @@ Each experiment reports standard IR metrics:
 ```mermaid
 flowchart TD
     Q["<span style='color:#000'>Query</span>"] --> HAS_TEXT{"<span style='color:#000'>Has text<br/>signal?</span>"}
-    HAS_TEXT -- "No" --> SEM["<span style='color:#000'>semantic_only</span>"]
-    HAS_TEXT -- "Yes" --> NEED_SEM{"<span style='color:#000'>Need semantic<br/>understanding?</span>"}
-    NEED_SEM -- "No" --> BM25["<span style='color:#000'>bm25_only</span>"]
-    NEED_SEM -- "Yes" --> LATENCY{"<span style='color:#000'>Latency<br/>budget?</span>"}
-    LATENCY -- "Tight" --> BIN["<span style='color:#000'>bm25_binary</span>"]
-    LATENCY -- "Moderate" --> HYBRID{"<span style='color:#000'>Prefer<br/>balance?</span>"}
-    LATENCY -- "Generous" --> RERANK["<span style='color:#000'>bm25_float_rerank</span>"]
-    HYBRID -- "RRF" --> RRF["<span style='color:#000'>hybrid_rrf</span>"]
-    HYBRID -- "Weighted" --> WGT["<span style='color:#000'>hybrid_weighted</span>"]
-    HYBRID -- "Direct" --> FLOAT["<span style='color:#000'>bm25_float</span>"]
+    HAS_TEXT -- "No" --> FLOAT["<span style='color:#000'>float_float</span>"]
+    HAS_TEXT -- "Yes" --> NEED_VIS{"<span style='color:#000'>Need visual<br/>understanding?</span>"}
+    NEED_VIS -- "No" --> BM25["<span style='color:#000'>bm25_only</span>"]
+    NEED_VIS -- "Yes" --> LATENCY{"<span style='color:#000'>Latency<br/>budget?</span>"}
+    LATENCY -- "Tight" --> BIN["<span style='color:#000'>hybrid_binary_bm25</span>"]
+    LATENCY -- "Moderate" --> HYBRID{"<span style='color:#000'>Query<br/>emphasis?</span>"}
+    LATENCY -- "Generous" --> PHASED["<span style='color:#000'>phased</span>"]
+    HYBRID -- "Visual-first" --> HFB["<span style='color:#000'>hybrid_float_bm25</span>"]
+    HYBRID -- "Text-first" --> HBF["<span style='color:#000'>hybrid_bm25_float</span>"]
 
     style Q fill:#90caf9,stroke:#1565c0,color:#000
-    style SEM fill:#a5d6a7,stroke:#388e3c,color:#000
+    style FLOAT fill:#a5d6a7,stroke:#388e3c,color:#000
     style BM25 fill:#a5d6a7,stroke:#388e3c,color:#000
     style BIN fill:#a5d6a7,stroke:#388e3c,color:#000
-    style FLOAT fill:#a5d6a7,stroke:#388e3c,color:#000
-    style RERANK fill:#a5d6a7,stroke:#388e3c,color:#000
-    style RRF fill:#a5d6a7,stroke:#388e3c,color:#000
-    style WGT fill:#a5d6a7,stroke:#388e3c,color:#000
+    style HFB fill:#a5d6a7,stroke:#388e3c,color:#000
+    style HBF fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PHASED fill:#a5d6a7,stroke:#388e3c,color:#000
     style HAS_TEXT fill:#ffcc80,stroke:#ef6c00,color:#000
-    style NEED_SEM fill:#ffcc80,stroke:#ef6c00,color:#000
+    style NEED_VIS fill:#ffcc80,stroke:#ef6c00,color:#000
     style LATENCY fill:#ffcc80,stroke:#ef6c00,color:#000
     style HYBRID fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ---
 
-## 6. Intelligent Routing Demo
+## 6. Intelligent Routing
 
 > **Deep dive**: [Intelligent Query Routing](../architecture/intelligent-query-routing.md)
 
-The routing system uses a 4-tier escalation chain to classify and route queries:
+The routing system uses a DSPy-powered decision pipeline with an A2A agent architecture:
 
-| Tier | Method | Speed | Confidence Threshold |
-|------|--------|-------|---------------------|
-| 1 | GLiNER (zero-shot NER) | Fast | 0.7 |
-| 2 | LLM classification | Slow | 0.6 |
-| 3 | LangExtract (structured) | Medium | 0.5 |
-| 4 | Keyword fallback | Instant | Always passes |
+| Stage | Agent | Purpose |
+|-------|-------|---------|
+| Entity extraction | `QueryEnhancementAgent` | Enrich queries with entities and relationships |
+| Classification | `RoutingAgent` | DSPy module selects execution agent + confidence |
+| Execution | `SearchAgent` / `OrchestratorAgent` | Handle single or multi-agent workflows |
 
-### Run the Routing Demo
+### Test Routing via the API
 
 ```bash
-# Concise output — shows final routing decisions
-uv run python scripts/demo_routing_unified.py
-
-# Verbose — shows tier-by-tier confidence scores
-uv run python scripts/demo_routing_unified.py --verbose
-
-# Test a specific tier category
-uv run python scripts/demo_routing_unified.py --category tier1_simple
-uv run python scripts/demo_routing_unified.py --category tier2_complex
-uv run python scripts/demo_routing_unified.py --category tier3_structured
-uv run python scripts/demo_routing_unified.py --category tier4_fallback
+# Route a query through the A2A protocol
+curl -X POST http://localhost:8000/a2a/tasks/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tasks/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Find videos of a dog playing fetch"}]
+      },
+      "metadata": {"tenant_id": "default"}
+    }
+  }'
 ```
-
-### What to Observe
-
-**Simple query** (resolves at Tier 1 — GLiNER):
-- _"Find videos of a dog playing fetch"_
-- GLiNER extracts entities: `[ANIMAL: dog, ACTION: playing fetch]`
-- Confidence > 0.7 → routes to single video search agent
-
-**Complex query** (escalates to Tier 2+ — triggers orchestration):
-- _"Find videos of a golden retriever at a park, then summarize the training techniques and compare with indoor training"_
-- Requires search + summarization + comparison → 3+ signals detected
-- Routes to multi-agent orchestrator
 
 ### Observing Routing in Phoenix
 
-After running the demo, open Phoenix at `http://localhost:6006`:
+After running queries, open Phoenix at `http://localhost:6006`:
 - Each routing decision creates a telemetry span
-- Spans show: tier reached, confidence scores, extracted entities, final decision
+- Spans show: confidence scores, extracted entities, recommended agent
 - Filter by project name to see routing-specific traces
 
 ---
@@ -522,13 +512,454 @@ Tenant management (separate service on port 9000):
 
 ---
 
-## 9. End-to-End Flow
+## 9. Optimization Pipeline
 
-The complete demo flow ties all sections together:
+> **Deep dive**: [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md)
+
+The optimization CLI closes the feedback loop: evaluation reveals quality gaps → optimization compiles improved DSPy modules → agents load them at startup.
+
+### How It Works
+
+```mermaid
+flowchart LR
+    SPANS["<span style='color:#000'>Phoenix Spans<br/>(production traffic)</span>"]
+    BUILD["<span style='color:#000'>Build DSPy<br/>Training Examples</span>"]
+    COMPILE["<span style='color:#000'>Compile Optimized<br/>Modules (SIMBA/MIPROv2)</span>"]
+    ARTIFACT["<span style='color:#000'>Save Artifact<br/>(ArtifactManager)</span>"]
+    LOAD["<span style='color:#000'>Agent loads artifact<br/>at next startup</span>"]
+
+    SPANS --> BUILD --> COMPILE --> ARTIFACT --> LOAD
+
+    style SPANS fill:#90caf9,stroke:#1565c0,color:#000
+    style BUILD fill:#ffcc80,stroke:#ef6c00,color:#000
+    style COMPILE fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ARTIFACT fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LOAD fill:#90caf9,stroke:#1565c0,color:#000
+```
+
+### Optimization Modes
+
+| Mode | What It Optimizes | When to Use |
+|------|-------------------|-------------|
+| `routing` | DSPy routing module (agent selection) | After routing accuracy evaluation |
+| `gateway-thresholds` | GLiNER confidence thresholds | When fast-path misroutes queries |
+| `entity-extraction` | Entity extraction accuracy | When entities are missed or wrong |
+| `profile` | Profile performance ranking | After multi-profile experiments |
+| `workflow` | Full end-to-end pipeline (all modes) | Scheduled nightly optimization |
+| `triggered` | On-demand for specific agents | When quality monitor fires |
+| `simba` | SIMBA optimizer for routing | Alternative to MIPROv2 |
+| `cleanup` | Purge old optimization logs | Periodic maintenance |
+
+### Run Optimization
+
+```bash
+# Single mode — optimize routing decisions
+python -m cogniverse_runtime.optimization_cli \
+  --mode routing --tenant-id acme:production
+
+# Full workflow — all modes in sequence
+python -m cogniverse_runtime.optimization_cli \
+  --mode workflow --tenant-id acme:production
+
+# Triggered by quality monitor (receives dataset name)
+python -m cogniverse_runtime.optimization_cli \
+  --mode triggered --tenant-id acme:production \
+  --agents search,summary \
+  --trigger-dataset optimization-trigger-default-20260403_040000
+
+# Cleanup old logs (keep last 7 days)
+python -m cogniverse_runtime.optimization_cli \
+  --mode cleanup --log-retention-days 7
+```
+
+### What to Observe
+
+After optimization runs, check Phoenix:
+- New experiment with optimized module scores vs baseline
+- Artifact saved to telemetry provider's dataset store
+- On next agent restart, the agent loads the compiled module automatically
+
+---
+
+## 10. Quality Monitor
+
+The quality monitor is a continuous sidecar that evaluates all agents and triggers optimization when quality degrades below thresholds.
+
+### Architecture
 
 ```mermaid
 flowchart TD
-    subgraph "Infrastructure"
+    QM["<span style='color:#000'>QualityMonitor<br/>(sidecar)</span>"]
+    GOLDEN["<span style='color:#000'>Golden Set Eval<br/>(every 2h)</span>"]
+    LIVE["<span style='color:#000'>Live Traffic Eval<br/>(every 4h)</span>"]
+    GATE["<span style='color:#000'>XGBoost Gate<br/>(should we optimize?)</span>"]
+    ARGO["<span style='color:#000'>Argo CronWorkflow<br/>(optimization_cli)</span>"]
+
+    QM --> GOLDEN
+    QM --> LIVE
+    GOLDEN --> GATE
+    LIVE --> GATE
+    GATE -->|"quality below threshold"| ARGO
+
+    style QM fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style GOLDEN fill:#90caf9,stroke:#1565c0,color:#000
+    style LIVE fill:#90caf9,stroke:#1565c0,color:#000
+    style GATE fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ARGO fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+### Run the Quality Monitor
+
+```bash
+# Development — single evaluation cycle and exit
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id default \
+  --runtime-url http://localhost:8000 \
+  --phoenix-url http://localhost:6006 \
+  --once
+
+# Continuous monitoring (production sidecar)
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id default \
+  --runtime-url http://localhost:28000 \
+  --phoenix-url http://localhost:6006 \
+  --golden-interval 7200 \
+  --live-interval 14400 \
+  --live-sample-count 20
+
+# With Argo integration (auto-submits optimization workflows)
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id default \
+  --runtime-url http://localhost:28000 \
+  --phoenix-url http://localhost:6006 \
+  --argo-url http://argo-server:2746 \
+  --argo-namespace cogniverse
+```
+
+### Configuration
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--golden-interval` | 7200 (2h) | Seconds between golden set evaluations |
+| `--live-interval` | 14400 (4h) | Seconds between live traffic evaluations |
+| `--live-sample-count` | 20 | Spans to sample per agent for live eval |
+| `--golden-dataset-path` | `data/testset/evaluation/sample_videos_retrieval_queries.json` | Path to golden dataset |
+| `--llm-model` | `qwen3:4b` | LLM for judge evaluations |
+| `--once` | false | Single cycle and exit (for Argo CronWorkflows) |
+
+In production, the quality monitor runs as a Kubernetes sidecar (`runtime.qualityMonitor.enabled: true` in Helm values).
+
+---
+
+## 11. Telegram Messaging Gateway
+
+Users can interact with Cogniverse via Telegram — search, summarize, research, and manage the wiki through bot commands.
+
+### Setup
+
+```bash
+# Set the bot token (create via @BotFather on Telegram)
+export TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# Start with messaging enabled
+cogniverse up --messaging
+
+# Or for development (polling mode):
+export GATEWAY_MODE=polling
+python -m cogniverse_messaging.gateway
+```
+
+### Invite Flow
+
+Telegram access is tenant-scoped. Admins generate invite tokens; users redeem them.
+
+```bash
+# Admin: generate an invite token
+curl -X POST http://localhost:8000/admin/messaging/invite \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:production", "expires_in_hours": 24}'
+
+# Returns: {"token": "abc123def456...", "tenant_id": "acme:production"}
+```
+
+The user sends `/start abc123def456...` to the bot to link their Telegram account to the tenant.
+
+### Bot Commands
+
+| Command | Agent | Example |
+|---------|-------|---------|
+| `/search <query>` | search_agent | `/search machine learning tutorial` |
+| `/summarize <query>` | summarizer_agent | `/summarize the Python basics video` |
+| `/report <query>` | detailed_report_agent | `/report Q4 content performance` |
+| `/research <query>` | deep_research_agent | `/research best practices for async Python` |
+| `/code <query>` | coding_agent | `/code write a FastAPI health endpoint` |
+| `/wiki search <query>` | — | Search the wiki knowledge base |
+| `/wiki topic <name>` | — | Look up a topic page by name |
+| `/wiki index` | — | Show the full wiki index |
+| `/wiki lint` | — | Check wiki for orphan/stale/empty pages |
+| `/memories` | — | View stored conversation memories |
+| `/instructions` | — | View system instructions |
+| `/jobs create ...` | — | Create background processing jobs |
+| `/jobs list` | — | List job status |
+| Plain text | routing_agent | `what videos do you have on transformers?` |
+| Photo/video | search_agent | Send media to search for similar content |
+| `/help` | — | Show all available commands |
+
+Conversation history is maintained via Mem0 across sessions. The gateway runs in **polling** mode for development and **webhook** mode for production (`GATEWAY_MODE=webhook` with `TELEGRAM_WEBHOOK_URL` set).
+
+---
+
+## 12. Wiki Knowledge Base
+
+The wiki automatically saves substantial agent interactions as searchable pages in Vespa. It requires no configuration — the `wiki_pages` schema is deployed on startup.
+
+### Auto-Filing Triggers
+
+Interactions are automatically saved to the wiki when:
+- The response contains 3+ extracted entities
+- The agent is `detailed_report_agent` or `deep_research_agent`
+- The conversation spans 4+ turns
+
+### REST API
+
+```bash
+# Save an interaction manually
+curl -X POST http://localhost:8000/wiki/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "how does ColPali work?",
+    "response": {"answer": "ColPali uses patch-level embeddings..."},
+    "entities": ["ColPali", "patch_embeddings"],
+    "agent_name": "routing_agent",
+    "tenant_id": "acme:production"
+  }'
+
+# Search the wiki
+curl -X POST http://localhost:8000/wiki/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "ColPali embeddings", "tenant_id": "acme:production", "top_k": 5}'
+
+# Get a topic by slug
+curl "http://localhost:8000/wiki/topic/colpali-embeddings?tenant_id=acme:production"
+
+# Browse the full index
+curl "http://localhost:8000/wiki/index?tenant_id=acme:production"
+
+# Run lint checks (find orphan, stale, or empty pages)
+curl "http://localhost:8000/wiki/lint?tenant_id=acme:production"
+
+# Delete a topic
+curl -X DELETE "http://localhost:8000/wiki/topic/old-topic?tenant_id=acme:production"
+```
+
+### Via Telegram
+
+After connecting the messaging gateway, users interact with the wiki through bot commands:
+
+```text
+/wiki search ColPali
+/wiki topic colpali-embeddings
+/wiki index
+/wiki lint
+```
+
+---
+
+## 13. Knowledge Graph CLI
+
+Index code or documents into a searchable knowledge graph stored in Vespa. The graph captures entities (functions, classes, modules) and their relationships (calls, imports, inherits).
+
+### Build the Graph
+
+```bash
+# Index a codebase
+cogniverse index ./libs --type code
+
+# Index with a specific tenant
+cogniverse index ./libs --type code --tenant acme:production
+
+# Index with a specific Vespa profile
+cogniverse index ./libs --type code --profile video_colpali_smol500_mv_frame
+```
+
+> **Note:** Only `--type code` is currently supported. `docs` and `video` types are planned.
+
+### Query the Graph (CLI)
+
+```bash
+# View graph statistics
+cogniverse graph stats
+cogniverse graph stats --tenant acme:production
+
+# Search for nodes by name or description
+cogniverse graph search "query encoder" --top-k 10
+
+# Find neighbors of a node
+cogniverse graph neighbors "SearchAgent" --depth 2
+
+# Find path between two nodes
+cogniverse graph path "RoutingAgent" "SearchAgent" --max-depth 5
+```
+
+### REST API
+
+```bash
+# Search nodes
+curl "http://localhost:8000/graph/search?query=encoder&tenant_id=default&top_k=10"
+
+# Get neighbors
+curl "http://localhost:8000/graph/neighbors?node_id=SearchAgent&tenant_id=default&depth=2"
+
+# Find path between nodes
+curl "http://localhost:8000/graph/path?source=RoutingAgent&target=SearchAgent&tenant_id=default"
+
+# Graph statistics
+curl "http://localhost:8000/graph/stats?tenant_id=default"
+```
+
+---
+
+## 14. Coding Agent CLI
+
+An interactive REPL for planning, generating, and executing code changes with streaming output.
+
+### Launch the REPL
+
+```bash
+# Default — Python, 5 iterations
+cogniverse code
+
+# Specify language and iteration limit
+cogniverse code --language python --iterations 10
+
+# With codebase context (index first for best results)
+cogniverse index ./libs --type code
+cogniverse code --codebase ./libs
+
+# Specify tenant
+cogniverse code --tenant acme:production
+```
+
+### How It Works
+
+The coding agent follows a plan → generate → execute loop:
+
+1. **Plan** — Analyzes the request and proposes a change plan
+2. **Generate** — Writes code changes with streaming output
+3. **Execute** — Applies changes and runs validation
+4. **Iterate** — Refines based on errors (up to `--iterations` limit)
+
+The agent uses the knowledge graph (if indexed) for codebase context, and Deno sandboxed execution for safe code running.
+
+> **Full documentation**: [Coding Agent CLI](../user/coding-agent-cli.md)
+
+---
+
+## 15. A2A Protocol
+
+The Runtime exposes a Google A2A (Agent-to-Agent) protocol server for programmatic agent interaction. This is a JSON-RPC 2.0 interface for building applications that talk to Cogniverse agents.
+
+### Agent Card
+
+Every A2A server publishes a discovery document:
+
+```bash
+curl http://localhost:8000/a2a/.well-known/agent.json
+```
+
+Returns the agent card with capabilities, skills, and supported input/output modes.
+
+### Send a Task (Fire-and-Forget)
+
+```bash
+curl -X POST http://localhost:8000/a2a \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "tasks/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Find videos of a dog playing fetch"}]
+      },
+      "metadata": {"tenant_id": "acme:production"}
+    }
+  }'
+```
+
+### Stream a Task (SSE)
+
+```bash
+curl -X POST http://localhost:8000/a2a \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "2",
+    "method": "tasks/sendSubscribe",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Summarize the cooking tutorial video"}]
+      },
+      "metadata": {"tenant_id": "acme:production"}
+    }
+  }'
+```
+
+The response is a Server-Sent Events stream with incremental results.
+
+### REST Alternative
+
+For simpler integrations, the REST agents API provides a direct endpoint:
+
+```bash
+# Process a task with a specific agent
+curl -X POST http://localhost:8000/agents/search_agent/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_name": "search_agent",
+    "query": "machine learning tutorial",
+    "top_k": 10,
+    "context": {"tenant_id": "acme:production"}
+  }'
+
+# List available agents
+curl http://localhost:8000/agents/
+
+# Get agent capabilities
+curl http://localhost:8000/agents/search_agent
+```
+
+### Multi-Turn Conversations
+
+Both A2A and REST support multi-turn context:
+
+```bash
+# REST: pass context_id and conversation_history
+curl -X POST http://localhost:8000/agents/search_agent/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_name": "search_agent",
+    "query": "show me longer ones",
+    "context_id": "session-abc-123",
+    "conversation_history": [
+      {"role": "user", "content": "find Python tutorials"},
+      {"role": "assistant", "content": "Found 5 results..."}
+    ],
+    "context": {"tenant_id": "acme:production"}
+  }'
+```
+
+---
+
+## 16. End-to-End Flow
+
+The complete workflow ties all sections together — from infrastructure through the continuous improvement loop:
+
+```mermaid
+flowchart TD
+    subgraph "Infrastructure (Section 1-2)"
         DC["<span style='color:#000'>cogniverse up</span>"]
     end
 
@@ -538,45 +969,70 @@ flowchart TD
 
     subgraph "Data (Section 4)"
         INGEST["<span style='color:#000'>run_ingestion.py<br/>→ keyframes → embeddings → Vespa</span>"]
+        KG["<span style='color:#000'>cogniverse index<br/>→ knowledge graph</span>"]
     end
 
     subgraph "Query (Sections 5-6)"
-        SEARCH["<span style='color:#000'>comprehensive_video_query_test<br/>→ MRR, NDCG, Recall</span>"]
-        ROUTE["<span style='color:#000'>demo_routing_unified.py<br/>→ GLiNER → LLM → orchestration</span>"]
+        SEARCH["<span style='color:#000'>Search + Routing<br/>→ text, visual, multi-modal</span>"]
     end
 
-    subgraph "Evaluate (Section 7)"
-        EXP["<span style='color:#000'>run_experiments_with_visualization.py<br/>→ Phoenix experiments</span>"]
+    subgraph "Evaluate & Optimize (Sections 7, 9-10)"
+        EXP["<span style='color:#000'>Experiments<br/>→ MRR, NDCG, Recall</span>"]
+        QM["<span style='color:#000'>Quality Monitor<br/>→ continuous scoring</span>"]
+        OPT["<span style='color:#000'>Optimization CLI<br/>→ DSPy compilation</span>"]
     end
 
     subgraph "Observe (Section 8)"
         DASH["<span style='color:#000'>Dashboard + Phoenix<br/>→ telemetry, annotations</span>"]
     end
 
+    subgraph "User Interfaces (Sections 11-15)"
+        TG["<span style='color:#000'>Telegram Gateway<br/>→ /search, /wiki, /code</span>"]
+        WIKI["<span style='color:#000'>Wiki Knowledge Base<br/>→ auto-captured pages</span>"]
+        CODE["<span style='color:#000'>cogniverse code<br/>→ interactive REPL</span>"]
+        A2A["<span style='color:#000'>A2A Protocol<br/>→ JSON-RPC 2.0</span>"]
+    end
+
     DC --> TENANT --> INGEST
-    INGEST --> SEARCH --> ROUTE
-    ROUTE --> EXP --> DASH
-    DASH -.->|"Annotations feed back<br/>into optimization"| ROUTE
+    INGEST --> SEARCH
+    KG --> CODE
+
+    SEARCH --> EXP
+    SEARCH --> WIKI
+    EXP --> QM
+    QM -->|"quality below threshold"| OPT
+    OPT -.->|"agents reload<br/>optimized modules"| SEARCH
+    EXP --> DASH
+
+    TG --> SEARCH
+    A2A --> SEARCH
 
     style DC fill:#90caf9,stroke:#1565c0,color:#000
     style TENANT fill:#ffcc80,stroke:#ef6c00,color:#000
     style INGEST fill:#a5d6a7,stroke:#388e3c,color:#000
+    style KG fill:#a5d6a7,stroke:#388e3c,color:#000
     style SEARCH fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style ROUTE fill:#ce93d8,stroke:#7b1fa2,color:#000
     style EXP fill:#ffcc80,stroke:#ef6c00,color:#000
+    style QM fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OPT fill:#ffcc80,stroke:#ef6c00,color:#000
     style DASH fill:#90caf9,stroke:#1565c0,color:#000
+    style TG fill:#81d4fa,stroke:#0288d1,color:#000
+    style WIKI fill:#81d4fa,stroke:#0288d1,color:#000
+    style CODE fill:#81d4fa,stroke:#0288d1,color:#000
+    style A2A fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
-### Quick Reference: The 6 Commands
+### Quick Reference
 
 ```bash
 # 1. Start services
-cogniverse up
+cogniverse up --messaging
 
 # 2. Create tenant (auto-provisions org + schemas)
-curl -X POST http://localhost:9000/admin/tenants \
+curl -X POST http://localhost:8000/admin/tenants \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "acme:production", "created_by": "admin"}'
+  -d '{"tenant_id": "acme:production", "created_by": "admin",
+       "base_schemas": ["video_colpali_smol500_mv_frame"]}'
 
 # 3. Ingest videos
 uv run python scripts/run_ingestion.py \
@@ -584,22 +1040,41 @@ uv run python scripts/run_ingestion.py \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame
 
-# 4. Run retrieval evaluation
-JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
-  --profiles video_colpali_smol500_mv_frame --test-multiple-strategies
+# 4. Search via API
+curl -X POST http://localhost:8000/search/ \
+  -H "Content-Type: application/json" \
+  -d '{"query": "dog playing fetch", "tenant_id": "acme:production", "top_k": 5}'
 
-# 5. Run routing demo
-uv run python scripts/demo_routing_unified.py --verbose
-
-# 6. Launch experiments
+# 5. Evaluate retrieval quality
 uv run python scripts/run_experiments_with_visualization.py \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame --all-strategies
+
+# 6. Run optimization
+python -m cogniverse_runtime.optimization_cli \
+  --mode workflow --tenant-id acme:production
+
+# 7. Start quality monitor (continuous)
+python -m cogniverse_runtime.quality_monitor_cli \
+  --tenant-id acme:production \
+  --runtime-url http://localhost:8000 \
+  --phoenix-url http://localhost:6006
+
+# 8. Build knowledge graph
+cogniverse index ./libs --type code
+
+# 9. Interactive coding agent
+cogniverse code --codebase ./libs
+
+# 10. Open dashboard
+open http://localhost:8501
 ```
 
 ---
 
 **See also:**
-- [Intelligent Query Routing](../architecture/intelligent-query-routing.md) — 4-tier routing architecture, entity extraction, DSPy signatures, multi-agent orchestration
-- [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) — synthetic data generation, HITL review, adaptive optimizer selection, annotation feedback
+- [Intelligent Query Routing](../architecture/intelligent-query-routing.md) — DSPy routing, entity extraction, multi-agent orchestration
+- [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) — synthetic data, HITL review, adaptive optimization
+- [Coding Agent CLI](../user/coding-agent-cli.md) — Full coding agent documentation
+- [Knowledge Graph](../user/knowledge-graph.md) — Graph extraction and querying

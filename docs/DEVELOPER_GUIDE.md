@@ -468,12 +468,12 @@ flowchart TB
 
 **Modules:**
 
-- Lowercase with underscores: `video_agent_refactored.py`
+- Lowercase with underscores: `search_agent.py`
 - Avoid abbreviations: `config.py` not `cfg.py`
 
 **Classes:**
 
-- PascalCase: `VideoSearchAgent`, `VespaSchemaManager`
+- PascalCase: `SearchAgent`, `VespaSchemaManager`
 - Descriptive names: `RoutingAgent` not `RA`
 
 **Functions:**

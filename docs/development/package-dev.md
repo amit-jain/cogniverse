@@ -80,7 +80,7 @@ cogniverse/
 │   │       ├── __init__.py
 │   │       ├── routing_agent.py       # Routing agent
 │   │       ├── orchestrator_agent.py  # A2A orchestration entry point
-│   │       ├── video_agent_refactored.py  # Video search agent
+│   │       ├── search_agent.py            # Search agent
 │   │       ├── approval/       # Approval workflow
 │   │       ├── inference/      # Inference logic
 │   │       ├── mixins/         # Agent mixins
@@ -1127,7 +1127,7 @@ from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 # cogniverse_agents - agent implementations only
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.search_agent import SearchAgent
 
 # ❌ BAD: Mixing concerns
 # Don't put agent implementations in cogniverse_core
@@ -1222,7 +1222,7 @@ uv run pytest tests/agents/ --cov=cogniverse_agents --cov-fail-under=80
 
 # ✅ Coverage report:
 # cogniverse_agents/routing_agent.py              95%
-# cogniverse_agents/video_agent_refactored.py     87%
+# cogniverse_agents/search_agent.py                87%
 # cogniverse_agents/gateway_agent.py              82%
 # TOTAL                                            88%
 ```
