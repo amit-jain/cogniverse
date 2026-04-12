@@ -5,12 +5,12 @@ description = "Cogniverse Foundation - Cross-cutting concerns and shared infrast
 requires-python = ">=3.12"
 dependencies = [
     "cogniverse-sdk",
-    "dspy-ai>=3.1.2",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "pydantic>=2.0.0",
-    "sqlalchemy>=2.0.0",
-    "pandas>=2.0.0",
+    "dspy-ai==3.1.3",
+    "opentelemetry-api==1.41.0",
+    "opentelemetry-sdk==1.41.0",
+    "pydantic==2.12.5",
+    "sqlalchemy==2.0.49",
+    "pandas==2.3.3",
 ]
 
 [tool.uv.sources]

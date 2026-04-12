@@ -12,8 +12,8 @@ authors = [
 dependencies = [
     "cogniverse-core",
     "cogniverse-evaluation",
-    "arize-phoenix>=14.0.0,<15",
-    "pandas>=2.0.0",
+    "arize-phoenix==14.2.1",
+    "pandas==2.3.3",
 ]
 
 [project.entry-points."cogniverse.telemetry.providers"]

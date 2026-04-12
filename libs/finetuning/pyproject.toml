@@ -18,31 +18,31 @@ dependencies = [
     # Note: Uses telemetry provider abstraction, not direct Phoenix dependency
 
     # Fine-tuning core libraries
-    "peft>=0.13.0",           # LoRA/PEFT adapters
-    "transformers>=4.50.0",   # Hugging Face transformers
-    "datasets>=3.2.0",        # Dataset loading and processing
-    "accelerate>=1.2.0",      # Training acceleration
-    "trl>=0.12.0",            # DPO, PPO, RLHF trainers (SFTTrainer, DPOTrainer)
+    "peft==0.17.1",           # LoRA/PEFT adapters
+    "transformers==4.56.2",   # Hugging Face transformers
+    "datasets==4.8.4",        # Dataset loading and processing
+    "accelerate==1.13.0",      # Training acceleration
+    "trl==1.1.0",            # DPO, PPO, RLHF trainers (SFTTrainer, DPOTrainer)
 
     # Training infrastructure
-    "torch>=2.5.0",
+    "torch==2.8.0",
     # "bitsandbytes>=0.45.0",   # Quantization and memory optimization (optional - Linux/Windows only, not available on macOS)
-    "scipy>=1.10.0",
+    "scipy==1.17.1",
 
     # Embedding fine-tuning
-    "sentence-transformers>=3.3.0",  # Contrastive learning for embeddings
+    "sentence-transformers==5.1.1",  # Contrastive learning for embeddings
 
     # Experiment tracking
-    "mlflow>=3.0.0",
+    "mlflow==3.11.1",
 
     # Cloud infrastructure
-    "modal>=0.68.0",          # Modal GPU jobs
-    "boto3>=1.28.0",          # S3 for model storage
+    "modal==1.4.1",          # Modal GPU jobs
+    "boto3==1.40.61",          # S3 for model storage
     "huggingface-hub>=0.28.0", # HF Hub integration
 
     # Data processing
-    "pandas>=2.1.0",
-    "pyarrow>=14.0.0",        # Efficient dataset serialization
+    "pandas==2.3.3",
+    "pyarrow==23.0.1",        # Efficient dataset serialization
 ]
 
 [tool.uv.sources]

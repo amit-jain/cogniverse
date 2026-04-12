@@ -7,13 +7,13 @@ requires-python = ">=3.11"
 dependencies = [
     # Zero internal cogniverse dependencies
     # Only standard library and essential external dependencies
-    "numpy>=1.24.0",  # For embedding arrays in backend interface
+    "numpy==2.4.4",  # For embedding arrays in backend interface
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "ruff>=0.1.0",
+    "pytest==9.0.3",
+    "ruff==0.15.10",
 ]
 
 [build-system]
