@@ -170,7 +170,7 @@ jobs:
 
     - name: Pre-pull Vespa Docker image
       run: |
-        docker pull vespaengine/vespa:latest
+        docker pull vespaengine/vespa:8.668.5
         df -h
 
     - name: Run integration tests

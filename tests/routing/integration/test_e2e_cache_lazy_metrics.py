@@ -96,7 +96,7 @@ def phoenix_container():
                 "PHOENIX_WORKING_DIR=/phoenix_data",
                 "-e",
                 "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
-                "arizephoenix/phoenix:latest",
+                "arizephoenix/phoenix:14.2.1",
             ],
             check=True,
             capture_output=True,

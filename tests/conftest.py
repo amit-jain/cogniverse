@@ -267,7 +267,7 @@ def phoenix_container():
                 "14317:4317",  # gRPC port
                 "-e",
                 "PHOENIX_WORKING_DIR=/phoenix",
-                "arizephoenix/phoenix:latest",
+                "arizephoenix/phoenix:14.2.1",
             ],
             check=True,
             capture_output=True,

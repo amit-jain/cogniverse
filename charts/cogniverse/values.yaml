@@ -95,7 +95,7 @@ vespa:
   enabled: true
   image:
     repository: vespaengine/vespa
-    tag: "latest"
+    tag: "8.668.5"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -419,7 +419,7 @@ llm:
     enabled: true
     image:
       repository: ollama/ollama
-      tag: "latest"
+      tag: "0.20.5"
       pullPolicy: IfNotPresent
     replicaCount: 1
     resources:

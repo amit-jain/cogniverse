@@ -31,7 +31,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
       containers:
       - name: cert-gen
-        image: alpine/openssl:latest
+        image: alpine/openssl:3.4.1
         command:
         - /bin/sh
         - -c

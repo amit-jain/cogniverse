@@ -91,7 +91,7 @@ jobs:
 
     services:
       vespa:
-        image: vespaengine/vespa:latest
+        image: vespaengine/vespa:8.668.5
         ports:
           - 8080:8080
           - 19071:19071

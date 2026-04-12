@@ -123,12 +123,12 @@ jobs:
     - name: Start Phoenix
       run: |
         echo "Starting Phoenix in Docker..."
-        docker pull arizephoenix/phoenix:latest
+        docker pull arizephoenix/phoenix:14.2.1
         docker run -d --name phoenix-ci \
           -p 6006:6006 \
           -p 4317:4317 \
           -e PHOENIX_WORKING_DIR=/tmp/phoenix-data \
-          arizephoenix/phoenix:latest
+          arizephoenix/phoenix:14.2.1
 
         # Wait for Phoenix to be ready
         echo "Waiting for Phoenix to be ready..."
