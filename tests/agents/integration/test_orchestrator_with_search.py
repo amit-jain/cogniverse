@@ -29,7 +29,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import dspy
 import pytest
 
-from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionAgent,
     EntityExtractionDeps,
@@ -51,6 +50,7 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementInput,
 )
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchInput
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
