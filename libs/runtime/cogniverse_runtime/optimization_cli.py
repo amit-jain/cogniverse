@@ -1361,9 +1361,10 @@ async def run_synthetic_generation(
             bc = BackendConfig(**backend_config) if isinstance(backend_config, dict) else backend_config
             gc = SyntheticGeneratorConfig(**generator_config) if isinstance(generator_config, dict) else generator_config
 
-            from cogniverse_runtime.backend_factory import create_backend
+            from cogniverse_core.registries.backend_registry import BackendRegistry
 
-            backend = create_backend(config_manager, tenant_id)
+            registry = BackendRegistry(config_manager=config_manager)
+            backend = registry.get_backend(tenant_id=tenant_id)
 
             service = SyntheticDataService(
                 backend=backend,
@@ -1380,10 +1381,10 @@ async def run_synthetic_generation(
 
             # Save as demonstrations with approval_status=pending
             demos = []
-            for example in response.examples:
+            for item in response.data:
                 demos.append({
-                    "input": json.dumps(example.input_data, default=str),
-                    "output": json.dumps(example.output_data, default=str),
+                    "input": json.dumps(item, default=str),
+                    "output": json.dumps(item.get("expected_output", ""), default=str),
                     "metadata": json.dumps({
                         "approval_status": "pending",
                         "optimizer_type": opt_type,
