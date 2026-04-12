@@ -35,12 +35,12 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
 if TYPE_CHECKING:
-    from cogniverse_agents.agent_registry import AgentRegistry
     from cogniverse_agents.orchestrator.checkpoint_storage import (
         WorkflowCheckpointStorage,
     )
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
     from cogniverse_core.events import EventQueue
+    from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
@@ -1270,7 +1270,7 @@ async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global orchestrator_agent
 
-    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
@@ -1319,7 +1319,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()

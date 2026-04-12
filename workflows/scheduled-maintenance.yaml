@@ -171,12 +171,9 @@ spec:
             echo "Running weekly DSPy optimization for tenant {{inputs.parameters.tenant-id}}..."
 
             cd /app
-            JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
-              --tenant-id {{inputs.parameters.tenant-id}} \
-              --optimizer GEPA \
-              --dataset golden_eval_v1 \
-              --profiles video_colpali_smol500_mv_frame \
-              --max-iterations 100
+            python -m cogniverse_runtime.optimization_cli \
+              --mode simba --tenant-id {{inputs.parameters.tenant-id}} \
+              --lookback-hours 168
 
             echo "Optimization completed for {{inputs.parameters.tenant-id}}"
         env:

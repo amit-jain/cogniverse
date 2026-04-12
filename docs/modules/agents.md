@@ -93,8 +93,8 @@ To add a custom agent, implement `A2AAgent[InputT, OutputT, DepsT]` and register
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.health_mixin import HealthCheckMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 ```
@@ -219,7 +219,7 @@ flowchart TB
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from pydantic import Field
@@ -923,7 +923,7 @@ class ProfileSelectionSignature(dspy.Signature):
 ```python
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from pydantic import BaseModel, Field
 from typing import List
 import dspy
@@ -2649,7 +2649,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 
 ### MemoryAwareMixin
 
-**Location**: `libs/core/cogniverse_core/agents/memory_aware_mixin.py`
+**Location**: `libs/core/cogniverse_agents.memory_aware_mixin.py`
 
 Provides memory integration for all agents:
 
@@ -2685,7 +2685,7 @@ class MemoryAwareMixin:
         Creates tenant-specific Mem0MemoryManager instance.
         Raises ValueError if tenant_id is empty or None.
         """
-        ...  # Implementation in cogniverse_core.agents.memory_aware_mixin
+        ...  # Implementation in cogniverse_agents.memory_aware_mixin
 
     def get_relevant_context(self, query: str, top_k: Optional[int] = 5) -> Optional[str]:
         """Retrieve relevant memories for query. Returns None if memory not initialized."""
@@ -2890,7 +2890,7 @@ class TenantAwareAgentMixin:
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 class RoutingDeps(AgentDeps):
     """Infrastructure dependencies — no tenant_id (it's per-request)"""
     enable_caching: bool = True

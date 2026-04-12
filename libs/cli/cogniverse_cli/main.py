@@ -201,7 +201,7 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
                 "[cyan]Using host LLM endpoint (external mode).[/cyan]"
             )
             external_url = (
-                "http://host.k3d.internal:11434" if use_k3d else "http://localhost:11434"
+                "http://host.docker.internal:11434" if use_k3d else "http://localhost:11434"
             )
             set_values["llm.builtin.enabled"] = "false"
             set_values["llm.external.enabled"] = "true"
@@ -212,7 +212,7 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
         if llm_url:
             resolved_url = llm_url
         elif use_k3d:
-            resolved_url = "http://host.k3d.internal:11434"
+            resolved_url = "http://host.docker.internal:11434"
         else:
             console.print(
                 "[red]--llm-url is required when using --llm=external "

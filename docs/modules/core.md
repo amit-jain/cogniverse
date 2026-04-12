@@ -427,7 +427,7 @@ backend = BackendRegistry.get_search_backend(
 ### DSPyModuleRegistry
 
 ```python
-from cogniverse_core.registries.dspy_registry import DSPyModuleRegistry
+from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry
 from cogniverse_foundation.config.agent_config import DSPyModuleType
 import dspy
 

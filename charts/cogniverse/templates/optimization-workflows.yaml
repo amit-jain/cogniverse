@@ -383,7 +383,7 @@ spec:
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
           - "--argo-url"
-          - "http://{{ $fullName }}-argo-server:2746"
+          - "http://argo-server.argo.svc.cluster.local:2746"
           - "--argo-namespace"
           - {{ .Release.Namespace | quote }}
         env:
