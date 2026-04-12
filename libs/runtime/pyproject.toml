@@ -39,7 +39,7 @@ dependencies = [
     "msgpack>=1.1.1",
 
     # A2A Protocol
-    "a2a-sdk[http-server]>=0.3.0",
+    "a2a-sdk[http-server]>=0.3.0,<1.0.0",
 
     # Sandbox runtime (OpenShell) for coding agent code execution.
     # Pinned to match the host gateway version — the SDK and gateway must

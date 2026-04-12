@@ -173,7 +173,7 @@ class PhoenixAnnotationStore(AnnotationStore):
         """
         try:
             client = self._get_client()
-            await client.annotations.add_span_annotation(
+            await client.spans.add_span_annotation(
                 span_id=span_id,
                 annotation_name=name,
                 annotator_kind="HUMAN",

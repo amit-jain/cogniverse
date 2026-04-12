@@ -749,7 +749,9 @@ class VespaBackend(Backend):
                                 if not existing_def.strip():
                                     continue
                                 existing_def = json.loads(existing_def)
-                            existing_obj = parser_for_existing.parse_schema(existing_def)
+                            existing_obj = parser_for_existing.parse_schema(
+                                existing_def
+                            )
                             merged_schemas.append(existing_obj)
                         except Exception as merge_exc:
                             logger.warning(
@@ -915,9 +917,7 @@ class VespaBackend(Backend):
         # If there are no schemas to wait for (e.g., the rollback path
         # re-deploying 0 previous schemas), there's nothing to probe.
         if not schema_names:
-            logger.debug(
-                "Skipping convergence probe: no schemas in deployment package"
-            )
+            logger.debug("Skipping convergence probe: no schemas in deployment package")
             return
 
         base_url = re.sub(r":\d+$", "", self._url)

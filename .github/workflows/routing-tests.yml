@@ -217,14 +217,9 @@ jobs:
       run: |
         uv sync --all-packages --all-extras
     
-    - name: Test demo script
-      run: |
-        # Test that the demo script can at least be imported and show help
-        uv run python scripts/demo_routing_unified.py --help || echo "Demo script needs CLI args"
-    
     - name: Test routing module imports
       run: |
-        uv run python -c "from cogniverse_agents.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
+        uv run python -c "from cogniverse_agents.routing_agent import RoutingAgent; print('Routing imports successful')"
 
   coverage-report:
     runs-on: ubuntu-latest
