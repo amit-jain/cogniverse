@@ -5,6 +5,7 @@ Unit tests for evaluation task orchestrator.
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from inspect_ai.scorer import match
 
 from cogniverse_evaluation.core.task import evaluation_task
 
@@ -30,7 +31,7 @@ class TestEvaluationTask:
                     mock_dataset.__len__ = Mock(return_value=1)  # Has 1 sample
                     mock_dataset_class.return_value = mock_dataset
                     mock_solver.return_value = Mock()
-                    mock_scorers.return_value = [Mock(), Mock()]
+                    mock_scorers.return_value = [match(), match()]
 
                     task = evaluation_task(
                         mode="experiment",
@@ -69,7 +70,7 @@ class TestEvaluationTask:
                     mock_dataset.__len__ = Mock(return_value=1)  # Has 1 sample
                     mock_dataset_class.return_value = mock_dataset
                     mock_solver.return_value = Mock()
-                    mock_scorers.return_value = [Mock()]
+                    mock_scorers.return_value = [match()]
 
                     task = evaluation_task(
                         mode="batch",
@@ -180,12 +181,12 @@ class TestEvaluationTask:
                 with patch("cogniverse_evaluation.core.solvers.create_batch_solver"):
                     with patch(
                         "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
-                    ):
-                        # Create mock dataset with examples and __len__
+                    ) as mock_scorers:
                         mock_dataset = MagicMock()
-                        mock_dataset.examples = []  # Empty list of examples
-                        mock_dataset.__len__ = Mock(return_value=1)  # Has 1 sample
+                        mock_dataset.examples = []
+                        mock_dataset.__len__ = Mock(return_value=1)
                         mock_dataset_class.return_value = mock_dataset
+                        mock_scorers.return_value = []
 
                         evaluation_task(
                             mode="batch", dataset_name="test_dataset", config=config
@@ -207,12 +208,12 @@ class TestEvaluationTask:
                 ):
                     with patch(
                         "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
-                    ):
-                        # Create mock dataset with examples and __len__
+                    ) as mock_scorers:
                         mock_dataset = MagicMock()
-                        mock_dataset.examples = []  # Empty list of examples
-                        mock_dataset.__len__ = Mock(return_value=1)  # Has 1 sample
+                        mock_dataset.examples = []
+                        mock_dataset.__len__ = Mock(return_value=1)
                         mock_dataset_class.return_value = mock_dataset
+                        mock_scorers.return_value = []
 
                         evaluation_task(
                             mode="experiment",
