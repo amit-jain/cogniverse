@@ -47,9 +47,7 @@ libs/agents/cogniverse_agents/
 │   ├── modality_evaluator.py           # Modality evaluation
 │   ├── modality_metrics.py             # Performance metrics
 │   ├── xgboost_meta_models.py          # XGBoost meta-learning
-│   ├── contextual_analyzer.py          # Cross-modal context
 │   ├── routing_span_evaluator.py       # Routing span evaluation
-│   ├── parallel_executor.py            # Parallel agent execution
 │   └── ... (additional DSPy and utility files)
 ```
 
@@ -892,7 +890,6 @@ def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
 
 ---
 
-### 12. ContextualAnalyzer (contextual_analyzer.py:34-441)
 
 **Purpose**: Maintains cross-modal context across queries to improve routing and search quality
 
@@ -1043,7 +1040,6 @@ async def extract_training_data_from_phoenix(
 
 ---
 
-### 15. LazyModalityExecutor (lazy_executor.py:16-309)
 
 **Purpose**: Execute expensive modalities only when needed based on cost/benefit analysis
 
@@ -1734,8 +1730,6 @@ Located in: `tests/routing/unit/`
 - `test_modality_optimizer.py` - Per-modality optimization
 - `test_modality_metrics.py` - Modality metrics tracking
 - `test_cross_modal_optimizer.py` - Cross-modal fusion tests
-- `test_lazy_executor.py` - Lazy execution tests
-- `test_contextual_analyzer.py` - Contextual analysis tests
 - `test_routing_strategies.py` - Routing strategy tests
 - `test_xgboost_meta_models.py` - XGBoost meta-model tests
 

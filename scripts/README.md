@@ -334,17 +334,14 @@ uv run python scripts/auto_optimization_trigger.py \
 
 ---
 
-#### `optimize_system.py` - System-Wide Optimization
 **Comprehensive system optimization (all components)**
 
 ```bash
 # Full system optimization
-uv run python scripts/optimize_system.py \
   --tenant-id default \
   --components all
 
 # Specific components
-uv run python scripts/optimize_system.py \
   --tenant-id acme_corp \
   --components routing modality embeddings
 ```
@@ -946,7 +943,6 @@ bash scripts/start_phoenix.sh
 | Category | Count | Key Scripts |
 |----------|-------|-------------|
 | **Ingestion** | 5 | `run_ingestion.py`, `ingest_documents.py`, `ingest_audio.py`, `ingest_images.py` |
-| **Optimization** | 3 | `optimization_cli` (module), `auto_optimization_trigger.py`, `optimize_system.py` |
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
 | **Deployment** | 3 | `deploy_production.py`, `deploy_all_schemas.py` |

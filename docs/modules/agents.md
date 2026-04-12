@@ -109,7 +109,6 @@ graph TD
 
     Root --> Init["<span style='color:#000'>__init__.py</span>"]
     Root --> RoutingAgent["<span style='color:#000'><b>routing_agent.py</b><br/>1667 lines - TOP LEVEL</span>"]
-    Root --> VideoAgent["<span style='color:#000'><b>video_agent_refactored.py</b><br/>180 lines - TOP LEVEL</span>"]
     Root --> OrchestratorAgent["<span style='color:#000'><b>orchestrator_agent.py</b><br/>A2A Entry Point</span>"]
     Root --> AudioAgent["<span style='color:#000'>audio_analysis_agent.py</span>"]
     Root --> DocAgent["<span style='color:#000'>document_agent.py</span>"]
@@ -171,7 +170,6 @@ graph TD
 
 - `routing_agent.py`: 1667 lines
 
-- `video_agent_refactored.py`: 180 lines
 
 - `orchestrator_agent.py`: A2A entry point with DSPy planning
 
@@ -410,7 +408,6 @@ routing_agent_config = {
 
 ### 2. VideoSearchAgent
 
-**Location**: `libs/agents/cogniverse_agents/video_agent_refactored.py` (top level)
 **Purpose**: Text-to-video search with ColPali and VideoPrism embeddings
 **Constructor**: `VideoSearchAgent(config_manager: ConfigManager = None, schema_loader=None)`
 
@@ -455,7 +452,6 @@ flowchart LR
 #### Class Definition
 
 ```python
-# libs/agents/cogniverse_agents/video_agent_refactored.py
 
 from typing import Optional, List, Dict, Any
 from cogniverse_foundation.config.manager import ConfigManager
@@ -549,7 +545,6 @@ def search(
 #### Usage Example
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -609,7 +604,6 @@ results = search_agent._search_by_video(
 #### Multi-Tenant Search Flow
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
@@ -2523,7 +2517,6 @@ print(f"Result: {result}")
 
 ### 13. VideoSearchAgent (Refactored)
 
-**Location:** `libs/agents/cogniverse_agents/video_agent_refactored.py`
 
 Refactored video search agent using the unified search service architecture. Provides a simpler interface compared to the original VideoSearchAgent.
 
@@ -2549,7 +2542,6 @@ def search(
 
 **Usage:**
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -3112,7 +3104,6 @@ print(f"Confidence: {decision.confidence}")
 ### Example 2: Video Search
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize agent (profile-agnostic, tenant-agnostic)
@@ -3163,7 +3154,6 @@ print(f"Summary: {result.execution_summary}")
 ### Example 4: Memory-Aware Search
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -3622,7 +3612,6 @@ class TestRoutingAgent:
 # Example integration test (actual tests exist in tests/agents/integration/)
 
 import pytest
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 
 @pytest.mark.integration
 class TestVideoSearchAgentIntegration:
@@ -3710,7 +3699,6 @@ agent = RoutingAgent()  # TypeError: missing deps
 ### 2. Initialize Config Manager for VideoSearchAgent
 
 ```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # VideoSearchAgent requires config_manager + schema_loader
