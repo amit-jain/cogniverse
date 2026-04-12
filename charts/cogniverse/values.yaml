@@ -356,7 +356,7 @@ phoenix:
   enabled: true
   image:
     repository: arizephoenix/phoenix
-    tag: "latest"
+    tag: "14.2.1"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
