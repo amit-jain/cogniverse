@@ -522,7 +522,7 @@ class VespaVideoSearchClient:
             else:
                 # Multi-token embeddings for patch-based models
                 binary_embedding = {
-                    index: np.packbits(np.where(vector > 0, 1, 0), axis=0)
+                    str(index): np.packbits(np.where(vector > 0, 1, 0), axis=0)
                     .astype(np.int8)
                     .tolist()
                     for index, vector in enumerate(embeddings)
@@ -605,7 +605,7 @@ class VespaVideoSearchClient:
                     str(index): vector.tolist() for index, vector in enumerate(embeddings)
                 }
                 binary_embedding = {
-                    index: np.packbits(np.where(vector > 0, 1, 0), axis=0)
+                    str(index): np.packbits(np.where(vector > 0, 1, 0), axis=0)
                     .astype(np.int8)
                     .tolist()
                     for index, vector in enumerate(embeddings)

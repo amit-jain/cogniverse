@@ -109,12 +109,16 @@ def query_agent_with_real_lm(real_dspy_lm):
 
 @pytest.fixture
 def orchestrator_with_real_agents(real_dspy_lm):
-    """OrchestratorAgent with real agent instances via mock AgentRegistry"""
-    from unittest.mock import Mock
+    """OrchestratorAgent with real DSPy planning + mocked agent HTTP calls.
+
+    The orchestrator uses real Ollama for DSPy planning (deciding which agents
+    to call), but HTTP calls to downstream agents are mocked since we don't
+    run separate agent servers in this test.
+    """
+    from unittest.mock import AsyncMock, Mock, patch
 
     from cogniverse_core.common.agent_models import AgentEndpoint
 
-    # Create mock AgentRegistry with endpoints matching the real agents
     registry = Mock()
     agent_endpoints = {
         "entity_extraction": AgentEndpoint(
@@ -150,7 +154,27 @@ def orchestrator_with_real_agents(real_dspy_lm):
         config_manager=mock_config_manager,
         port=8013,
     )
-    return orchestrator
+
+    # Mock httpx.AsyncClient so agent HTTP calls succeed
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.json.return_value = {"status": "success", "result": "processed"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    patcher = patch(
+        "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+        return_value=mock_client,
+    )
+    patcher.start()
+
+    yield orchestrator
+
+    patcher.stop()
 
 
 @pytest.mark.integration

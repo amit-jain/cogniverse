@@ -55,6 +55,7 @@ _AGENT_CLASSES = _discover_agent_classes()
 _AGENTS_WITHOUT_MEMORY = {
     "AudioAnalysisAgent",  # pure speech-to-text + retrieval
     "ImageSearchAgent",  # pure ColPali retrieval
+    "GatewayAgent",  # thin triage agent — routes to downstream, no memory needed
 }
 
 
