@@ -125,7 +125,11 @@ def _collect_stream_events(agent, typed_input) -> list[dict[str, Any]]:
         async for event in await agent.process(typed_input, stream=True):
             events.append(event)
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(_run())
+    except RuntimeError:
+        asyncio.run(_run())
     return events
 
 
@@ -320,7 +324,7 @@ class TestSummarizerAgentStreaming:
 class TestRoutingAgentStreaming:
     """RoutingAgent streaming with real Ollama + real entity extraction."""
 
-    def test_stream_phases_and_output(self, dspy_lm):
+    def test_stream_phases_and_output(self, config_manager, dspy_lm):
         from cogniverse_agents.routing_agent import (
             RoutingAgent,
             RoutingDeps,
@@ -328,7 +332,6 @@ class TestRoutingAgentStreaming:
         )
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-        # llm_config=None → resolved from config.json automatically
         agent = RoutingAgent(
             deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
         )

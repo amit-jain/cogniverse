@@ -209,6 +209,30 @@ def schema_loader():
     return FilesystemSchemaLoader(SCHEMAS_DIR)
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _set_test_backend_env(vespa_instance):
+    """Set BACKEND_URL/BACKEND_PORT env vars so create_default_config_manager()
+    naturally resolves to the test Vespa container. No mocks needed."""
+    import os
+
+    original_url = os.environ.get("BACKEND_URL")
+    original_port = os.environ.get("BACKEND_PORT")
+
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(vespa_instance["http_port"])
+
+    yield
+
+    if original_url is not None:
+        os.environ["BACKEND_URL"] = original_url
+    else:
+        os.environ.pop("BACKEND_URL", None)
+    if original_port is not None:
+        os.environ["BACKEND_PORT"] = original_port
+    else:
+        os.environ.pop("BACKEND_PORT", None)
+
+
 @pytest.fixture(scope="module")
 def memory_manager(vespa_instance, config_manager, schema_loader):
     """Real Mem0MemoryManager backed by test Vespa Docker.
