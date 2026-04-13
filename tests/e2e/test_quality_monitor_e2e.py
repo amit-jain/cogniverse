@@ -141,7 +141,7 @@ class TestPhoenixDatasets:
             )
 
             readback = client.datasets.get_dataset(dataset=dataset_name)
-            readback_df = readback.as_dataframe()
+            readback_df = readback.to_dataframe()
             assert len(readback_df) >= 1
         except Exception as e:
             # Dataset may already exist from previous run

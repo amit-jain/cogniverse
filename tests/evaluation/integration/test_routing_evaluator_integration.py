@@ -2,7 +2,7 @@
 Integration tests for RoutingEvaluator with real Phoenix data.
 
 These tests require:
-- Phoenix server running at localhost:6006
+- Phoenix Docker container via phoenix_container fixture (ports 16006/14317)
 - Actual routing spans in the Phoenix database
 """
 
@@ -72,7 +72,7 @@ class TestRoutingEvaluatorIntegration:
     """Integration tests with real Phoenix infrastructure"""
 
     @pytest.fixture
-    def telemetry_provider(self, phoenix_test_server):
+    def telemetry_provider(self, phoenix_container):
         """Create telemetry provider for integration tests"""
         import cogniverse_foundation.telemetry.manager as telemetry_manager_module
         from cogniverse_foundation.telemetry.manager import TelemetryManager
@@ -84,10 +84,10 @@ class TestRoutingEvaluatorIntegration:
 
         # Create config matching the Phoenix container endpoints
         config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
+            otlp_endpoint="http://localhost:14317",
             provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
+                "http_endpoint": "http://localhost:16006",
+                "grpc_endpoint": "http://localhost:14317",
             },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
@@ -100,8 +100,8 @@ class TestRoutingEvaluatorIntegration:
         manager.register_project(
             tenant_id="test-tenant",
             project_name=None,  # Use default unified tenant project
-            http_endpoint="http://localhost:26006",
-            grpc_endpoint="localhost:24317",
+            http_endpoint="http://localhost:16006",
+            grpc_endpoint="localhost:14317",
         )
 
         yield manager.get_provider(tenant_id="test-tenant")
@@ -120,17 +120,17 @@ class TestRoutingEvaluatorIntegration:
         )
 
     @pytest.fixture
-    def setup_routing_environment(self, phoenix_test_server):
+    def setup_routing_environment(self, phoenix_container):
         """Set up environment for routing agent tests
 
         Just provide config - RoutingAgent will initialize its own TelemetryManager.
         """
         return {
             "telemetry_config": TelemetryConfig(
-                otlp_endpoint="http://localhost:24317",
+                otlp_endpoint="http://localhost:14317",
                 provider_config={
-                    "http_endpoint": "http://localhost:26006",
-                    "grpc_endpoint": "http://localhost:24317",
+                    "http_endpoint": "http://localhost:16006",
+                    "grpc_endpoint": "http://localhost:14317",
                 },
                 batch_config=BatchExportConfig(use_sync_export=True),
             ),
@@ -147,7 +147,7 @@ class TestRoutingEvaluatorIntegration:
 
         # Debug: Query ALL spans to see what we have
         client = routing_evaluator.provider.client
-        all_spans = client.get_spans_dataframe()
+        all_spans = client.spans.get_spans_dataframe()
         if all_spans is not None and not all_spans.empty:
             logger.info(f"DEBUG: Found {len(all_spans)} total spans")
             logger.info(f"DEBUG: Span names: {all_spans['name'].unique()}")
@@ -198,8 +198,8 @@ class TestRoutingEvaluatorIntegration:
         client = routing_evaluator.provider.client
 
         # Get spans from the orchestration project
-        all_project_spans = client.get_spans_dataframe(
-            project_name="cogniverse-test-tenant"
+        all_project_spans = client.spans.get_spans_dataframe(
+            project_identifier="cogniverse-test-tenant"
         )
 
         # Filter for routing spans

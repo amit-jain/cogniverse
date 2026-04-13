@@ -732,7 +732,7 @@ class QualityMonitor:
             sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
             dataset_name = f"quality-baseline-{self.tenant_id}"
             dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
-            df = dataset.as_dataframe()
+            df = dataset.to_dataframe()
             if df.empty:
                 return None
 
@@ -920,7 +920,7 @@ class QualityMonitor:
             sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
             dataset_name = f"quality-baseline-{self.tenant_id}"
             dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
-            df = dataset.as_dataframe()
+            df = dataset.to_dataframe()
 
             if df.empty:
                 return None

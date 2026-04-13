@@ -2,7 +2,8 @@
 Integration test for DeepResearchAgent with real Ollama and Vespa.
 
 Exercises the full research cycle: decompose → search → evaluate → synthesize.
-Requires Ollama (localhost:11434) and Vespa (localhost:8080).
+Uses vespa_instance fixture from conftest to manage its own Docker container.
+Requires Ollama (localhost:11434).
 """
 
 import logging
@@ -32,18 +33,8 @@ def _ollama_available():
         return False
 
 
-def _vespa_available():
-    import requests
-
-    try:
-        return requests.get("http://localhost:8080/state/v1/health", timeout=3).status_code == 200
-    except Exception:
-        return False
-
-
 pytestmark = [
     pytest.mark.skipif(not _ollama_available(), reason="Ollama not running on :11434"),
-    pytest.mark.skipif(not _vespa_available(), reason="Vespa not running on :8080"),
 ]
 
 
@@ -56,13 +47,21 @@ def configure_dspy():
 
 
 @pytest.fixture
-def real_search_fn():
-    """Search function that hits real Vespa."""
+def real_search_fn(vespa_instance):
+    """Search function that hits the test Vespa Docker container.
+
+    The vespa_instance fixture sets BACKEND_URL/BACKEND_PORT env vars,
+    so create_default_config_manager() automatically connects to the
+    test container.
+    """
 
     async def search(query: str, tenant_id: str):
         from cogniverse_agents.search.service import SearchService
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
 
         config_manager = create_default_config_manager()
         config = get_config(tenant_id=tenant_id, config_manager=config_manager)
@@ -88,14 +87,14 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.timeout(120)
     async def test_full_research_cycle(self, real_search_fn):
         """Decompose → search Vespa → evaluate → synthesize with real Ollama."""
-        deps = DeepResearchDeps(tenant_id="flywheel_org:production")
+        deps = DeepResearchDeps(tenant_id="default")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 
         result = await agent.process(
             DeepResearchInput(
                 query="What visual content appears in outdoor scenes?",
                 max_iterations=2,
-                tenant_id="flywheel_org:production",
+                tenant_id="default",
             )
         )
 
@@ -114,7 +113,7 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.timeout(60)
     async def test_decomposition_produces_real_subquestions(self, real_search_fn):
         """DSPy decomposition with real Ollama produces meaningful sub-questions."""
-        deps = DeepResearchDeps(tenant_id="flywheel_org:production")
+        deps = DeepResearchDeps(tenant_id="default")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 
         sub_qs = await agent._decompose(

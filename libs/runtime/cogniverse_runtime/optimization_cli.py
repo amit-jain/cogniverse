@@ -68,7 +68,7 @@ async def run_triggered_optimization(
 
     try:
         dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset)
-        trigger_df = dataset.as_dataframe()
+        trigger_df = dataset.to_dataframe()
 
         # Phoenix wraps columns under input/output dicts — flatten
         if "input" in trigger_df.columns and "agent" not in trigger_df.columns:

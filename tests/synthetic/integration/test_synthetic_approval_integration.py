@@ -14,7 +14,6 @@ Tests the complete flow:
 
 import logging
 import os
-import subprocess
 import time
 from datetime import datetime
 
@@ -36,7 +35,6 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_synthetic.approval.confidence_extractor import (
     SyntheticDataConfidenceExtractor,
 )
@@ -74,156 +72,9 @@ skip_if_no_teacher_api = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def phoenix_container():
-    """Start Phoenix Docker container on non-default ports for synthetic approval tests.
 
-    If Phoenix is already running (e.g., started by CI workflow), reuses it.
-    """
-    import os
-    import urllib.request
-
-    # Set environment variables BEFORE any TelemetryManager is created
-    original_endpoint = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
-    original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
-
-    os.environ["TELEMETRY_OTLP_ENDPOINT"] = "http://localhost:24317"
-    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
-
-    # Reset TelemetryManager singleton using reset() class method
-    TelemetryManager.reset()
-
-    # Check if Phoenix is already running (e.g., started by CI workflow)
-    phoenix_already_running = False
-    try:
-        urllib.request.urlopen("http://localhost:26006", timeout=2)
-        phoenix_already_running = True
-        logger.info("Phoenix already running on port 26006, reusing existing instance")
-    except Exception:
-        pass
-
-    if phoenix_already_running:
-        # Phoenix is already running, just yield and don't manage container
-        yield "external"
-        return
-
-    container_name = f"phoenix_synthetic_test_{int(time.time() * 1000)}"
-
-    # Clean up old containers
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_synthetic_test"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.stdout.strip():
-            old_containers = result.stdout.strip().split("\n")
-            for container_id in old_containers:
-                subprocess.run(
-                    ["docker", "rm", "-f", container_id],
-                    capture_output=True,
-                    timeout=10,
-                )
-            logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
-    except Exception as e:
-        logger.warning(f"Error cleaning up old containers: {e}")
-
-    try:
-        # Create temporary directory for Phoenix data
-        import tempfile
-
-        test_data_dir = os.path.join(
-            tempfile.gettempdir(), f"phoenix_test_{int(time.time())}"
-        )
-        os.makedirs(test_data_dir, exist_ok=True)
-
-        # Start Phoenix container with SQLite persistent storage
-        result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                container_name,
-                "-p",
-                "26006:6006",  # HTTP port
-                "-p",
-                "24317:4317",  # gRPC port
-                "-v",
-                f"{test_data_dir}:/phoenix_data",  # Mount temp directory
-                "-e",
-                "PHOENIX_WORKING_DIR=/phoenix_data",  # Enable persistent storage
-                "-e",
-                "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",  # SQLite database
-                "arizephoenix/phoenix:14.2.1",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        logger.info(f"Phoenix container {container_name} started")
-
-        # Wait for Phoenix to be ready using standardized utility
-        from tests.utils.async_polling import PollingTimeoutError, wait_for_http_ready
-
-        try:
-            wait_for_http_ready(
-                url="http://localhost:26006",
-                timeout=60,
-                description="Phoenix HTTP endpoint",
-            )
-        except PollingTimeoutError:
-            logs_result = subprocess.run(
-                ["docker", "logs", container_name],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
-            raise RuntimeError("Phoenix failed to start within timeout")
-
-        yield container_name
-
-    finally:
-        # Cleanup - COMMENTED OUT FOR DEBUGGING
-        # Stop Phoenix container after test
-        try:
-            subprocess.run(
-                ["docker", "stop", container_name],
-                check=False,
-                capture_output=True,
-                timeout=30,
-            )
-            subprocess.run(
-                ["docker", "rm", container_name],
-                check=False,
-                capture_output=True,
-                timeout=10,
-            )
-            logger.info(f"Phoenix container {container_name} stopped and removed")
-        except Exception as e:
-            logger.warning(f"Error cleaning up Phoenix container: {e}")
-            try:
-                subprocess.run(
-                    ["docker", "rm", "-f", container_name],
-                    check=False,
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception:
-                pass
-
-        # Restore original environment variables
-        if original_endpoint:
-            os.environ["TELEMETRY_OTLP_ENDPOINT"] = original_endpoint
-        else:
-            os.environ.pop("TELEMETRY_OTLP_ENDPOINT", None)
-
-        if original_sync_export:
-            os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
-        else:
-            os.environ.pop("TELEMETRY_SYNC_EXPORT", None)
+# phoenix_container fixture is inherited from tests/conftest.py
+# It starts Phoenix Docker on ports 16006 (HTTP) and 14317 (gRPC)
 
 
 @pytest.fixture
@@ -280,7 +131,8 @@ def backend_config():
 @pytest.fixture
 def telemetry_manager(phoenix_container):
     """TelemetryManager configured for approval tests"""
-    # phoenix_container fixture ensures env vars are set and TelemetryManager singleton is reset
+    # phoenix_container fixture (from tests/conftest.py) ensures env vars are set
+    # and TelemetryManager singleton is reset. Ports: 16006 (HTTP), 14317 (gRPC).
     from cogniverse_foundation.telemetry.config import (
         BatchExportConfig,
         TelemetryConfig,
@@ -288,7 +140,7 @@ def telemetry_manager(phoenix_container):
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     config = TelemetryConfig(
-        otlp_endpoint="localhost:24317",
+        otlp_endpoint="localhost:14317",
         batch_config=BatchExportConfig(use_sync_export=True),
     )
     manager = TelemetryManager(config)
@@ -307,8 +159,8 @@ def approval_storage(phoenix_container, telemetry_manager):
     # Depend on phoenix_container to ensure it's running and env vars are set
     # Depend on telemetry_manager to use proper tenant-scoped span creation
     return ApprovalStorageImpl(
-        grpc_endpoint="http://localhost:24317",  # gRPC port for span export
-        http_endpoint="http://localhost:26006",  # HTTP port for span queries
+        grpc_endpoint="http://localhost:14317",  # gRPC port for span export
+        http_endpoint="http://localhost:16006",  # HTTP port for span queries
         tenant_id="test-tenant1",
         telemetry_manager=telemetry_manager,
     )

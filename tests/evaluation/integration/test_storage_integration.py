@@ -23,11 +23,11 @@ class TestTelemetryStorageIntegration:
     """Integration tests for telemetry storage with real backend."""
 
     @pytest.fixture
-    def storage(self, phoenix_test_server):
+    def storage(self, phoenix_container):
         """Create storage instance with test telemetry backend."""
         config = ConnectionConfig(
-            http_endpoint="http://localhost:26006",
-            otlp_endpoint="localhost:24317",
+            http_endpoint="http://localhost:16006",
+            otlp_endpoint="localhost:14317",
             enable_health_checks=False,
         )
         storage = TelemetryStorage(config)
@@ -35,14 +35,11 @@ class TestTelemetryStorageIntegration:
         storage.shutdown()
 
     @pytest.mark.integration
-    def test_connection_lifecycle(self, phoenix_test_server):
+    def test_connection_lifecycle(self, phoenix_container):
         """Test connection establishment and shutdown."""
-        # Extract host:port from base_url for OTLP endpoint
-        # import urllib.parse
-
         config = ConnectionConfig(
-            http_endpoint="http://localhost:26006",
-            otlp_endpoint="localhost:24317",
+            http_endpoint="http://localhost:16006",
+            otlp_endpoint="localhost:14317",
             enable_health_checks=False,
         )
 
@@ -148,13 +145,11 @@ class TestTelemetryStorageIntegration:
         assert all(r is not None for r in results)
 
     @pytest.mark.integration
-    def test_health_check_recovery(self, phoenix_test_server):
+    def test_health_check_recovery(self, phoenix_container):
         """Test health check and auto-recovery."""
-        # import urllib.parse
-
         config = ConnectionConfig(
-            http_endpoint="http://localhost:26006",
-            otlp_endpoint="localhost:24317",
+            http_endpoint="http://localhost:16006",
+            otlp_endpoint="localhost:14317",
             enable_health_checks=True,
             health_check_interval_seconds=0.5,
         )
@@ -268,13 +263,11 @@ class TestTelemetryStorageIntegration:
             assert metrics["avg_latency_ms"] > 0
 
     @pytest.mark.integration
-    def test_context_manager_cleanup(self, phoenix_test_server):
+    def test_context_manager_cleanup(self, phoenix_container):
         """Test context manager properly cleans up resources."""
-        # import urllib.parse
-
         config = ConnectionConfig(
-            http_endpoint="http://localhost:26006",
-            otlp_endpoint="localhost:24317",
+            http_endpoint="http://localhost:16006",
+            otlp_endpoint="localhost:14317",
             enable_health_checks=False,
         )
 

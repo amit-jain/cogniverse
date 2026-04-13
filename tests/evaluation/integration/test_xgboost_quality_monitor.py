@@ -73,7 +73,11 @@ def monitor_with_xgboost(phoenix_container, tmp_path):
     yield m
 
     import asyncio
-    asyncio.get_event_loop().run_until_complete(m.close())
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(m.close())
+    except RuntimeError:
+        asyncio.run(m.close())
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
 

@@ -139,14 +139,14 @@ def mock_phoenix_client():
     """Mock Phoenix client for testing.
 
     Patches phoenix.client.Client (used in task.py) to return
-    mock datasets with as_dataframe() returning a proper DataFrame.
+    mock datasets with to_dataframe() returning a proper DataFrame.
     """
     with patch("phoenix.client.Client") as mock_client_class:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
 
-        # Mock dataset with as_dataframe() returning DataFrame
-        # task.py calls: sync_client.datasets.get_dataset(dataset=...).as_dataframe()
+        # Mock dataset with to_dataframe() returning DataFrame
+        # task.py calls: sync_client.datasets.get_dataset(dataset=...).to_dataframe()
         mock_dataset = MagicMock()
         mock_dataset.id = "test_dataset_id"
         mock_dataset.name = "test_dataset"
@@ -165,8 +165,8 @@ def mock_phoenix_client():
                 output={"expected_videos": ["item3"], "expected_items": ["item3"]},
             ),
         ]
-        # as_dataframe() returns Phoenix nested input format
-        mock_dataset.as_dataframe.return_value = pd.DataFrame(
+        # to_dataframe() returns Phoenix nested input format
+        mock_dataset.to_dataframe.return_value = pd.DataFrame(
             [
                 {
                     "input": {
@@ -743,17 +743,53 @@ def search_evaluator_provider(phoenix_container):
     Uploads a test dataset to real Phoenix, then configures
     get_evaluation_provider() to return a real PhoenixEvaluationProvider
     wired to the test Phoenix instance.
+
+    Sets up TelemetryManager singleton with test Phoenix endpoints so that
+    PhoenixEvaluationProvider.initialize() picks up the right endpoints
+    (instead of falling back to localhost:6006 when VespaConfigStore is
+    unreachable at localhost:8080).
     """
+    import os
+
     from phoenix.client import Client
 
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
     from cogniverse_evaluation.providers.registry import (
+        get_evaluation_registry,
         set_evaluation_provider,
     )
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
     from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
         PhoenixEvaluationProvider,
     )
 
     phoenix_endpoint = "http://localhost:16006"
+    grpc_endpoint = "http://localhost:14317"
+
+    # Set up TelemetryManager singleton with test Phoenix endpoints.
+    # PhoenixEvaluationProvider.initialize() calls get_telemetry_manager()
+    # and reads provider_config for endpoint resolution. Without this,
+    # it falls back to localhost:6006 when VespaConfigStore is unreachable.
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+    get_evaluation_registry().clear_cache()
+
+    telemetry_config = TelemetryConfig(
+        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", grpc_endpoint),
+        provider_config={
+            "http_endpoint": phoenix_endpoint,
+            "grpc_endpoint": grpc_endpoint,
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    tm = TelemetryManager(config=telemetry_config)
+    telemetry_manager_module._telemetry_manager = tm
+
     sync_client = Client(base_url=phoenix_endpoint)
 
     # Upload real test dataset to Phoenix (idempotent — skip if already exists)
@@ -787,9 +823,13 @@ def search_evaluator_provider(phoenix_container):
         {
             "tenant_id": "default",
             "http_endpoint": phoenix_endpoint,
-            "grpc_endpoint": "http://localhost:14317",
+            "grpc_endpoint": grpc_endpoint,
         }
     )
     set_evaluation_provider(provider)
 
     yield provider
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+    get_evaluation_registry().clear_cache()

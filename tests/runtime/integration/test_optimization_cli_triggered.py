@@ -80,7 +80,7 @@ class TestTriggeredOptimization:
 
         sync_client = Client(base_url="http://localhost:16006")
         dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
-        df = dataset.as_dataframe()
+        df = dataset.to_dataframe()
 
         # Flatten Phoenix nested format if needed
         if "input" in df.columns:
@@ -116,7 +116,7 @@ class TestTriggeredOptimization:
 
         sync_client = Client(base_url="http://localhost:16006")
         dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
-        trigger_df = dataset.as_dataframe()
+        trigger_df = dataset.to_dataframe()
 
         # Flatten Phoenix format
         if "input" in trigger_df.columns:

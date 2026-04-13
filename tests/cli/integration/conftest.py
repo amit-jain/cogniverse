@@ -9,7 +9,6 @@ Requires: docker, k3d, kubectl, helm installed.
 import subprocess
 import time
 
-import httpx
 import pytest
 
 CLUSTER_NAME = "cogniverse-test"
@@ -22,6 +21,19 @@ def _cmd(args: list[str], *, timeout: int = 120, check: bool = True) -> subproce
 
 def _cluster_exists() -> bool:
     result = _cmd(["k3d", "cluster", "list", CLUSTER_NAME], check=False)
+    return result.returncode == 0
+
+
+def _k3d_available() -> bool:
+    """Check if k3d is installed and Docker is running."""
+    for tool in ["docker", "k3d", "kubectl", "helm"]:
+        result = subprocess.run(["which", tool], capture_output=True)
+        if result.returncode != 0:
+            return False
+    # Verify Docker daemon is actually running
+    result = subprocess.run(
+        ["docker", "info"], capture_output=True, timeout=10
+    )
     return result.returncode == 0
 
 
@@ -43,7 +55,13 @@ def k3d_cluster():
     cmd = ["k3d", "cluster", "create", CLUSTER_NAME]
     for p in ports:
         cmd.extend(["-p", f"{p}:{p}@loadbalancer"])
-    _cmd(cmd, timeout=120)
+
+    result = _cmd(cmd, timeout=120, check=False)
+    if result.returncode != 0:
+        pytest.skip(
+            f"k3d cluster creation failed (ports in use or Docker issue): "
+            f"{result.stderr.strip()[:200]}"
+        )
 
     yield {
         "cluster_name": CLUSTER_NAME,
@@ -58,7 +76,6 @@ def k3d_cluster():
 @pytest.fixture(scope="session")
 def deployed_stack(k3d_cluster):
     """Deploy the full cogniverse stack via Helm into the test cluster."""
-    import os
     from pathlib import Path
 
     # Find chart and values
@@ -103,13 +120,13 @@ def deployed_stack(k3d_cluster):
     # Start port-forwards
     port_forwards = []
     pf_specs = [
-        (f"svc/cogniverse-vespa", NAMESPACE, "8080:8080"),
-        (f"svc/cogniverse-vespa", NAMESPACE, "19071:19071"),
-        (f"svc/cogniverse-runtime", NAMESPACE, "8000:8000"),
-        (f"svc/cogniverse-dashboard", NAMESPACE, "8501:8501"),
-        (f"svc/cogniverse-phoenix", NAMESPACE, "6006:6006"),
-        (f"svc/cogniverse-phoenix", NAMESPACE, "4317:4317"),
-        (f"svc/cogniverse-llm", NAMESPACE, "11434:11434"),
+        ("svc/cogniverse-vespa", NAMESPACE, "8080:8080"),
+        ("svc/cogniverse-vespa", NAMESPACE, "19071:19071"),
+        ("svc/cogniverse-runtime", NAMESPACE, "8000:8000"),
+        ("svc/cogniverse-dashboard", NAMESPACE, "8501:8501"),
+        ("svc/cogniverse-phoenix", NAMESPACE, "6006:6006"),
+        ("svc/cogniverse-phoenix", NAMESPACE, "4317:4317"),
+        ("svc/cogniverse-llm", NAMESPACE, "11434:11434"),
     ]
     for svc, ns, ports in pf_specs:
         proc = subprocess.Popen(

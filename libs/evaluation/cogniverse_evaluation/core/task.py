@@ -66,7 +66,7 @@ def evaluation_task(
     phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
     if phoenix_dataset is None:
         raise ValueError(f"Dataset '{dataset_name}' not found or empty")
-    dataset_data = phoenix_dataset.as_dataframe()
+    dataset_data = phoenix_dataset.to_dataframe()
 
     # PhoenixDatasetStore.get_dataset() returns a DataFrame
     if isinstance(dataset_data, pd.DataFrame):

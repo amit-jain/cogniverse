@@ -12,6 +12,13 @@ import subprocess
 import httpx
 import pytest
 
+from tests.cli.integration.conftest import _k3d_available
+
+pytestmark = pytest.mark.skipif(
+    not _k3d_available(),
+    reason="k3d/Docker/kubectl/helm not available - skipping cluster lifecycle tests",
+)
+
 
 @pytest.mark.integration
 @pytest.mark.slow
