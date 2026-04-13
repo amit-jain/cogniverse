@@ -561,8 +561,20 @@ class RoutingAgent(
 
         The A2A base class handles conversion from A2A protocol format
         to RoutingInput and from RoutingOutput back to A2A format.
+        Emits streaming progress events for each processing stage.
         """
-        return await self.route_query(
+        self.emit_progress(
+            "context_enrichment",
+            "Building routing context from entities, relationships, and memory...",
+            data={
+                "entities_count": len(input_data.entities) if input_data.entities else 0,
+                "has_enhanced_query": input_data.enhanced_query is not None,
+            },
+        )
+
+        self.emit_progress("routing_decision", "Running DSPy routing module...")
+
+        result = await self.route_query(
             query=input_data.query,
             enhanced_query=input_data.enhanced_query,
             entities=input_data.entities,
@@ -570,6 +582,17 @@ class RoutingAgent(
             context=input_data.context,
             tenant_id=input_data.tenant_id,
         )
+
+        self.emit_progress(
+            "complete",
+            f"Routed to {result.recommended_agent} (confidence: {result.confidence:.2f})",
+            data={
+                "recommended_agent": result.recommended_agent,
+                "confidence": result.confidence,
+            },
+        )
+
+        return result
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
         """Return A2A skill descriptors."""

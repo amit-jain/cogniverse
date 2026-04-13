@@ -172,20 +172,56 @@ class VespaDockerManager:
         http_port = container_info["http_port"]
 
         logger.info(f"Waiting for application endpoint on port {http_port}...")
+        # Phase 1: Wait for container node (GET-based probe)
+        container_ready = False
         for i in range(timeout):
             try:
                 response = requests.get(
                     f"http://localhost:{http_port}/ApplicationStatus", timeout=5
                 )
                 if response.status_code == 200:
-                    logger.info(f"✅ Vespa ready on port {http_port}")
-                    return
+                    logger.info(f"✅ Vespa container node ready on port {http_port}")
+                    container_ready = True
+                    break
             except Exception:
                 pass
             wait_for_vespa_indexing(delay=2)
-        else:
+
+        if not container_ready:
             raise RuntimeError(
-                f"Application endpoint not ready after {timeout} seconds"
+                f"Container node not ready after {timeout} seconds"
+            )
+
+        # Phase 2: Wait for content/distributor node (PUT-based feed probe).
+        # GET probes only check the container node. The content node that
+        # handles feeds/queries may still be initializing. A PUT probe
+        # verifies the full data path is operational.
+        logger.info(f"Waiting for content node feed readiness on port {http_port}...")
+        feed_ready = False
+        for i in range(timeout):
+            try:
+                # Try a conditional PUT to a non-existent doc — we expect 412
+                # (precondition failed) or 200, both prove the feed path works.
+                # A 503 or connection error means the content node isn't ready.
+                response = requests.put(
+                    f"http://localhost:{http_port}/document/v1/cogniverse/config_metadata/docid/_feed_probe",
+                    json={"fields": {}},
+                    headers={"Content-Type": "application/json"},
+                    timeout=5,
+                )
+                if response.status_code in (200, 400, 412):
+                    logger.info(f"✅ Vespa content node ready on port {http_port}")
+                    feed_ready = True
+                    break
+                elif response.status_code == 503:
+                    pass  # Content node still initializing
+            except Exception:
+                pass
+            wait_for_vespa_indexing(delay=2)
+
+        if not feed_ready:
+            raise RuntimeError(
+                f"Content node feed not ready after {timeout} seconds"
             )
 
     def deploy_schemas(
