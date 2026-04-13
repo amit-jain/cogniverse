@@ -477,7 +477,7 @@ class VespaVideoSearchClient:
             else:
                 # Multi-token embeddings for patch-based models
                 float_embedding = {
-                    index: vector.tolist() for index, vector in enumerate(embeddings)
+                    str(index): vector.tolist() for index, vector in enumerate(embeddings)
                 }
 
                 body.update(
@@ -569,7 +569,7 @@ class VespaVideoSearchClient:
             else:
                 # Use Vespa ColPali format: input.query(qt) with simple dict
                 float_embedding = {
-                    index: vector.tolist() for index, vector in enumerate(embeddings)
+                    str(index): vector.tolist() for index, vector in enumerate(embeddings)
                 }
 
                 body.update(
@@ -602,7 +602,7 @@ class VespaVideoSearchClient:
             else:
                 # PHASED strategy needs both float and binary embeddings
                 float_embedding = {
-                    index: vector.tolist() for index, vector in enumerate(embeddings)
+                    str(index): vector.tolist() for index, vector in enumerate(embeddings)
                 }
                 binary_embedding = {
                     index: np.packbits(np.where(vector > 0, 1, 0), axis=0)

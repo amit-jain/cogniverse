@@ -505,11 +505,14 @@ class TestOrchestratorAgentIntegration:
             "Should execute at least one agent from plan"
         )
 
-        # VALIDATE: Executed agents match plan
-        planned_agents = [step["agent_name"] for step in result.plan_steps]
+        # VALIDATE: Executed agents match plan (normalize _agent suffix)
+        def _normalize(name):
+            return name.removesuffix("_agent") if name.endswith("_agent") else name
+
+        planned_set = {_normalize(step["agent_name"]) for step in result.plan_steps}
         for agent_name in result.agent_results.keys():
-            assert agent_name in planned_agents, (
-                f"Agent '{agent_name}' executed but not in plan: {planned_agents}"
+            assert _normalize(agent_name) in planned_set, (
+                f"Agent '{agent_name}' executed but not in plan: {planned_set}"
             )
 
         # VALIDATE CORRECTNESS: Results are from actual execution, not defaults

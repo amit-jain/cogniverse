@@ -212,8 +212,14 @@ def schema_loader():
 @pytest.fixture(autouse=True, scope="module")
 def _set_test_backend_env(vespa_instance):
     """Set BACKEND_URL/BACKEND_PORT env vars so create_default_config_manager()
-    naturally resolves to the test Vespa container. No mocks needed."""
+    naturally resolves to the test Vespa container. No mocks needed.
+
+    Also resets config singletons so they pick up the new env vars
+    when a new module starts with a different Vespa container.
+    """
     import os
+
+    from cogniverse_foundation.config import utils as config_utils
 
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
@@ -221,8 +227,12 @@ def _set_test_backend_env(vespa_instance):
     os.environ["BACKEND_URL"] = "http://localhost"
     os.environ["BACKEND_PORT"] = str(vespa_instance["http_port"])
 
+    # Reset config singleton so it re-creates with the new env vars
+    config_utils._config_manager_singleton = None
+
     yield
 
+    config_utils._config_manager_singleton = None
     if original_url is not None:
         os.environ["BACKEND_URL"] = original_url
     else:
