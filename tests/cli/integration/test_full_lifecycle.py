@@ -12,13 +12,6 @@ import subprocess
 import httpx
 import pytest
 
-from tests.cli.integration.conftest import _k3d_available
-
-pytestmark = pytest.mark.skipif(
-    not _k3d_available(),
-    reason="k3d/Docker/kubectl/helm not available - skipping cluster lifecycle tests",
-)
-
 
 @pytest.mark.integration
 @pytest.mark.slow
@@ -28,12 +21,13 @@ class TestDeployedServices:
 
     def test_vespa_config_healthy(self, deployed_stack):
         """Vespa config server responds to health check."""
-        resp = httpx.get("http://localhost:19071/state/v1/health", timeout=10)
+        from tests.cli.integration.conftest import PORTS
+        resp = httpx.get(f"http://localhost:{PORTS['vespa_config']}/state/v1/health", timeout=10)
         assert resp.status_code == 200
 
     def test_vespa_query_reachable(self, deployed_stack):
         """Vespa query endpoint is reachable."""
-        resp = httpx.get("http://localhost:8080/ApplicationStatus", timeout=10)
+        resp = httpx.get(f"{deployed_stack['vespa_url']}/ApplicationStatus", timeout=10)
         assert resp.status_code == 200
 
     def test_runtime_healthy(self, deployed_stack):
@@ -60,21 +54,22 @@ class TestDeployedServices:
         assert resp.status_code == 200
 
     def test_all_pods_running(self, deployed_stack):
-        """All pods in cogniverse namespace are Running."""
+        """All pods in test namespace are Running."""
+        from tests.cli.integration.conftest import NAMESPACE
         result = subprocess.run(
-            ["kubectl", "get", "pods", "-n", "cogniverse",
+            ["kubectl", "get", "pods", "-n", NAMESPACE,
              "-o", "jsonpath={.items[*].status.phase}"],
             capture_output=True, text=True, timeout=10,
         )
         phases = result.stdout.strip().split()
-        # All should be Running (LLM might still be pulling)
         running = [p for p in phases if p == "Running"]
         assert len(running) >= 4, f"Expected at least 4 Running pods, got: {phases}"
 
     def test_helm_release_deployed(self, deployed_stack):
         """Helm release exists and is deployed."""
+        from tests.cli.integration.conftest import NAMESPACE
         result = subprocess.run(
-            ["helm", "status", "cogniverse", "-n", "cogniverse"],
+            ["helm", "status", "cogniverse", "-n", NAMESPACE],
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0
