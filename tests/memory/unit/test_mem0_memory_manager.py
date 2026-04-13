@@ -138,6 +138,7 @@ class TestMem0MemoryManager:
             user_id="tenant1",
             agent_id="test_agent",
             limit=5,
+            filters=None,
         )
 
     def test_search_memory_not_initialized(self):

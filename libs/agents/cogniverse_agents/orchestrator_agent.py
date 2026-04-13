@@ -607,7 +607,16 @@ class OrchestratorAgent(
 
         steps = []
         unavailable_agents = []
+        # Build lookup for agent name normalization (LLM may add/omit _agent suffix)
+        _agent_lookup = {name: name for name in registered_agents}
+        for name in registered_agents:
+            _agent_lookup[f"{name}_agent"] = name
+            if name.endswith("_agent"):
+                _agent_lookup[name[: -len("_agent")]] = name
+
         for i, agent_name in enumerate(agent_sequence):
+            # Normalize: match with or without _agent suffix
+            agent_name = _agent_lookup.get(agent_name, agent_name)
             # Validate against registry (skip unknown agents)
             if agent_name not in registered_agents:
                 logger.warning(

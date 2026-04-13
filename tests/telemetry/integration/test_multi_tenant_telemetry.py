@@ -393,30 +393,11 @@ class TestPhoenixIntegrationWithRealServer:
     """
     Integration tests with real Phoenix server.
 
-    These tests are skipped by default. To run them:
-    1. Start Phoenix: python -m phoenix.server.main serve
-    2. Unskip this class
-    3. Run: pytest tests/telemetry/integration/test_multi_tenant_telemetry.py -v
+    Uses the phoenix_container fixture from conftest.py which manages
+    its own Docker container on ports 16006 (HTTP) and 14317 (gRPC).
     """
 
-    @pytest.fixture(scope="function")
-    def phoenix_config(self):
-        """Config for real Phoenix integration."""
-        return TelemetryConfig(
-            enabled=True,
-            otlp_endpoint="http://localhost:4317",
-            provider_config={
-                "http_endpoint": "http://localhost:6006",
-                "grpc_endpoint": "http://localhost:4317",
-            },
-            service_name="integration-test",
-            environment="test",
-            batch_config=BatchExportConfig(
-                use_sync_export=True,  # Sync for immediate verification
-            ),
-        )
-
-    def test_real_phoenix_multi_tenant_isolation(self, phoenix_config):
+    def test_real_phoenix_multi_tenant_isolation(self, phoenix_container):
         """
         CRITICAL TEST: Validate tenant isolation with real Phoenix.
 
@@ -428,9 +409,24 @@ class TestPhoenixIntegrationWithRealServer:
 
         Uses a per-run UUID in span names so the test is idempotent against a
         persistent Phoenix instance that accumulates spans across test runs.
+        Uses the phoenix_container fixture (ports 16006/14317).
         """
         # Reset singleton
         TelemetryManager._instance = None
+
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            otlp_endpoint="http://localhost:14317",
+            provider_config={
+                "http_endpoint": "http://localhost:16006",
+                "grpc_endpoint": "http://localhost:14317",
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(
+                use_sync_export=True,
+            ),
+        )
 
         manager = TelemetryManager(phoenix_config)
 
@@ -477,7 +473,7 @@ class TestPhoenixIntegrationWithRealServer:
         # Query Phoenix API to verify tenant isolation
         from phoenix.client import Client
 
-        client = Client(base_url=phoenix_config.provider_config["http_endpoint"])
+        client = Client(base_url="http://localhost:16006")
 
         # Verify tenant-alpha spans — filter to this run's spans by name prefix
         alpha_project = phoenix_config.get_project_name("tenant-alpha", "routing")

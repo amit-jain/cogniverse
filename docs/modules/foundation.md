@@ -55,7 +55,7 @@ flowchart TB
         Utils["<span style='color:#000'>utils.py<br/>create_default_config_manager</span>"]
         ApiMixin["<span style='color:#000'>api_mixin.py<br/>API configuration mixin</span>"]
         Bootstrap["<span style='color:#000'>bootstrap.py<br/>Environment bootstrap</span>"]
-        SqliteDir["<span style='color:#000'><b>sqlite/</b><br/>config_store.py</span>"]
+        VespaStore["<span style='color:#000'>VespaConfigStore<br/>(in cogniverse_vespa)</span>"]
     end
 
     subgraph TelemetryFiles["<span style='color:#000'><b>telemetry/ files</b></span>"]
@@ -121,7 +121,7 @@ flowchart TB
 - Multi-tenant configuration with tenant isolation
 - Version history tracking for all configurations
 - LRU caching for performance
-- Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore, SQLiteConfigStore)
+- Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -688,4 +688,4 @@ uv run pytest tests/telemetry/ tests/common/unit/ tests/common/integration/ --co
 
 ---
 
-**Summary:** The Foundation module provides the infrastructure layer for Cogniverse. `ConfigManager` handles multi-tenant, versioned configuration with pluggable backend persistence (VespaConfigStore, SQLiteConfigStore). `TelemetryManager` provides OpenTelemetry tracing with tenant isolation and Phoenix integration. All operations require `tenant_id` to ensure proper multi-tenant isolation.
+**Summary:** The Foundation module provides the infrastructure layer for Cogniverse. `ConfigManager` handles multi-tenant, versioned configuration with pluggable backend persistence (VespaConfigStore). `TelemetryManager` provides OpenTelemetry tracing with tenant isolation and Phoenix integration. All operations require `tenant_id` to ensure proper multi-tenant isolation.

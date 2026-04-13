@@ -929,9 +929,10 @@ class VespaSearchBackend(SearchBackend):
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
                     # For multi-vector models, convert to dict format as per Vespa docs
+                    # Keys must be strings for JSON serialization (httpr requirement)
                     if query_embeddings.ndim == 2:
                         query_params[vespa_param_name] = {
-                            index: vector.tolist()
+                            str(index): vector.tolist()
                             for index, vector in enumerate(query_embeddings)
                         }
                     else:
@@ -949,9 +950,10 @@ class VespaSearchBackend(SearchBackend):
                         f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}"
                     )
                     # For multi-vector models, convert to dict format as per Vespa docs
+                    # Keys must be strings for JSON serialization (httpr requirement)
                     if binary_embeddings.ndim == 2:
                         query_params[vespa_param_name] = {
-                            index: vector.tolist()
+                            str(index): vector.tolist()
                             for index, vector in enumerate(binary_embeddings)
                         }
                         logger.error(

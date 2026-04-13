@@ -370,9 +370,10 @@ class TestWorkflowIntelligenceRoundTrip:
             timestamp=datetime.now(),
         )
 
-        # Should not raise, but also should not persist anything
+        # record_execution stores to in-memory workflow_history
         await wi.record_execution(execution)
-        assert len(wi.workflow_history) == 0
+        assert len(wi.workflow_history) == 1
+        assert wi.workflow_history[0].workflow_id == execution.workflow_id
 
     @pytest.mark.asyncio
     async def test_load_historical_data_empty(self, real_provider):

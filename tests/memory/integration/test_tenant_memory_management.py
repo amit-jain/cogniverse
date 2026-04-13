@@ -369,7 +369,9 @@ class TestJobExecution:
         assert first_payload["tenant_id"] == "test_tenant"
         assert "context" not in first_payload
 
+        # Second call is _deliver_to_wiki (pure delivery skips routing_agent)
         second_payload = calls[1][1]["json"]
-        assert second_payload["query"] == "save to wiki"
+        assert second_payload["query"] == "find recent papers on ColPali retrieval"
         assert second_payload["tenant_id"] == "test_tenant"
-        assert second_payload["context"] == "Found 3 ColPali papers"
+        assert second_payload["response"] == {"answer": "Found 3 ColPali papers"}
+        assert second_payload["agent_name"] == "job_executor"

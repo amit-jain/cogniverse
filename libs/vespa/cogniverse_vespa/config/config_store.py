@@ -24,7 +24,7 @@ class VespaConfigStore(ConfigStore):
     Vespa-based configuration store with multi-tenant support.
 
     Stores configurations as Vespa documents in a dedicated schema.
-    Provides same interface as SQLiteConfigStore but uses Vespa backend.
+    Implements ConfigStore interface using Vespa backend.
 
     Schema: config_metadata
     Document structure:

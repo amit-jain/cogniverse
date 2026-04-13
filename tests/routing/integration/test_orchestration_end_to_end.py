@@ -145,8 +145,8 @@ class TestOrchestrationEndToEnd:
         assert hasattr(result, "metadata")
         assert isinstance(result.metadata, dict)
 
-        # Check for expected metadata keys
-        assert "processing_time_ms" in result.metadata
+        # Thin routing agent stores tenant_id in metadata
+        assert "tenant_id" in result.metadata
 
 
 @pytest.mark.asyncio

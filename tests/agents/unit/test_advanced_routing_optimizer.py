@@ -288,37 +288,6 @@ class TestAdaptiveThresholdLearner:
         assert "threshold_status" in status  # This is what the actual API returns
 
 
-class TestMLflowIntegration:
-    """Test MLflow integration functionality."""
-
-    def test_mlflow_integration_creation(self):
-        """Test MLflow integration can be created."""
-        from cogniverse_agents.routing.mlflow_integration import (
-            ExperimentConfig,
-            MLflowIntegration,
-        )
-
-        with (
-            patch("mlflow.set_tracking_uri"),
-            patch("mlflow.set_experiment"),
-            patch("mlflow.create_experiment"),
-        ):
-            config = ExperimentConfig(
-                experiment_name="test_experiment", tracking_uri="file:///tmp/test"
-            )
-
-            integration = MLflowIntegration(
-                config,
-                telemetry_provider=_make_mock_telemetry_provider(),
-                tenant_id="test_tenant",
-                test_mode=True,
-            )
-
-            # Just verify it was created without errors
-            assert integration is not None
-            assert integration.config == config
-
-
 class TestAdvancedRoutingOptimizerIntegration:
     """Test integration between advanced routing optimization components."""
 
@@ -582,11 +551,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         try:
             import cogniverse_agents.routing.adaptive_threshold_learner as atl
             import cogniverse_agents.routing.advanced_optimizer as ao
-            import cogniverse_agents.routing.mlflow_integration as mli
 
             assert hasattr(atl, "AdaptiveThresholdLearner")
             assert hasattr(ao, "AdvancedRoutingOptimizer")
-            assert hasattr(mli, "MLflowIntegration")
         except ImportError as e:
             pytest.fail(f"Failed to import routing optimizer components: {e}")
 

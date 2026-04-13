@@ -793,15 +793,13 @@ class TestSingleProfileSearchIntegration:
         )
 
 
-@skip_if_no_ollama
-@pytest.mark.integration
-@pytest.mark.slow
-class TestEndToEndQueryFusionPipeline:
-    """
-    End-to-end integration tests: RoutingAgent (parallel mode) → query_variants → SearchAgent.
+# TestEndToEndQueryFusionPipeline removed: tested analyze_and_route_with_relationships
+# which was deleted in the A2A refactor. The routing→search pipeline now uses
+# route_query() → A2A tasks/send, tested in test_routing_agent_real.py.
 
-    Validates the complete pipeline where RoutingAgent generates query variants
-    and SearchAgent fuses them via RRF.
+
+class _RemovedTestEndToEndQueryFusionPipeline:
+    """REMOVED: tested deleted analyze_and_route_with_relationships API.
 
     Requires real Ollama for ComposableQueryAnalysisModule to generate variants.
     """

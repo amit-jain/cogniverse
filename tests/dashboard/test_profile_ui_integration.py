@@ -59,8 +59,9 @@ class TestDashboardProfileIntegration:
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from unittest.mock import MagicMock
+
         from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
         from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
@@ -70,9 +71,9 @@ class TestDashboardProfileIntegration:
         BackendRegistry._backend_instances.clear()
         SchemaRegistry._instance = None
 
-        # Create config manager with SQLite store (no Vespa required)
-        db_path = tmp_path / "test_config.db"
-        store = SQLiteConfigStore(db_path=db_path)
+        # In-memory mock store (SQLiteConfigStore was removed)
+        store = MagicMock()
+        store.get_config.return_value = None
         config_manager = ConfigManager(store=store)
 
         # Set up system config for both default and test_tenant

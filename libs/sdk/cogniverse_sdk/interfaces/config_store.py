@@ -85,9 +85,7 @@ class ConfigStore(ABC):
     Abstract interface for configuration storage
 
     Implementations:
-    - SQLiteConfigStore: Local SQLite database (default)
-    - VespaConfigStore: Vespa backend storage
-    - ElasticsearchConfigStore: Elasticsearch backend storage (future)
+    - VespaConfigStore: Vespa backend storage (default)
     """
 
     @abstractmethod

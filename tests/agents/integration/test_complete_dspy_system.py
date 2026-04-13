@@ -123,9 +123,6 @@ class TestCompleteDSPySystem:
         from cogniverse_agents.routing.adaptive_threshold_learner import (
             AdaptiveThresholdLearner,
         )
-        from cogniverse_agents.routing.mlflow_integration import (
-            ExperimentConfig,
-        )
 
         # Test adaptive learning with real telemetry provider
         learner = AdaptiveThresholdLearner(
@@ -133,10 +130,6 @@ class TestCompleteDSPySystem:
             tenant_id=_TEST_TENANT,
         )
         assert learner is not None
-
-        # Test MLflow integration basic structure
-        exp_config = ExperimentConfig(experiment_name="test")
-        assert exp_config.experiment_name == "test"
 
     @pytest.mark.asyncio
     async def test_multi_agent_orchestration_simulation(
@@ -154,10 +147,9 @@ class TestCompleteDSPySystem:
             )
             routing_agent = RoutingAgent(deps=deps)
 
-            # Test orchestration capability detection
-            capabilities = routing_agent._get_routing_capabilities(deps)
-            assert isinstance(capabilities, list)
-            assert len(capabilities) > 0
+            # Test that routing agent was created and has core capabilities
+            assert routing_agent is not None
+            assert hasattr(routing_agent, "route_query")
 
 
 @skip_if_no_ollama

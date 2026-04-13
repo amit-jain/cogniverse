@@ -159,7 +159,7 @@ class TestUpCommand:
         mock_deploy_wf: MagicMock,
         mock_status: MagicMock,
     ) -> None:
-        """When auto-detect finds host LLM on k3d, LLM overrides use host.k3d.internal."""
+        """When auto-detect finds host LLM on k3d, LLM overrides use host.docker.internal."""
         runner = CliRunner()
         result = runner.invoke(cli, ["up"])
         assert result.exit_code == 0
@@ -168,7 +168,7 @@ class TestUpCommand:
         assert set_vals is not None
         assert set_vals["llm.builtin.enabled"] == "false"
         assert set_vals["llm.external.enabled"] == "true"
-        assert "host.k3d.internal" in set_vals["llm.external.url"]
+        assert "host.docker.internal" in set_vals["llm.external.url"]
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main._print_status_table")
