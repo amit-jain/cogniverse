@@ -1054,7 +1054,7 @@ class AgentDispatcher:
         evaluator = RoutingSpanEvaluator(
             optimizer=optimizer, tenant_id=tenant_id
         )
-        cycle_results = await evaluator.run_evaluation_cycle()
+        cycle_results = await evaluator.evaluate_routing_spans()
         spans_evaluated = cycle_results.get("spans_evaluated", 0)
 
         return {
