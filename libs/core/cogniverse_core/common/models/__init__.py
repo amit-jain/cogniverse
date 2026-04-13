@@ -8,8 +8,10 @@ from .model_loaders import (
     ModelLoaderFactory,
     RemoteColBERTLoader,
     VideoPrismModelLoader,
-    _model_lock as model_load_lock,
     get_or_load_model,
+)
+from .model_loaders import (
+    _model_lock as model_load_lock,
 )
 from .videoprism_loader import (
     VideoPrismGlobalLoader,

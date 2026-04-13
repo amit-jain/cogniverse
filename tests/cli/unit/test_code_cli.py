@@ -1,14 +1,12 @@
 """Unit tests for the coding agent CLI — REPL commands, apply, streaming."""
 
-import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from cogniverse_cli.code import CodingSession, _handle_slash_command
-from cogniverse_cli.index import CODE_EXTENSIONS, collect_files
+from cogniverse_cli.index import collect_files
 from cogniverse_cli.streaming import (
     CodingResult,
     _build_a2a_request,

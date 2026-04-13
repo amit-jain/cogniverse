@@ -359,7 +359,9 @@ class TestComprehensiveIngestion:
                 config.search_backend = "vespa"
                 config.max_frames_per_video = 1
 
-                from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+                from cogniverse_core.schemas.filesystem_loader import (
+                    FilesystemSchemaLoader,
+                )
 
                 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
                 pipeline = VideoIngestionPipeline(

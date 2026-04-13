@@ -603,7 +603,7 @@ class TestMultimodalGraphExtraction:
 
         path = manager.get_path(lighton_node.name, vespa_node.name, max_depth=3)
         assert path is not None, (
-            f"A path must exist between LightOn and Vespa, got None"
+            "A path must exist between LightOn and Vespa, got None"
         )
         assert lighton_node.node_id in path
         assert vespa_node.node_id in path

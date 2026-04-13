@@ -54,13 +54,13 @@ class TestDashboardProfileIntegration:
     @pytest.fixture
     def running_api(self, temp_schema_dir: Path, tmp_path: Path):
         """Start the FastAPI server for integration tests"""
+        from unittest.mock import MagicMock
+
         from fastapi.testclient import TestClient
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from unittest.mock import MagicMock
-
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_runtime.main import app

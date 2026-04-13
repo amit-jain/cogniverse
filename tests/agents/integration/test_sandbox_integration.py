@@ -9,7 +9,6 @@ destroy on teardown. No pre-existing gateway required.
 """
 
 import subprocess
-import time
 
 import pytest
 

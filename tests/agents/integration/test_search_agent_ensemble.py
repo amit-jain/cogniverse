@@ -22,8 +22,6 @@ import pytest
 
 from cogniverse_agents.search_agent import SearchInput
 
-from .conftest import skip_if_no_ollama
-
 logger = logging.getLogger(__name__)
 
 

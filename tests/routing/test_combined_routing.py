@@ -437,7 +437,7 @@ class CombinedRoutingTester:
 
     async def test_query_with_gliner_model(
         self,
-        analyzer: "QueryAnalyzer",
+        analyzer: "QueryAnalyzer",  # noqa: F821
         query_tuple: tuple,
         model_name: str,  # type: ignore  # noqa: F821
     ) -> TestResult:

@@ -7,8 +7,6 @@ feeds documents, searches, and verifies semantic results.
 """
 
 import logging
-import platform
-import subprocess
 import time
 from pathlib import Path
 

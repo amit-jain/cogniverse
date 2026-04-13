@@ -303,7 +303,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         4. Logging shows correct optimizer selection
         """
         import logging
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         import dspy
 

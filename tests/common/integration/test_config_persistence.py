@@ -286,7 +286,6 @@ class TestConfigPersistence:
         """Test configuration statistics"""
         # Use unique tenant IDs to avoid state from other tests
         tenant1 = "stats_tenant1"
-        tenant2 = "stats_tenant2"
 
         # Create some configs
         config_manager.set_system_config(

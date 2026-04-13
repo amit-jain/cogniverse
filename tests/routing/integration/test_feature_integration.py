@@ -11,7 +11,6 @@ NO MOCKS for telemetry/Phoenix. Uses shared phoenix_container fixture.
 """
 
 import logging
-import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -19,14 +18,16 @@ import pytest
 
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationAgent,
-    AnnotationPriority,
     AnnotationStatus,
 )
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_agents.routing.config import AutomationRulesConfig
 from cogniverse_evaluation.online_evaluator import OnlineEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-from tests.utils.async_polling import simulate_processing_delay, wait_for_phoenix_processing
+from tests.utils.async_polling import (
+    simulate_processing_delay,
+    wait_for_phoenix_processing,
+)
 
 logger = logging.getLogger(__name__)
 
