@@ -506,7 +506,7 @@ class TestOrchestratorAgentIntegration:
         )
 
         # VALIDATE: Executed agents match plan
-        planned_agents = [step["agent_type"] for step in result.plan_steps]
+        planned_agents = [step["agent_name"] for step in result.plan_steps]
         for agent_name in result.agent_results.keys():
             assert agent_name in planned_agents, (
                 f"Agent '{agent_name}' executed but not in plan: {planned_agents}"

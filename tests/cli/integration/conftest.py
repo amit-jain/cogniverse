@@ -91,6 +91,13 @@ def deployed_stack(k3d_cluster):
         timeout=300,
     )
 
+    # Install Argo CRDs (chart references CronWorkflow resources)
+    from cogniverse_cli.argo import install_argo_controller
+    try:
+        install_argo_controller(namespace="argo")
+    except Exception as e:
+        pytest.fail(f"Argo controller install failed: {e}")
+
     # Helm install
     _cmd([
         "helm", "install", "cogniverse", str(chart_path),
