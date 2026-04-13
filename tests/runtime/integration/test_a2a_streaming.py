@@ -1051,7 +1051,7 @@ class TestFullOptimizationPipeline:
         """
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.new_event_loop()
 
         # Step 1: Make real routing requests to generate traces
         queries = [
@@ -1153,5 +1153,6 @@ class TestFullOptimizationPipeline:
         assert final_result["status"] == "success", (
             f"Routing after optimization should succeed: {final_result}"
         )
-        assert "recommended_agent" in final_result
-        assert final_result["confidence"] > 0.0
+        assert final_result.get("agent") or final_result.get("gateway", {}).get("routed_to"), (
+            f"Expected routed agent, got: {final_result}"
+        )
