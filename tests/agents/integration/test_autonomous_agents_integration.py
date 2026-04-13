@@ -136,6 +136,16 @@ def orchestrator_with_real_agents(real_dspy_lm):
             url="http://localhost:8012",
             capabilities=["query_enhancement"],
         ),
+        "search": AgentEndpoint(
+            name="search",
+            url="http://localhost:8013",
+            capabilities=["search"],
+        ),
+        "summarizer": AgentEndpoint(
+            name="summarizer",
+            url="http://localhost:8014",
+            capabilities=["summarization"],
+        ),
     }
     registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
     registry.find_agents_by_capability = Mock(
