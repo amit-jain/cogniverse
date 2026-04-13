@@ -357,7 +357,7 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 run_job(job_id, "test_tenant", "http://localhost:28000")
             )
 

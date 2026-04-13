@@ -181,7 +181,11 @@ def monitor_with_real_search(search_client, real_telemetry, tmp_path):
 
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(m.close())
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(m.close())
+    except RuntimeError:
+        asyncio.run(m.close())
 
 
 @pytest.mark.integration

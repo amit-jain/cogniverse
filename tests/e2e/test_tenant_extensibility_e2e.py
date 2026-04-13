@@ -463,7 +463,7 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 run_job(job_id, TENANT_ID, RUNTIME)
             )
 
@@ -543,7 +543,7 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 run_job(job_id, TENANT_ID, RUNTIME)
             )
 

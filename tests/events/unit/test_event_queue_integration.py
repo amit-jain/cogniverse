@@ -29,7 +29,7 @@ def queue_manager():
 @pytest.fixture
 def event_queue(queue_manager):
     """Create event queue for testing."""
-    return asyncio.get_event_loop().run_until_complete(
+    return asyncio.run(
         queue_manager.create_queue(
             task_id="test_workflow_123",
             tenant_id="test_tenant",
