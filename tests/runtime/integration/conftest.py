@@ -50,11 +50,12 @@ SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 
 @pytest.fixture(scope="module")
-def vespa_instance():
+def vespa_instance(request):
     """
     Start isolated Vespa Docker instance for runtime integration tests.
 
     Module-scoped to share across all tests in this module.
+    Uses the requesting module's name for unique port generation.
     Deploys metadata schemas so VespaConfigStore can be used immediately.
 
     Yields:
@@ -71,7 +72,7 @@ def vespa_instance():
         # Use unique ports derived from module name hash to avoid collisions
         # with a running Vespa instance on the default 8080/19071 ports.
         container_info = manager.start_container(
-            module_name="runtime_integration_tests",
+            module_name=request.module.__name__,
             use_module_ports=True,
         )
 
