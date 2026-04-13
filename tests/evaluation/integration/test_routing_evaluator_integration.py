@@ -299,20 +299,31 @@ class TestRoutingEvaluatorIntegration:
         assert len(spans) > 0, "No routing spans found after generating them"
 
         # Filter to only valid routing spans
-        # Phoenix returns flattened format: attributes.routing = {chosen_agent, confidence, ...}
+        # Phoenix stores attributes in flattened format (attributes.routing.*)
+        # or dotted flat keys (routing.recommended_agent, routing.confidence)
         valid_spans = []
         for span in spans:
             try:
-                # Check Phoenix flattened format
-                if "attributes.routing" in span and isinstance(
-                    span["attributes.routing"], dict
-                ):
-                    routing_attrs = span["attributes.routing"]
-                    if (
-                        "chosen_agent" in routing_attrs
-                        and "confidence" in routing_attrs
-                    ):
-                        valid_spans.append(span)
+                has_agent = False
+                has_confidence = False
+
+                # Check Phoenix nested format
+                routing_attrs = span.get("attributes.routing")
+                if routing_attrs and isinstance(routing_attrs, dict):
+                    has_agent = "chosen_agent" in routing_attrs or "recommended_agent" in routing_attrs
+                    has_confidence = "confidence" in routing_attrs
+
+                # Check flat dotted keys
+                if not has_agent:
+                    has_agent = any(
+                        k in span
+                        for k in ("attributes.routing.recommended_agent", "attributes.routing.chosen_agent")
+                    )
+                if not has_confidence:
+                    has_confidence = "attributes.routing.confidence" in span
+
+                if has_agent and has_confidence:
+                    valid_spans.append(span)
             except Exception:
                 continue
 
