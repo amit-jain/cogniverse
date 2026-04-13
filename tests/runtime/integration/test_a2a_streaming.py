@@ -950,7 +950,10 @@ class TestRoutingOptimizationIntegration:
         assert route_result["status"] == "success", (
             f"Routing after optimization should succeed, got: {route_result}"
         )
-        assert "recommended_agent" in route_result
+        # Gateway returns routed_to in gateway dict, not top-level recommended_agent
+        assert route_result.get("agent") or route_result.get("gateway", {}).get("routed_to"), (
+            f"Expected agent routing result, got: {route_result}"
+        )
 
     def test_optimize_routing_empty_examples_triggers_cycle(
         self, streaming_dispatcher, real_telemetry, dspy_lm

@@ -56,7 +56,21 @@ async def routing_agent_with_spans(telemetry_manager_with_phoenix):
     if not success:
         logger.error("Failed to flush telemetry spans")
 
-    await asyncio.sleep(2)
+    # Poll for spans to arrive in Phoenix (gRPC export is async)
+    from phoenix.client import Client
+    client = Client(base_url="http://localhost:16006")
+    project = telemetry_manager_with_phoenix.config.get_project_name(
+        _TEST_TENANT, "routing"
+    )
+    for _ in range(15):
+        await asyncio.sleep(2)
+        try:
+            df = client.spans.get_spans_dataframe(project_identifier=project)
+            routing = df[df["name"] == "cogniverse.routing"] if df is not None else []
+            if len(routing) >= 3:
+                break
+        except Exception:
+            pass
 
     return agent
 

@@ -63,8 +63,20 @@ async def generate_routing_spans(env_config: dict):
     if hasattr(agent, "telemetry_manager") and agent.telemetry_manager is not None:
         agent.telemetry_manager.force_flush(timeout_millis=10000)
 
-    # Give Phoenix time to process
-    time.sleep(2)
+    # Poll for spans to arrive in Phoenix (gRPC export is async)
+    from phoenix.client import Client
+    client = Client(base_url="http://localhost:16006")
+    for _ in range(15):
+        time.sleep(2)
+        try:
+            df = client.spans.get_spans_dataframe(
+                project_identifier="cogniverse-test-tenant"
+            )
+            routing = df[df["name"] == "cogniverse.routing"] if df is not None else []
+            if len(routing) >= 3:
+                break
+        except Exception:
+            pass
 
 
 @pytest.mark.integration
