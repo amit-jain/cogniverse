@@ -13,8 +13,23 @@ skip_if_no_ollama = pytest.mark.skipif(
     reason="Ollama not available at http://localhost:11434",
 )
 
+def _deno_available() -> bool:
+    """Check if Deno is available, including ~/.deno/bin."""
+    import os
+    from pathlib import Path
+
+    if shutil.which("deno"):
+        return True
+    deno_home = Path.home() / ".deno" / "bin" / "deno"
+    if deno_home.exists():
+        # Add to PATH so subprocess calls also find it
+        os.environ["PATH"] = f"{deno_home.parent}:{os.environ.get('PATH', '')}"
+        return True
+    return False
+
+
 skip_if_no_deno = pytest.mark.skipif(
-    shutil.which("deno") is None,
+    not _deno_available(),
     reason="Deno not installed — DSPy RLM REPL requires Deno for code execution",
 )
 

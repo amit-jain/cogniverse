@@ -58,18 +58,43 @@ def openshell_gateway():
     Uses a unique name and port to avoid conflicts with user's dev gateway.
     Destroys on teardown.
     """
+    import time as _time
+
+    # Check if gateway is already running (reuse from previous run or manual start)
+    info_result = subprocess.run(
+        ["openshell", "gateway", "info", "--gateway", GATEWAY_NAME],
+        capture_output=True, text=True, timeout=10,
+    )
+    if info_result.returncode == 0 and "ready" in info_result.stdout.lower():
+        subprocess.run(
+            ["openshell", "gateway", "select", GATEWAY_NAME],
+            capture_output=True, timeout=10, check=False,
+        )
+        yield GATEWAY_NAME
+        return  # Don't destroy — we didn't create it
+
+    # Kill any container holding the port (from crashed previous runs)
+    port_check = subprocess.run(
+        ["docker", "ps", "-q", "--filter", f"publish={GATEWAY_PORT}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    for cid in port_check.stdout.strip().splitlines():
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
+
+    # Destroy stale gateway metadata
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True, timeout=30, check=False,
+        capture_output=True, timeout=60, check=False,
     )
+    _time.sleep(5)  # Let Docker release ports
 
     result = subprocess.run(
         ["openshell", "gateway", "start", "--name", GATEWAY_NAME,
          "--port", str(GATEWAY_PORT)],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, timeout=300,
     )
     if result.returncode != 0:
-        pytest.skip(f"Failed to start OpenShell gateway: {result.stderr}")
+        pytest.fail(f"Failed to start OpenShell gateway: {result.stderr[:500]}")
 
     subprocess.run(
         ["openshell", "gateway", "select", GATEWAY_NAME],
@@ -80,7 +105,7 @@ def openshell_gateway():
 
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True, timeout=60, check=False,
+        capture_output=True, timeout=120, check=False,
     )
 
 
