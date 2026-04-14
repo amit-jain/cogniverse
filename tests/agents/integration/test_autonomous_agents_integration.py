@@ -109,44 +109,69 @@ def query_agent_with_real_lm(real_dspy_lm):
 
 @pytest.fixture
 def orchestrator_with_real_agents(real_dspy_lm):
-    """OrchestratorAgent with real DSPy planning + mocked agent HTTP calls.
+    """OrchestratorAgent with real DSPy planning + real in-process agent dispatch.
 
-    The orchestrator uses real Ollama for DSPy planning (deciding which agents
-    to call), but HTTP calls to downstream agents are mocked since we don't
-    run separate agent servers in this test.
+    Creates real agent instances and patches httpx to dispatch to their
+    _process_impl() directly — same pattern as test_orchestrator_with_search.py.
     """
-    from unittest.mock import AsyncMock, Mock, patch
+    from unittest.mock import Mock, patch
 
+    import dspy
+
+    from cogniverse_agents.entity_extraction_agent import (
+        EntityExtractionAgent,
+        EntityExtractionDeps,
+        EntityExtractionInput,
+    )
+    from cogniverse_agents.profile_selection_agent import (
+        ProfileSelectionAgent,
+        ProfileSelectionDeps,
+        ProfileSelectionInput,
+    )
+    from cogniverse_agents.query_enhancement_agent import (
+        QueryEnhancementAgent,
+        QueryEnhancementDeps,
+        QueryEnhancementInput,
+    )
+    from cogniverse_agents.summarizer_agent import (
+        SummarizerAgent,
+        SummarizerDeps,
+        SummarizerInput,
+    )
     from cogniverse_core.common.agent_models import AgentEndpoint
 
-    registry = Mock()
+    # Real agent instances (no Vespa needed — preprocessing agents only)
+    agents_by_url = {
+        "http://localhost:8010": (EntityExtractionAgent(deps=EntityExtractionDeps()), EntityExtractionInput),
+        "http://localhost:8011": (ProfileSelectionAgent(deps=ProfileSelectionDeps()), ProfileSelectionInput),
+        "http://localhost:8012": (QueryEnhancementAgent(deps=QueryEnhancementDeps()), QueryEnhancementInput),
+        "http://localhost:8014": (SummarizerAgent(deps=SummarizerDeps(tenant_id="default")), SummarizerInput),
+    }
+
     agent_endpoints = {
         "entity_extraction": AgentEndpoint(
-            name="entity_extraction",
-            url="http://localhost:8010",
+            name="entity_extraction", url="http://localhost:8010",
             capabilities=["entity_extraction"],
         ),
         "profile_selection": AgentEndpoint(
-            name="profile_selection",
-            url="http://localhost:8011",
+            name="profile_selection", url="http://localhost:8011",
             capabilities=["profile_selection"],
         ),
         "query_enhancement": AgentEndpoint(
-            name="query_enhancement",
-            url="http://localhost:8012",
+            name="query_enhancement", url="http://localhost:8012",
             capabilities=["query_enhancement"],
         ),
         "search": AgentEndpoint(
-            name="search",
-            url="http://localhost:8013",
+            name="search", url="http://localhost:8013",
             capabilities=["search"],
         ),
         "summarizer": AgentEndpoint(
-            name="summarizer",
-            url="http://localhost:8014",
+            name="summarizer", url="http://localhost:8014",
             capabilities=["summarization"],
         ),
     }
+
+    registry = Mock()
     registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
     registry.find_agents_by_capability = Mock(
         side_effect=lambda cap: [
@@ -156,29 +181,69 @@ def orchestrator_with_real_agents(real_dspy_lm):
     registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
     registry.agents = agent_endpoints
 
-    orchestrator_deps = OrchestratorDeps()
-    mock_config_manager = Mock()
     orchestrator = OrchestratorAgent(
-        deps=orchestrator_deps,
+        deps=OrchestratorDeps(),
         registry=registry,
-        config_manager=mock_config_manager,
-        port=8013,
+        config_manager=Mock(),
+        port=8015,
     )
 
-    # Mock httpx.AsyncClient so agent HTTP calls succeed
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = Mock()
-    mock_response.json.return_value = {"status": "success", "result": "processed"}
+    # Patch httpx to dispatch to real in-process agents
+    async def dispatch_to_agent(url, json=None, **kwargs):
+        agent_base_url = url.rsplit("/", 1)[0]
+        entry = agents_by_url.get(agent_base_url)
+        query = json.get("query", "") if json else ""
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+
+        if entry is None:
+            # Agent not available in-process (e.g. search needs Vespa)
+            resp.json.return_value = {"status": "success", "result": f"processed: {query[:50]}"}
+            return resp
+
+        agent, input_cls = entry
+        try:
+            if input_cls == SummarizerInput:
+                agent_input = input_cls(query=query, search_results=[])
+            else:
+                agent_input = input_cls(query=query)
+            with dspy.context(lm=real_dspy_lm):
+                result = await agent._process_impl(agent_input)
+            result_dict = result.model_dump() if hasattr(result, "model_dump") else {"result": str(result)}
+            resp.json.return_value = {"status": "success", **result_dict}
+        except Exception as e:
+            resp.json.return_value = {"status": "error", "message": str(e)}
+
+        return resp
+
+    mock_client = Mock()
+    mock_client.post = dispatch_to_agent
+    mock_client.__aenter__ = lambda self: self
+    mock_client.__aexit__ = lambda self, *a: None
+
+    # Make __aenter__/__aexit__ async
+    import asyncio
+
+    async def async_enter(self):
+        return self
+
+    async def async_exit(self, *a):
+        pass
+
+    mock_client.__aenter__ = lambda self: asyncio.coroutine(lambda: self)()
+    mock_client.__aexit__ = lambda self, *a: asyncio.coroutine(lambda: None)()
+
+    from unittest.mock import AsyncMock
+    mock_client_instance = AsyncMock()
+    mock_client_instance.post = dispatch_to_agent
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
     patcher = patch(
         "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-        return_value=mock_client,
+        return_value=mock_client_instance,
     )
     patcher.start()
 
