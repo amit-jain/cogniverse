@@ -226,6 +226,12 @@ def vespa_with_schema():
     except Exception as e:
         logger.error(f"Failed to start Vespa instance: {e}")
         pytest.fail(f"Failed to start Vespa: {e}")
+    finally:
+        logger.info("🧹 Tearing down Vespa container...")
+        try:
+            manager.docker_manager.stop_container()
+        except Exception as cleanup_err:
+            logger.warning(f"Vespa cleanup failed: {cleanup_err}")
 
     finally:
         # Cleanup
