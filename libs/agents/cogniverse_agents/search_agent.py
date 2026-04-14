@@ -465,10 +465,9 @@ class SearchAgent(
         # Get config port for schema deployment
         backend_config_port = deps.backend_config_port
         if not backend_config_port:
-            if backend_port == 8080:
-                backend_config_port = 19071
-            else:
-                backend_config_port = backend_port + 10991
+            from cogniverse_vespa.config_utils import calculate_config_port
+
+            backend_config_port = calculate_config_port(backend_port)
 
         # Create DSPy search module
         self.search_module = SearchOptimizationModule()

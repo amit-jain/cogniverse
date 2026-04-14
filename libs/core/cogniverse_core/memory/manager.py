@@ -18,6 +18,20 @@ from mem0 import Memory
 
 logger = logging.getLogger(__name__)
 
+# Vespa standard ports — single source of truth for config port derivation.
+# Duplicated from cogniverse_vespa.config_utils to avoid cross-layer import
+# (core cannot depend on vespa).
+_VESPA_DEFAULT_DATA_PORT = 8080
+_VESPA_DEFAULT_CONFIG_PORT = 19071
+_VESPA_CONFIG_PORT_OFFSET = _VESPA_DEFAULT_CONFIG_PORT - _VESPA_DEFAULT_DATA_PORT  # 10991
+
+
+def _calculate_config_port(data_port: int) -> int:
+    """Derive Vespa config port from data port using standard offset."""
+    if data_port == _VESPA_DEFAULT_DATA_PORT:
+        return _VESPA_DEFAULT_CONFIG_PORT
+    return data_port + _VESPA_CONFIG_PORT_OFFSET
+
 
 # Register backend as a supported vector store provider in Mem0
 def _register_backend_provider():
@@ -190,7 +204,7 @@ class Mem0MemoryManager:
         backend_config_dict = {
             "url": backend_host,  # VespaBackend expects "url", not "backend_url"
             "port": backend_port,  # VespaBackend expects "port", not "backend_port"
-            "config_port": backend_config_port or 19071,
+            "config_port": backend_config_port or _calculate_config_port(backend_port),
             "schema_name": base_schema_name,  # Base schema name for operations (backend handles tenant transformation)
             "backend": backend_section,  # Backend section for search operations
             "profiles": profiles,  # Also keep at top level for config merging

@@ -131,8 +131,19 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     Patches A2AClient.send_task to dispatch directly to agent._process_impl()
     instead of making HTTP calls.
     """
+    from cogniverse_core.common.agent_models import AgentEndpoint
+
     config_manager = vespa_with_schema["manager"].config_manager
     registry = AgentRegistry(config_manager=config_manager)
+
+    # Register agents that the orchestrator can plan with
+    for name, url, caps in [
+        ("entity_extraction", "http://localhost:8010", ["entity_extraction"]),
+        ("profile_selection", "http://localhost:8011", ["profile_selection"]),
+        ("query_enhancement", "http://localhost:8012", ["query_enhancement"]),
+        ("search", "http://localhost:8002", ["search"]),
+    ]:
+        registry.register_agent(AgentEndpoint(name=name, url=url, capabilities=caps))
 
     # Re-assert DSPy LM — can get cleared by agent init code
     dspy.configure(lm=dspy_lm)
@@ -420,7 +431,11 @@ class TestOrchestratorWithRealAgents:
         assert result.plan_reasoning, "LLM should provide planning reasoning"
 
         # --- Validate LLM planned a multi-agent pipeline ---
-        planned_agents = {s["agent_type"] for s in result.plan_steps}
+        # Normalize _agent suffix (LLM may return "search_agent" or "search")
+        def _norm(name):
+            return name.removesuffix("_agent") if name.endswith("_agent") else name
+
+        planned_agents = {_norm(s["agent_name"]) for s in result.plan_steps}
         assert "search" in planned_agents, (
             f"'search' must always be planned for a search query. "
             f"Planned: {planned_agents}"
@@ -435,7 +450,7 @@ class TestOrchestratorWithRealAgents:
         for i, step in enumerate(result.plan_steps):
             for dep_idx in step["depends_on"]:
                 assert 0 <= dep_idx < i, (
-                    f"Step {i} ({step['agent_type']}) has invalid dep {dep_idx}"
+                    f"Step {i} ({step['agent_name']}) has invalid dep {dep_idx}"
                 )
 
         # --- Every planned agent must have results ---
@@ -487,7 +502,7 @@ class TestOrchestratorWithRealAgents:
         assert isinstance(s_result["results"], list)
 
         # Log full pipeline for debugging
-        logger.info(f"Pipeline planned: {[s['agent_type'] for s in result.plan_steps]}")
+        logger.info(f"Pipeline planned: {[s['agent_name'] for s in result.plan_steps]}")
         for agent_name in planned_agents:
             logger.info(f"  {agent_name}: {result.agent_results[agent_name]}")
 

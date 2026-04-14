@@ -214,6 +214,18 @@ def vespa_with_schema():
 
         logger.info(f"✅ Vespa ready at http://localhost:{agent_http_port}")
 
+        # Set env vars so create_default_config_manager() and agent code
+        # resolve to the test Vespa container ports
+        original_url = os.environ.get("BACKEND_URL")
+        original_port = os.environ.get("BACKEND_PORT")
+        original_config_port = os.environ.get("VESPA_CONFIG_PORT")
+        os.environ["BACKEND_URL"] = "http://localhost"
+        os.environ["BACKEND_PORT"] = str(agent_http_port)
+        os.environ["VESPA_CONFIG_PORT"] = str(agent_config_port)
+
+        from cogniverse_foundation.config import utils as config_utils
+        config_utils._config_manager_singleton = None
+
         # Yield with manager for agent fixture access
         yield {
             "http_port": agent_http_port,
@@ -227,6 +239,18 @@ def vespa_with_schema():
         logger.error(f"Failed to start Vespa instance: {e}")
         pytest.fail(f"Failed to start Vespa: {e}")
     finally:
+        # Restore env vars
+        config_utils._config_manager_singleton = None
+        for var, orig in [
+            ("BACKEND_URL", original_url),
+            ("BACKEND_PORT", original_port),
+            ("VESPA_CONFIG_PORT", original_config_port),
+        ]:
+            if orig is not None:
+                os.environ[var] = orig
+            else:
+                os.environ.pop(var, None)
+
         # Cleanup: stop Docker container and clear state
         logger.info("Tearing down Vespa test instance...")
         try:

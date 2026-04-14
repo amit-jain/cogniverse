@@ -354,9 +354,13 @@ class OrchestratorAgent(
             llm_config = config.get_llm_config()
             resolved = llm_config.resolve("orchestrator_agent")
 
-            backend_section = config.get("backend", {})
-            backend_url = backend_section.get("url", "http://localhost")
-            backend_port = backend_section.get("port", 8080)
+            # Read backend URL/port from BootstrapConfig (reads env vars set
+            # at the startup boundary — authoritative source of truth).
+            from cogniverse_foundation.config.bootstrap import BootstrapConfig
+
+            bootstrap = BootstrapConfig.from_environment()
+            backend_url = bootstrap.backend_url
+            backend_port = bootstrap.backend_port
 
             # Extract provider from model string (e.g., "ollama/smollm3:3b" -> "ollama")
             provider = (
@@ -372,11 +376,14 @@ class OrchestratorAgent(
 
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
+            from cogniverse_vespa.config_utils import calculate_config_port
+
             self.initialize_memory(
                 agent_name="orchestrator_agent",
                 tenant_id=tenant_id,
                 backend_host=backend_url,
                 backend_port=backend_port,
+                backend_config_port=calculate_config_port(backend_port),
                 llm_model=llm_model,
                 embedding_model=embedding_model,
                 llm_base_url=llm_base_url,
