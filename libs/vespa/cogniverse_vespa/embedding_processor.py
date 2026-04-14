@@ -132,7 +132,7 @@ class VespaEmbeddingProcessor:
         embedding_dict = {}
         for idx in range(len(binarized)):
             hex_string = hexlify(binarized[idx].tobytes()).decode("utf-8")
-            embedding_dict[idx] = hex_string
+            embedding_dict[str(idx)] = hex_string
 
         return embedding_dict
 
