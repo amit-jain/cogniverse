@@ -133,19 +133,15 @@ def orchestrator_with_real_agents(real_dspy_lm):
         QueryEnhancementDeps,
         QueryEnhancementInput,
     )
-    from cogniverse_agents.summarizer_agent import (
-        SummarizerAgent,
-        SummarizerDeps,
-        SummarizerInput,
-    )
     from cogniverse_core.common.agent_models import AgentEndpoint
 
-    # Real agent instances (no Vespa needed — preprocessing agents only)
+    # Real agent instances — preprocessing agents that don't need Vespa.
+    # search and summarizer are in the registry but not in agents_by_url —
+    # they fall through to the generic success response in dispatch_to_agent.
     agents_by_url = {
         "http://localhost:8010": (EntityExtractionAgent(deps=EntityExtractionDeps()), EntityExtractionInput),
         "http://localhost:8011": (ProfileSelectionAgent(deps=ProfileSelectionDeps()), ProfileSelectionInput),
         "http://localhost:8012": (QueryEnhancementAgent(deps=QueryEnhancementDeps()), QueryEnhancementInput),
-        "http://localhost:8014": (SummarizerAgent(deps=SummarizerDeps(tenant_id="default")), SummarizerInput),
     }
 
     agent_endpoints = {
@@ -205,10 +201,7 @@ def orchestrator_with_real_agents(real_dspy_lm):
 
         agent, input_cls = entry
         try:
-            if input_cls == SummarizerInput:
-                agent_input = input_cls(query=query, search_results=[])
-            else:
-                agent_input = input_cls(query=query)
+            agent_input = input_cls(query=query)
             with dspy.context(lm=real_dspy_lm):
                 result = await agent._process_impl(agent_input)
             result_dict = result.model_dump() if hasattr(result, "model_dump") else {"result": str(result)}
