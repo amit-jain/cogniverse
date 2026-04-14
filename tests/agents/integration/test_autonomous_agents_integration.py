@@ -218,32 +218,16 @@ def orchestrator_with_real_agents(real_dspy_lm):
 
         return resp
 
-    mock_client = Mock()
-    mock_client.post = dispatch_to_agent
-    mock_client.__aenter__ = lambda self: self
-    mock_client.__aexit__ = lambda self, *a: None
-
-    # Make __aenter__/__aexit__ async
-    import asyncio
-
-    async def async_enter(self):
-        return self
-
-    async def async_exit(self, *a):
-        pass
-
-    mock_client.__aenter__ = lambda self: asyncio.coroutine(lambda: self)()
-    mock_client.__aexit__ = lambda self, *a: asyncio.coroutine(lambda: None)()
-
     from unittest.mock import AsyncMock
-    mock_client_instance = AsyncMock()
-    mock_client_instance.post = dispatch_to_agent
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+    client = AsyncMock()
+    client.post = dispatch_to_agent
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
 
     patcher = patch(
         "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-        return_value=mock_client_instance,
+        return_value=client,
     )
     patcher.start()
 
