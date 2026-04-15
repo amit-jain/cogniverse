@@ -132,6 +132,32 @@ def vespa_instance(request):
 
         manager.wait_for_application_ready(container_info, timeout=120)
 
+        # Wait for the data schema to be queryable (content node convergence).
+        # The GET/PUT probes check metadata schemas but the data schema may
+        # take additional time to become available for queries.
+        import requests as _requests
+
+        data_schema_name = "video_colpali_smol500_mv_frame_default"
+        http_port = container_info["http_port"]
+        for attempt in range(30):
+            try:
+                resp = _requests.post(
+                    f"http://localhost:{http_port}/search/",
+                    json={
+                        "yql": f"select documentid from {data_schema_name} where true limit 1",
+                        "hits": 1,
+                    },
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    logger.info(f"✅ Data schema '{data_schema_name}' ready for queries")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        else:
+            logger.warning(f"⚠️ Data schema '{data_schema_name}' not queryable after 60s")
+
         logger.info(
             "Vespa initialization complete - ready for runtime integration tests"
         )
