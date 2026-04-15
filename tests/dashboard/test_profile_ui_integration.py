@@ -54,7 +54,8 @@ class TestDashboardProfileIntegration:
     @pytest.fixture
     def running_api(self, temp_schema_dir: Path, tmp_path: Path):
         """Start the FastAPI server for integration tests"""
-        from unittest.mock import MagicMock
+        from datetime import datetime, timezone
+        from typing import Dict
 
         from fastapi.testclient import TestClient
 
@@ -65,15 +66,75 @@ class TestDashboardProfileIntegration:
         from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
+        from cogniverse_sdk.interfaces.config_store import (
+            ConfigEntry,
+            ConfigStore,
+        )
+
+        # In-memory ConfigStore (replaces deleted SQLiteConfigStore)
+        class DictConfigStore(ConfigStore):
+            def __init__(self):
+                self._data: Dict[str, ConfigEntry] = {}
+
+            def _key(self, tenant_id, scope, service, config_key):
+                return f"{tenant_id}:{scope.value}:{service}:{config_key}"
+
+            def set_config(self, tenant_id, scope, service, config_key, config_value):
+                k = self._key(tenant_id, scope, service, config_key)
+                existing = self._data.get(k)
+                version = (existing.version + 1) if existing else 1
+                now = datetime.now(timezone.utc)
+                entry = ConfigEntry(
+                    tenant_id=tenant_id, scope=scope, service=service,
+                    config_key=config_key, config_value=config_value,
+                    version=version, created_at=now, updated_at=now,
+                )
+                self._data[k] = entry
+                return entry
+
+            def get_config(self, tenant_id, scope, service, config_key, version=None):
+                return self._data.get(self._key(tenant_id, scope, service, config_key))
+
+            def get_config_history(self, tenant_id, scope, service, config_key, limit=10):
+                entry = self.get_config(tenant_id, scope, service, config_key)
+                return [entry] if entry else []
+
+            def list_configs(self, tenant_id, scope=None, service=None):
+                return [
+                    e for e in self._data.values()
+                    if e.tenant_id == tenant_id
+                    and (scope is None or e.scope == scope)
+                    and (service is None or e.service == service)
+                ]
+
+            def export_configs(self, tenant_id, include_history=False):
+                return {"configs": [e.config_value for e in self.list_configs(tenant_id)]}
+
+            def import_configs(self, tenant_id, configs):
+                return 0
+
+            def delete_config(self, tenant_id, scope, service, config_key):
+                k = self._key(tenant_id, scope, service, config_key)
+                return self._data.pop(k, None) is not None
+
+            def list_all_configs(self):
+                return list(self._data.values())
+
+            def get_stats(self):
+                return {"total": len(self._data)}
+
+            def health_check(self):
+                return True
+
+            def initialize(self):
+                pass
 
         # Reset registries (including cached backend instances)
         BackendRegistry._instance = None
         BackendRegistry._backend_instances.clear()
         SchemaRegistry._instance = None
 
-        # In-memory mock store (SQLiteConfigStore was removed)
-        store = MagicMock()
-        store.get_config.return_value = None
+        store = DictConfigStore()
         config_manager = ConfigManager(store=store)
 
         # Set up system config for both default and test_tenant
