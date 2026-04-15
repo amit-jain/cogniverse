@@ -144,19 +144,25 @@ def vespa_instance(request):
                 resp = _requests.post(
                     f"http://localhost:{http_port}/search/",
                     json={
-                        "yql": f"select documentid from {data_schema_name} where true limit 1",
+                        "yql": "select documentid from sources * where true limit 1",
                         "hits": 1,
+                        "model.restrict": data_schema_name,
                     },
                     timeout=5,
                 )
-                if resp.status_code == 200:
-                    logger.info(f"✅ Data schema '{data_schema_name}' ready for queries")
+                body = resp.json()
+                errors = body.get("root", {}).get("errors", [])
+                if resp.status_code == 200 and not errors:
+                    logger.info(f"✅ Data schema '{data_schema_name}' ready (model.restrict)")
                     break
             except Exception:
                 pass
             time.sleep(2)
         else:
-            logger.warning(f"⚠️ Data schema '{data_schema_name}' not queryable after 60s")
+            raise RuntimeError(
+                f"Data schema '{data_schema_name}' not queryable via model.restrict after 60s. "
+                "Content distributor may not have converged."
+            )
 
         logger.info(
             "Vespa initialization complete - ready for runtime integration tests"
@@ -225,6 +231,38 @@ def config_manager(vespa_instance):
             embedding_model="vidore/colsmol-500m",
         ),
         tenant_id="tenant_b",
+    )
+
+    # Register the data schema that was deployed in vespa_instance fixture.
+    # Without this, SchemaRegistry.deploy_schema() (called during agent memory
+    # init) won't find it in _get_all_schemas() and will redeploy WITHOUT it,
+    # dropping the data schema from the Vespa application package.
+    # Register the data schema in the ConfigStore so SchemaRegistry.deploy_schema()
+    # includes it when redeploying (e.g., during agent memory init).
+    # The schema_definition must be the real SD content — Vespa uses it in redeployment.
+    from datetime import datetime, timezone
+
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
+    with open(schema_file) as f:
+        reg_schema_json = json.load(f)
+    reg_schema_json["name"] = "video_colpali_smol500_mv_frame_default"
+    reg_schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_default"
+
+    cm.store.set_config(
+        tenant_id="default",
+        scope=ConfigScope.SCHEMA,
+        service="schema_registry",
+        config_key="schema_video_colpali_smol500_mv_frame",
+        config_value={
+            "tenant_id": "default",
+            "base_schema_name": "video_colpali_smol500_mv_frame",
+            "full_schema_name": "video_colpali_smol500_mv_frame_default",
+            "schema_definition": json.dumps(reg_schema_json),
+            "config": {},
+            "deployment_time": datetime.now(timezone.utc).isoformat(),
+        },
     )
 
     return cm
