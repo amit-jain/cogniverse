@@ -15,7 +15,7 @@ from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_
 
 
 def generate_unique_ports(
-    module_name: str, base_http_port: int = 50000
+    module_name: str, base_http_port: int = 40000
 ) -> Tuple[int, int]:
     """
     Generate unique HTTP and config ports for a test module in the IANA
@@ -38,11 +38,10 @@ def generate_unique_ports(
     seed = f"{module_name}:{os.getpid()}"
     port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
 
-    # Range: 50000-60999 with +1000 config offset (standard test ports).
-    # Code that derives config_port from http_port uses calculate_config_port()
-    # which handles the offset correctly for any port.
-    http_port = 50000 + (port_hash % 11000)
-    config_port = http_port + 1000
+    # Range: 40000-54544 so config_port (http + 10991) stays under 65535
+    http_port = 40000 + (port_hash % 14544)
+    # Standard Vespa offset so code that derives config_port from http_port works
+    config_port = http_port + 10991
 
     return http_port, config_port
 

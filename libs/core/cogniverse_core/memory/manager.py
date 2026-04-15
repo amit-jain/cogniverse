@@ -27,16 +27,7 @@ _VESPA_CONFIG_PORT_OFFSET = _VESPA_DEFAULT_CONFIG_PORT - _VESPA_DEFAULT_DATA_POR
 
 
 def _calculate_config_port(data_port: int) -> int:
-    """Derive Vespa config port from data port.
-
-    Checks VESPA_CONFIG_PORT env var first (set by test fixtures),
-    then falls back to standard Vespa convention.
-    """
-    import os
-
-    env_config_port = os.environ.get("VESPA_CONFIG_PORT")
-    if env_config_port:
-        return int(env_config_port)
+    """Derive Vespa config port from data port using standard offset."""
     if data_port == _VESPA_DEFAULT_DATA_PORT:
         return _VESPA_DEFAULT_CONFIG_PORT
     return data_port + _VESPA_CONFIG_PORT_OFFSET
