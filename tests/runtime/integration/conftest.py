@@ -137,6 +137,8 @@ def vespa_instance(request):
         # take additional time to become available for queries.
         import requests as _requests
 
+        # Wait for data schema to be queryable via model.restrict (requires
+        # content distributor convergence, not just container node).
         data_schema_name = "video_colpali_smol500_mv_frame_default"
         http_port = container_info["http_port"]
         for attempt in range(30):
@@ -144,13 +146,16 @@ def vespa_instance(request):
                 resp = _requests.post(
                     f"http://localhost:{http_port}/search/",
                     json={
-                        "yql": f"select documentid from {data_schema_name} where true limit 1",
+                        "yql": "select documentid from sources * where true limit 1",
                         "hits": 1,
+                        "model.restrict": data_schema_name,
                     },
                     timeout=5,
                 )
-                if resp.status_code == 200:
-                    logger.info(f"✅ Data schema '{data_schema_name}' ready for queries")
+                body = resp.json()
+                errors = body.get("root", {}).get("errors", [])
+                if resp.status_code == 200 and not errors:
+                    logger.info(f"✅ Data schema '{data_schema_name}' ready (model.restrict)")
                     break
             except Exception:
                 pass

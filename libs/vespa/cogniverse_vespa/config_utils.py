@@ -20,22 +20,20 @@ def calculate_config_port(data_port: int) -> int:
     """
     Calculate Vespa config server port from data port.
 
-    Vespa convention: config port = data port + 10991
-    - Standard: data=8080, config=19071
-    - Custom: data=8100, config=19091
+    Checks VESPA_CONFIG_PORT env var first (set by test fixtures),
+    then falls back to standard Vespa convention: config = data + 10991.
 
     Args:
         data_port: Vespa data/query port (HTTP endpoint)
 
     Returns:
         Corresponding config server port
-
-    Example:
-        >>> calculate_config_port(8080)
-        19071
-        >>> calculate_config_port(8100)
-        19091
     """
+    import os
+
+    env_config_port = os.environ.get("VESPA_CONFIG_PORT")
+    if env_config_port:
+        return int(env_config_port)
     if data_port == VESPA_DEFAULT_DATA_PORT:
         return VESPA_DEFAULT_CONFIG_PORT
     return data_port + VESPA_CONFIG_PORT_OFFSET
