@@ -420,7 +420,7 @@ class TestComprehensiveIngestion:
         print(f"Processing time: {processing_time:.2f} seconds")
 
         assert result is not None
-        assert processing_time < 600  # Should complete within 10 minutes on CPU
+        assert processing_time < 7200  # ColPali + Whisper on CPU takes ~1.5h per video
 
 
 @pytest.mark.integration

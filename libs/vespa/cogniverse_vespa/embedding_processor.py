@@ -101,7 +101,7 @@ class VespaEmbeddingProcessor:
         embedding_dict = {}
         for patch_idx in range(len(embeddings)):
             hex_string = self._numpy_to_hex_bfloat16(embeddings[patch_idx])
-            embedding_dict[patch_idx] = hex_string
+            embedding_dict[str(patch_idx)] = hex_string
         return embedding_dict
 
     def _convert_to_binary_dict(self, embeddings: np.ndarray) -> Any:

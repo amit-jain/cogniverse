@@ -678,7 +678,7 @@ class TestEmbeddingFormatConsistency:
 
         assert len(result) == raw.shape[0]
         for idx in range(raw.shape[0]):
-            hex_str = result[idx]
+            hex_str = result[str(idx)]
             assert len(hex_str) == 32, (
                 f"Token {idx}: expected 32 hex chars, got {len(hex_str)}"
             )
@@ -702,5 +702,5 @@ class TestEmbeddingFormatConsistency:
         assert len(float_dict) == raw.shape[0]
 
         for idx in range(min(3, raw.shape[0])):
-            assert len(binary_dict[idx]) == 32
-            assert len(float_dict[idx]) == 512
+            assert len(binary_dict[str(idx)]) == 32
+            assert len(float_dict[str(idx)]) == 512
