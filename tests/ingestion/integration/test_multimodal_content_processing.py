@@ -665,7 +665,7 @@ class TestEmbeddingFormatConsistency:
 
         assert len(result) == raw.shape[0]
         for idx in range(raw.shape[0]):
-            hex_str = result[idx]
+            hex_str = result[str(idx)]
             assert len(hex_str) == 128 * 4, (
                 f"Token {idx}: expected 512 hex chars, got {len(hex_str)}"
             )
