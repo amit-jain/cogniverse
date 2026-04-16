@@ -353,7 +353,7 @@ class AgentDispatcher:
             )
             return agent, typed_input
 
-        if capabilities & {"routing"}:
+        if capabilities & {"routing", "intelligent_routing"}:
             from cogniverse_agents.routing_agent import (
                 RoutingAgent,
                 RoutingDeps,
