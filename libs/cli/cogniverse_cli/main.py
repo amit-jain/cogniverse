@@ -174,18 +174,21 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
         if host_llm_detected:
             console.print("[cyan]Detected host LLM, will use external mode.[/cyan]")
 
-    # 4. Create k3d cluster if needed (local mode only)
+    # 4. Resolve project root (needed for cluster volume mount and image build)
+    project_root = resolve_project_root()
+
+    # 5. Create k3d cluster if needed (local mode only)
     if use_k3d:
         if not k3d_running:
             console.print("[cyan]Creating k3d cluster...[/cyan]")
             # Exclude LLM port if host LLM is running (avoids port conflict)
             exclude = [11434] if host_llm_detected else None
-            create_cluster(exclude_ports=exclude)
+            create_cluster(
+                exclude_ports=exclude,
+                workspace_path=str(project_root) if project_root else None,
+            )
         else:
             console.print("[cyan]Using existing k3d cluster.[/cyan]")
-
-    # 4. Build/import images if workspace source available
-    project_root = resolve_project_root()
     if project_root and has_workspace_source(project_root):
         console.print("[cyan]Building container images...[/cyan]")
         tags = build_images(project_root)

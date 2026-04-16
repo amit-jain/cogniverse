@@ -140,12 +140,15 @@ def create_cluster(
     ports: list[int] | None = None,
     *,
     exclude_ports: list[int] | None = None,
+    workspace_path: str | None = None,
 ) -> None:
-    """Create a k3d cluster with port mappings.
+    """Create a k3d cluster with port mappings and workspace volume.
 
     Each port gets a ``-p`` flag mapping it through the load balancer.
     Use *exclude_ports* to skip ports that are already in use on the host
     (e.g., 11434 when host Ollama is running).
+    *workspace_path* mounts the project root into the k3d node at
+    ``/cogniverse-src`` for devMode volume access.
     """
     if ports is None:
         ports = DEFAULT_PORTS
@@ -156,6 +159,8 @@ def create_cluster(
         # Allow any port as NodePort (default range is 30000-32767)
         "--k3s-arg", "--service-node-port-range=1-65535@server:0",
     ]
+    if workspace_path:
+        cmd.extend(["--volume", f"{workspace_path}:/cogniverse-src@server:0"])
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
