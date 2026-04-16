@@ -50,6 +50,7 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 **Core Principles**:
 - Fix implementation to satisfy tests, never weaken tests
 - 100% pass rate required before commit — 0 failed AND 0 skipped (infra skips = bugs)
+- NEVER dismiss failures as "pre-existing", "LLM-dependent", "transient", or "infrastructure" — every failure must be investigated and fixed
 - No shortcuts: no mocking away failures, no disabling, no hardcoding
 - Always use `--tb=long` — short tracebacks hide root causes and force re-runs
 - Never pipe test output through `tail` — it buffers everything and hides progress. Redirect to a log file instead: `uv run pytest ... --tb=long -v 2>&1 > /tmp/test_run.log` and monitor with `tail -f` or `grep PASSED\|FAILED`

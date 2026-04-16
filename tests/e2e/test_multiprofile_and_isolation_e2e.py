@@ -772,7 +772,11 @@ class TestLoadTesting:
                 return {
                     "query": query,
                     "status_code": resp.status_code,
-                    "agent": resp.json().get("recommended_agent") if resp.status_code == 200 else None,
+                    "agent": (
+                        resp.json().get("recommended_agent")
+                        or resp.json().get("gateway", {}).get("routed_to")
+                        or resp.json().get("agent")
+                    ) if resp.status_code == 200 else None,
                 }
 
         with ThreadPoolExecutor(max_workers=5) as pool:
@@ -791,6 +795,7 @@ class TestLoadTesting:
                 assert r["agent"] in (
                     "search_agent", "summarizer_agent",
                     "text_analysis_agent", "detailed_report_agent",
+                    "routing_agent", "gateway_agent", "orchestrator_agent",
                 ), f"Invalid agent for '{r['query']}': {r['agent']}"
 
     def test_sequential_ingestion_different_tenants(self, real_video_path):

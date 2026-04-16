@@ -1671,15 +1671,13 @@ class TestBatchVideoIngestion:
 
     def test_batch_ingestion_start(self):
         """Start batch ingestion → poll status → verify event loop responsive."""
-        video_dir = str(
-            Path(__file__).parent.parent.parent
-            / "data"
-            / "testset"
-            / "evaluation"
-            / "sample_videos"
-        )
-        if not Path(video_dir).exists():
-            pytest.skip(f"Sample video dir not found: {video_dir}")
+        # Use pod-internal path (devMode mounts data/ at /app/data)
+        video_dir = "/app/data/testset/evaluation/sample_videos"
+
+        # Verify the host copy exists (pod mount mirrors host)
+        host_dir = Path(__file__).parent.parent.parent / "data" / "testset" / "evaluation" / "sample_videos"
+        if not host_dir.exists():
+            pytest.skip(f"Sample video dir not found on host: {host_dir}")
 
         with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
             resp = client.post(

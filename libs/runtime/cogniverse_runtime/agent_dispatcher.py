@@ -131,7 +131,7 @@ class AgentDispatcher:
                 action, query, context, tenant_id
             )
 
-        if capabilities & {"gateway", "routing"}:
+        if capabilities & {"gateway", "routing", "intelligent_routing"}:
             result = await self._execute_gateway_task(query, context, tenant_id)
         elif "orchestration" in capabilities:
             result = await self._execute_orchestration_task(

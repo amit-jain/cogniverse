@@ -284,6 +284,8 @@ spec:
           mountPath: /app/scripts
         - name: src-configs-schemas
           mountPath: /app/configs/schemas
+        - name: src-data
+          mountPath: /app/data
         {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       - name: quality-monitor
@@ -394,6 +396,10 @@ spec:
         hostPath:
           path: {{ .Values.devMode.hostPath }}/configs/schemas
           type: Directory
+      - name: src-data
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/data
+          type: DirectoryOrCreate
       {{- end }}
       {{- with .Values.runtime.nodeSelector }}
       nodeSelector:
