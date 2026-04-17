@@ -99,11 +99,17 @@ class ProfileSelectionModule(dspy.Module):
     def forward(self, query: str, available_profiles: str) -> dspy.Prediction:
         """Select optimal profile using LLM reasoning"""
         try:
-            return self.selector(query=query, available_profiles=available_profiles)
+            result = self.selector(query=query, available_profiles=available_profiles)
         except Exception as e:
             logger.warning(f"Profile selection failed: {e}, using fallback")
-            # Fallback: simple heuristic
             return self._fallback_selection(query, available_profiles)
+        # DSPy silently emits None for unparseable output fields on smaller
+        # local models. Route through the heuristic fallback when any
+        # required field is missing so downstream schema validation holds.
+        if not result.selected_profile or not result.modality:
+            logger.warning("Profile selection produced empty fields, using fallback")
+            return self._fallback_selection(query, available_profiles)
+        return result
 
     def _fallback_selection(
         self, query: str, available_profiles: str
@@ -279,9 +285,13 @@ class ProfileSelectionAgent(
                 alternatives=[],
             )
 
+        # Feed memory-enriched prompt to the LM but keep the caller's
+        # original query for response/telemetry — otherwise tenant
+        # instructions leak into downstream consumers that echo `query`.
+        prompt_query = query
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            query = self.inject_context_into_prompt(query, query)
+            prompt_query = self.inject_context_into_prompt(query, query)
 
         # Convert profiles list to comma-separated string for DSPy
         profiles_str = ", ".join(profiles) if isinstance(profiles, list) else profiles
@@ -291,30 +301,56 @@ class ProfileSelectionAgent(
         result = await self.call_dspy(
             self.dspy_module,
             output_field="selected_profile",
-            query=query,
+            query=prompt_query,
             available_profiles=profiles_str,
         )
 
-        # Parse confidence
+        # Parse confidence. DSPy can return None for any output field when the
+        # LM response fails to parse — substitute safe defaults so the response
+        # schema holds.
         try:
             confidence = float(result.confidence)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
             confidence = 0.5
+
+        selected_profile = result.selected_profile or (
+            profiles[0] if isinstance(profiles, list) and profiles else "default"
+        )
+        modality = result.modality or "text"
+        reasoning = result.reasoning or ""
+        query_intent = result.query_intent or "text_search"
+        complexity = result.complexity or "medium"
+
+        # Consistency check — the profile name encodes the true modality
+        # (e.g. `video_colpali_...`, `audio_clap_...`). Small local models
+        # frequently get the separate `modality` field wrong even when the
+        # profile is right; honour the profile as the source of truth.
+        profile_modality = selected_profile.split("_", 1)[0] if selected_profile else ""
+        if profile_modality in {"video", "image", "audio", "document", "code"}:
+            if profile_modality != modality:
+                logger.info(
+                    "Overriding LLM modality %r with profile-derived %r",
+                    modality,
+                    profile_modality,
+                )
+            modality = profile_modality
+            if query_intent == "text_search" and profile_modality != "text":
+                query_intent = f"{profile_modality}_search"
 
         # Generate alternative profiles (top 3)
         self.emit_progress("alternatives", "Generating alternative profiles...")
         alternatives = self._generate_alternatives(
-            query, profiles, result.selected_profile, result.modality
+            query, profiles, selected_profile, modality
         )
 
         output = ProfileSelectionOutput(
             query=query,
-            selected_profile=result.selected_profile,
+            selected_profile=selected_profile,
             confidence=confidence,
-            reasoning=result.reasoning,
-            query_intent=result.query_intent,
-            modality=result.modality,
-            complexity=result.complexity,
+            reasoning=reasoning,
+            query_intent=query_intent,
+            modality=modality,
+            complexity=complexity,
             alternatives=alternatives,
         )
 

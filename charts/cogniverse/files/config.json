@@ -4,7 +4,7 @@
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
     "routing_agent": {
-      "url": "http://localhost:8001",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "routing",
@@ -13,7 +13,7 @@
       "modalities": []
     },
     "search_agent": {
-      "url": "http://localhost:8002",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "search",
@@ -25,7 +25,7 @@
       ]
     },
     "text_analysis_agent": {
-      "url": "http://localhost:8003",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "text_analysis",
@@ -37,7 +37,7 @@
       ]
     },
     "summarizer_agent": {
-      "url": "http://localhost:8004",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "summarization",
@@ -50,7 +50,7 @@
       ]
     },
     "detailed_report_agent": {
-      "url": "http://localhost:8005",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "detailed_report",
@@ -63,7 +63,7 @@
       ]
     },
     "image_search_agent": {
-      "url": "http://localhost:8006",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "image_search",
@@ -74,7 +74,7 @@
       ]
     },
     "audio_analysis_agent": {
-      "url": "http://localhost:8007",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "audio_analysis",
@@ -85,7 +85,7 @@
       ]
     },
     "document_agent": {
-      "url": "http://localhost:8008",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "document_analysis",
@@ -96,7 +96,7 @@
       ]
     },
     "deep_research_agent": {
-      "url": "http://localhost:8009",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "deep_research",
@@ -108,7 +108,7 @@
       ]
     },
     "coding_agent": {
-      "url": "http://localhost:8010",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "coding",
@@ -118,7 +118,7 @@
       "modalities": []
     },
     "gateway_agent": {
-      "url": "http://localhost:8000",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
       "capabilities": [
         "gateway",
@@ -128,7 +128,7 @@
     },
     "entity_extraction_agent": {
       "enabled": true,
-      "url": "http://localhost:8000",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "capabilities": [
         "entity_extraction",
         "ner"
@@ -137,7 +137,7 @@
     },
     "query_enhancement_agent": {
       "enabled": true,
-      "url": "http://localhost:8000",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "capabilities": [
         "query_enhancement",
         "expansion"
@@ -146,7 +146,7 @@
     },
     "profile_selection_agent": {
       "enabled": true,
-      "url": "http://localhost:8000",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "capabilities": [
         "profile_selection"
       ],
@@ -154,7 +154,7 @@
     },
     "orchestrator_agent": {
       "enabled": true,
-      "url": "http://localhost:8013",
+      "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "capabilities": [
         "orchestration",
         "planning",
@@ -165,12 +165,12 @@
   },
   "llm_config": {
     "primary": {
-      "model": "ollama/qwen3:4b",
+      "model": "ollama/gemma4:e2b",
       "api_key": null,
       "temperature": 0.1,
       "max_tokens": 1000,
       "adapter_path": null,
-      "api_base": "http://localhost:11434"
+      "api_base": "{{ include "cogniverse.llmEndpoint" . }}"
     },
     "teacher": {
       "model": "claude-3-5-sonnet-20241022",
@@ -186,26 +186,26 @@
         "max_tokens": 1000
       },
       "summarizer_agent": {
-        "model": "ollama/qwen3:4b"
+        "model": "ollama/gemma4:e2b"
       },
       "detailed_report_agent": {
-        "model": "ollama/qwen3:4b"
+        "model": "ollama/gemma4:e2b"
       },
       "vlm_interface": {
-        "model": "ollama/deepseek-r1:7b"
+        "model": "ollama/gemma4:e2b"
       },
       "coding_agent": {
-        "model": "ollama/qwen2.5-coder:7b-instruct",
+        "model": "ollama/gemma4:e2b",
         "max_tokens": 2048
       },
       "query_analysis_module": null,
       "llm_auto_annotator": null
     }
   },
-  "routing_agent_url": "http://localhost:8001",
-  "video_agent_url": "http://localhost:8002",
-  "detailed_report_agent_url": "http://localhost:8003",
-  "summarizer_agent_url": "http://localhost:8004",
+  "routing_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
+  "video_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
+  "detailed_report_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
+  "summarizer_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
   "orchestrator_agent_port": 8013,
   "routing_agent": {
     "enable_advanced_optimization": true,
@@ -312,7 +312,7 @@
     "visual_judge": {
       "provider": "ollama",
       "model": "llava:7b",
-      "base_url": "http://localhost:11434",
+      "base_url": "{{ include "cogniverse.llmEndpoint" . }}",
       "api_key": null,
       "frames_per_video": 30,
       "max_videos": 2,
@@ -322,7 +322,7 @@
     "llm_judge": {
       "provider": "ollama",
       "model": "deepseek-r1:7b",
-      "base_url": "http://localhost:11434",
+      "base_url": "{{ include "cogniverse.llmEndpoint" . }}",
       "api_key": null
     },
     "modal_visual_judge": {
@@ -416,7 +416,7 @@
       "heuristic": "heuristic"
     },
     "ollama_config": {
-      "api_base": "http://localhost:11434/v1",
+      "api_base": "{{ include "cogniverse.llmEndpoint" . }}/v1",
       "comment": "For Ollama models, set 'model' to 'ollama_bge' or 'ollama_mxbai' and 'api_base' to this value"
     }
   },
@@ -460,7 +460,7 @@
     "llm_config": {
       "provider": "local",
       "model": "smollm2:1.7b",
-      "endpoint": "http://localhost:11434",
+      "endpoint": "{{ include "cogniverse.llmEndpoint" . }}",
       "temperature": 0.1,
       "max_tokens": 150,
       "use_chain_of_thought": true,
@@ -469,7 +469,7 @@
     },
     "langextract_config": {
       "langextract_model": "qwen2.5:7b",
-      "ollama_url": "http://localhost:11434",
+      "ollama_url": "{{ include "cogniverse.llmEndpoint" . }}",
       "timeout": 30,
       "use_structured_extraction": true
     },
@@ -587,7 +587,7 @@
   },
   "backend": {
     "type": "vespa",
-    "url": "http://localhost",
+    "url": "{{ include "cogniverse.vespaUrl" . }}",
     "port": 8080,
     "profiles": {
       "video_colpali_smol500_mv_frame": {
@@ -1107,5 +1107,5 @@
       "max_results_per_message": 5
     }
   },
-  "base_url": "http://localhost:11434"
+  "base_url": "{{ include "cogniverse.llmEndpoint" . }}"
 }

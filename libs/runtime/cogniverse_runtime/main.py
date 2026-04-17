@@ -497,9 +497,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_synthetic.api import configure_service as configure_synthetic
 
     llm_config = config.get_llm_config()
-    # LLM api_base comes from SystemConfig.base_url which reads LLM_ENDPOINT env
     primary_lm = create_dspy_lm(llm_config.primary)
-    dspy.configure(lm=primary_lm)
+    # LenientJSONAdapter normalizes LM field-name variants (e.g. gemma4
+    # emits `reason` instead of `reasoning`) before DSPy's strict output
+    # validation. Without this, ChainOfThought calls fail with
+    # AdapterParseError on small local models.
+    from cogniverse_foundation.dspy import LenientJSONAdapter
+
+    dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
     logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
 
     modality_config = OptimizerGenerationConfig(

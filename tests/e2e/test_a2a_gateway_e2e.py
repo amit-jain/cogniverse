@@ -637,7 +637,7 @@ class TestEntityExtractionAgent:
         - MIT (ORGANIZATION, confidence >0.8)
         - climate change (CONCEPT, confidence >0.8)
         """
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
@@ -689,7 +689,7 @@ class TestEntityExtractionAgent:
 
         Must detect SPECIFIC entities by name, not just "at least one tech entity".
         """
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
@@ -756,7 +756,7 @@ class TestQueryEnhancementAgent:
         "ML transformer videos" should expand "ML" to "machine learning"
         and produce query_variants for RRF fusion search.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/query_enhancement_agent/process",
                 json={
@@ -800,7 +800,7 @@ class TestQueryEnhancementAgent:
         Pass entities from a hypothetical entity extraction step and verify
         the enhancement agent processes them.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/query_enhancement_agent/process",
                 json={
@@ -877,7 +877,7 @@ class TestProfileSelectionAgent:
         "find basketball highlights" is a video query — should select a video
         profile from the 4 known profiles, with modality="video".
         """
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 "/agents/profile_selection_agent/process",
                 json={

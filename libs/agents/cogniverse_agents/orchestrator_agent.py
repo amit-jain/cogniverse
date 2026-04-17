@@ -784,9 +784,9 @@ class OrchestratorAgent(
 
                 # Prepare input (merge query with previous results if needed)
                 agent_input = step.input_data.copy()
-                agent_input["tenant_id"] = tenant_id
+                context: Dict[str, Any] = {"tenant_id": tenant_id}
                 if session_id:
-                    agent_input["session_id"] = session_id
+                    context["session_id"] = session_id
 
                 for dep_idx in step.depends_on:
                     if dep_idx < len(plan.steps):
@@ -796,13 +796,20 @@ class OrchestratorAgent(
                                 dep_agent
                             ]
 
-                # Call agent via HTTP
+                # Call agent via HTTP — payload must satisfy AgentTask schema:
+                # agent_name + query required, tenant_id goes inside context.
                 try:
                     query = agent_input.pop("query", "")
+                    payload = {
+                        "agent_name": agent_name,
+                        "query": query,
+                        "context": context,
+                        **agent_input,
+                    }
                     async with httpx.AsyncClient(timeout=60.0) as http_client:
                         response = await http_client.post(
                             f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
-                            json={"query": query, **agent_input},
+                            json=payload,
                         )
                         response.raise_for_status()
                         result = response.json()

@@ -192,24 +192,25 @@ runtime:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
 
-  # Health checks
+  # Liveness: TCP socket only. HTTP /health endpoints queue behind uvicorn
+  # workers and can stall under concurrent DSPy/CPU-LLM load. TCP checks the
+  # listener is alive — the actual process is fine, work is just slow.
   livenessProbe:
-    httpGet:
-      path: /health
+    tcpSocket:
       port: 8000
     initialDelaySeconds: 60
     periodSeconds: 30
-    timeoutSeconds: 5
-    failureThreshold: 3
+    timeoutSeconds: 10
+    failureThreshold: 10
 
   readinessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8000
     initialDelaySeconds: 30
     periodSeconds: 15
-    timeoutSeconds: 3
-    failureThreshold: 3
+    timeoutSeconds: 10
+    failureThreshold: 5
 
   # OpenShell sandbox — enables coding agent code execution in isolated containers.
   #
@@ -237,6 +238,17 @@ runtime:
     # In-cluster mode settings
     inCluster:
       enabled: false
+
+  # HuggingFace model cache mounted at /home/cogniverse/.cache. Set
+  # `persistent: true` to back it with a PVC so ColPali / GLiNER /
+  # SentenceTransformer / Whisper survive pod restarts and helm upgrades.
+  # `false` keeps it ephemeral (emptyDir) — re-downloads on every restart,
+  # adds 60-120s of cold-start latency for the first request.
+  modelCache:
+    persistent: true
+    size: "20Gi"
+    accessMode: "ReadWriteOnce"
+    storageClass: ""
 
   # Quality monitor sidecar — continuous evaluation of all agents
   qualityMonitor:
@@ -445,8 +457,13 @@ llm:
       OLLAMA_HOST: "0.0.0.0:11434"
       OLLAMA_NUM_PARALLEL: "4"
       OLLAMA_MAX_LOADED_MODELS: "2"
+      # Keep models resident indefinitely. Unloading a ~7GB model and
+      # reloading it on the next request takes 60-120s and causes spurious
+      # test timeouts.
+      OLLAMA_KEEP_ALIVE: "-1"
     models:
-      - "qwen3:4b"
+      - "gemma4:e2b"
+      - "nomic-embed-text"
     livenessProbe:
       httpGet:
         path: /api/tags

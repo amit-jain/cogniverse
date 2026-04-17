@@ -4,30 +4,38 @@ Integration tests for OrchestratorAgent with real in-process agents.
 Tests validate the COMPLETE orchestration pipeline:
 - Real LLM planning (DSPy decides agent sequence + parallelization)
 - Real agent execution (entity extraction, query enhancement, profile selection, search)
-- In-process dispatch (patches A2AClient to route to real agent instances)
+- Real HTTP dispatch via httpx.ASGITransport (no live server needed, but requests
+  flow through the actual FastAPI routes, Pydantic AgentTask validation, and the
+  runtime AgentDispatcher — exactly like production)
 - Concrete assertions on agent outputs (entities, enhanced queries, profiles, search results)
 
 Requirements:
-- Ollama running with gemma3:4b model (orchestrator planning needs better generation quality)
+- Ollama running with gemma4:e2b model (orchestrator planning needs a capable LLM)
 - Docker for Vespa container (for search agent)
 
 What is REAL (integration boundary):
 - Real DSPy LLM inference via Ollama (planning + per-agent inference)
 - Real Vespa Docker container (search agent hits actual Vespa)
 - Real agent instances (EntityExtractionAgent, ProfileSelectionAgent, etc.)
+- Real FastAPI app mounted in memory via ASGITransport — payloads validate
+  against the production AgentTask schema, catching wire-format drift that
+  previously slipped past when the test short-circuited httpx
 
-What is MOCKED (deliberately, to allow in-process dispatch without an HTTP server):
-- httpx.AsyncClient: patched to route POST calls directly to in-process agent._process_impl()
-  instead of making real HTTP calls. This keeps the test self-contained while still exercising
-  all agent logic. The HTTP wire format is tested separately in test_orchestrator_http_pipeline.py.
+This deliberately does NOT patch httpx.AsyncClient. Earlier versions of this
+test routed POSTs directly to `agent._process_impl()` which meant the
+AgentTask Pydantic schema never ran; the orchestrator→sub-agent payload
+mismatch (missing `agent_name`, `tenant_id` at wrong level) shipped to
+production undetected. Using the real ASGI transport closes that gap.
 """
 
 import logging
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
 import dspy
+import httpx
 import pytest
+from fastapi import FastAPI
 
 from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionAgent,
@@ -126,24 +134,42 @@ def agent_instances(vespa_with_schema, dspy_lm):
 @pytest.fixture
 def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     """
-    OrchestratorAgent wired to real in-process agents.
-
-    Patches A2AClient.send_task to dispatch directly to agent._process_impl()
-    instead of making HTTP calls.
+    OrchestratorAgent wired to real in-process agents via an in-memory ASGI
+    FastAPI app. httpx.AsyncClient is patched to use ASGITransport so POSTs
+    flow through the real `/agents/{name}/process` route, Pydantic AgentTask
+    validation, and the runtime AgentDispatcher exactly like production —
+    but without binding a network port.
     """
     from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_runtime.routers import agents as agents_router
 
     config_manager = vespa_with_schema["manager"].config_manager
+    schema_loader = FilesystemSchemaLoader(
+        base_path=Path("tests/system/resources/schemas")
+    )
     registry = AgentRegistry(config_manager=config_manager)
 
-    # Register agents that the orchestrator can plan with
-    for name, url, caps in [
-        ("entity_extraction", "http://localhost:8010", ["entity_extraction"]),
-        ("profile_selection", "http://localhost:8011", ["profile_selection"]),
-        ("query_enhancement", "http://localhost:8012", ["query_enhancement"]),
-        ("search", "http://localhost:8002", ["search"]),
+    # All four sub-agents live at a single in-process ASGI host. Path routing
+    # (/agents/{name}/process) selects the target agent, matching production
+    # where every agent shares the runtime pod.
+    ASGI_BASE = "http://asgi.test"
+    for name, caps in [
+        ("entity_extraction", ["entity_extraction"]),
+        ("profile_selection", ["profile_selection"]),
+        ("query_enhancement", ["query_enhancement"]),
+        ("search", ["search"]),
+        # Orchestrator itself is also reachable via the same app so nested
+        # dispatch works if a plan asks for it.
+        ("orchestrator", ["orchestration"]),
     ]:
-        registry.register_agent(AgentEndpoint(name=name, url=url, capabilities=caps))
+        registry.register_agent(
+            AgentEndpoint(
+                name=name,
+                url=ASGI_BASE,
+                capabilities=caps,
+                process_endpoint=f"/agents/{name}/process",
+            )
+        )
 
     # Re-assert DSPy LM — can get cleared by agent init code
     dspy.configure(lm=dspy_lm)
@@ -155,71 +181,32 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
         port=8013,
     )
 
-    async def dispatch_to_agent(url: str, json=None, **kwargs):
-        """Route httpx POST calls to in-process agent instances."""
-        from unittest.mock import Mock as SyncMock
+    # Build a minimal FastAPI app carrying only the agents router. Injecting
+    # registry + config_manager + schema_loader reaches the real dispatcher,
+    # so every POST runs production AgentTask validation and dispatch logic.
+    # The dispatcher constructs its own agent instances via ConfigLoader —
+    # that mirrors production exactly, which is the point of this test.
+    app = FastAPI()
+    app.include_router(agents_router.router, prefix="/agents", tags=["agents"])
+    agents_router.set_agent_registry(registry)
+    agents_router.set_agent_dependencies(config_manager, schema_loader)
 
-        # Extract agent URL from the POST URL (e.g., "http://localhost:8010/process")
-        agent_base_url = url.rsplit("/", 1)[0]  # Remove "/process"
-        agent = agent_instances.get(agent_base_url)
+    # Route httpx.AsyncClient through ASGITransport so the orchestrator's
+    # POSTs hit the real FastAPI app (and thus the real AgentTask schema).
+    # Any orchestrator→sub-agent payload drift (missing `agent_name`, wrong
+    # nesting of `tenant_id`, etc.) will fail here at 422 — the exact case
+    # the old httpx mock was silently swallowing.
+    transport = httpx.ASGITransport(app=app)
 
-        query = json.get("query", "") if json else ""
-
-        if agent is None:
-            resp = SyncMock()
-            resp.raise_for_status = SyncMock()
-            resp.json.return_value = {"error": f"No in-process agent for {url}"}
-            return resp
-
-        try:
-            if isinstance(agent, EntityExtractionAgent):
-                agent_input = EntityExtractionInput(query=query)
-            elif isinstance(agent, ProfileSelectionAgent):
-                agent_input = ProfileSelectionInput(query=query)
-            elif isinstance(agent, QueryEnhancementAgent):
-                agent_input = QueryEnhancementInput(query=query)
-            elif isinstance(agent, SearchAgent):
-                tenant_id = (
-                    json.get("tenant_id", "test_tenant") if json else "test_tenant"
-                )
-                agent_input = SearchInput(query=query, tenant_id=tenant_id)
-            else:
-                resp = SyncMock()
-                resp.raise_for_status = SyncMock()
-                resp.json.return_value = {"error": f"Unknown agent type: {type(agent)}"}
-                return resp
-
-            with dspy.context(lm=dspy_lm):
-                result = await agent._process_impl(agent_input)
-
-            if hasattr(result, "model_dump"):
-                result_dict = result.model_dump()
-            elif hasattr(result, "__dict__"):
-                result_dict = result.__dict__
-            else:
-                result_dict = {"result": str(result)}
-
-            resp = SyncMock()
-            resp.raise_for_status = SyncMock()
-            resp.json.return_value = result_dict
-            return resp
-
-        except Exception as e:
-            logger.error(f"In-process agent {url} failed: {e}")
-            resp = SyncMock()
-            resp.raise_for_status = SyncMock()
-            resp.json.return_value = {"status": "error", "message": str(e)}
-            return resp
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(side_effect=dispatch_to_agent)
-    mock_cm = Mock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    class _ASGIAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("transport", transport)
+            kwargs.setdefault("base_url", ASGI_BASE)
+            super().__init__(*args, **kwargs)
 
     httpx_patcher = patch(
         "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-        return_value=mock_cm,
+        _ASGIAsyncClient,
     )
     httpx_patcher.start()
 

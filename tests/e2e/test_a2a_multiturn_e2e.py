@@ -24,9 +24,9 @@ TENANT_ID = "flywheel_org:production"
 
 def runtime_available() -> bool:
     try:
-        r = httpx.get(f"{RUNTIME}/health", timeout=5.0)
+        r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
         return r.status_code == 200
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.ReadTimeout):
         return False
 
 

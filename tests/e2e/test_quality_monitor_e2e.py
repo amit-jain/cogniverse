@@ -2,9 +2,9 @@
 E2E tests for quality monitor sidecar, strategy learning, and Argo workflows.
 
 Requires live k3d stack via `cogniverse up` with:
-- Runtime at localhost:28000
-- Vespa at localhost:28080
-- Phoenix at localhost:26006
+- Runtime at localhost:28000 (Service NodePort, exposed via k3d loadbalancer)
+- Vespa at localhost:8080 (Service port directly)
+- Phoenix at localhost:26006 (Service NodePort)
 - Ollama at localhost:11434
 - Argo controller deployed
 
@@ -23,7 +23,7 @@ import pytest
 from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
 
 PHOENIX = "http://localhost:26006"
-VESPA = "http://localhost:28080"
+VESPA = "http://localhost:8080"
 
 
 def _get_kubeconfig() -> str:
@@ -186,15 +186,23 @@ class TestArgoWorkflows:
     """Verify Argo CronWorkflows are deployed on k3d."""
 
     def test_daily_optimization_cronworkflow_exists(self):
-        """Daily optimization CronWorkflow is deployed."""
+        """Daily gateway-optimization CronWorkflow is deployed.
+
+        The chart deploys these optimization-related CronWorkflows
+        (see charts/cogniverse/templates/optimization-workflows.yaml):
+          - cogniverse-daily-gateway       — daily gateway tuning
+          - cogniverse-agent-optimization  — weekly DSPy optimization
+          - cogniverse-scheduled-distillation — forced distillation
+        This test checks the daily gateway tuning flavor exists.
+        """
         output = _kubectl(
             "get", "cronworkflows",
             "-o", "jsonpath={.items[*].metadata.name}",
         )
         workflows = output.split()
-        daily = [w for w in workflows if "daily-optimization" in w]
+        daily = [w for w in workflows if "daily-gateway" in w]
         assert len(daily) >= 1, (
-            f"Expected daily-optimization CronWorkflow, got: {workflows}"
+            f"Expected cogniverse-daily-gateway CronWorkflow, got: {workflows}"
         )
 
     def test_cleanup_cronworkflow_exists(self):

@@ -764,3 +764,43 @@ def get_or_load_model(
 
         _model_cache[cache_key] = (model, processor)
         return model, processor
+
+
+# Module-level GLiNER cache. Loaded once per (model_name) and reused across
+# every agent instance — gateway, entity_extraction, routing all want the
+# same 1.4GB model. Without this, the dispatcher's per-request agent
+# instantiation would reload it every call, blowing memory through the
+# suite (PyTorch's caching allocator never returns memory to the OS).
+_gliner_cache: Dict[str, Any] = {}
+
+
+def get_or_load_gliner(
+    model_name: str, logger: Optional[logging.Logger] = None
+) -> Optional[Any]:
+    """Return a cached GLiNER instance, loading once per model name.
+
+    Returns None on load failure (callers must handle missing extractor).
+    Uses the same global lock as the embedding-model cache to serialize
+    HuggingFace `from_pretrained` calls (concurrent loads corrupt accelerate
+    dispatch hooks).
+    """
+    with _model_lock:
+        cached = _gliner_cache.get(model_name)
+        if cached is not None:
+            if logger:
+                logger.info(f"Using cached GLiNER model: {model_name}")
+            return cached
+        try:
+            from gliner import GLiNER
+
+            if logger:
+                logger.info(f"Loading GLiNER model: {model_name}")
+            instance = GLiNER.from_pretrained(model_name)
+            _gliner_cache[model_name] = instance
+            if logger:
+                logger.info(f"GLiNER loaded: {model_name}")
+            return instance
+        except Exception as exc:
+            if logger:
+                logger.error(f"GLiNER load failed for {model_name}: {exc}")
+            return None

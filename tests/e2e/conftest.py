@@ -34,8 +34,11 @@ E2E_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "cogniverse_e2e_artifacts"
 
 
 def runtime_available() -> bool:
+    # /health/live is the cheap alive-or-not endpoint; /health does backend
+    # + agent registry lookups and can block behind uvicorn under LLM load,
+    # giving false negatives that skip whole test files at collection time.
     try:
-        r = httpx.get(f"{RUNTIME}/health", timeout=5.0)
+        r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
         return r.status_code == 200
     except (httpx.ConnectError, httpx.ReadTimeout):
         return False
@@ -50,23 +53,16 @@ def dashboard_available() -> bool:
 
 
 def _ensure_stack_running() -> bool:
-    """Ensure the cogniverse stack is running.
+    """Check that the cogniverse stack is running.
 
-    If services are already reachable (e.g., from a prior `cogniverse up`),
-    returns True immediately. Otherwise attempts `cogniverse up`.
+    The session fixture used to shell out to ``cogniverse up`` when the
+    stack looked down — that rebuilt images + ran helm upgrade +
+    rolled the runtime pod MID-SUITE. A transient blip (one slow probe)
+    was enough to trigger a full redeploy and cascade every downstream
+    test into a pod-restart 500/EOF. The stack must be brought up
+    before running the suite; we only verify it here.
     """
-    if runtime_available() and dashboard_available():
-        return True
-
-    # Try starting with cogniverse up
-    try:
-        result = subprocess.run(
-            ["cogniverse", "up", "--llm=builtin"],
-            capture_output=True, text=True, timeout=600,
-        )
-        return result.returncode == 0 and runtime_available()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    return runtime_available() and dashboard_available()
 
 
 def _skip_if_no_runtime():
@@ -105,11 +101,12 @@ def restart_runtime(timeout_s: int = 60) -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    # Wait for the new pod to become ready
+    # Wait for the new pod to become ready. /health/live is cheap and
+    # doesn't queue behind uvicorn workers under LLM load.
     for _ in range(timeout_s):
         _time.sleep(1)
         try:
-            r = httpx.get(f"{RUNTIME}/health", timeout=3.0)
+            r = httpx.get(f"{RUNTIME}/health/live", timeout=5.0)
             if r.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.ReadTimeout):
@@ -247,7 +244,9 @@ def e2e_stack():
 
     If services are already up (from a prior ``cogniverse up``), uses them.
     Otherwise attempts to start the stack. After services are confirmed,
-    creates the E2E tenant, deploys schemas, and ingests sample data.
+    creates the E2E tenant, deploys schemas, ingests sample data, and brings
+    up the OpenShell sandbox gateway so the coding agent's sandbox path is
+    exercised end-to-end (not short-circuited by a skip).
     """
     if not _ensure_stack_running():
         pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
@@ -255,7 +254,27 @@ def e2e_stack():
     _bootstrap_tenant_and_schemas()
     _ingest_sample_video()
     _ensure_llm_model()
+    _ensure_sandbox_gateway()
     yield
+
+
+def _ensure_sandbox_gateway() -> None:
+    """Start the OpenShell sandbox gateway and sync mTLS certs into k3d.
+
+    The coding agent inside the runtime pod dispatches generated code to
+    this host-side gateway over host.docker.internal. If the gateway isn't
+    up, the coding agent's sandbox step raises a RuntimeError at execution
+    time. We bring it up here so the test run exercises the real path.
+    """
+    try:
+        from cogniverse_cli.sandbox import ensure_sandbox_ready
+    except ImportError:
+        print("OpenShell sandbox setup unavailable (cogniverse_cli.sandbox not importable)")
+        return
+    try:
+        ensure_sandbox_ready()
+    except Exception as exc:  # pragma: no cover — infra failure, not fatal
+        print(f"OpenShell gateway bootstrap raised (non-fatal): {exc}")
 
 
 @pytest.fixture(scope="session")

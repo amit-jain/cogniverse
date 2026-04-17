@@ -76,19 +76,32 @@ class AgentDispatcher:
             )
 
         sys_cfg = self._config_manager.get_system_config()
+        # Prefer llm_config.primary.model (authoritative, set via chart
+        # values) over SystemConfig.llm_model (dataclass default that drifts
+        # from the chart — was 'ollama/gemma3:4b' while chart used gemma4).
+        # Strip the provider prefix: Mem0's openai provider expects just
+        # the model name ("gemma4:e2b"), and the Ollama /v1 endpoint adds
+        # its own routing.
+        from cogniverse_foundation.config.utils import get_config
+
+        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        llm_primary = config.get_llm_config().primary
+        model_name = llm_primary.model
+        if "/" in model_name:
+            model_name = model_name.split("/", 1)[1]
+
         try:
             agent.initialize_memory(
                 agent_name=agent_name,
                 tenant_id=tenant_id,
                 backend_host=sys_cfg.backend_url,
                 backend_port=sys_cfg.backend_port,
-                llm_model=getattr(sys_cfg, "llm_model", "qwen3:4b"),
+                llm_model=model_name,
                 embedding_model=getattr(
                     sys_cfg, "embedding_model", "nomic-embed-text"
                 ),
-                llm_base_url=getattr(
-                    sys_cfg, "base_url", "http://localhost:11434"
-                ),
+                llm_base_url=llm_primary.api_base
+                or getattr(sys_cfg, "base_url", "http://localhost:11434"),
                 config_manager=self._config_manager,
                 schema_loader=self._schema_loader,
             )
@@ -512,7 +525,11 @@ class AgentDispatcher:
             "profile": profile,
         }
 
-        if resolved_query != query:
+        # Multi-turn contract: whenever conversation_history was supplied we
+        # ran the rewriter, so expose both the original and the resolved query
+        # in the response — even when they match. Callers can diff the two to
+        # see whether the rewriter actually changed anything.
+        if conversation_history:
             response["original_query"] = query
             response["rewritten_query"] = resolved_query
 
@@ -543,7 +560,9 @@ class AgentDispatcher:
         result = await self._query_rewriter.acall(
             query=query, conversation_history=history_text
         )
-        rewritten = result.rewritten_query.strip()
+        # DSPy may return None for the output field when the LM response fails
+        # to parse — fall back to the original query in that case.
+        rewritten = (result.rewritten_query or "").strip()
         return rewritten if rewritten else query
 
     async def _execute_gateway_task(
@@ -1047,9 +1066,11 @@ class AgentDispatcher:
             }
 
         # No examples: run automated optimization cycle from traces
+        from cogniverse_agents.routing.annotation_agent import AnnotationAgent
         from cogniverse_agents.routing.routing_span_evaluator import (
             RoutingSpanEvaluator,
         )
+        from cogniverse_runtime.routers.agents import get_annotation_queue
 
         evaluator = RoutingSpanEvaluator(
             optimizer=optimizer, tenant_id=tenant_id
@@ -1057,9 +1078,23 @@ class AgentDispatcher:
         cycle_results = await evaluator.evaluate_routing_spans()
         spans_evaluated = cycle_results.get("spans_evaluated", 0)
 
+        # Identify low-confidence routing spans and enqueue them for human
+        # annotation. Without this, the AnnotationQueue stayed empty after
+        # every optimization cycle — the evaluator only fed the optimizer
+        # but never produced annotation requests.
+        try:
+            annotation_agent = AnnotationAgent(tenant_id=tenant_id)
+            requests = await annotation_agent.identify_spans_needing_annotation()
+            queue = get_annotation_queue()
+            enqueued = queue.enqueue_batch(requests) if requests else 0
+        except Exception as exc:
+            logger.warning("Annotation enqueue failed (non-fatal): %s", exc)
+            enqueued = 0
+
         return {
             "status": "optimization_triggered",
             "optimizer": "OptimizationOrchestrator",
             "cycle_results": cycle_results,
             "spans_evaluated": spans_evaluated,
+            "annotations_enqueued": enqueued,
         }

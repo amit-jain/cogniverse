@@ -10,6 +10,11 @@ Requires live k3d stack via `cogniverse up` with:
 - Runtime at localhost:28000
 - Phoenix at localhost:26006
 - kubectl context: k3d-cogniverse
+
+MARKED AS SLOW: the module fixture seeds ~80 DSPy spans via real agent calls
+(each is ~60-80s on CPU Ollama — the entire fixture takes ~2 hours). Run
+explicitly with `pytest -m slow tests/e2e/test_batch_optimization_e2e.py` on
+machines where the LLM is backed by a GPU or faster inference service.
 """
 
 import json
@@ -18,6 +23,8 @@ import time
 
 import httpx
 import pytest
+
+pytestmark = pytest.mark.slow
 
 from tests.e2e.conftest import (
     PHOENIX_URL,
@@ -156,27 +163,31 @@ def generate_spans_for_batch_jobs():
     except Exception:
         pytest.skip("Runtime not available")
 
-    # Generate 100+ spans for EVERY agent type.
-    # Each batch job needs enough training data for BootstrapFewShot
-    # to produce demos. 100 spans → ~8 demos in practice.
+    # Per-agent span count. BootstrapFewShot samples demos from these; the
+    # project originally generated 100 per agent which takes ~9 hours on CPU
+    # Ollama. 20 per agent is enough to bootstrap 3-4 demos while keeping the
+    # fixture under ~2 hours on CPU. Override via BATCH_SPAN_COUNT for
+    # GPU-backed runs where 100+ is cheap.
+    import os as _os
+    spans_per_agent = int(_os.environ.get("BATCH_SPAN_COUNT", "20"))
 
-    # Gateway spans (100+) — simple queries through gateway
-    for i in range(100):
+    # Gateway spans — simple queries through gateway
+    for i in range(spans_per_agent):
         q = f"{GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]} run {i}"
         _call_agent("gateway_agent", q)
 
-    # Entity extraction spans (100+)
-    for i in range(100):
+    # Entity extraction spans
+    for i in range(spans_per_agent):
         q = f"{ENTITY_QUERIES[i % len(ENTITY_QUERIES)]} case {i}"
         _call_agent("entity_extraction_agent", q)
 
-    # Query enhancement spans (100+)
-    for i in range(100):
+    # Query enhancement spans
+    for i in range(spans_per_agent):
         q = f"{ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]} variant {i}"
         _call_agent("query_enhancement_agent", q)
 
-    # Profile selection spans (100+)
-    for i in range(100):
+    # Profile selection spans
+    for i in range(spans_per_agent):
         q = f"{PROFILE_QUERIES[i % len(PROFILE_QUERIES)]} variant {i}"
         _call_agent("profile_selection_agent", q)
 

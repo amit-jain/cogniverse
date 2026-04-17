@@ -145,6 +145,30 @@ spec:
     app.kubernetes.io/component: vespa
 {{- end }}
 ---
+# Runtime model cache PVC. HuggingFace pulls (ColPali ~67MB, GLiNER large
+# ~1.7GB, GLiNER medium ~1.5GB, SentenceTransformer, Whisper) all land in
+# /home/cogniverse/.cache. With emptyDir these were lost on every restart
+# and re-fetched, costing 60-120s per cold start. PVC keeps them across
+# pod restarts and helm upgrades.
+{{- if and .Values.runtime.enabled .Values.runtime.modelCache.persistent }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-runtime-model-cache
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime
+spec:
+  accessModes:
+    - {{ .Values.runtime.modelCache.accessMode | default "ReadWriteOnce" }}
+  {{- if .Values.runtime.modelCache.storageClass }}
+  storageClassName: {{ .Values.runtime.modelCache.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.runtime.modelCache.size | default "20Gi" }}
+{{- end }}
+---
 # Runtime Deployment
 {{- if .Values.runtime.enabled }}
 apiVersion: apps/v1
@@ -216,12 +240,17 @@ spec:
         {{- if .Values.runtime.sandbox.enabled }}
         - name: COGNIVERSE_SANDBOX_ENABLED
           value: "true"
+        {{- if .Values.runtime.sandbox.inCluster.enabled }}
+        # In-cluster: explicit host:port (no scheme) — gRPC insecure channel.
         - name: OPENSHELL_GATEWAY_ENDPOINT
-          {{- if .Values.runtime.sandbox.inCluster.enabled }}
           value: "openshell.{{ .Release.Namespace }}.svc.cluster.local:8080"
-          {{- else }}
-          value: {{ .Values.runtime.sandbox.gatewayEndpoint | quote }}
-          {{- end }}
+        {{- end }}
+        # Host mode: DON'T set OPENSHELL_GATEWAY_ENDPOINT. SandboxManager
+        # falls back to SandboxClient.from_active_cluster() which reads the
+        # mounted metadata.json (parses scheme + host + port correctly and
+        # builds the TLS channel from the mounted mtls certs). Setting the
+        # env var bypasses that path and passes a raw URL to gRPC which
+        # cannot parse "https://" prefixes.
         {{- end }}
         {{- if .Values.argo.enabled }}
         # Audit fix #3 — wire Argo so the runtime can submit CronWorkflows
@@ -272,8 +301,33 @@ spec:
           subPath: ca.crt
           readOnly: true
         {{- else }}
-        - name: openshell-config
-          mountPath: /home/cogniverse/.config/openshell
+        # Host-mode: mTLS material synced into the cluster by
+        # `cogniverse sandbox sync` (secret=openshell-mtls, configmaps
+        # openshell-metadata/openshell-active). Mounted into the SDK's
+        # expected paths so SandboxClient.from_active_cluster() resolves.
+        # Paths mirror what the openshell CLI writes on a host:
+        #   ~/.config/openshell/active_gateway  (plain text — gateway name)
+        #   ~/.config/openshell/gateways/<name>/metadata.json
+        #   ~/.config/openshell/gateways/<name>/mtls/{ca,tls}.{crt,key}
+        - name: openshell-mtls
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/ca.crt
+          subPath: ca.crt
+          readOnly: true
+        - name: openshell-mtls
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.crt
+          subPath: tls.crt
+          readOnly: true
+        - name: openshell-mtls
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.key
+          subPath: tls.key
+          readOnly: true
+        - name: openshell-metadata
+          mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/metadata.json
+          subPath: metadata.json
+          readOnly: true
+        - name: openshell-active
+          mountPath: /home/cogniverse/.config/openshell/active_gateway
+          subPath: active_gateway
           readOnly: true
         {{- end }}
         {{- end }}
@@ -358,8 +412,17 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
+        {{- if .Values.runtime.modelCache.persistent }}
+        # Persistent model cache — survives pod restarts. Without this,
+        # every restart re-downloads ColPali / GLiNER / SentenceTransformer
+        # / Whisper from HuggingFace, adding ~60-120s to first request and
+        # blowing the test timeouts.
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-runtime-model-cache
+        {{- else }}
         emptyDir:
-          sizeLimit: 20Gi
+          sizeLimit: {{ .Values.runtime.modelCache.size | default "20Gi" }}
+        {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       # Audit fix #1 — golden dataset for QualityMonitor sidecar.
       # ConfigMap is built by templates/configmap.yaml from
@@ -377,10 +440,15 @@ spec:
         secret:
           secretName: openshell-client-ca
       {{- else }}
-      - name: openshell-config
-        hostPath:
-          path: {{ .Values.runtime.sandbox.hostConfigPath }}
-          type: Directory
+      - name: openshell-mtls
+        secret:
+          secretName: openshell-mtls
+      - name: openshell-metadata
+        configMap:
+          name: openshell-metadata
+      - name: openshell-active
+        configMap:
+          name: openshell-active
       {{- end }}
       {{- end }}
       {{- if .Values.devMode.enabled }}

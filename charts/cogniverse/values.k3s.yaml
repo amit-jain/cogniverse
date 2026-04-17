@@ -7,6 +7,12 @@ vespa:
   replicaCount: 1
   service:
     type: NodePort
+    # k3d's loadbalancer publishes host:8080 -> server:8080, so the NodePort
+    # MUST match the service port for Vespa to be reachable from the host
+    # at localhost:8080. values.yaml defaults to 28080, which breaks the
+    # LB mapping (server:8080 would have nothing listening).
+    nodePorts:
+      query: 8080
   persistence:
     storageClass: "local-path"
     size: "20Gi"
@@ -27,31 +33,43 @@ runtime:
     type: NodePort
   autoscaling:
     enabled: false
-  # ML model loading blocks the event loop for 60-120s on first request.
-  # Increase probe tolerance so K8s doesn't kill the pod during model load.
+  # Liveness/readiness probe config inherited from values.yaml (TCP socket
+  # for liveness, /health/live HTTP for readiness). Overriding periods here
+  # for k3s so initial delay accounts for cold Ollama pulls.
   livenessProbe:
-    httpGet:
-      path: /health
-      port: 8000
     initialDelaySeconds: 120
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 10
   readinessProbe:
-    httpGet:
-      path: /health
-      port: 8000
     initialDelaySeconds: 60
-    periodSeconds: 15
-    timeoutSeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 15
     failureThreshold: 10
   resources:
     requests:
-      cpu: "1"
-      memory: "4Gi"
+      cpu: "2"
+      # Runtime memory grows through a suite: every ingested tenant loads
+      # ColPali (~500MB) in-process, memory manager caches per-tenant Mem0
+      # instances, and Vespa search buffers climb with stored docs. A
+      # single-pod suite hits 15-25Gi easily. Keep the request at 8Gi so
+      # the scheduler reserves headroom, but push the limit up so the
+      # container doesn't hit OOM mid-suite.
+      memory: "8Gi"
     limits:
       cpu: "16"
-      memory: "40Gi"
+      memory: "32Gi"
+  # Host-mode OpenShell sandbox: developer starts `openshell gateway start
+  # --port 19091` on the host, then `cogniverse sandbox sync` stores the
+  # mTLS certs + metadata as `openshell-mtls` / `openshell-metadata` in the
+  # cluster. The runtime mounts those into ~/.config/openshell so the SDK
+  # resolves the active cluster and connects over host.docker.internal.
+  # Port 19091 matches the sync tool's POD_GATEWAY_ENDPOINT constant.
+  sandbox:
+    enabled: true
+    gatewayEndpoint: "https://host.docker.internal:19091"
+    inCluster:
+      enabled: false
 
 dashboard:
   replicaCount: 1

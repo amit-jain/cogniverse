@@ -23,7 +23,9 @@ class TestDeepResearchE2E:
 
     def test_deep_research_returns_structured_report(self):
         """POST /agents/deep_research_agent/process → structured research output."""
-        with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+        # Deep research chains 3 DSPy calls (decompose → evaluate → synthesize)
+        # and each is 60-80s on CPU Ollama, so the 180s default was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             resp = client.post(
                 "/agents/deep_research_agent/process",
                 json={
@@ -81,8 +83,35 @@ class TestAnnotationQueueE2E:
             assert isinstance(data["statistics"]["total"], int)
 
     def test_assign_and_complete_lifecycle(self):
-        """Optimization cycle seeds queue → assign → complete → verify state."""
+        """Optimization cycle seeds queue → assign → complete → verify state.
+
+        Seeds Phoenix with a few low-confidence routing spans first; the
+        optimization cycle scans the last hour of routing spans and only
+        enqueues those scoring below the AnnotationAgent confidence
+        threshold (default 0.6). Without seeding, a fresh suite has no
+        spans → empty queue → nothing to assign.
+        """
         with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            # Seed: trigger several routing decisions on ambiguous queries
+            # so Phoenix has cogniverse.routing spans in the lookback window.
+            # The classifier emits lower confidence on short / vague text.
+            seed_queries = [
+                "stuff",
+                "things about that",
+                "the other one",
+                "more like before",
+                "what was that thing",
+            ]
+            for q in seed_queries:
+                client.post(
+                    "/agents/routing_agent/process",
+                    json={
+                        "agent_name": "routing_agent",
+                        "query": q,
+                        "context": {"tenant_id": TENANT_ID},
+                    },
+                )
+
             # Trigger the real optimization cycle — this is how production works.
             # It reads spans from Phoenix, identifies low-confidence ones,
             # enqueues them, and optionally runs DSPy compilation.

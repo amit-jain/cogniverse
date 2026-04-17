@@ -250,9 +250,13 @@ class EntityExtractionAgent(
                 dominant_types=[],
             )
 
+        # Memory context is mixed in ONLY for the DSPy path (LM prompt);
+        # GLiNER runs on the raw user query so entity spans match caller's
+        # text and don't pollute results with tenant-instruction tokens.
+        prompt_query = query
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            query = self.inject_context_into_prompt(query, query)
+            prompt_query = self.inject_context_into_prompt(query, query)
 
         entities: List[Entity] = []
         relationships: List[Relationship] = []
@@ -263,12 +267,12 @@ class EntityExtractionAgent(
                 entities, relationships, path_used = self._extract_fast_path(query)
             except Exception as e:
                 logger.warning("Fast path extraction failed, falling back to DSPy: %s", e)
-                entities = await self._extract_dspy_path(query)
+                entities = await self._extract_dspy_path(prompt_query)
                 relationships = []
                 path_used = "dspy"
         else:
             # --- DSPy fallback ---
-            entities = await self._extract_dspy_path(query)
+            entities = await self._extract_dspy_path(prompt_query)
 
         # Compute dominant types
         type_counts: Dict[str, int] = {}

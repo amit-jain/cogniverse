@@ -89,10 +89,20 @@ class QueryEnhancementModule(dspy.Module):
     def forward(self, query: str) -> dspy.Prediction:
         """Enhance query using DSPy"""
         try:
-            return self.enhancer(query=query)
+            result = self.enhancer(query=query)
         except Exception as e:
             logger.warning(f"Query enhancement failed: {e}, using fallback")
             return self._fallback_enhancement(query)
+        # DSPy silently emits None for unparseable output fields. Treat that
+        # as the same failure mode as an exception and fall through to
+        # heuristic expansion so the contract (non-empty enhanced_query)
+        # still holds for smaller local LMs.
+        if not result.enhanced_query or not result.expansion_terms:
+            logger.warning(
+                "Query enhancement produced empty fields, using fallback"
+            )
+            return self._fallback_enhancement(query)
+        return result
 
     def _fallback_enhancement(self, query: str) -> dspy.Prediction:
         """Fallback enhancement using simple heuristics"""
@@ -238,15 +248,18 @@ class QueryEnhancementAgent(
                 reasoning="Empty query, no enhancement performed",
             )
 
+        # Preserve caller's original query — the memory-injected variant is
+        # only fed to the LM, not reflected back in the response.
+        prompt_query = query
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            query = self.inject_context_into_prompt(query, query)
+            prompt_query = self.inject_context_into_prompt(query, query)
 
         # Build entity context from upstream EntityExtractionAgent
         entity_context = self._build_entity_context(
             input.entities, input.relationships
         )
-        dspy_query = f"{query}\n{entity_context}" if entity_context else query
+        dspy_query = f"{prompt_query}\n{entity_context}" if entity_context else prompt_query
 
         # Enhance query using DSPy (with fallback on failure)
         self.emit_progress("enhancement", "Enhancing query with DSPy...")
@@ -269,30 +282,35 @@ class QueryEnhancementAgent(
         # Parse confidence
         try:
             confidence = float(result.confidence)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
             confidence = 0.7
 
+        # DSPy may return None for any output field when the LM response is
+        # unparseable — substitute safe fallbacks so the response schema holds.
+        enhanced_query = result.enhanced_query or query
+        reasoning = result.reasoning or ""
+
         # Generate RRF query variants
-        variants = self._generate_variants(query, result.enhanced_query, expansion_terms)
+        variants = self._generate_variants(query, enhanced_query, expansion_terms)
 
         # Emit telemetry span
         self._emit_enhancement_span(
             tenant_id=input.tenant_id or "default",
             original_query=query,
-            enhanced_query=result.enhanced_query,
+            enhanced_query=enhanced_query,
             variant_count=len(variants),
             confidence=confidence,
         )
 
         return QueryEnhancementOutput(
             original_query=query,
-            enhanced_query=result.enhanced_query,
+            enhanced_query=enhanced_query,
             expansion_terms=expansion_terms,
             synonyms=synonyms,
             context_additions=context_additions,
             query_variants=variants,
             confidence=confidence,
-            reasoning=result.reasoning,
+            reasoning=reasoning,
         )
 
     def _dspy_to_a2a_output(self, result: QueryEnhancementOutput) -> Dict[str, Any]:

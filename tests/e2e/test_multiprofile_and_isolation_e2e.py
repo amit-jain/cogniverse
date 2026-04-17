@@ -135,15 +135,28 @@ def _cleanup_tenant(client: httpx.Client, tenant_id: str):
 
 
 def _restart_runtime_if_unhealthy():
-    """Restart runtime if it's unresponsive from accumulated model loads."""
+    """Verify the runtime is reachable before running this class's tests.
+
+    Uses /health/live (trivial endpoint) not /health (which queries the
+    backend/agent registries and can take >5s when the main event loop is
+    busy with a long LLM call). The earlier implementation here issued a
+    `kubectl rollout restart` whenever /health timed out within 5s, which
+    created a new ReplicaSet mid-suite and cascaded dozens of subsequent
+    tests into 500/connection-refused. With OLLAMA_KEEP_ALIVE=-1 the model
+    stays resident, so there's no longer any accumulated-model-load cost
+    that would justify an in-suite pod restart.
+    """
     try:
-        resp = httpx.get(f"{RUNTIME}/health", timeout=5)
+        resp = httpx.get(f"{RUNTIME}/health/live", timeout=10)
         if resp.status_code == 200:
             return
     except (httpx.ConnectError, httpx.ReadTimeout):
         pass
-    from tests.e2e.conftest import restart_runtime
-    restart_runtime(timeout_s=120)
+    raise RuntimeError(
+        "Runtime /health/live did not respond within 10s. Check pod "
+        "state; the stack-level fixture should have verified this at "
+        "session start."
+    )
 
 
 @pytest.mark.e2e
@@ -760,7 +773,10 @@ class TestLoadTesting:
         n_requests = len(queries)
 
         def _route(query: str) -> dict:
-            with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+            # 5 concurrent routing calls × ~60-90s each on CPU Ollama
+            # serialize through the LLM. Total wait per request can hit
+            # 300-450s; 180s timeout was too tight.
+            with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
                 resp = client.post(
                     "/agents/routing_agent/process",
                     json={

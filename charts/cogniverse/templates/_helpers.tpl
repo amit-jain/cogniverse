@@ -89,6 +89,38 @@ Return the proper image name
 {{- end -}}
 
 {{/*
+LLM endpoint URL. Prefers llm.external.url when external is enabled,
+otherwise derives the in-cluster service URL from the builtin LLM.
+Used by the config.json ConfigMap so DSPy/Ollama clients hit the
+deployed endpoint rather than the localhost default baked into config.json.
+*/}}
+{{- define "cogniverse.llmEndpoint" -}}
+{{- if .Values.llm.external.enabled -}}
+{{- required "llm.external.url is required when llm.external.enabled=true" .Values.llm.external.url -}}
+{{- else -}}
+{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.builtin.service.port) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Runtime service URL. All agents share the runtime pod, so the orchestrator
+dispatches to them via path routing on this single URL
+(e.g. http://<runtime>:8000/agents/<name>/process).
+*/}}
+{{- define "cogniverse.runtimeUrl" -}}
+{{- printf "http://%s-runtime:%d" (include "cogniverse.fullname" .) (int .Values.runtime.service.port) -}}
+{{- end -}}
+
+{{/*
+Vespa backend base URL (scheme + host, no port). Used by backend.url in
+config.json so VespaBackend constructed from config (e.g. inside ingestion
+worker tasks) reaches the in-cluster service rather than localhost.
+*/}}
+{{- define "cogniverse.vespaUrl" -}}
+{{- printf "http://%s-vespa" (include "cogniverse.fullname" .) -}}
+{{- end -}}
+
+{{/*
 Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "cogniverse.imagePullSecrets" -}}

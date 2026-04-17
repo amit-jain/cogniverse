@@ -203,29 +203,20 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     # ------------------------------------------------------------------
 
     def _ensure_model_loaded(self) -> None:
-        """Lazy-load GLiNER model with thread lock."""
+        """Resolve GLiNER from the module-level cache (loads once per name).
+
+        The dispatcher creates fresh agent instances per request; without
+        caching, every request reloaded the 1.4GB GLiNER weights and PyTorch
+        retained them in heap, leaking through the suite.
+        """
         if self._gliner_model is not None:
             return
 
-        from gliner import GLiNER
+        from cogniverse_core.common.models import get_or_load_gliner
 
-        from cogniverse_core.common.models import model_load_lock
-
-        with model_load_lock:
-            # Double-check after acquiring the lock
-            if self._gliner_model is not None:
-                return
-            logger.info(
-                "Loading GLiNER model: %s", self.deps.gliner_model_name
-            )
-            try:
-                self._gliner_model = GLiNER.from_pretrained(
-                    self.deps.gliner_model_name
-                )
-                logger.info("GLiNER model loaded")
-            except Exception as e:
-                logger.error("GatewayAgent: failed to load GLiNER model: %s", e)
-                self._gliner_model = None
+        self._gliner_model = get_or_load_gliner(
+            self.deps.gliner_model_name, logger=logger
+        )
 
     # ------------------------------------------------------------------
     # Entity extraction and classification
@@ -391,6 +382,48 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         except Exception as e:
             logger.debug("Failed to emit gateway span: %s", e)
 
+    def _emit_routing_span(
+        self,
+        *,
+        tenant_id: str,
+        query: str,
+        complexity: str,
+        modality: str,
+        generation_type: str,
+        routed_to: str,
+        confidence: float,
+        reasoning: str,
+    ) -> None:
+        """Emit a cogniverse.routing span mirroring the RoutingAgent shape.
+
+        Downstream evaluators (RoutingEvaluator, AnnotationAgent,
+        RoutingSpanEvaluator, ModalitySpanCollector) filter on the
+        `cogniverse.routing` span name and read `routing.*` attributes.
+        Emitting it here lets those consumers observe gateway routing
+        decisions the same way they observed legacy RoutingAgent decisions.
+        """
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+
+        try:
+            with self.telemetry_manager.span(
+                "cogniverse.routing",
+                tenant_id=tenant_id,
+                attributes={
+                    "routing.query": query[:200],
+                    "routing.chosen_agent": routed_to,
+                    "routing.recommended_agent": routed_to,
+                    "routing.confidence": confidence,
+                    "routing.reasoning": reasoning[:200],
+                    "routing.complexity": complexity,
+                    "routing.modality": modality,
+                    "routing.generation_type": generation_type,
+                },
+            ):
+                pass  # span auto-closes
+        except Exception as e:
+            logger.debug("Failed to emit routing span: %s", e)
+
     # ------------------------------------------------------------------
     # Core processing
     # ------------------------------------------------------------------
@@ -432,6 +465,16 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             generation_type=generation_type,
             routed_to=routed_to,
             confidence=overall_confidence,
+        )
+        self._emit_routing_span(
+            tenant_id=tenant_id,
+            query=input.query,
+            complexity=complexity,
+            modality=modality,
+            generation_type=generation_type,
+            routed_to=routed_to,
+            confidence=overall_confidence,
+            reasoning=reasoning,
         )
 
         return GatewayOutput(

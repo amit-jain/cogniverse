@@ -34,20 +34,13 @@ class GLiNERRelationshipExtractor:
         self.gliner_model = None
 
     def _load_gliner_model(self):
-        """Load GLiNER model with error handling"""
+        """Resolve GLiNER from the shared module-level cache."""
         try:
-            from gliner import GLiNER
+            from cogniverse_core.common.models import get_or_load_gliner
 
-            from cogniverse_core.common.models import model_load_lock
-
-            with model_load_lock:
-                self.gliner_model = GLiNER.from_pretrained(self.model_name)
-            logger.info(f"Loaded GLiNER model: {self.model_name}")
+            self.gliner_model = get_or_load_gliner(self.model_name, logger=logger)
         except ImportError:
             logger.warning("GLiNER not installed. Entity extraction will be limited.")
-            self.gliner_model = None
-        except Exception as e:
-            logger.error(f"Failed to load GLiNER model {self.model_name}: {e}")
             self.gliner_model = None
 
     def extract_entities(

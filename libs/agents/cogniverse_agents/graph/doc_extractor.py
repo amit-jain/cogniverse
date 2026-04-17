@@ -55,15 +55,14 @@ class DocExtractor:
             return self._gliner
         if self._gliner_failed:
             return None
-        try:
-            from gliner import GLiNER
+        from cogniverse_core.common.models import get_or_load_gliner
 
-            self._gliner = GLiNER.from_pretrained("urchade/gliner_large-v2.1")
-            return self._gliner
-        except Exception as exc:
-            logger.warning("GLiNER load failed, falling back to no-op: %s", exc)
+        self._gliner = get_or_load_gliner(
+            "urchade/gliner_large-v2.1", logger=logger
+        )
+        if self._gliner is None:
             self._gliner_failed = True
-            return None
+        return self._gliner
 
     def extract(
         self,

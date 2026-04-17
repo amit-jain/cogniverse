@@ -189,7 +189,10 @@ class TestTenantMemories:
         if not _memory_available():
             pytest.skip("Memory backend not initialized on runtime")
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Memory add makes an LLM extraction call per text (gemma4:e2b on
+        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # client timeout was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={
@@ -248,7 +251,10 @@ class TestTenantMemories:
         if not _memory_available():
             pytest.skip("Memory backend not initialized on runtime")
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Memory add makes an LLM extraction call per text (gemma4:e2b on
+        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # client timeout was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             # Seed a strategy so we're not testing against empty state
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
@@ -271,7 +277,10 @@ class TestTenantMemories:
         if not _memory_available():
             pytest.skip("Memory backend not initialized on runtime")
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Memory add makes an LLM extraction call per text (gemma4:e2b on
+        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # client timeout was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer dark mode for all dashboards"},
@@ -313,7 +322,10 @@ class TestAdminMemoryManagement:
         if not _memory_available():
             pytest.skip("Memory backend not initialized on runtime")
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Memory add makes an LLM extraction call per text (gemma4:e2b on
+        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # client timeout was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer using FAISS for nearest neighbor search"},
@@ -331,7 +343,10 @@ class TestAdminMemoryManagement:
         if not _memory_available():
             pytest.skip("Memory backend not initialized on runtime")
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Memory add makes an LLM extraction call per text (gemma4:e2b on
+        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # client timeout was tight.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer PostgreSQL over MySQL"},
@@ -565,13 +580,18 @@ class TestJobExecution:
 
 
 def _get_runtime_config_manager():
-    """Get a ConfigManager pointing at the k3d Vespa (NodePort 28080)."""
+    """Get a ConfigManager pointing at the k3d Vespa (host port 8080).
+
+    The k3d loadbalancer publishes the Vespa Service port (8080) directly;
+    the backing NodePort inside the cluster is 28080 but that port isn't
+    exposed on the host. See cluster.py DEFAULT_PORTS for the list.
+    """
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
     store = VespaConfigStore(
         backend_url="http://localhost",
-        backend_port=28080,
+        backend_port=8080,
     )
     return ConfigManager(store=store)
 

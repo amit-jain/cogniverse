@@ -8,6 +8,7 @@ from .model_loaders import (
     ModelLoaderFactory,
     RemoteColBERTLoader,
     VideoPrismModelLoader,
+    get_or_load_gliner,
     get_or_load_model,
 )
 from .model_loaders import (
@@ -20,6 +21,7 @@ from .videoprism_loader import (
 )
 
 __all__ = [
+    "get_or_load_gliner",
     "get_or_load_model",
     "model_load_lock",
     "ModelLoaderFactory",

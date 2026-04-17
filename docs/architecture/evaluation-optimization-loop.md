@@ -394,10 +394,15 @@ Routing spans capture the full context needed for offline analysis and annotatio
 
 | Span Attribute | Type | Purpose |
 |---|---|---|
-| `routing.chosen_agent` | string | Which agent was selected |
-| `routing.confidence` | float | Routing confidence score |
-| `routing.processing_time` | float | Decision latency (ms) |
 | `routing.query` | string | Original user query |
+| `routing.chosen_agent` | string | Which agent was selected |
+| `routing.recommended_agent` | string | DSPy-recommended agent (same as chosen_agent for GatewayAgent) |
+| `routing.confidence` | float | Routing confidence score |
+| `routing.reasoning` | string | Routing decision rationale |
+| `routing.complexity` | string | Query complexity classification |
+| `routing.modality` | string | Content modality (video, text, etc.) |
+| `routing.generation_type` | string | Generation type (search, qa, synthesis, etc.) |
+| `routing.processing_time` | float | Decision latency (ms) |
 | `routing.enhanced_query` | string | Post-enhancement query |
 | `routing.entities` | list | Extracted entities |
 | `routing.relationships` | list | Extracted relationships |

@@ -147,6 +147,7 @@ class QualityMonitor:
         live_sample_count: int = 20,
         thresholds: Optional[QualityThresholds] = None,
         telemetry_provider=None,
+        search_profile: str = "video_colpali_smol500_mv_frame",
     ):
         self.tenant_id = tenant_id
         self.runtime_url = runtime_url.rstrip("/")
@@ -160,6 +161,7 @@ class QualityMonitor:
         self.live_eval_interval = live_eval_interval_seconds
         self.live_sample_count = live_sample_count
         self.thresholds = thresholds or QualityThresholds()
+        self.search_profile = search_profile
         self._telemetry_provider = telemetry_provider
         self._training_decision_model = None
 
@@ -350,7 +352,7 @@ class QualityMonitor:
                     f"{self.runtime_url}/search/",
                     json={
                         "query": query,
-                        "profile": "test_colpali",
+                        "profile": self.search_profile,
                         "top_k": 10,
                     },
                 )

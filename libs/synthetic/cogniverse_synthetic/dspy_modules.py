@@ -66,7 +66,13 @@ class ValidatedEntityQueryGenerator(dspy.Module):
 
             # Validate: at least one meaningful entity word must appear in query
             # (case-insensitive). Multi-word entities ("Neural Networks") match when
-            # any constituent word is present.
+            # any constituent word is present. DSPy may return None when the LM
+            # fails to produce the output field — treat as an invalid attempt.
+            if not result.query:
+                logger.debug(
+                    f"Attempt {attempt + 1}/{self.max_retries}: query is empty"
+                )
+                continue
             query_lower = result.query.lower()
             if any(word in query_lower for word in entity_words):
                 logger.debug(
@@ -84,8 +90,28 @@ class ValidatedEntityQueryGenerator(dspy.Module):
                 f"Query '{result.query}' does not contain any entities from {entity_list}"
             )
 
-        # After max retries, raise error instead of using fallback
-        raise ValueError(
-            f"Failed to generate query containing entities after {self.max_retries} attempts. "
-            f"Entities: {entity_list}, Last query: {result.query}"
+        # Retries exhausted — synthesize a deterministic query from the
+        # entities and topics so the pipeline still produces output when the
+        # LM is unreliable (e.g. small local models). Mark as fallback so
+        # downstream consumers can weight these examples accordingly.
+        logger.warning(
+            "Query validation failed after %d retries; emitting template fallback. "
+            "Entities: %s",
+            self.max_retries,
+            entity_list,
         )
+        topic_hint = topics.split(",")[0].strip() if topics else ""
+        entity_text = entity_list[0] if entity_list else "content"
+        fallback_query = (
+            f"find {topic_hint} about {entity_text}".strip()
+            if topic_hint
+            else f"find {entity_text}"
+        )
+        result = dspy.Prediction(
+            query=fallback_query,
+            reasoning="Template fallback after validation retries exhausted",
+        )
+        result._retry_count = self.max_retries
+        result._max_retries = self.max_retries
+        result._fallback_used = True
+        return result

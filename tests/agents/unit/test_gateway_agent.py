@@ -369,7 +369,7 @@ class TestProcessImpl:
 class TestTelemetrySpan:
     @pytest.mark.asyncio
     async def test_span_emitted(self, gateway_agent, mock_gliner_model):
-        """When telemetry_manager is set, _emit_gateway_span calls span()."""
+        """telemetry_manager set -> gateway AND routing spans emitted."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
@@ -383,15 +383,57 @@ class TestTelemetrySpan:
             GatewayInput(query="cooking videos", tenant_id="acme")
         )
 
-        mock_tm.span.assert_called_once()
-        call_kwargs = mock_tm.span.call_args
-        assert call_kwargs[0][0] == "cogniverse.gateway"
-        assert call_kwargs[1]["tenant_id"] == "acme"
-        attrs = call_kwargs[1]["attributes"]
-        assert attrs["gateway.query"] == "cooking videos"
-        assert attrs["gateway.complexity"] == "simple"
-        assert attrs["gateway.modality"] == "video"
-        assert attrs["gateway.routed_to"] == "search_agent"
+        # Gateway emits two spans: one for gateway-specific analysis,
+        # one for downstream routing evaluators/annotation that key off
+        # `cogniverse.routing`.
+        assert mock_tm.span.call_count == 2
+        span_names = [call.args[0] for call in mock_tm.span.call_args_list]
+        assert "cogniverse.gateway" in span_names
+        assert "cogniverse.routing" in span_names
+
+        gateway_call = next(
+            c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.gateway"
+        )
+        assert gateway_call.kwargs["tenant_id"] == "acme"
+        gw_attrs = gateway_call.kwargs["attributes"]
+        assert gw_attrs["gateway.query"] == "cooking videos"
+        assert gw_attrs["gateway.complexity"] == "simple"
+        assert gw_attrs["gateway.modality"] == "video"
+        assert gw_attrs["gateway.routed_to"] == "search_agent"
+
+    @pytest.mark.asyncio
+    async def test_routing_span_shape(self, gateway_agent, mock_gliner_model):
+        """Gateway's cogniverse.routing span uses the RoutingAgent key shape.
+
+        AnnotationAgent / RoutingEvaluator read `routing.chosen_agent`,
+        `routing.confidence`, `routing.query`, `routing.reasoning` — Phoenix
+        nests dot-prefixed keys into `attributes.routing = {...}`. This test
+        guards that shape so those consumers keep working.
+        """
+        mock_gliner_model.predict_entities.return_value = [
+            {"text": "video", "label": "video_content", "score": 0.92},
+        ]
+        mock_tm = MagicMock()
+        mock_tm.span.return_value.__enter__ = Mock(return_value=MagicMock())
+        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+        gateway_agent.telemetry_manager = mock_tm
+
+        await gateway_agent._process_impl(
+            GatewayInput(query="cooking videos", tenant_id="acme")
+        )
+
+        routing_call = next(
+            c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.routing"
+        )
+        assert routing_call.kwargs["tenant_id"] == "acme"
+        attrs = routing_call.kwargs["attributes"]
+        assert attrs["routing.query"] == "cooking videos"
+        assert attrs["routing.chosen_agent"] == "search_agent"
+        assert attrs["routing.recommended_agent"] == "search_agent"
+        assert isinstance(attrs["routing.confidence"], float)
+        assert attrs["routing.complexity"] == "simple"
+        assert attrs["routing.modality"] == "video"
+        assert attrs["routing.reasoning"]
 
     @pytest.mark.asyncio
     async def test_no_telemetry_manager(self, gateway_agent, mock_gliner_model):
