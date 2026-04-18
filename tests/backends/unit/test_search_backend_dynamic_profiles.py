@@ -181,6 +181,52 @@ def test_search_raises_when_profile_not_found():
         )
 
 
+def test_vespa_backend_add_profile_mirrors_to_owned_search_backend():
+    """`VespaBackend.add_profile` must keep config['profiles'] AND the
+    owned VespaSearchBackend's dict in sync. This is the layer
+    `get_search_backend('vespa')` actually returns — it extends
+    SearchBackend via the `Backend` union, and a default no-op override
+    would have silently dropped runtime profile additions.
+    """
+    from unittest.mock import MagicMock
+
+    from cogniverse_vespa.backend import VespaBackend
+
+    # Construct VespaBackend with minimum viable deps (no real Vespa).
+    backend_config = MagicMock()
+    backend_config.backend_type = "vespa"
+    backend_config.url = "http://localhost"
+    backend_config.port = 8080
+    backend_config.tenant_id = "t"
+    backend = VespaBackend(
+        backend_config=backend_config,
+        schema_loader=MagicMock(),
+        config_manager=MagicMock(),
+    )
+    # Simulate post-initialize state: config dict exists with profiles key.
+    backend.config = {"profiles": {}}
+
+    # Attach a fake owned search backend to prove delegation happens.
+    fake_inner = MagicMock()
+    fake_inner.add_profile = MagicMock()
+    fake_inner.remove_profile = MagicMock()
+    backend._vespa_search_backend = fake_inner
+
+    backend.add_profile("dyn", {"type": "memory", "schema_name": "dyn"})
+
+    assert backend.config["profiles"]["dyn"]["schema_name"] == "dyn"
+    assert backend.profiles["dyn"]["type"] == "memory"  # property reflects config
+    fake_inner.add_profile.assert_called_once_with(
+        "dyn", {"type": "memory", "schema_name": "dyn"}
+    )
+
+    backend.remove_profile("dyn")
+
+    assert "dyn" not in backend.config["profiles"]
+    assert "dyn" not in backend.profiles
+    fake_inner.remove_profile.assert_called_once_with("dyn")
+
+
 def test_search_uses_newly_added_profile():
     """Add a profile dynamically, then a search against it should pass
     past the profile-resolution phase (it may fail later for other reasons

@@ -142,18 +142,24 @@ def test_listener_exception_does_not_break_add_backend_profile(
     assert result.profile_name == "safe"
 
 
-def test_backend_registry_add_profile_skips_backend_without_method(
+def test_backend_registry_add_profile_swallows_backend_exceptions(
     clean_backend_registry,
 ):
-    """Backends predating add_profile should be skipped silently."""
-    legacy_backend = MagicMock(spec=[])  # no add_profile attribute
-    BackendRegistry._backend_instances.set("search_legacy", legacy_backend)
+    """If one backend's add_profile raises, others must still be updated."""
+    good = MagicMock()
+    good.add_profile = MagicMock()
+    bad = MagicMock()
+    bad.add_profile = MagicMock(side_effect=RuntimeError("boom"))
 
-    # Must not raise
-    updated = BackendRegistry.add_profile_to_backends(
-        "agent_memories", {"type": "memory"}
-    )
-    assert updated == 0
+    BackendRegistry._backend_instances.set("search_good", good)
+    BackendRegistry._backend_instances.set("search_bad", bad)
+
+    updated = BackendRegistry.add_profile_to_backends("p", {"type": "m"})
+
+    # Bad backend raised so counts as not updated, good counts as 1.
+    assert updated == 1
+    good.add_profile.assert_called_once()
+    bad.add_profile.assert_called_once()
 
 
 def test_backend_registry_counts_only_search_and_backend_caches(

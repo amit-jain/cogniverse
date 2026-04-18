@@ -1255,6 +1255,48 @@ class VespaBackend(Backend):
         # Basic health check
         return self.schema_manager is not None
 
+    # -----------------------------------------------------------------
+    # Runtime profile mutation (SearchBackend interface override)
+    # -----------------------------------------------------------------
+    # Keep self.config["profiles"] and the owned VespaSearchBackend's
+    # in-memory dict in sync so runtime-added profiles are visible to
+    # both the ingestion path (reads config directly) and the search
+    # path (reads via VespaSearchBackend.profiles).
+
+    def add_profile(
+        self, profile_name: str, profile_config: Dict[str, Any]
+    ) -> None:
+        """Register a profile at runtime; mirror into owned search backend."""
+        if hasattr(self, "config") and isinstance(self.config, dict):
+            profiles = self.config.setdefault("profiles", {})
+            profiles[profile_name] = dict(profile_config)
+        if self._vespa_search_backend is not None:
+            self._vespa_search_backend.add_profile(profile_name, profile_config)
+
+    def remove_profile(self, profile_name: str) -> None:
+        """Unregister a profile at runtime."""
+        if hasattr(self, "config") and isinstance(self.config, dict):
+            profiles = self.config.get("profiles")
+            if isinstance(profiles, dict):
+                profiles.pop(profile_name, None)
+        if self._vespa_search_backend is not None:
+            self._vespa_search_backend.remove_profile(profile_name)
+
+    @property
+    def profiles(self) -> Dict[str, Any]:
+        """Expose the live profiles dict the way VespaSearchBackend does.
+
+        The unified backend keeps profiles in ``self.config["profiles"]``
+        at initialize time; exposing them under ``self.profiles`` lets
+        callers (tests, introspection) use a single attribute name
+        across both VespaBackend and VespaSearchBackend.
+        """
+        if hasattr(self, "config") and isinstance(self.config, dict):
+            profiles = self.config.get("profiles")
+            if isinstance(profiles, dict):
+                return profiles
+        return {}
+
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """
         Get embedding requirements for a specific schema.
