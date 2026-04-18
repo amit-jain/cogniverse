@@ -13,7 +13,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
+
+from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,18 @@ class AudioEmbeddingGenerator:
     def __init__(
         self,
         clap_model: str = "laion/clap-htsat-unfused",
-        semantic_model: str = "sentence-transformers/all-mpnet-base-v2",
+        semantic_model: Optional[str] = None,
     ):
         """
         Initialize audio embedding generator
 
         Args:
             clap_model: CLAP model for acoustic embeddings (512-dim)
-            semantic_model: Sentence transformer for semantic embeddings (768-dim)
+            semantic_model: Override name for the semantic embedder. When
+                None, the shared ``get_semantic_embedder()`` factory picks
+                a default — remote Ollama (``nomic-embed-text``) when
+                ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
+                in-process ``all-mpnet-base-v2``.
         """
         self._clap_model_name = clap_model
         self._semantic_model_name = semantic_model
@@ -43,7 +48,10 @@ class AudioEmbeddingGenerator:
 
         logger.info("AudioEmbeddingGenerator initialized")
         logger.info(f"  Acoustic model: {clap_model}")
-        logger.info(f"  Semantic model: {semantic_model}")
+        logger.info(
+            "  Semantic model: %s",
+            semantic_model if semantic_model else "(resolved lazily via env)",
+        )
 
     @property
     def clap_model(self):
@@ -72,14 +80,21 @@ class AudioEmbeddingGenerator:
 
     @property
     def semantic_model(self):
-        """Lazy load semantic model"""
+        """Lazy-resolve the shared semantic embedder.
+
+        Returns a cached embedder — remote Ollama or local
+        SentenceTransformer — from the module-level factory. Every
+        agent that calls this shares one backend instance instead of
+        loading an independent ~400MB model per call site.
+        """
         if self._semantic_model is None:
-            logger.info(f"Loading semantic model: {self._semantic_model_name}")
             try:
-                self._semantic_model = SentenceTransformer(self._semantic_model_name)
-                logger.info("✅ Semantic model loaded")
+                self._semantic_model = get_semantic_embedder(
+                    model_name=self._semantic_model_name
+                )
+                logger.info("✅ Semantic embedder ready")
             except Exception as e:
-                logger.error(f"Failed to load semantic model: {e}")
+                logger.error(f"Failed to initialize semantic embedder: {e}")
                 raise
         return self._semantic_model
 

@@ -226,15 +226,21 @@ class DocumentAgent(
 
     @property
     def text_embedding_model(self):
-        """Lazy load text embedding model for text strategy"""
-        if self._text_embedding_model is None:
-            logger.info("Loading text embedding model...")
-            from sentence_transformers import SentenceTransformer
+        """Lazy-resolve the shared semantic embedder.
 
-            self._text_embedding_model = SentenceTransformer(
-                "sentence-transformers/all-mpnet-base-v2"
+        Delegates to the module-level factory so document and audio
+        agents share a single embedder — remote Ollama when
+        ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
+        in-process ``all-mpnet-base-v2``.
+        """
+        if self._text_embedding_model is None:
+            logger.info("Resolving text embedding model...")
+            from cogniverse_core.common.models.semantic_embedder import (
+                get_semantic_embedder,
             )
-            logger.info("✅ Text embedding model loaded")
+
+            self._text_embedding_model = get_semantic_embedder()
+            logger.info("✅ Text embedder ready")
         return self._text_embedding_model
 
     async def search_documents(

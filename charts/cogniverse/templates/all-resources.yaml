@@ -237,6 +237,17 @@ spec:
           {{- else }}
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
+        # Route semantic text embeddings through the shared Ollama service
+        # instead of loading ~400MB SentenceTransformer copies per agent.
+        # Defaults to the same LLM endpoint (Ollama serves both).
+        - name: COGNIVERSE_SEMANTIC_EMBED_URL
+          {{- if .Values.llm.external.enabled }}
+          value: {{ .Values.llm.external.url | quote }}
+          {{- else }}
+          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+          {{- end }}
+        - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
+          value: "nomic-embed-text"
         {{- if .Values.runtime.sandbox.enabled }}
         - name: COGNIVERSE_SANDBOX_ENABLED
           value: "true"
