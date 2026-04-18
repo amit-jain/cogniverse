@@ -213,6 +213,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
         """Process segments as individual documents."""
+        import gc
+
         video_id = video_data["video_id"]
         video_path = Path(video_data.get("video_path", ""))
 
@@ -263,6 +265,18 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # Feed to backend
                 if self._feed_document(doc):
                     documents_fed += 1
+
+                # Drop the per-segment embedding + document now so they don't
+                # pile up across the full segment loop — ColPali multi-vector
+                # output is ~370 KB/frame and the Document wraps it, easily a
+                # few hundred MB in aggregate on a long video.
+                del embeddings, doc
+
+                # Every 20 segments, force a cycle collection so generational
+                # GC reclaims any PyTorch wrapper objects and the CPU
+                # allocator can return unused slabs.
+                if (idx + 1) % 20 == 0:
+                    gc.collect()
 
             except Exception as e:
                 self.logger.error(f"Error processing segment {idx}: {e}")
@@ -317,10 +331,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 metadata={},
             )
 
-        # Stack embeddings
+        # Stack embeddings. vstack copies the inputs into a new contiguous
+        # array, so the per-segment arrays are immediately redundant —
+        # drop them to reclaim ~370 KB/frame × segment_count.
         combined_embeddings = (
             np.vstack(all_embeddings) if len(all_embeddings) > 1 else all_embeddings[0]
         )
+        all_embeddings.clear()
 
         # Create single document
         doc = self._create_combined_document(
@@ -560,17 +577,28 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error("Model or processor not loaded")
                 return None
 
-            # Load and process image
-            image = Image.open(frame_path).convert("RGB")
-
-            # Process image with model
-            batch_inputs = self.processor.process_images([image]).to(self.model.device)
+            # Context manager releases the decoded PIL buffer (~6 MB at 1080p)
+            # as soon as process_images copies pixel_values into a tensor.
+            # Without this, the PIL Image refcount keeps the decoded RGB bytes
+            # alive for the full segment loop and bloats the process by
+            # 6 MB × N_frames over an ingestion run.
+            with Image.open(frame_path) as image:
+                image = image.convert("RGB")
+                batch_inputs = self.processor.process_images([image]).to(
+                    self.model.device
+                )
 
             with torch.no_grad():
                 embeddings = self.model(**batch_inputs)
 
-            # Convert to numpy
             embeddings_np = embeddings.cpu().to(torch.float32).numpy()
+
+            # Drop the processor/model intermediate tensors before the next
+            # frame's forward pass so PyTorch's CPU caching allocator can
+            # reuse the slab. Without this the allocator holds per-frame
+            # activations (hundreds of MB for ColPali-family models) across
+            # the whole segment loop, accumulating into GB-scale bloat.
+            del batch_inputs, embeddings
 
             self.logger.info(
                 f"    🖼️ Generated embeddings for frame {frame_path.name}: shape={embeddings_np.shape}"
@@ -617,17 +645,23 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     self.logger.error("No frames extracted from chunk")
                     return None
 
-                # Process frames with ColQwen
                 batch_inputs = self.processor.process_images(frames).to(
                     self.model.device
                 )
+                # Release decoded RGB buffers (up to 10 × ~6 MB) now that
+                # process_images has copied them into pixel_values tensors.
+                frames.clear()
 
                 with torch.no_grad():
                     embeddings = self.model(**batch_inputs)
 
-                # Convert to numpy and average across frames
                 embeddings_np = embeddings.cpu().numpy()
-                return embeddings_np.mean(axis=0)  # Average across frames
+                result = embeddings_np.mean(axis=0)
+
+                # Drop tensors so the CPU allocator can reclaim activations
+                # before the caller moves on to the next chunk.
+                del batch_inputs, embeddings, embeddings_np
+                return result
 
             elif self.videoprism_loader:
                 # VideoPrism processing

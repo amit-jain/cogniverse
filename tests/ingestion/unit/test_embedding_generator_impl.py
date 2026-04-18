@@ -714,8 +714,14 @@ class TestEmbeddingGeneratorImpl:
         generator.processor = Mock()
         generator.model.device = "cpu"
 
-        # Mock image and processing
+        # Mock image and processing. Image.open is used as a context manager
+        # now (``with Image.open(...) as image:``) so the mock must support
+        # __enter__/__exit__; the converted image is what process_images sees.
         mock_image = Mock()
+        mock_image_open.return_value.__enter__ = Mock(
+            return_value=mock_image_open.return_value
+        )
+        mock_image_open.return_value.__exit__ = Mock(return_value=None)
         mock_image_open.return_value.convert.return_value = mock_image
 
         # Mock processor chain - use real dict for batch inputs
