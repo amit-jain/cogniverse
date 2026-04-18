@@ -249,6 +249,14 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
         pull_and_import_third_party(
             CLUSTER_NAME, values_file, skip_llm=llm_is_external,
         )
+    # 5c. Bootstrap secrets the chart references by name. Must happen
+    # BEFORE helm install so gated-model pods (e.g. inference.embed with
+    # google/embeddinggemma-300m) find hf-token at startup.
+    from cogniverse_cli.secrets import sync_hf_token_to_cluster
+
+    console.print("[cyan]Syncing cluster secrets...[/cyan]")
+    sync_hf_token_to_cluster(required=False)
+
     console.print("[cyan]Deploying Helm release...[/cyan]")
     try:
         helm_install(chart_path, values_file, set_values=set_values or None)
@@ -411,6 +419,29 @@ def graph_path(source: str, target: str, tenant: str | None, max_depth: int) -> 
 
     tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
     cmd_path(tenant_id, source, target, max_depth=max_depth)
+
+
+@cli.group()
+def secrets() -> None:
+    """Manage cluster secrets referenced by the Helm chart."""
+
+
+@secrets.command(name="sync")
+@click.option(
+    "--required/--optional", default=False,
+    help="Fail if the token is missing instead of warning.",
+)
+def secrets_sync(required: bool) -> None:
+    """Re-sync the hf-token Secret from local HuggingFace credentials.
+
+    Reads the token from HF_TOKEN, HUGGING_FACE_HUB_TOKEN, or
+    ~/.cache/huggingface/token (populated by `huggingface-cli login`)
+    and applies it as Secret/hf-token in the cogniverse namespace.
+    """
+    from cogniverse_cli.secrets import sync_hf_token_to_cluster
+
+    if not sync_hf_token_to_cluster(required=required) and required:
+        raise click.ClickException("Failed to sync hf-token")
 
 
 @cli.group()
