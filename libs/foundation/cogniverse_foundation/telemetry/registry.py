@@ -7,11 +7,44 @@ Core auto-discovers installed providers without hardcoded imports.
 
 import importlib.metadata
 import logging
+import os
 from typing import Any, Dict, List, Optional, Type
 
+from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+
+_DEFAULT_TENANT_CACHE_CAPACITY = 16
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        return max(1, int(os.environ.get(
+            "COGNIVERSE_TENANT_CACHE_CAPACITY",
+            _DEFAULT_TENANT_CACHE_CAPACITY,
+        )))
+    except (TypeError, ValueError):
+        return _DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def _on_provider_evicted(key: str, instance: TelemetryProvider) -> None:
+    """Close a provider's underlying transport when evicted from the LRU.
+
+    Phoenix/OTLP providers hold a gRPC channel plus an HTTP client. If
+    they expose ``close()`` or ``shutdown()``, call it so we release the
+    sockets instead of relying on GC to chase them down.
+    """
+    for method in ("close", "shutdown"):
+        closer = getattr(instance, method, None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:
+                logger.debug("Provider %s.%s() failed: %s", key, method, exc)
+            return
+    logger.debug("Evicted telemetry provider %s (no close method)", key)
 
 
 class TelemetryRegistry:
@@ -27,7 +60,13 @@ class TelemetryRegistry:
 
     _instance = None
     _providers: Dict[str, Type[TelemetryProvider]] = {}
-    _provider_instances: Dict[str, TelemetryProvider] = {}
+    # LRU-bounded per-tenant cache. Each Phoenix/OTLP instance keeps a
+    # gRPC channel + HTTP client open; an unbounded dict would leak one
+    # of each per test tenant for the life of the process.
+    _provider_instances: TenantLRUCache[TelemetryProvider] = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_provider_evicted,
+    )
     _entry_points_loaded = False
 
     def __new__(cls):
@@ -166,9 +205,10 @@ class TelemetryRegistry:
 
         # Check cache (per-tenant instances for isolation)
         instance_key = f"{name}_{tenant_id}"
-        if instance_key in cls._provider_instances:
+        cached = cls._provider_instances.get(instance_key)
+        if cached is not None:
             logger.debug(f"Returning cached telemetry provider: {instance_key}")
-            return cls._provider_instances[instance_key]
+            return cached
 
         # Create and initialize new instance
         provider_class = cls._providers[name]
@@ -182,8 +222,8 @@ class TelemetryRegistry:
         # Provider validates and interprets config keys
         instance.initialize(provider_config)
 
-        # Cache instance per tenant
-        cls._provider_instances[instance_key] = instance
+        # Cache instance per tenant (LRU eviction if over capacity)
+        cls._provider_instances.set(instance_key, instance)
         logger.info(f"Created telemetry provider: {instance_key}")
 
         return instance

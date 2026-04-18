@@ -16,7 +16,44 @@ os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
 
+from cogniverse_foundation.caching import TenantLRUCache
+
 logger = logging.getLogger(__name__)
+
+
+# Max number of distinct tenants whose Mem0 instances are kept warm in
+# this process. Each instance carries a Vespa client and an LLM config,
+# so an unbounded dict leaks ~50-200MB per tenant across long-running
+# suites. Override with COGNIVERSE_TENANT_CACHE_CAPACITY to widen the
+# working set in multi-tenant servers.
+_DEFAULT_TENANT_CACHE_CAPACITY = 16
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        return max(1, int(os.environ.get(
+            "COGNIVERSE_TENANT_CACHE_CAPACITY",
+            _DEFAULT_TENANT_CACHE_CAPACITY,
+        )))
+    except (TypeError, ValueError):
+        return _DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def _on_tenant_evicted(tenant_id: str, instance: "Mem0MemoryManager") -> None:
+    """Drop references the evicted instance held to Mem0/backend state.
+
+    Mem0.Memory keeps a reference to the vector store + LLM config. We
+    null those refs so the GC can reclaim them; actual network clients
+    release on the next cycle (pyvespa uses httpx.Client which closes
+    on deref).
+    """
+    try:
+        instance.memory = None
+        instance.config = None
+        instance._initialized = False
+        logger.info("Evicted Mem0MemoryManager for tenant %s", tenant_id)
+    except Exception as exc:
+        logger.debug("Mem0 eviction cleanup for %s: %s", tenant_id, exc)
 
 # Vespa standard ports — single source of truth for config port derivation.
 # Duplicated from cogniverse_vespa.config_utils to avoid cross-layer import
@@ -81,27 +118,27 @@ class Mem0MemoryManager:
     Each tenant gets dedicated Vespa schema: agent_memories_{tenant_id}
     """
 
-    # Per-tenant instances cache
-    _instances: Dict[str, "Mem0MemoryManager"] = {}
-    _instances_lock = None  # Will be initialized as threading.Lock()
+    # Per-tenant LRU cache. Bounded so a test suite that creates a fresh
+    # tenant per test (or a multi-tenant server with churn) can't push the
+    # working set past capacity without evicting the oldest tenant.
+    _instances: TenantLRUCache["Mem0MemoryManager"] = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_tenant_evicted,
+    )
 
     def __new__(cls, tenant_id: str):
-        """Per-tenant singleton pattern"""
-        import threading
+        """Per-tenant singleton pattern (LRU-bounded)."""
 
-        # Initialize lock on first call
-        if cls._instances_lock is None:
-            cls._instances_lock = threading.Lock()
+        def _build() -> "Mem0MemoryManager":
+            instance = super(Mem0MemoryManager, cls).__new__(cls)
+            instance._initialized = False
+            logger.info(
+                "Created new Mem0MemoryManager instance for tenant: %s",
+                tenant_id,
+            )
+            return instance
 
-        with cls._instances_lock:
-            if tenant_id not in cls._instances:
-                instance = super().__new__(cls)
-                instance._initialized = False
-                cls._instances[tenant_id] = instance
-                logger.info(
-                    f"Created new Mem0MemoryManager instance for tenant: {tenant_id}"
-                )
-            return cls._instances[tenant_id]
+        return cls._instances.get_or_set(tenant_id, _build)
 
     def __init__(self, tenant_id: str):
         """Initialize memory manager for specific tenant (only once per tenant)"""

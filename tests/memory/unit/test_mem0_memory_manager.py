@@ -31,6 +31,28 @@ class TestMem0MemoryManager:
         assert manager1 is not manager3
         assert manager2 is not manager3
 
+    def test_instances_cache_is_lru_bounded(self):
+        """A burst of unique tenants must stay within the cache capacity.
+
+        The unbounded dict pattern held every tenant instance forever,
+        driving OOM in long test runs. The LRU cache caps the working
+        set; the least-recently-used tenant is evicted when new ones
+        arrive.
+        """
+        from cogniverse_foundation.caching import TenantLRUCache
+
+        assert isinstance(Mem0MemoryManager._instances, TenantLRUCache)
+        capacity = Mem0MemoryManager._instances.capacity
+
+        Mem0MemoryManager._instances.clear()
+        for i in range(capacity * 3):
+            Mem0MemoryManager(tenant_id=f"burst-tenant-{i}")
+
+        assert len(Mem0MemoryManager._instances) == capacity
+        # Most recent `capacity` tenants must be present
+        for i in range(capacity * 3 - capacity, capacity * 3):
+            assert f"burst-tenant-{i}" in Mem0MemoryManager._instances
+
     def test_initialization(self, manager):
         """Test initial state"""
         assert manager.memory is None
