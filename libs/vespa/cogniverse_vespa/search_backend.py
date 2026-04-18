@@ -294,11 +294,16 @@ class VespaSearchBackend(SearchBackend):
         self._config_manager = config_manager
         self._schema_loader = schema_loader
 
+        # Lock guards runtime mutation of self.profiles / self.default_profiles
+        # via add_profile / remove_profile. Reads in get_search_results take the
+        # same lock so a concurrent add can't produce a torn read.
+        self._profiles_lock = threading.RLock()
+
         if config is not None:
             self.backend_url = config.get("url", "http://localhost")
             self.backend_port = config.get("port", 8080)
-            self.profiles = config.get("profiles", {})
-            self.default_profiles = config.get("default_profiles", {})
+            self.profiles = dict(config.get("profiles", {}))
+            self.default_profiles = dict(config.get("default_profiles", {}))
             self.schema_name = None
             self.profile = None
             self.query_encoder = query_encoder or config.get("query_encoder")
@@ -340,7 +345,8 @@ class VespaSearchBackend(SearchBackend):
         Called by backend registry after instantiation.
 
         Args:
-            config: Configuration with keys url, port, schema_name, profile, tenant_id, config_manager
+            config: Configuration with keys url, port, schema_name, profile,
+                profiles, default_profiles, tenant_id, config_manager
         """
         self.backend_url = config.get("url", "http://localhost")
         self.backend_port = config.get("port", 8080)
@@ -348,6 +354,21 @@ class VespaSearchBackend(SearchBackend):
         self.profile = config.get("profile")
         self.query_encoder = None
         self._config_manager = config.get("config_manager")
+
+        # Populate profiles/default_profiles from config. Earlier versions
+        # of initialize() dropped these on the floor, so any caller that
+        # constructed a backend with no-args and then called initialize()
+        # ended up with an empty profiles dict at query time.
+        backend_section = config.get("backend", {}) or {}
+        with self._profiles_lock:
+            self.profiles = dict(
+                config.get("profiles") or backend_section.get("profiles") or {}
+            )
+            self.default_profiles = dict(
+                config.get("default_profiles")
+                or backend_section.get("default_profiles")
+                or {}
+            )
 
         # Combine URL and port
         full_url = f"{self.backend_url}:{self.backend_port}"
@@ -365,8 +386,24 @@ class VespaSearchBackend(SearchBackend):
 
         logger.info(
             f"VespaSearchBackend initialized for schema '{self.schema_name}' "
-            f"with pool=True, metrics=True (query-time mode)"
+            f"with pool=True, metrics=True, {len(self.profiles)} profiles "
+            f"(query-time mode)"
         )
+
+    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
+        """Register a profile config at runtime so queries can target it.
+
+        Used by BackendRegistry fanout when ConfigManager.add_backend_profile
+        fires its change-listener — closes the gap where dynamically-created
+        profiles were only visible to ingestion, not search.
+        """
+        with self._profiles_lock:
+            self.profiles[profile_name] = dict(profile_config)
+
+    def remove_profile(self, profile_name: str) -> None:
+        """Unregister a profile from the in-memory dict. Idempotent."""
+        with self._profiles_lock:
+            self.profiles.pop(profile_name, None)
 
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
@@ -544,14 +581,19 @@ class VespaSearchBackend(SearchBackend):
         query_embeddings = query_dict.get("query_embeddings")
 
         # Phase 1: Profile Resolution
+        # Snapshot profiles+default_profiles under the lock so a concurrent
+        # add_profile / remove_profile can't produce a torn read here.
+        with self._profiles_lock:
+            profiles_snapshot = dict(self.profiles)
+            default_profiles_snapshot = dict(self.default_profiles)
         requested_profile = query_dict.get("profile")
 
         if requested_profile:
             # 1. Use explicitly requested profile
-            if requested_profile not in self.profiles:
+            if requested_profile not in profiles_snapshot:
                 raise ValueError(
                     f"Requested profile '{requested_profile}' not found. "
-                    f"Available profiles: {list(self.profiles.keys())}"
+                    f"Available profiles: {list(profiles_snapshot.keys())}"
                 )
             profile_name = requested_profile
             logger.info(f"[{correlation_id}] Using requested profile: {profile_name}")
@@ -560,7 +602,7 @@ class VespaSearchBackend(SearchBackend):
             # Get all profiles for this type
             type_profiles = {
                 name: config
-                for name, config in self.profiles.items()
+                for name, config in profiles_snapshot.items()
                 if config.get("type") == content_type
             }
 
@@ -572,7 +614,7 @@ class VespaSearchBackend(SearchBackend):
                 )
             elif len(type_profiles) > 1:
                 # 3. Check default_profiles
-                default_config = self.default_profiles.get(content_type, {})
+                default_config = default_profiles_snapshot.get(content_type, {})
                 profile_name = default_config.get("profile")
 
                 if not profile_name:
@@ -595,11 +637,11 @@ class VespaSearchBackend(SearchBackend):
                 # 4. No profiles for this type
                 raise ValueError(
                     f"No profiles found for type '{content_type}'. "
-                    f"Available types: {set(p.get('type') for p in self.profiles.values())}"
+                    f"Available types: {set(p.get('type') for p in profiles_snapshot.values())}"
                 )
 
-        # Get profile config
-        profile_config = self.profiles[profile_name]
+        # Get profile config from the same snapshot used above
+        profile_config = profiles_snapshot[profile_name]
 
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)

@@ -466,3 +466,102 @@ class TestMem0MemoryAwareMixinIntegration:
 
         # Cleanup
         agent.clear_memory()
+
+
+@pytest.mark.integration
+class TestMem0ProfileRegistrationIntegration:
+    """Regression guard: Mem0 must register agent_memories through
+    ConfigManager so the shared VespaSearchBackend learns about it.
+
+    Before the fix Mem0 only added the profile to a local config dict
+    handed to a tenant-specific ingestion backend. The shared search
+    backend kept its startup snapshot, so `Mem0.search()` on a fresh
+    tenant raised `ValueError: profile 'agent_memories' not found` —
+    under concurrent suite load the retry storm wedged the FastAPI
+    event loop and cascade-failed the rest of the suite.
+    """
+
+    def test_initialize_propagates_agent_memories_profile_to_search_backend(
+        self, shared_memory_vespa
+    ):
+        from pathlib import Path
+
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        Mem0MemoryManager._instances.clear()
+        BackendRegistry._backend_instances.clear()
+
+        config_store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=shared_memory_vespa["http_port"],
+        )
+        config_manager = ConfigManager(store=config_store)
+        config_manager.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=shared_memory_vespa["http_port"],
+            )
+        )
+
+        # Wire the listener the runtime main.py wires at startup.
+        def listener(event, name, cfg):
+            if event == "added" and cfg is not None:
+                BackendRegistry.add_profile_to_backends(name, cfg)
+            elif event == "removed":
+                BackendRegistry.remove_profile_from_backends(name)
+
+        config_manager.set_profile_change_listener(listener)
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+        # Construct a cached shared search backend BEFORE Mem0 init so we
+        # can observe the fanout landing in its profiles dict.
+        search_backend = BackendRegistry.get_instance().get_search_backend(
+            name="vespa",
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "config_port": shared_memory_vespa["config_port"],
+                    "port": shared_memory_vespa["http_port"],
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        # Sanity: fresh search backend doesn't know agent_memories yet.
+        # (It may carry other profiles pre-registered by the fixture; we
+        # only assert our target is absent.)
+        assert "agent_memories" not in search_backend.profiles
+
+        manager = Mem0MemoryManager(tenant_id="profile_propagation_tenant")
+        manager.initialize(
+            backend_host="http://localhost",
+            backend_port=shared_memory_vespa["http_port"],
+            backend_config_port=shared_memory_vespa["config_port"],
+            base_schema_name="agent_memories",
+            llm_model=get_llm_model(),
+            embedding_model="nomic-embed-text",
+            llm_base_url="http://localhost:11434/v1",
+            auto_create_schema=False,  # schema already deployed by fixture
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+        # The core assertion: agent_memories must now be visible to the
+        # shared search backend via the listener fanout. This is the
+        # wiring that was missing and caused the retry storm.
+        assert "agent_memories" in search_backend.profiles, (
+            "Mem0 init must register agent_memories profile through "
+            "ConfigManager so the listener fans it out to cached search "
+            "backends. Without this the search path never learns about "
+            "it and retries until the event loop wedges."
+        )
+        cached_profile = search_backend.profiles["agent_memories"]
+        assert cached_profile.get("schema_name") == "agent_memories"
+        assert cached_profile.get("type") == "memory"
+
+        config_manager.set_profile_change_listener(None)
+        BackendRegistry._backend_instances.clear()

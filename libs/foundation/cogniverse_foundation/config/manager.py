@@ -6,7 +6,7 @@ Provides unified interface for all configuration operations with caching.
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from cogniverse_foundation.config.agent_config import AgentConfig
 from cogniverse_foundation.config.unified_config import (
@@ -20,6 +20,12 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_sdk.interfaces.config_store import ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
+
+
+# Listener signature: (event_type, profile_name, profile_config_or_none)
+# event_type is "added" or "removed". profile_config is a dict when added,
+# None when removed. Listeners must not raise — we log and swallow.
+ProfileChangeListener = Callable[[str, str, Optional[Dict[str, Any]]], None]
 
 
 class ConfigManager:
@@ -43,6 +49,7 @@ class ConfigManager:
         self,
         store: ConfigStore,
         cache_size: int = 100,
+        profile_change_listener: Optional[ProfileChangeListener] = None,
     ):
         """
         Initialize configuration manager with required ConfigStore.
@@ -50,6 +57,15 @@ class ConfigManager:
         Args:
             store: ConfigStore implementation (REQUIRED, no fallback)
             cache_size: LRU cache size (number of configs per tenant)
+            profile_change_listener: Optional callable invoked when a
+                backend profile is added or removed. Signature
+                ``(event_type, profile_name, profile_config_or_none)``
+                where event_type is ``"added"`` or ``"removed"``. Used by
+                the runtime to propagate profile changes from the
+                ConfigStore into live `VespaSearchBackend` instances via
+                `BackendRegistry.add_profile_to_backends`. Kept as a
+                callback rather than a direct import so the foundation
+                layer doesn't depend on core.
 
         Raises:
             ValueError: If store is None
@@ -60,10 +76,43 @@ class ConfigManager:
         self.store = store
         self.cache_size = cache_size
         self._backend_lock = threading.Lock()
+        self._profile_change_listener = profile_change_listener
 
         logger.info(
-            f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}"
+            "ConfigManager initialized with %s, cache size: %d, "
+            "profile_change_listener=%s",
+            type(self.store).__name__,
+            cache_size,
+            "set" if profile_change_listener else "unset",
         )
+
+    def set_profile_change_listener(
+        self, listener: Optional[ProfileChangeListener]
+    ) -> None:
+        """Install or replace the profile-change listener.
+
+        Allows late wiring — the listener can be set after construction
+        (e.g., during runtime startup once `BackendRegistry` is ready).
+        """
+        self._profile_change_listener = listener
+
+    def _notify_profile_change(
+        self,
+        event_type: str,
+        profile_name: str,
+        profile_config: Optional[Dict[str, Any]],
+    ) -> None:
+        """Invoke the profile-change listener, swallowing any error."""
+        listener = self._profile_change_listener
+        if listener is None:
+            return
+        try:
+            listener(event_type, profile_name, profile_config)
+        except Exception as exc:
+            logger.warning(
+                "profile_change_listener(%s, %s) raised: %s",
+                event_type, profile_name, exc,
+            )
 
     # ========== System Configuration ==========
 
@@ -424,7 +473,14 @@ class ConfigManager:
             logger.info(
                 f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
             )
-            return profile
+
+        # Notify outside the lock to avoid holding _backend_lock across
+        # potentially slow listener work (e.g. backend dict updates).
+        profile_dict = (
+            profile.to_dict() if hasattr(profile, "to_dict") else dict(profile.__dict__)
+        )
+        self._notify_profile_change("added", profile.profile_name, profile_dict)
+        return profile
 
     def update_backend_profile(
         self,
@@ -543,7 +599,9 @@ class ConfigManager:
             logger.info(
                 f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
             )
-            return True
+        # Notify outside the lock so listeners can't deadlock on _backend_lock.
+        self._notify_profile_change("removed", profile_name, None)
+        return True
 
     # ========== Generic Configuration Access ==========
 

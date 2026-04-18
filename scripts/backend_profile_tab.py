@@ -385,33 +385,49 @@ def render_create_profile_form(manager, tenant_id: str):
             if model_specific:
                 profile_data["model_specific"] = model_specific
 
-            # Save profile
+            # Create via the admin HTTP API (consistent with deploy/delete
+            # paths in this file). Previously this went direct to
+            # ConfigManager with a bad signature and service="video_processing"
+            # while the runtime uses service="backend", so profiles created
+            # from the dashboard never showed up via `/admin/profiles`.
             try:
-                manager.add_backend_profile(
-                    tenant_id=tenant_id,
-                    profile_name=profile_name,
-                    config=profile_data,
-                    service="video_processing",
-                )
-                st.success(f"✅ Profile '{profile_name}' created successfully!")
-
-                # Deploy schema if requested
-                if deploy_schema:
-                    with st.spinner("Deploying schema to backend..."):
-                        deployment_result = deploy_schema_via_api(
-                            profile_name, tenant_id, force=False
+                api_url = get_runtime_api_url()
+                create_payload = {
+                    "tenant_id": tenant_id,
+                    "profile_name": profile_name,
+                    "type": profile_data["type"],
+                    "description": profile_data["description"],
+                    "schema_name": profile_data["schema_name"],
+                    "embedding_model": profile_data["embedding_model"],
+                    "pipeline_config": profile_data["pipeline_config"],
+                    "strategies": profile_data["strategies"],
+                    "embedding_type": profile_data["embedding_type"],
+                    "schema_config": profile_data["schema_config"],
+                    "model_specific": profile_data.get("model_specific") or {},
+                    "deploy_schema": bool(deploy_schema),
+                }
+                with httpx.Client(timeout=60.0) as client:
+                    resp = client.post(
+                        f"{api_url}/admin/profiles", json=create_payload
+                    )
+                if resp.status_code == 201:
+                    data = resp.json()
+                    st.success(f"✅ Profile '{profile_name}' created successfully!")
+                    if deploy_schema and data.get("schema_deployed"):
+                        st.success(
+                            f"✅ Schema deployed: {data.get('tenant_schema_name')}"
                         )
-
-                        if deployment_result["success"]:
-                            st.success(
-                                f"✅ Schema deployed: {deployment_result['tenant_schema_name']}"
-                            )
-                        else:
-                            st.error(
-                                f"❌ Schema deployment failed: {deployment_result['error']}"
-                            )
-
-                st.rerun()
+                    elif deploy_schema:
+                        st.warning(
+                            "Profile created but schema was not deployed — "
+                            "check runtime logs."
+                        )
+                    st.rerun()
+                else:
+                    detail = (
+                        resp.json().get("detail", resp.text) if resp.text else ""
+                    )
+                    st.error(f"❌ Failed to create profile (HTTP {resp.status_code}): {detail}")
             except Exception as e:
                 st.error(f"❌ Failed to create profile: {e}")
 

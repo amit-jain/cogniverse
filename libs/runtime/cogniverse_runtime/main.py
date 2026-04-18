@@ -167,6 +167,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
+    # Wire profile-change propagation: when /admin/profiles adds or removes
+    # a backend profile, push the update into live search-backend instances
+    # via BackendRegistry so the change is queryable without a pod restart.
+    def _profile_change_listener(
+        event: str, profile_name: str, profile_config
+    ) -> None:
+        if event == "added" and profile_config is not None:
+            BackendRegistry.add_profile_to_backends(profile_name, profile_config)
+        elif event == "removed":
+            BackendRegistry.remove_profile_from_backends(profile_name)
+
+    config_manager.set_profile_change_listener(_profile_change_listener)
     config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 

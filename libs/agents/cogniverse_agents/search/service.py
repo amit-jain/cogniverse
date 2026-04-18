@@ -65,7 +65,29 @@ class SearchService:
         logger.info("SearchService initialized (profile-agnostic)")
 
     def _get_profile_config(self, profile: str) -> Dict[str, Any]:
-        """Get profile configuration from backend config."""
+        """Get profile configuration from backend config.
+
+        Reads from ConfigManager at query time first so profiles added
+        via `POST /admin/profiles` or `ConfigManager.add_backend_profile`
+        after SearchService was constructed are visible. Falls back to
+        the startup snapshot in ``self.config`` if ConfigManager lookup
+        fails (keeps behavior for tests that don't wire one up fully).
+        """
+        try:
+            live = self.config_manager.get_backend_config(
+                tenant_id="default", service="backend"
+            )
+            live_profile = live.profiles.get(profile) if live else None
+            if live_profile is not None:
+                to_dict = getattr(live_profile, "to_dict", None)
+                return to_dict() if callable(to_dict) else dict(live_profile)
+        except Exception as exc:
+            logger.debug(
+                "Live profile lookup via ConfigManager failed for '%s' "
+                "(falling back to startup snapshot): %s",
+                profile, exc,
+            )
+
         backend_config = self.config.get("backend", {})
         profiles = backend_config.get("profiles", {})
         profile_config = profiles.get(profile)

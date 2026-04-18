@@ -373,6 +373,15 @@ def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False
 
 ### Profile Creation Flow
 
+Earlier versions of this doc stopped at persistence (step 5). A profile
+written to the ConfigStore wasn't yet visible to the running search
+backend — its `self.profiles` dict was a snapshot from pod startup, so
+`POST /search/?profile=...` against a newly-created profile raised
+`"profile not found"` until the pod restarted. Step 6 below is the
+in-memory propagation that closes that gap (implemented via
+`ConfigManager.profile_change_listener` → `BackendRegistry.add_profile_to_backends`
+→ `VespaSearchBackend.add_profile`).
+
 ```mermaid
 flowchart TB
     User["<span style='color:#000'>1. User fills form - Dashboard</span>"]
@@ -380,15 +389,17 @@ flowchart TB
     Router["<span style='color:#000'>3. Admin Router - Validate</span>"]
     ConfigMgr["<span style='color:#000'>4. ConfigManager - Lock/Read/Write</span>"]
     Store["<span style='color:#000'>5. ConfigStore - Version/Persist</span>"]
-    Release["<span style='color:#000'>6. Release Lock</span>"]
-    Response["<span style='color:#000'>7. 201 Created</span>"]
-    Success["<span style='color:#000'>8. Success Message</span>"]
+    Propagate["<span style='color:#000'>6. Propagate to cached search backends<br/>(profile_change_listener →<br/>BackendRegistry.add_profile_to_backends →<br/>VespaSearchBackend.add_profile)</span>"]
+    Release["<span style='color:#000'>7. Release Lock</span>"]
+    Response["<span style='color:#000'>8. 201 Created</span>"]
+    Success["<span style='color:#000'>9. Success Message</span>"]
 
     User --> API
     API --> Router
     Router --> ConfigMgr
     ConfigMgr --> Store
-    Store --> Release
+    Store --> Propagate
+    Propagate --> Release
     Release --> Response
     Response --> Success
 
@@ -397,11 +408,12 @@ flowchart TB
     style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ConfigMgr fill:#ffcc80,stroke:#ef6c00,color:#000
     style Store fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Propagate fill:#a5d6a7,stroke:#388e3c,color:#000
     style Release fill:#ffcc80,stroke:#ef6c00,color:#000
     style Response fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Success fill:#90caf9,stroke:#1565c0,color:#000
 
-    linkStyle 0,1,2,3,4,5,6 stroke:#000,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6,7 stroke:#000,stroke-width:2px
 ```
 
 ### Concurrent Updates Flow

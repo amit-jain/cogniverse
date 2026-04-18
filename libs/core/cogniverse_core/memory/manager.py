@@ -216,14 +216,49 @@ class Mem0MemoryManager:
             profiles = {}
 
         if base_schema_name not in profiles:
-            # Add minimal profile for agent_memories schema
-            profiles[base_schema_name] = {
+            # Minimal profile for agent_memories. Shape must match
+            # `BackendProfileConfig.to_dict()` (see unified_config.py:429) so
+            # it survives round-trip through ConfigStore unchanged.
+            memory_profile = {
                 "type": "memory",
                 "model": "nomic-embed-text",
+                "embedding_model": "nomic-embed-text",
                 "embedding_dims": 768,
                 "encoder": "ollama",
-                "strategy": "semantic_search",  # Default to semantic search for memories
+                "strategy": "semantic_search",
+                "schema_name": base_schema_name,
+                "embedding_type": "dense",
+                "schema_config": {"embedding_dims": 768},
             }
+            profiles[base_schema_name] = memory_profile
+
+            # Persist the profile through ConfigManager so the shared search
+            # backend picks it up via the profile_change_listener wired in
+            # main.py. Without this step the profile was only known to the
+            # tenant-specific ingestion backend — writes landed in Vespa but
+            # reads returned "profile not found" from the shared search cache.
+            try:
+                from cogniverse_foundation.config.unified_config import (
+                    BackendProfileConfig,
+                )
+
+                profile_config = BackendProfileConfig.from_dict(
+                    base_schema_name, memory_profile
+                )
+                config_manager.add_backend_profile(
+                    profile_config,
+                    tenant_id="default",
+                    service="backend",
+                )
+            except Exception as exc:
+                # Idempotent re-adds surface as store-level warnings but
+                # shouldn't fail Mem0 init. The in-process dict we just
+                # built is still used below for the ingestion backend.
+                logger.debug(
+                    "ConfigManager.add_backend_profile for '%s' raised "
+                    "(may be a harmless re-register): %s",
+                    base_schema_name, exc,
+                )
 
         config_backend = config.get("backend", {})
         # Strip url/port from config.json's backend section — the explicit

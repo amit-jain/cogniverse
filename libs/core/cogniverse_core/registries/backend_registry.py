@@ -400,6 +400,67 @@ class BackendRegistry:
         logger.info("Cleared all backend instances")
 
     @classmethod
+    def add_profile_to_backends(
+        cls, profile_name: str, profile_config: Dict[str, Any]
+    ) -> int:
+        """Fan a new profile out to every cached search backend that supports it.
+
+        Called by `ConfigManager.add_backend_profile` through its
+        `profile_change_listener` so runtime profile additions become
+        queryable without a pod restart. Backends that don't implement
+        `add_profile` are skipped (backward compatible with any backend
+        implementation predating this hook).
+
+        Returns:
+            Number of backends updated. Useful for logging / tests.
+        """
+        updated = 0
+        for key in cls._backend_instances.keys():
+            if not key.startswith("search_") and not key.startswith("backend_"):
+                continue
+            instance = cls._backend_instances.get(key)
+            if instance is None:
+                continue
+            add_profile = getattr(instance, "add_profile", None)
+            if callable(add_profile):
+                try:
+                    add_profile(profile_name, profile_config)
+                    updated += 1
+                except Exception as exc:
+                    logger.warning(
+                        "add_profile(%s) failed on backend %s: %s",
+                        profile_name, key, exc,
+                    )
+        if updated:
+            logger.info(
+                "Propagated profile '%s' to %d cached backend(s)",
+                profile_name, updated,
+            )
+        return updated
+
+    @classmethod
+    def remove_profile_from_backends(cls, profile_name: str) -> int:
+        """Remove a profile from every cached backend that supports it."""
+        updated = 0
+        for key in cls._backend_instances.keys():
+            if not key.startswith("search_") and not key.startswith("backend_"):
+                continue
+            instance = cls._backend_instances.get(key)
+            if instance is None:
+                continue
+            remove_profile = getattr(instance, "remove_profile", None)
+            if callable(remove_profile):
+                try:
+                    remove_profile(profile_name)
+                    updated += 1
+                except Exception as exc:
+                    logger.warning(
+                        "remove_profile(%s) failed on backend %s: %s",
+                        profile_name, key, exc,
+                    )
+        return updated
+
+    @classmethod
     def is_registered(cls, name: str, backend_type: str = "any") -> bool:
         """
         Check if a backend is registered.
