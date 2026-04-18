@@ -5,6 +5,8 @@ These tests verify the complete memory system works with real Vespa instance.
 Uses shared session-scoped Vespa container from conftest.py.
 """
 
+import uuid
+
 import pytest
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
@@ -481,9 +483,21 @@ class TestMem0ProfileRegistrationIntegration:
     event loop and cascade-failed the rest of the suite.
     """
 
-    def test_initialize_propagates_agent_memories_profile_to_search_backend(
+    def test_mem0_add_then_search_returns_the_memory_via_shared_backend(
         self, shared_memory_vespa
     ):
+        """Real round-trip: on a fresh tenant (no agent_memories profile
+        in the cached search backend), Mem0.initialize must register the
+        profile via ConfigManager so the shared search backend learns
+        about it; then add_memory + search_memory must return the
+        memory with matching content.
+
+        This is the bug that surfaced as the retry storm: before the
+        fix, Mem0's write path worked (writes landed in Vespa) but
+        search went through the shared VespaSearchBackend whose
+        profiles dict was a startup snapshot with no agent_memories
+        entry — every search raised 'profile not found' and retried.
+        """
         from pathlib import Path
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -507,7 +521,6 @@ class TestMem0ProfileRegistrationIntegration:
             )
         )
 
-        # Wire the listener the runtime main.py wires at startup.
         def listener(event, name, cfg):
             if event == "added" and cfg is not None:
                 BackendRegistry.add_profile_to_backends(name, cfg)
@@ -517,8 +530,8 @@ class TestMem0ProfileRegistrationIntegration:
         config_manager.set_profile_change_listener(listener)
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-        # Construct a cached shared search backend BEFORE Mem0 init so we
-        # can observe the fanout landing in its profiles dict.
+        # Build the shared search backend BEFORE Mem0 init — mirrors a
+        # pod that came up with no agent_memories profile at startup.
         search_backend = BackendRegistry.get_instance().get_search_backend(
             name="vespa",
             config={
@@ -531,12 +544,22 @@ class TestMem0ProfileRegistrationIntegration:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        # Sanity: fresh search backend doesn't know agent_memories yet.
-        # (It may carry other profiles pre-registered by the fixture; we
-        # only assert our target is absent.)
-        assert "agent_memories" not in search_backend.profiles
+        assert "agent_memories" not in search_backend.profiles, (
+            "Cold cached backend must NOT already know agent_memories — "
+            "otherwise we're not proving dynamic registration worked."
+        )
 
-        manager = Mem0MemoryManager(tenant_id="profile_propagation_tenant")
+        # Reuse `test_tenant` because that's the only tenant whose
+        # agent_memories_<tenant> schema the fixture actually deploys
+        # to Vespa. Using a brand-new tenant requires auto-deploy which
+        # currently fails in the fixture (it preserves the existing
+        # `agent_memories_test_tenant` schema via a parser that chokes
+        # on the fixture's own deployed schema — orthogonal pre-existing
+        # bug, not in scope for this test).
+        tenant_id = "test_tenant"
+        agent_name = f"propagation_agent_{uuid.uuid4().hex[:8]}"
+
+        manager = Mem0MemoryManager(tenant_id=tenant_id)
         manager.initialize(
             backend_host="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
@@ -545,23 +568,58 @@ class TestMem0ProfileRegistrationIntegration:
             llm_model=get_llm_model(),
             embedding_model="nomic-embed-text",
             llm_base_url="http://localhost:11434/v1",
-            auto_create_schema=False,  # schema already deployed by fixture
+            auto_create_schema=False,  # fixture pre-deployed the schema
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
 
-        # The core assertion: agent_memories must now be visible to the
-        # shared search backend via the listener fanout. This is the
-        # wiring that was missing and caused the retry storm.
-        assert "agent_memories" in search_backend.profiles, (
-            "Mem0 init must register agent_memories profile through "
-            "ConfigManager so the listener fans it out to cached search "
-            "backends. Without this the search path never learns about "
-            "it and retries until the event loop wedges."
+        # Assertion A: listener-fanout landed agent_memories on the
+        # shared backend's in-memory dict. Without this step, no amount
+        # of searching would work.
+        assert "agent_memories" in search_backend.profiles
+        assert search_backend.profiles["agent_memories"]["schema_name"] == (
+            "agent_memories"
         )
-        cached_profile = search_backend.profiles["agent_memories"]
-        assert cached_profile.get("schema_name") == "agent_memories"
-        assert cached_profile.get("type") == "memory"
 
+        # Real write: a unique memory that we can search for later.
+        unique_phrase = "Rosetta Stone hieroglyphs Champollion 1822 decipherment"
+        memory_id = manager.add_memory(
+            content=(
+                f"The user is researching the {unique_phrase} for a history paper."
+            ),
+            tenant_id=tenant_id,
+            agent_name=agent_name,
+            metadata={"category": "research_topic"},
+        )
+        assert memory_id is not None and isinstance(memory_id, str)
+
+        # Let Vespa indexing settle.
+        wait_for_vespa_indexing(delay=2)
+
+        # Real search: must come back with the memory containing our
+        # unique phrase. This is the path that used to raise 'profile
+        # not found' before the fix — now it must return content.
+        results = manager.search_memory(
+            query="Champollion deciphering hieroglyphs",
+            tenant_id=tenant_id,
+            agent_name=agent_name,
+            top_k=5,
+        )
+        assert len(results) > 0, (
+            "Mem0.search_memory returned zero hits — either profile "
+            "propagation regressed, Vespa isn't indexing, or the "
+            "embedder is returning vectors uncorrelated with the query."
+        )
+        found = any("champollion" in str(r).lower() for r in results)
+        assert found, (
+            f"Ingested memory about Champollion not retrievable by "
+            f"semantic search — got: {results!r}"
+        )
+
+        # Cleanup
+        try:
+            manager.clear_agent_memory(tenant_id, agent_name)
+        except Exception:
+            pass
         config_manager.set_profile_change_listener(None)
         BackendRegistry._backend_instances.clear()
