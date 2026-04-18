@@ -3,6 +3,21 @@
 global:
   storageClass: "local-path"
 
+# Mount the workspace libs into runtime/quality-monitor so code edits take
+# effect on pod restart without rebuilding the Docker image. The k3d
+# cluster is created with --volume $(pwd):/cogniverse-src so the
+# hostPath is already wired on the node.
+devMode:
+  enabled: true
+  hostPath: /cogniverse-src
+
+# Enable the dedicated vLLM embedding service — offloads semantic text
+# embedding (nomic-embed-text) from Ollama so the shared LLM endpoint
+# stays responsive under concurrent load.
+inference:
+  embed:
+    enabled: true
+
 vespa:
   replicaCount: 1
   service:

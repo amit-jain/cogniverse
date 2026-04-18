@@ -9,7 +9,7 @@ import pytest
 
 from cogniverse_core.common.models.semantic_embedder import (
     LocalSentenceTransformerEmbedder,
-    RemoteOllamaEmbedder,
+    RemoteOpenAIEmbedder,
     get_semantic_embedder,
     reset_semantic_embedder_cache,
 )
@@ -24,13 +24,13 @@ def _reset_cache():
 
 def test_remote_url_arg_selects_remote_backend():
     embedder = get_semantic_embedder(remote_url="http://fake.invalid:11434")
-    assert isinstance(embedder, RemoteOllamaEmbedder)
+    assert isinstance(embedder, RemoteOpenAIEmbedder)
 
 
 def test_env_var_selects_remote_backend(monkeypatch):
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://fake.invalid:11434")
     embedder = get_semantic_embedder()
-    assert isinstance(embedder, RemoteOllamaEmbedder)
+    assert isinstance(embedder, RemoteOpenAIEmbedder)
 
 
 def test_no_url_falls_back_to_local(monkeypatch):
@@ -56,21 +56,31 @@ def test_instances_cached_by_backend_and_model():
     assert c is not a
 
 
-def test_remote_encode_hits_ollama_api_embed(monkeypatch):
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434/", "nomic-embed-text")
-
+def _openai_embed_response(vectors: list[list[float]]):
+    """Build a MagicMock response matching the OpenAI /v1/embeddings shape."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
-        "embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        "data": [
+            {"embedding": v, "index": i, "object": "embedding"}
+            for i, v in enumerate(vectors)
+        ],
+        "model": "test-model",
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
     }
     mock_response.raise_for_status.return_value = None
+    return mock_response
 
+
+def test_remote_encode_hits_v1_embeddings():
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000/", "nomic-embed-text")
+
+    mock_response = _openai_embed_response([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     with patch.object(embedder._session, "post", return_value=mock_response) as mock_post:
         result = embedder.encode(["hello", "world"])
 
-    # Trailing slash stripped, correct endpoint
+    # Trailing slash stripped, OpenAI-compatible endpoint
     called_url = mock_post.call_args.args[0]
-    assert called_url == "http://fake.invalid:11434/api/embed"
+    assert called_url == "http://fake.invalid:8000/v1/embeddings"
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["model"] == "nomic-embed-text"
@@ -80,8 +90,27 @@ def test_remote_encode_hits_ollama_api_embed(monkeypatch):
     assert result.dtype == np.float32
 
 
+def test_remote_encode_preserves_order_when_backend_reorders():
+    """Some backends return out-of-order rows; we sort by index."""
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "data": [
+            {"embedding": [0.4, 0.5, 0.6], "index": 1},
+            {"embedding": [0.1, 0.2, 0.3], "index": 0},
+        ],
+    }
+    mock_response.raise_for_status.return_value = None
+    with patch.object(embedder._session, "post", return_value=mock_response):
+        result = embedder.encode(["first", "second"])
+
+    # Row 0 corresponds to "first" input regardless of backend ordering
+    np.testing.assert_allclose(result[0], [0.1, 0.2, 0.3])
+    np.testing.assert_allclose(result[1], [0.4, 0.5, 0.6])
+
+
 def test_remote_encode_empty_input_returns_empty_array():
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
     with patch.object(embedder._session, "post") as mock_post:
         result = embedder.encode([])
     mock_post.assert_not_called()
@@ -90,10 +119,8 @@ def test_remote_encode_empty_input_returns_empty_array():
 
 def test_remote_encode_returns_1d_for_single_string_input():
     """Match SentenceTransformer: str input -> (D,), list input -> (N, D)."""
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434", "nomic-embed-text")
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"embeddings": [[0.6, 0.8]]}
-    mock_response.raise_for_status.return_value = None
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    mock_response = _openai_embed_response([[0.6, 0.8]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         single = embedder.encode("hello")
         batch = embedder.encode(["hello"])
@@ -103,10 +130,8 @@ def test_remote_encode_returns_1d_for_single_string_input():
 
 
 def test_remote_encode_normalizes_when_requested():
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434", "nomic-embed-text")
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"embeddings": [[3.0, 4.0]]}
-    mock_response.raise_for_status.return_value = None
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         norm = embedder.encode("hello", normalize_embeddings=True)
     # L2-normalized [3,4] = [0.6, 0.8]
@@ -115,17 +140,15 @@ def test_remote_encode_normalizes_when_requested():
 
 
 def test_remote_encode_skips_normalize_when_not_requested():
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434", "nomic-embed-text")
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"embeddings": [[3.0, 4.0]]}
-    mock_response.raise_for_status.return_value = None
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         raw = embedder.encode("hello")
     np.testing.assert_allclose(raw, [3.0, 4.0], rtol=1e-5)
 
 
-def test_remote_encode_raises_when_ollama_returns_no_embeddings():
-    embedder = RemoteOllamaEmbedder("http://fake.invalid:11434", "nomic-embed-text")
+def test_remote_encode_raises_when_backend_returns_no_embeddings():
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
     mock_response = MagicMock()
     mock_response.json.return_value = {"error": "model not found"}
     mock_response.raise_for_status.return_value = None

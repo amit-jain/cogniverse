@@ -572,6 +572,60 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
+  # Dedicated semantic-embedding service. Splits embedding traffic off the
+  # shared Ollama pod (Ollama serializes requests per model, so embedding
+  # calls queue behind LLM token streams). vLLM's continuous batching
+  # absorbs concurrent requests; benchmark on M-series CPU showed ~10 rps
+  # at conc=8 vs Ollama's ~1 rps under load.
+  embed:
+    enabled: false
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    model: google/embeddinggemma-300m
+    dtype: float32
+    extraArgs:
+      - "--max-model-len"
+      - "2048"
+    # EmbeddingGemma is gated on HuggingFace. Create a k8s Secret with the
+    # token (key: HF_TOKEN) and set hfTokenSecret to its name; the chart
+    # wires it into the pod env as HF_TOKEN. Leave empty for ungated models.
+    hfTokenSecret: "hf-token"
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29003
+    # nomic-embed-text-v1.5 (137M) uses ~1.5-2 GiB under load; a bump to
+    # embedding-gemma-300m pushed peak to 4.1 GiB in our benchmark, so
+    # keep 6 GiB headroom by default so the pod doesn't OOM when swapped.
+    # requests == limits gives Guaranteed QoS so the scheduler reserves
+    # headroom and the pod isn't evicted under node memory pressure.
+    resources:
+      limits:
+        cpu: "4"
+        memory: "6Gi"
+      requests:
+        cpu: "4"
+        memory: "6Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 180
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 10
+
 # ===========================================
 # Messaging Gateway (Telegram/Slack)
 # ===========================================

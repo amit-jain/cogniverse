@@ -79,11 +79,14 @@ class LocalSentenceTransformerEmbedder(SemanticEmbedder):
         return self._model.encode(texts, **kwargs)
 
 
-class RemoteOllamaEmbedder(SemanticEmbedder):
-    """HTTP client targeting Ollama's ``/api/embed`` endpoint.
+class RemoteOpenAIEmbedder(SemanticEmbedder):
+    """HTTP client targeting an OpenAI-compatible ``/v1/embeddings`` endpoint.
 
-    Ollama is already running in the cluster with ``nomic-embed-text``
-    loaded for Mem0; reusing it keeps the runtime container lean.
+    Works against any server that speaks the OpenAI embeddings API shape:
+    vLLM (continuous batching, parallel requests), Ollama 0.5+,
+    text-embeddings-inference, Infinity. We default to this rather than
+    Ollama's native ``/api/embed`` so the same client works whether the
+    runtime points at a dedicated vLLM embed pod or a shared Ollama.
     """
 
     def __init__(self, base_url: str, model: str, timeout: float = 60.0):
@@ -106,22 +109,28 @@ class RemoteOllamaEmbedder(SemanticEmbedder):
             return np.zeros((0, 0), dtype=np.float32)
 
         resp = self._session.post(
-            f"{self._base_url}/api/embed",
+            f"{self._base_url}/v1/embeddings",
             json={"model": self._model, "input": items},
             timeout=self._timeout,
         )
         resp.raise_for_status()
-        data = resp.json()
-        embeddings = data.get("embeddings")
-        if embeddings is None:
+        payload = resp.json()
+
+        # OpenAI-compatible response: {"data": [{"embedding": [...], "index": i}, ...]}
+        rows = payload.get("data")
+        if not rows:
             raise RuntimeError(
-                f"Ollama /api/embed returned no embeddings; response={data!r}"
+                f"/v1/embeddings returned no embeddings; response={payload!r}"
             )
-        arr = np.asarray(embeddings, dtype=np.float32)
+        # Preserve input order (providers return "index" but often in-order already).
+        rows = sorted(rows, key=lambda r: r.get("index", 0))
+        arr = np.asarray(
+            [r["embedding"] for r in rows], dtype=np.float32
+        )
 
         # Call sites pass ``normalize_embeddings=True`` to match
-        # SentenceTransformer behavior. Ollama doesn't L2-normalize its
-        # output, so we do it here when requested.
+        # SentenceTransformer behavior. Some backends don't L2-normalize
+        # their output, so we do it here when requested.
         if kwargs.get("normalize_embeddings"):
             arr = _l2_normalize(arr)
 
@@ -165,7 +174,7 @@ def get_semantic_embedder(
         if cached is not None:
             return cached
         if remote_url:
-            embedder: SemanticEmbedder = RemoteOllamaEmbedder(remote_url, model_name)
+            embedder: SemanticEmbedder = RemoteOpenAIEmbedder(remote_url, model_name)
         else:
             embedder = LocalSentenceTransformerEmbedder(model_name)
         _cache[key] = embedder

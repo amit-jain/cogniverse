@@ -237,9 +237,16 @@ spec:
           {{- else }}
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
-        # Route semantic text embeddings through the shared Ollama service
-        # instead of loading ~400MB SentenceTransformer copies per agent.
-        # Defaults to the same LLM endpoint (Ollama serves both).
+        # Route semantic text embeddings to the dedicated vLLM embed pod
+        # when enabled (continuous batching, ~10 rps under load). Falls
+        # back to the shared Ollama endpoint when the dedicated pod is
+        # disabled.
+        {{- if .Values.inference.embed.enabled }}
+        - name: COGNIVERSE_SEMANTIC_EMBED_URL
+          value: "http://{{ $fullName }}-vllm-embed:{{ .Values.inference.embed.service.port }}"
+        - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
+          value: {{ .Values.inference.embed.model | quote }}
+        {{- else }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
           {{- if .Values.llm.external.enabled }}
           value: {{ .Values.llm.external.url | quote }}
@@ -248,6 +255,7 @@ spec:
           {{- end }}
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
           value: "nomic-embed-text"
+        {{- end }}
         {{- if .Values.runtime.sandbox.enabled }}
         - name: COGNIVERSE_SANDBOX_ENABLED
           value: "true"
@@ -952,6 +960,13 @@ spec:
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
         args:
           - {{ $cfg.model | quote }}
           - "--convert"
