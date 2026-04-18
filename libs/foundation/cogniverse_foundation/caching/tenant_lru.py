@@ -95,6 +95,20 @@ class TenantLRUCache(Generic[T]):
         with self._lock:
             return list(self._data.keys())
 
+    def copy(self) -> "TenantLRUCache[T]":
+        """Shallow copy: same capacity + on_evict, snapshot of current data.
+
+        Preserves LRU ordering. Added for dict-like save/restore patterns
+        in test fixtures.
+        """
+        with self._lock:
+            clone: "TenantLRUCache[T]" = TenantLRUCache(
+                capacity=self._capacity, on_evict=self._on_evict
+            )
+            for key, value in self._data.items():
+                clone._data[key] = value
+            return clone
+
     def _evict_over_capacity(self) -> None:
         evicted: list[tuple[str, T]] = []
         while len(self._data) > self._capacity:

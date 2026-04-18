@@ -8,11 +8,31 @@ modifying core code.
 
 import importlib
 import logging
+import os
 from typing import Any, Dict, Optional, Type
 
+from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        return max(1, int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)))
+    except (TypeError, ValueError):
+        return 16
+
+
+def _on_backend_evicted(key: str, instance: Any) -> None:
+    for method in ("close", "shutdown"):
+        closer = getattr(instance, method, None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:
+                logger.debug("Backend %s.%s() failed: %s", key, method, exc)
+            return
 
 
 class BackendRegistry:
@@ -27,7 +47,13 @@ class BackendRegistry:
     _ingestion_backends: Dict[str, Type[IngestionBackend]] = {}
     _search_backends: Dict[str, Type[SearchBackend]] = {}
     _full_backends: Dict[str, Type[Backend]] = {}
-    _backend_instances: Dict[str, Any] = {}
+    # Per-(backend_name, tenant) LRU cache. Each backend instance carries a
+    # pyvespa client with search buffers, so an unbounded dict leaks ~50MB
+    # per tenant through long-running tests.
+    _backend_instances: TenantLRUCache[Any] = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_backend_evicted,
+    )
 
     def __new__(cls):
         if cls._instance is None:
@@ -127,9 +153,10 @@ class BackendRegistry:
             instance_key = f"ingestion_{name}_{tenant_id}"
 
         # Check if instance already exists
-        if instance_key in cls._backend_instances:
+        cached = cls._backend_instances.get(instance_key)
+        if cached is not None:
             logger.debug(f"Returning cached backend: {instance_key}")
-            return cls._backend_instances[instance_key]
+            return cached
 
         # Try to auto-import if not registered
         if name not in cls._ingestion_backends:
@@ -200,8 +227,8 @@ class BackendRegistry:
             backend_init_config=backend_init_config,
         )
 
-        # Cache instance with tenant_id
-        cls._backend_instances[instance_key] = instance
+        # Cache instance with tenant_id (LRU eviction if over capacity)
+        cls._backend_instances.set(instance_key, instance)
         logger.info(f"Created and cached backend: {instance_key}")
 
         return instance
@@ -243,9 +270,10 @@ class BackendRegistry:
         instance_key = f"search_{name}"
 
         # Check if instance already exists
-        if instance_key in cls._backend_instances:
+        cached = cls._backend_instances.get(instance_key)
+        if cached is not None:
             logger.debug(f"Returning cached backend: {instance_key}")
-            return cls._backend_instances[instance_key]
+            return cached
 
         # Try to auto-import if not registered
         if name not in cls._search_backends:
@@ -320,8 +348,8 @@ class BackendRegistry:
             backend_init_config=backend_init_config,
         )
 
-        # Cache shared instance
-        cls._backend_instances[instance_key] = instance
+        # Cache shared instance (LRU eviction if over capacity)
+        cls._backend_instances.set(instance_key, instance)
         logger.info(f"Created and cached shared search backend: {instance_key}")
 
         return instance

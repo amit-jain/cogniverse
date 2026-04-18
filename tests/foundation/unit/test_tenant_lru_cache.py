@@ -127,6 +127,23 @@ def test_concurrent_get_or_set_builds_factory_once():
     assert len({id(v) for v in results}) == 1
 
 
+def test_copy_preserves_data_and_order_without_sharing_state():
+    cache: TenantLRUCache[int] = TenantLRUCache(capacity=4)
+    cache.set("a", 1)
+    cache.set("b", 2)
+    snapshot = cache.copy()
+
+    assert isinstance(snapshot, TenantLRUCache)
+    assert snapshot.keys() == cache.keys()
+    assert snapshot.get("a") == 1
+    assert snapshot.get("b") == 2
+
+    # Mutating the snapshot must not touch the original.
+    snapshot.set("c", 3)
+    assert "c" not in cache
+    assert "c" in snapshot
+
+
 def test_capacity_holds_under_burst_of_unique_tenants():
     """The raison d'être test: 100 unique tenants hitting a cap-of-8 cache
     leaves exactly 8 entries."""

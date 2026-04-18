@@ -8,11 +8,31 @@ modifying core code.
 
 import importlib.metadata
 import logging
+import os
 from typing import Any, Dict, Optional, Type
 
+from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
 
 logger = logging.getLogger(__name__)
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        return max(1, int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)))
+    except (TypeError, ValueError):
+        return 16
+
+
+def _on_store_evicted(key: str, instance: Any) -> None:
+    for method in ("close", "shutdown"):
+        closer = getattr(instance, method, None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:
+                logger.debug("Adapter store %s.%s() failed: %s", key, method, exc)
+            return
 
 
 class AdapterStoreRegistry:
@@ -30,7 +50,10 @@ class AdapterStoreRegistry:
 
     _instance = None
     _stores: Dict[str, Type[AdapterStore]] = {}
-    _store_instances: Dict[str, AdapterStore] = {}
+    _store_instances: TenantLRUCache[AdapterStore] = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_store_evicted,
+    )
     _entry_points_loaded = False
 
     def __new__(cls):
@@ -156,9 +179,10 @@ class AdapterStoreRegistry:
         )
 
         # Check cache
-        if cache_key in cls._store_instances:
+        cached = cls._store_instances.get(cache_key)
+        if cached is not None:
             logger.debug(f"Returning cached adapter store: {cache_key}")
-            return cls._store_instances[cache_key]
+            return cached
 
         # Create new instance
         store_class = cls._stores[name]
@@ -169,8 +193,8 @@ class AdapterStoreRegistry:
         else:
             instance = store_class()
 
-        # Cache instance
-        cls._store_instances[cache_key] = instance
+        # Cache instance (LRU eviction if over capacity)
+        cls._store_instances.set(cache_key, instance)
         logger.info(f"Created adapter store: {name}")
 
         return instance

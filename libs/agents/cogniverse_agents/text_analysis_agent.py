@@ -178,8 +178,24 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Per-tenant agent instances cache
-_agent_instances: Dict[str, TextAnalysisAgent] = {}
+# Per-tenant agent instances cache (LRU-bounded).
+# Each instance holds a compiled DSPy module + LM config, which is
+# non-trivial in memory across many tenants.
+import os
+
+from cogniverse_foundation.caching import TenantLRUCache
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        return max(1, int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)))
+    except (TypeError, ValueError):
+        return 16
+
+
+_agent_instances: TenantLRUCache[TextAnalysisAgent] = TenantLRUCache(
+    capacity=_tenant_cache_capacity(),
+)
 _config_manager: ConfigManager = None
 
 
@@ -218,12 +234,13 @@ def get_agent(tenant_id: str) -> TextAnalysisAgent:
             "ConfigManager not initialized. Call set_config_manager() during app startup."
         )
 
-    if tenant_id not in _agent_instances:
+    def _build() -> TextAnalysisAgent:
         logger.info(f"Creating new TextAnalysisAgent for tenant: {tenant_id}")
-        _agent_instances[tenant_id] = TextAnalysisAgent(
+        return TextAnalysisAgent(
             tenant_id=tenant_id, config_manager=_config_manager
         )
-    return _agent_instances[tenant_id]
+
+    return _agent_instances.get_or_set(tenant_id, _build)
 
 
 @app.post("/analyze")

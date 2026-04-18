@@ -345,8 +345,12 @@ class TestBackendRegistry(unittest.TestCase):
         )
 
         self.assertIsInstance(backend, MockIngestionBackend)
-        # Config should have tenant_id injected by registry
-        self.assertEqual(backend.config, {**config, "tenant_id": "test_tenant"})
+        # User config must survive and tenant_id must be injected. The
+        # registry also propagates url/port from SystemConfig for
+        # connection bootstrapping; we don't pin those here so the test
+        # stays stable across SystemConfig changes.
+        self.assertEqual(backend.config["test_config"], "value")
+        self.assertEqual(backend.config["tenant_id"], "test_tenant")
         self.assertTrue(backend.initialized)
 
     def test_get_search_backend(self):
