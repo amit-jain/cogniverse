@@ -556,13 +556,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # See: charts/cogniverse/templates/optimization-workflows.yaml
     # CLI: python -m cogniverse_runtime.optimization_cli --mode once
 
+    # 11. Start the InMemoryQueueManager cleanup loop. Every search / ingestion /
+    # mem0 operation creates a task queue holding up to max_buffer_size events
+    # (~1 KB each). Without this loop, queues live forever — the suite creates
+    # thousands over a run and the runtime OOMs on the accumulated buffers.
+    from cogniverse_core.events import get_queue_manager
+
+    queue_manager = get_queue_manager()
+    await queue_manager.start_cleanup_loop(interval_seconds=60)
+    logger.info("Event queue cleanup loop started")
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
-    # Add cleanup logic here if needed
+    await queue_manager.stop_cleanup_loop()
     logger.info("Cogniverse Runtime shut down successfully")
 
 

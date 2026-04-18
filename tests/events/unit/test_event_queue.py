@@ -553,6 +553,57 @@ class TestInMemoryQueueManager:
         assert stats["active_queues"] == 0
         assert stats["default_ttl_minutes"] == 30
 
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_removes_expired_queue_without_manual_call(
+        self, manager
+    ):
+        """Background cleanup loop drops expired queues on its own.
+
+        This is the regression guard for the OOM that accumulated because
+        ``start_cleanup_loop`` was defined but never invoked in the runtime
+        lifespan. Expired queues lived forever and the runtime crossed
+        its 32 GiB limit around the 34-minute mark of the e2e suite.
+        """
+        # Expired queue (ttl=0, inserted directly so create_queue's validation
+        # doesn't reject it) plus one active queue for a control assertion.
+        expired = InMemoryEventQueue(
+            task_id="expired_task",
+            tenant_id="tenant1",
+            ttl_minutes=0,
+        )
+        manager._queues["expired_task"] = expired
+        await manager.create_queue("live_task", "tenant1")
+
+        await manager.start_cleanup_loop(interval_seconds=1)
+        try:
+            # Two ticks of the 1s loop — first tick fires at t=1, second at t=2
+            # giving us a firm window for the expired queue to be reaped.
+            await asyncio.sleep(2.5)
+            assert "expired_task" not in manager._queues, (
+                "start_cleanup_loop did not reap an expired queue — "
+                "the runtime-lifespan wiring is broken and the OOM regression "
+                "will reappear."
+            )
+            assert "live_task" in manager._queues, (
+                "cleanup loop evicted a live queue — TTL semantics are wrong"
+            )
+        finally:
+            await manager.stop_cleanup_loop()
+
+        # Stop is idempotent and leaves the state consistent.
+        assert manager._cleanup_task is None
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_start_cleanup_loop_is_idempotent(self, manager):
+        """Calling start twice must not create two concurrent reapers."""
+        await manager.start_cleanup_loop(interval_seconds=60)
+        first_task = manager._cleanup_task
+        await manager.start_cleanup_loop(interval_seconds=60)
+        assert manager._cleanup_task is first_task
+        await manager.stop_cleanup_loop()
+
 
 class TestMultiTenantIsolation:
     """Test multi-tenant queue isolation"""
