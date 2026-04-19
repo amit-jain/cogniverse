@@ -569,8 +569,16 @@ class VespaSearchBackend(SearchBackend):
 
         # Extract parameters from query_dict
         query_text = query_dict.get("query")
-        if not query_text:
-            raise ValueError("query_dict must contain 'query' key with text query")
+        query_embeddings = query_dict.get("query_embeddings")
+        # Either text or pre-computed embeddings is sufficient. Mem0 in
+        # particular hands us a 768-dim embedding with an empty query string
+        # during its internal duplicate/context scans; forcing text here
+        # triggered a ValueError that Mem0 retried 3× per call, hanging the
+        # orchestrator's detailed_report path past the client timeout.
+        if not query_text and query_embeddings is None:
+            raise ValueError(
+                "query_dict must contain 'query' text or 'query_embeddings'"
+            )
 
         content_type = query_dict.get("type")
         if not content_type:
@@ -578,7 +586,6 @@ class VespaSearchBackend(SearchBackend):
 
         top_k = query_dict.get("top_k", 10)
         filters = query_dict.get("filters", {})  # Get filters from query_dict
-        query_embeddings = query_dict.get("query_embeddings")
 
         # Phase 1: Profile Resolution
         # Snapshot profiles+default_profiles under the lock so a concurrent

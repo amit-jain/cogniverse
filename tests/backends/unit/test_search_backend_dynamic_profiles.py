@@ -181,6 +181,54 @@ def test_search_raises_when_profile_not_found():
         )
 
 
+def test_search_accepts_empty_query_text_when_embeddings_provided():
+    """Mem0 invokes search with pre-computed embeddings and empty query text.
+
+    Regression guard: search_backend used to reject ``query=""`` with
+    ``"query_dict must contain 'query' key with text query"``. Mem0 retried
+    3× per call, and the orchestrator's detailed_report path hung past the
+    300s client timeout. The ``test_gateway_confidence_in_range`` e2e
+    test was the visible failure.
+    """
+    import numpy as np
+
+    backend = _make_backend({"known": {"type": "memory"}})
+    # Past profile resolution → profile validation passes. The next failure
+    # (strategy/schema lookup, backend HTTP, etc.) is irrelevant — the point
+    # is that the "query_dict must contain 'query' key" path MUST NOT fire.
+    try:
+        backend.search(
+            query_dict={
+                "query": "",
+                "type": "memory",
+                "profile": "known",
+                "tenant_id": "acme",
+                "query_embeddings": np.zeros(768, dtype=np.float32),
+            }
+        )
+    except ValueError as exc:
+        assert "must contain 'query'" not in str(exc), (
+            f"Empty query + embeddings still raises the old validation: {exc}"
+        )
+    except Exception:
+        # Any other exception is downstream of the validation we fixed.
+        pass
+
+
+def test_search_still_rejects_missing_text_and_embeddings():
+    """If caller supplies neither text nor embeddings, we must still fail loudly."""
+    backend = _make_backend({"known": {"type": "memory"}})
+    with pytest.raises(ValueError, match="query_embeddings"):
+        backend.search(
+            query_dict={
+                "query": "",
+                "type": "memory",
+                "profile": "known",
+                "tenant_id": "acme",
+            }
+        )
+
+
 def test_vespa_backend_add_profile_mirrors_to_owned_search_backend():
     """`VespaBackend.add_profile` must keep config['profiles'] AND the
     owned VespaSearchBackend's dict in sync. This is the layer
