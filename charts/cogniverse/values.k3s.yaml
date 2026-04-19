@@ -38,6 +38,27 @@ vespa:
     limits:
       cpu: "4"
       memory: "16Gi"
+  # Vespa config-server cold-start (bundle loading + ZK replay) easily
+  # runs 4-5 min on local disk. The chart default (delay=120s,
+  # failure=3) kills at ~210s and each restart replays state, making
+  # the next cycle even slower. Give the config-server a 7-min window
+  # on k3s.
+  livenessProbe:
+    httpGet:
+      path: /state/v1/health
+      port: 19071
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 10
+  readinessProbe:
+    httpGet:
+      path: /state/v1/health
+      port: 19071
+    initialDelaySeconds: 120
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 10
 
 runtime:
   replicaCount: 1
@@ -52,7 +73,7 @@ runtime:
   # for liveness, /health/live HTTP for readiness). Overriding periods here
   # for k3s so initial delay accounts for cold Ollama pulls.
   livenessProbe:
-    initialDelaySeconds: 120
+    initialDelaySeconds: 300
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 10
@@ -171,7 +192,10 @@ config:
       name: "Default Tenant"
 
 initJobs:
+  # One-shot bootstrap: deploys the base Vespa application package + schemas
+  # so runtime's startup probe of ``:8080/document/v1/config_metadata`` can
+  # succeed. Without this after a ZK wipe, :8080 never binds.
   schemaDeployment:
-    enabled: false  # Handled by E2E test fixtures
+    enabled: true
   modelPulling:
     enabled: false  # Handled by E2E test fixtures
