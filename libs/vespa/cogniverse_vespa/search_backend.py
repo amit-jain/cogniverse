@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import requests
 from vespa.application import Vespa
 
 from cogniverse_core.common.utils.output_manager import OutputManager
@@ -539,7 +540,23 @@ class VespaSearchBackend(SearchBackend):
 
         return packed
 
-    @retry_with_backoff
+    # Retry only for transient failures (network blips, Vespa hiccups).
+    # ValueErrors are permanent config problems — wrong content_type,
+    # missing profile, malformed inputs — and retrying them just
+    # multiplies the wasted latency. Previously every "No profiles found
+    # for type 'wiki'" from an empty wiki cache tripped 3 retries plus
+    # backoff (~5s each) through the orchestrator's LLM chain.
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=1.0,
+            exceptions=(
+                requests.RequestException,
+                ConnectionError,
+                TimeoutError,
+            ),
+        )
+    )
     def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """
         Search for documents using query dict format.

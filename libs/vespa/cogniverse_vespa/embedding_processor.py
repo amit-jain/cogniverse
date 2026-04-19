@@ -35,6 +35,16 @@ class VespaEmbeddingProcessor:
         Returns:
             Dict with processed embeddings ready for Vespa
         """
+        # Mem0's metadata-only updates flow through VespaBackend.update_document
+        # with a Document whose ``embeddings`` dict is empty — raw_embeddings
+        # arrives here as None. Returning None made the ingestion client do
+        # ``"embedding" in None`` and raise a TypeError that bubbled up as
+        # "argument of type 'NoneType' is not iterable". Return an empty dict
+        # instead so downstream ``in`` checks are False and no embedding
+        # fields are added to the Vespa put.
+        if raw_embeddings is None:
+            return {}
+
         if isinstance(raw_embeddings, np.ndarray):
             # Squeeze leading batch dimension: (1, N, D) → (N, D)
             if raw_embeddings.ndim == 3 and raw_embeddings.shape[0] == 1:

@@ -229,6 +229,40 @@ def test_search_still_rejects_missing_text_and_embeddings():
         )
 
 
+def test_search_does_not_retry_value_errors():
+    """``ValueError`` signals a permanent config problem (profile missing,
+    type unknown, bad inputs). The retry wrapper used to re-fire these 3×
+    per call with exponential backoff; under the orchestrator's wiki path
+    ('No profiles found for type wiki') that burned ~5 seconds per call
+    and accumulated to push the complex-query test past its client
+    timeout. Verify the retry wrapper no longer loops on ValueError.
+    """
+    backend = _make_backend({"known": {"type": "memory"}})
+
+    # Fire a search that will fail at profile-resolution (ValueError).
+    import time
+
+    start = time.monotonic()
+    try:
+        backend.search(
+            query_dict={
+                "query": "any",
+                "type": "video",  # no "video" profile registered
+                "tenant_id": "acme",
+            }
+        )
+    except ValueError:
+        pass
+    elapsed = time.monotonic() - start
+
+    # Retry defaults: 3 attempts × ≥1s initial_delay ≈ >3s total.
+    # Without retrying ValueError, the call returns immediately.
+    assert elapsed < 1.0, (
+        f"Search took {elapsed:.2f}s — retry wrapper is still looping on "
+        "ValueError when it should fail fast for permanent config errors."
+    )
+
+
 def test_vespa_backend_add_profile_mirrors_to_owned_search_backend():
     """`VespaBackend.add_profile` must keep config['profiles'] AND the
     owned VespaSearchBackend's dict in sync. This is the layer
