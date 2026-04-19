@@ -80,7 +80,7 @@ class TestTenantInstructions:
         queries an agent, checks the response is semantically closer to
         the instruction topic than a baseline without instructions.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
 
             baseline_resp = client.post(
@@ -192,7 +192,7 @@ class TestTenantMemories:
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
         # client timeout was tight.
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={
@@ -254,7 +254,7 @@ class TestTenantMemories:
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
         # client timeout was tight.
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             # Seed a strategy so we're not testing against empty state
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
@@ -280,7 +280,7 @@ class TestTenantMemories:
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
         # client timeout was tight.
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer dark mode for all dashboards"},
@@ -325,7 +325,7 @@ class TestAdminMemoryManagement:
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
         # client timeout was tight.
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer using FAISS for nearest neighbor search"},
@@ -346,7 +346,7 @@ class TestAdminMemoryManagement:
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
         # client timeout was tight.
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             client.post(
                 f"/admin/tenant/{TENANT_ID}/memories",
                 json={"text": "I prefer PostgreSQL over MySQL"},
@@ -672,7 +672,7 @@ class TestSearchBehavior:
 
     def test_text_analysis_produces_relevant_response(self):
         """Text analysis response should be semantically relevant to the query."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/text_analysis_agent/process",
                 json={

@@ -1505,7 +1505,7 @@ class TestStreamingEndpointFromDashboard:
         import json
         import uuid
 
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -1566,7 +1566,7 @@ class TestStreamingEndpointFromDashboard:
         import json
         import uuid
 
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,

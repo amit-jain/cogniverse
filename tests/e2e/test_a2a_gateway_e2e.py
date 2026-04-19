@@ -43,7 +43,7 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.693 (well above 0.4 threshold) on
         the deployed 7-label model.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -106,7 +106,7 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.444 (above 0.4 threshold) on the
         deployed 7-label model.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -165,7 +165,7 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.446 (above 0.4 threshold) on the
         deployed 7-label model.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -218,7 +218,7 @@ class TestGatewayComplexRouting:
         both video and document modalities which forces complexity regardless
         of GLiNER confidence.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -245,7 +245,7 @@ class TestGatewayComplexRouting:
         healthy.  If the orchestrator returns 500 (e.g. Ollama not loaded),
         we still verify the gateway classification was correct.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -291,7 +291,7 @@ class TestGatewayComplexRouting:
         """Queries with 'analyze'/'summarize' keywords should be complex
         regardless of modality confidence — the complexity detection
         checks for analysis verbs."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -325,7 +325,7 @@ class TestGatewayComplexRouting:
         """Same query should produce same classification twice."""
         query = "search for video content about AI"
         results = []
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             for _ in range(2):
                 resp = client.post(
                     "/agents/gateway_agent/process",
@@ -371,7 +371,7 @@ class TestGatewaySearchPipeline:
         deployed 7-label model, ensuring the gateway classifies it as simple
         and routes to search_agent rather than the orchestrator.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -409,7 +409,7 @@ class TestGatewaySearchPipeline:
         Query chosen for GLiNER score 0.444 (above 0.4 threshold) on the
         deployed 7-label model.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -475,7 +475,7 @@ class TestRoutingAgentThin:
         This verifies the full routing→gateway→search pipeline produces
         real search results with correct classification.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -514,7 +514,7 @@ class TestRoutingAgentThin:
     def test_routing_no_inline_entities(self):
         """Routing agent response must NOT have top-level entities or
         enhanced_query — those moved to dedicated A2A agents."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -543,7 +543,7 @@ class TestRoutingAgentThin:
 
     def test_routing_different_modality_routes_correctly(self):
         """Audio query through routing → gateway → audio_analysis_agent."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -569,7 +569,7 @@ class TestRoutingAgentThin:
 
         GLiNER score 0.423 on deployed model (above 0.4 threshold).
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -595,7 +595,7 @@ class TestRoutingAgentThin:
 
         GLiNER score 0.466 on deployed model (above 0.4 threshold).
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -637,7 +637,7 @@ class TestEntityExtractionAgent:
         - MIT (ORGANIZATION, confidence >0.8)
         - climate change (CONCEPT, confidence >0.8)
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
@@ -689,7 +689,7 @@ class TestEntityExtractionAgent:
 
         Must detect SPECIFIC entities by name, not just "at least one tech entity".
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
@@ -756,7 +756,7 @@ class TestQueryEnhancementAgent:
         "ML transformer videos" should expand "ML" to "machine learning"
         and produce query_variants for RRF fusion search.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/query_enhancement_agent/process",
                 json={
@@ -800,7 +800,7 @@ class TestQueryEnhancementAgent:
         Pass entities from a hypothetical entity extraction step and verify
         the enhancement agent processes them.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/query_enhancement_agent/process",
                 json={
@@ -877,7 +877,7 @@ class TestProfileSelectionAgent:
         "find basketball highlights" is a video query — should select a video
         profile from the 4 known profiles, with modality="video".
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/profile_selection_agent/process",
                 json={
@@ -967,7 +967,7 @@ class TestTelemetrySpans:
         from phoenix.client import Client as PhoenixClient
 
         # Run a query through the gateway
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={

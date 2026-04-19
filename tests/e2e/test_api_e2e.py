@@ -55,7 +55,7 @@ class TestRoutingPipeline:
 
     def test_routing_decision_structure(self):
         """Routing agent returns success via the gateway pipeline."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -97,7 +97,7 @@ class TestRoutingPipeline:
         agent response now has a gateway-style structure with downstream_result
         or orchestration_result.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -144,7 +144,7 @@ class TestRoutingPipeline:
             ), f"Routing returned unknown agent: {data['recommended_agent']!r}"
 
     def test_routing_executes_downstream(self):
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -197,7 +197,7 @@ class TestQueryEnhancementViaGateway:
 
     def test_gateway_processes_query_successfully(self):
         """Gateway pipeline processes queries without errors."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -214,7 +214,7 @@ class TestQueryEnhancementViaGateway:
 
     def test_gateway_classifies_entity_rich_queries(self):
         """Entity-rich queries are classified and routed by the gateway."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -282,7 +282,7 @@ class TestOrchestration:
     def test_complex_query_triggers_orchestration_or_downstream(self):
         """Complex queries route through the gateway to orchestration or
         direct downstream."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -304,7 +304,7 @@ class TestOrchestration:
 
         transport = httpx.HTTPTransport(retries=2)
         with httpx.Client(
-            base_url=RUNTIME, timeout=300.0, transport=transport
+            base_url=RUNTIME, timeout=900.0, transport=transport
         ) as client:
             resp1 = client.post(
                 "/agents/routing_agent/process",
@@ -371,7 +371,7 @@ class TestSearchAPI:
         )
 
     def test_search_with_explicit_profile(self):
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -391,7 +391,7 @@ class TestSearchAPI:
 
     def test_search_result_fields(self):
         """Verify search results contain expected content fields."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -415,7 +415,7 @@ class TestSearchAPI:
 
     def test_search_response_echoes_params(self):
         """Verify response includes the query, profile, and strategy sent."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -433,7 +433,7 @@ class TestSearchAPI:
         assert data["profile"] == PROFILE
 
     def test_search_with_different_strategy(self):
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/search/",
                 json={
@@ -658,7 +658,7 @@ class TestAgentOperations:
     )
     def test_agent_process_response_structure(self, agent_name, query):
         """Each agent returns status=success with agent name."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 f"/agents/{agent_name}/process",
                 json={
@@ -736,7 +736,7 @@ class TestSyntheticDataAPI:
 
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
                 json={
@@ -776,7 +776,7 @@ class TestSyntheticDataAPI:
 
     def test_generate_synthetic_data_cross_modal(self):
         """POST /synthetic/generate with cross_modal optimizer."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
                 json={
@@ -987,7 +987,7 @@ class TestAgentRegistryAndHealth:
 
     def test_search_agent_process(self):
         """Scenario 18 sub-test: Direct search agent process."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/search_agent/process",
                 json={
@@ -1031,7 +1031,7 @@ class TestA2AProtocol:
         )
 
     def test_a2a_single_turn(self):
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/a2a/",
                 json={
@@ -1062,7 +1062,7 @@ class TestA2AProtocol:
 
     def test_a2a_streaming_produces_sse_events(self):
         """message/stream returns SSE events with progress + final result."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with client.stream(
                 "POST",
                 "/a2a/",
@@ -1151,7 +1151,7 @@ class TestStreamingAllAgents:
     )
     def test_streaming_agent_returns_events(self, agent_name, query, expect_streaming):
         """message/stream returns SSE events for streaming-capable agents."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with client.stream(
                 "POST",
                 "/a2a/",
@@ -1213,7 +1213,7 @@ class TestOptimizationE2E:
 
     def test_record_examples_triggers_optimization(self):
         """POST optimize_routing with examples → optimization_triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -1244,7 +1244,7 @@ class TestOptimizationE2E:
 
     def test_auto_optimization_cycle_from_traces(self):
         """POST optimize_routing without examples → runs full cycle from traces."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/routing_agent/process",
                 json={
@@ -1291,7 +1291,7 @@ class TestOptimizationE2E:
 
     def test_route_after_optimization_succeeds(self):
         """Routing works after optimization was triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             # First trigger optimization
             client.post(
                 "/agents/routing_agent/process",
@@ -1458,7 +1458,7 @@ class TestImageIngestionAndSearch:
 
     def test_upload_image_and_search(self, real_image_path):
         """Upload real 1280x720 keyframe → ColPali embedding → search."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             self._deploy_schema_if_needed(client, "image_colpali_mv")
 
             with open(real_image_path, "rb") as f:
@@ -1511,7 +1511,7 @@ class TestAudioIngestionAndSearch:
         synthetic sine tone. Tests the audio pipeline: file discovery →
         embedding generation.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(extracted_audio_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",
@@ -1554,7 +1554,7 @@ class TestPDFIngestionAndSearch:
 
     def test_upload_pdf_processing(self, real_pdf_path):
         """Upload Video-ChatGPT paper → PDF text extraction → embedding."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_pdf_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",
@@ -1598,7 +1598,7 @@ class TestDocumentIngestionAndSearch:
 
     def test_upload_markdown_processing(self, real_document_path):
         """Upload real markdown doc → text extraction → GTE-ColBERT embedding."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",

@@ -38,7 +38,7 @@ def runtime_available() -> bool:
     # + agent registry lookups and can block behind uvicorn under LLM load,
     # giving false negatives that skip whole test files at collection time.
     try:
-        r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
+        r = httpx.get(f"{RUNTIME}/health/live", timeout=30.0)
         return r.status_code == 200
     except (httpx.ConnectError, httpx.ReadTimeout):
         return False

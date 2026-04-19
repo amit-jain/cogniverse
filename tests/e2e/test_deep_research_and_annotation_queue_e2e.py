@@ -91,7 +91,7 @@ class TestAnnotationQueueE2E:
         threshold (default 0.6). Without seeding, a fresh suite has no
         spans → empty queue → nothing to assign.
         """
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             # Seed: trigger several routing decisions on ambiguous queries
             # so Phoenix has cogniverse.routing spans in the lookback window.
             # The classifier emits lower confidence on short / vague text.
