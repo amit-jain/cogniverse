@@ -13,8 +13,10 @@ Features:
 - Cancellation of in-flight workflows
 """
 
+import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from enum import Enum
@@ -44,6 +46,53 @@ if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
+
+
+# Module-level shared HTTP client. httpx.AsyncClient holds a connection
+# pool, DNS resolver state and async dispatch workers; creating a fresh
+# one per sub-agent call turns each orchestration into 5+ client spin-ups
+# that stack thread/socket pressure across concurrent orchestrations.
+# The client is lazily initialised per running event loop — at test time
+# the loop gets torn down between sessions, so a cached client bound to
+# a dead loop would wedge; keying by id(loop) avoids that.
+_HTTP_CLIENT_TIMEOUT = httpx.Timeout(240.0, connect=10.0)
+_http_clients: Dict[int, httpx.AsyncClient] = {}
+_http_clients_lock = asyncio.Lock()
+
+
+async def _get_http_client() -> httpx.AsyncClient:
+    """Return a loop-scoped shared AsyncClient, building on first use."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    client = _http_clients.get(key)
+    if client is not None and not client.is_closed:
+        return client
+    async with _http_clients_lock:
+        client = _http_clients.get(key)
+        if client is not None and not client.is_closed:
+            return client
+        client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
+        _http_clients[key] = client
+        return client
+
+
+# Cap concurrent orchestrations. Each complex query fans out to 5+
+# sub-agent HTTP calls; without a cap, a handful of concurrent complex
+# queries saturates both the shared httpx pool and the runtime's
+# FastAPI worker pool, starving /health/live past the readiness probe.
+_ORCH_CONCURRENCY = int(os.environ.get("COGNIVERSE_ORCHESTRATION_CONCURRENCY", "4"))
+_orch_semaphores: Dict[int, asyncio.Semaphore] = {}
+
+
+def _get_orchestration_semaphore() -> asyncio.Semaphore:
+    """Return a loop-scoped semaphore (see httpx client comment for why)."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    sem = _orch_semaphores.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(_ORCH_CONCURRENCY)
+        _orch_semaphores[key] = sem
+    return sem
 
 
 class OrchestratorInput(AgentInput):
@@ -437,6 +486,25 @@ class OrchestratorAgent(
                 execution_summary="No execution performed",
             )
 
+        # Bound concurrent orchestrations — each fans out to 5+ sub-agent
+        # calls, and unrestricted concurrency saturates the shared httpx
+        # pool, the FastAPI worker pool, and the event loop. Waiters queue
+        # here instead of stacking load on downstream services.
+        sem = _get_orchestration_semaphore()
+        async with sem:
+            return await self._process_impl_locked(
+                input, workflow_id, query, tenant_id, session_id
+            )
+
+    async def _process_impl_locked(
+        self,
+        input: "OrchestratorInput",
+        workflow_id: str,
+        query: str,
+        tenant_id: str,
+        session_id: Optional[str],
+    ) -> "OrchestratorOutput":
+        """Orchestration body — runs under ``_orch_semaphores`` cap."""
         start_time = time.monotonic()
 
         # Lazy memory initialization for this tenant
@@ -806,19 +874,13 @@ class OrchestratorAgent(
                         "context": context,
                         **agent_input,
                     }
-                    # 60s was too tight for complex downstream agents like
-                    # detailed_report_agent that make multiple LLM calls on
-                    # local Ollama; the timeout fired, str(httpx.ReadTimeout)
-                    # returned "", and the orchestrator logged an empty
-                    # "Agent X failed:" that hid the actual cause. 240s gives
-                    # multi-LLM chains room while still bounding the step.
-                    async with httpx.AsyncClient(timeout=240.0) as http_client:
-                        response = await http_client.post(
-                            f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
-                            json=payload,
-                        )
-                        response.raise_for_status()
-                        result = response.json()
+                    http_client = await _get_http_client()
+                    response = await http_client.post(
+                        f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    result = response.json()
 
                     # Emit completion event
                     self.emit_progress(

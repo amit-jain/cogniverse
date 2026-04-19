@@ -295,9 +295,6 @@ class TestOrchestratorAgent:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test query",
@@ -320,8 +317,8 @@ class TestOrchestratorAgent:
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             results = await orchestrator_agent._execute_plan(plan)
 
@@ -358,9 +355,6 @@ class TestOrchestratorAgent:
         """Test execution when HTTP call to agent raises exception"""
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=ConnectionError("Agent failed"))
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test query",
@@ -377,8 +371,8 @@ class TestOrchestratorAgent:
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             results = await orchestrator_agent._execute_plan(plan)
 
@@ -399,9 +393,6 @@ class TestOrchestratorAgent:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout(""))
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test query",
@@ -418,8 +409,8 @@ class TestOrchestratorAgent:
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             results = await orchestrator_agent._execute_plan(plan)
 
@@ -449,13 +440,10 @@ class TestOrchestratorAgent:
         }
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator_agent._process_impl(
                 OrchestratorInput(query="Show me machine learning videos")
@@ -579,9 +567,6 @@ class TestOrchestratorStreaming:
         mock_response.json.return_value = {"status": "success", "result": "ok"}
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         plan = OrchestrationPlan(
             query="test",
@@ -598,8 +583,8 @@ class TestOrchestratorStreaming:
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator_agent._execute_plan(plan)
 
