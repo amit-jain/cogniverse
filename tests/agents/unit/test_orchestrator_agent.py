@@ -387,6 +387,51 @@ class TestOrchestratorAgent:
         assert "Agent failed" in results["search_agent"]["message"]
 
     @pytest.mark.asyncio
+    async def test_execute_plan_empty_str_exception_includes_type(
+        self, orchestrator_agent
+    ):
+        """Empty-``str()`` exceptions (e.g. ``httpx.ReadTimeout()``) used to
+        log ``"Agent X failed:"`` with no context. The enriched handler
+        must surface the exception type in both the log and the returned
+        error message so timeouts don't look identical to other failures.
+        """
+        import httpx
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        mock_cm = Mock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        plan = OrchestrationPlan(
+            query="test query",
+            steps=[
+                AgentStep(
+                    agent_name="search_agent",
+                    input_data={"query": "test query"},
+                    depends_on=[],
+                    reasoning="Search",
+                )
+            ],
+            parallel_groups=[],
+            reasoning="Test plan",
+        )
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+            return_value=mock_cm,
+        ):
+            results = await orchestrator_agent._execute_plan(plan)
+
+        assert results["search_agent"]["status"] == "error"
+        # Old behavior: message == "" for empty-str exceptions.
+        # New behavior: message surfaces the exception type.
+        assert "ReadTimeout" in results["search_agent"]["message"], (
+            "Empty-str exception should still carry the type name in the "
+            f"returned error, got {results['search_agent']['message']!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_process_full_workflow(self, orchestrator_agent):
         """Test complete orchestration workflow"""
         orchestrator_agent.dspy_module.forward = Mock(

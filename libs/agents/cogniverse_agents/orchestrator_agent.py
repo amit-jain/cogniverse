@@ -806,7 +806,13 @@ class OrchestratorAgent(
                         "context": context,
                         **agent_input,
                     }
-                    async with httpx.AsyncClient(timeout=60.0) as http_client:
+                    # 60s was too tight for complex downstream agents like
+                    # detailed_report_agent that make multiple LLM calls on
+                    # local Ollama; the timeout fired, str(httpx.ReadTimeout)
+                    # returned "", and the orchestrator logged an empty
+                    # "Agent X failed:" that hid the actual cause. 240s gives
+                    # multi-LLM chains room while still bounding the step.
+                    async with httpx.AsyncClient(timeout=240.0) as http_client:
                         response = await http_client.post(
                             f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
                             json=payload,
@@ -825,12 +831,18 @@ class OrchestratorAgent(
                     )
                     return agent_name, result
                 except Exception as e:
+                    # Always report the exception TYPE — httpx.ReadTimeout
+                    # and friends have empty str() and used to show as
+                    # "failed: " with no context, making every failure look
+                    # identical in the logs.
+                    err_detail = f"{type(e).__name__}: {e}" if str(e) else repr(e)
                     logger.error(
-                        f"Agent {agent_name} at {agent_endpoint.url} failed: {e}"
+                        f"Agent {agent_name} at {agent_endpoint.url} failed: "
+                        f"{err_detail}"
                     )
                     return agent_name, {
                         "status": "error",
-                        "message": str(e),
+                        "message": err_detail,
                     }
 
             # Execute all ready steps concurrently
