@@ -223,6 +223,40 @@ class TestWikiIndex:
 
 
 @pytest.mark.unit
+class TestWikiManagerSchemaValidation:
+    """Guard against the regression where ``main.py`` constructed
+    ``schema_name=f"wiki_pages_{tenant_id}"`` without sanitizing the colon
+    in tenant_ids like ``"acme:production"``. Every feed call then hit
+    Vespa's /document/v1 URL parser with a colon in the schema segment
+    and returned 400 "Illegal key-value pair". The constructor now fails
+    fast when handed a colon-containing schema_name.
+    """
+
+    def test_colon_in_schema_name_rejected_at_construction(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        with pytest.raises(ValueError, match="contains a colon"):
+            WikiManager(
+                backend=MagicMock(),
+                tenant_id="acme:production",
+                schema_name="wiki_pages_acme:production",
+            )
+
+    def test_sanitized_schema_name_accepted(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        mgr = WikiManager(
+            backend=MagicMock(),
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+        # tenant_id may keep its colon (it's only used for labels and
+        # YQL-quoted queries); schema_name is what lands in URLs.
+        assert mgr._tenant_id == "acme:production"
+        assert mgr._schema_name == "wiki_pages_acme_production"
+
+
+@pytest.mark.unit
 class TestAutoFileThreshold:
     def _make_manager(self):
         from cogniverse_agents.wiki.wiki_manager import WikiManager

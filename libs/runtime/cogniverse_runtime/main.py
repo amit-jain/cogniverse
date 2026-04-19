@@ -435,10 +435,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
                 )
 
+            # Colons are reserved in Vespa's /document/v1 URL segments
+            # (id:namespace:doctype::docid format). A tenant_id like
+            # "flywheel_org:production" produced schema_name
+            # "wiki_pages_flywheel_org:production" and every feed call
+            # returned 400 "Illegal key-value pair 'production'".
+            # schema_registry.deploy_schema sanitizes internally the same
+            # way, so both sides line up on the underscore form.
             mgr = WikiManager(
                 backend=wiki_backend,
                 tenant_id=tenant_id,
-                schema_name=f"wiki_pages_{tenant_id}",
+                schema_name=wiki_backend.get_tenant_schema_name(
+                    tenant_id, "wiki_pages"
+                ),
             )
             _wiki_managers[tenant_id] = mgr
             return mgr

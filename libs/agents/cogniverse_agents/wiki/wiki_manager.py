@@ -27,8 +27,19 @@ class WikiManager:
             backend: VespaSearchBackend instance (provides get_document, search).
             tenant_id: Tenant identifier (e.g. "acme:production").
             schema_name: Vespa schema name for this tenant's wiki pages
-                         (e.g. "wiki_pages_acme_production").
+                         (e.g. "wiki_pages_acme_production"). Must NOT contain
+                         colons — Vespa's /document/v1 URL uses ':' as a path
+                         delimiter, so colons in the schema segment produce
+                         "Illegal key-value pair" 400s on every feed. Use
+                         ``backend.get_tenant_schema_name(tenant_id, base)``
+                         to get the sanitized form.
         """
+        if ":" in schema_name:
+            raise ValueError(
+                f"schema_name '{schema_name}' contains a colon — Vespa's "
+                "/document/v1 URL cannot parse it. Pass a sanitized schema "
+                "name (tenant_id's colon already replaced with underscore)."
+            )
         self._backend = backend
         self._tenant_id = tenant_id
         self._schema_name = schema_name
