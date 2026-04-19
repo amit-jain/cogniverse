@@ -24,6 +24,7 @@ from cogniverse_runtime.config_loader import get_config_loader
 from cogniverse_runtime.routers import (
     admin,
     agents,
+    debug,
     events,
     graph,
     health,
@@ -643,6 +644,7 @@ app.include_router(synthetic_router, tags=["synthetic-data"])
 app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
+app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 
 
 @app.get("/")

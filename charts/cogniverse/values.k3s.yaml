@@ -75,6 +75,9 @@ runtime:
     limits:
       cpu: "16"
       memory: "40Gi"
+  # Turn on POST /admin/debug/memsnap for the dev cluster. Off in prod.
+  env:
+    COGNIVERSE_DEBUG_MEM: "1"
   # Host-mode OpenShell sandbox: developer starts `openshell gateway start
   # --port 19091` on the host, then `cogniverse sandbox sync` stores the
   # mTLS certs + metadata as `openshell-mtls` / `openshell-metadata` in the
