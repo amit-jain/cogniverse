@@ -110,13 +110,22 @@ class WikiManager:
 
         Returns a list of dicts with doc_id, title, content, page_type, score.
         """
+        import numpy as np
+
+        query_vec = np.asarray(self._generate_embedding(query), dtype=np.float32)
         try:
+            # ``hybrid`` combines closeness(embedding) with bm25(title/content).
+            # Gives usable scores on the current backend whether or not the
+            # nearestNeighbor YQL fast path fires for this schema.
             results = self._backend.search(
                 {
                     "query": query,
                     "type": "wiki",
                     "top_k": top_k,
                     "schema": self._schema_name,
+                    "tenant_id": self._tenant_id,
+                    "strategy": "hybrid",
+                    "query_embeddings": query_vec,
                 }
             )
         except Exception:
@@ -186,6 +195,8 @@ class WikiManager:
                     "type": "wiki",
                     "top_k": 500,
                     "schema": self._schema_name,
+                    "tenant_id": self._tenant_id,
+                    "strategy": "semantic_search",
                 }
             )
         except Exception:
@@ -382,6 +393,8 @@ class WikiManager:
                     "type": "wiki",
                     "top_k": 500,
                     "schema": self._schema_name,
+                    "tenant_id": self._tenant_id,
+                    "strategy": "semantic_search",
                 }
             )
         except Exception:
@@ -478,19 +491,15 @@ class WikiManager:
             logger.exception("Failed to feed wiki page %s", page.doc_id)
 
     def _generate_embedding(self, text: str) -> List[float]:
-        """Generate a text embedding via Ollama nomic-embed-text.
+        """Return a 768-dim text embedding via the shared SemanticEmbedder."""
+        from cogniverse_core.common.models.semantic_embedder import (
+            get_semantic_embedder,
+        )
 
-        Falls back to a zero vector on any error so that feed operations are
-        never blocked by embedding failures.
-        """
         try:
-            import ollama
-
-            result = ollama.embed(model="nomic-embed-text", input=text)
-            embeddings = result.get("embeddings") or result.get("embedding") or []
-            if embeddings and isinstance(embeddings[0], list):
-                return embeddings[0]
-            return list(embeddings)
-        except Exception:
-            logger.warning("Embedding generation failed; using zero vector")
+            embedder = get_semantic_embedder()
+            vec = embedder.encode(text)
+            return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+        except Exception as exc:
+            logger.warning("Embedding generation failed (%s); using zero vector", exc)
             return [0.0] * 768

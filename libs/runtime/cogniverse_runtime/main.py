@@ -412,6 +412,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as schema_err:
             logger.warning(f"Wiki schema deploy skipped: {schema_err}")
 
+        # Register a backend profile with type="wiki" so WikiManager.search
+        # can resolve. Schema deploy and profile registration are separate
+        # concerns in VespaSearchBackend — Mem0 does the same thing in
+        # memory/manager.py for "agent_memories". The profile_change_listener
+        # wired above fans this into every cached search backend.
+        try:
+            from cogniverse_foundation.config.unified_config import (
+                BackendProfileConfig,
+            )
+
+            wiki_profile = {
+                "type": "wiki",
+                "model": "google/embeddinggemma-300m",
+                "embedding_model": "google/embeddinggemma-300m",
+                "embedding_dims": 768,
+                "strategy": "semantic_search",
+                "schema_name": "wiki_pages",
+                "embedding_type": "dense",
+                "schema_config": {"embedding_dims": 768},
+            }
+            config_manager.add_backend_profile(
+                BackendProfileConfig.from_dict("wiki_pages", wiki_profile),
+                tenant_id="default",
+                service="backend",
+            )
+            logger.info("Wiki backend profile registered")
+        except Exception as exc:
+            logger.debug("Wiki profile register skipped: %s", exc)
+
         _wiki_managers: dict = {}
 
         def _wiki_manager_factory(tenant_id: str) -> WikiManager:
