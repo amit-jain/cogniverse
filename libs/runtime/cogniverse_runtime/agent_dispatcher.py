@@ -279,7 +279,7 @@ class AgentDispatcher:
         # Instantiate with default deps
         deps = deps_cls()
         agent = agent_cls(deps=deps)
-        self._init_agent_memory(agent, agent_name, tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, agent_name, tenant_id)
 
         # Inject global TelemetryManager for span emission
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -662,7 +662,7 @@ class AgentDispatcher:
             config_manager=self._config_manager,
             workflow_intelligence=workflow_intelligence,
         )
-        self._init_agent_memory(agent, "orchestrator_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "orchestrator_agent", tenant_id)
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
@@ -754,7 +754,7 @@ class AgentDispatcher:
 
         deps = SummarizerDeps(tenant_id=tenant_id)
         agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
-        self._init_agent_memory(agent, "summarizer_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "summarizer_agent", tenant_id)
 
         request = SummaryRequest(
             query=query,
@@ -800,7 +800,7 @@ class AgentDispatcher:
 
         deps = DetailedReportDeps(tenant_id=tenant_id)
         agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
-        self._init_agent_memory(agent, "detailed_report_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "detailed_report_agent", tenant_id)
 
         request = ReportRequest(
             query=query,
@@ -882,7 +882,7 @@ class AgentDispatcher:
             tenant_id=tenant_id,
         )
         agent = DocumentAgent(deps=deps)
-        self._init_agent_memory(agent, "document_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "document_agent", tenant_id)
 
         results = await agent.search_documents(query=query, limit=top_k)
 
@@ -911,7 +911,7 @@ class AgentDispatcher:
             return result.get("results", [])
 
         agent = DeepResearchAgent(deps=deps, search_fn=search_fn)
-        self._init_agent_memory(agent, "deep_research_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "deep_research_agent", tenant_id)
 
         input_data = DeepResearchInput(query=query, tenant_id=tenant_id)
         result = await agent.process(input_data)
@@ -985,7 +985,7 @@ class AgentDispatcher:
         )
         # Audit fix #14 — auto-init memory so the coding agent receives
         # learned strategies and tenant memories in inject_context_into_prompt.
-        self._init_agent_memory(agent, "coding_agent", tenant_id)
+        await asyncio.to_thread(self._init_agent_memory, agent, "coding_agent", tenant_id)
 
         ctx = context or {}
         input_data = CodingInput(
