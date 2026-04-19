@@ -430,7 +430,13 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
     async def _process_impl(self, input: GatewayInput) -> GatewayOutput:
         """Classify and route a query."""
-        entities = self._extract_entities(input.query)
+        import asyncio
+
+        # GLiNER.predict_entities is sync, CPU-heavy (~200-500ms per call),
+        # and would otherwise run on the event loop thread — starving every
+        # other request including /health/live (readiness failure, pod
+        # marked NotReady under concurrent orchestration load).
+        entities = await asyncio.to_thread(self._extract_entities, input.query)
         modality, modality_confidence = self._classify_modality(entities)
         generation_type, gen_confidence = self._classify_generation_type(entities)
 
