@@ -66,14 +66,15 @@ runtime:
       cpu: "2"
       # Runtime memory grows through a suite: every ingested tenant loads
       # ColPali (~500MB) in-process, memory manager caches per-tenant Mem0
-      # instances, and Vespa search buffers climb with stored docs. A
-      # single-pod suite hits 15-25Gi easily. Keep the request at 8Gi so
-      # the scheduler reserves headroom, but push the limit up so the
-      # container doesn't hit OOM mid-suite.
+      # instances (LRU-bounded at 16), and Vespa search buffers climb with
+      # stored docs. Under combined fixture-ingestion + full orchestration
+      # chain (gateway → orchestrator → entity/search/detailed_report) the
+      # pod crossed 32Gi. 40Gi gives real headroom on a 49Gi node; the
+      # Ollama pod is simultaneously reduced to 20Gi so total limits fit.
       memory: "8Gi"
     limits:
       cpu: "16"
-      memory: "32Gi"
+      memory: "40Gi"
   # Host-mode OpenShell sandbox: developer starts `openshell gateway start
   # --port 19091` on the host, then `cogniverse sandbox sync` stores the
   # mTLS certs + metadata as `openshell-mtls` / `openshell-metadata` in the
@@ -129,18 +130,18 @@ llm:
     # per conversation. Under orchestration load (detailed_report_agent fires
     # multiple agents → multiple LLM calls → parallel context windows),
     # gemma4:e2b pushed a 16Gi cap into repeated OOMKills and hung the
-    # complex-query e2e path. Raise the memory LIMIT (only memory-limit
-    # matters for OOMKill; request stays modest so the pod still schedules
-    # on a 49Gi node alongside the rest of the workload).
-    # Long-term fix is to migrate the LLM to vLLM for continuous batching
-    # — once a vLLM-hosted gemma4 build is available.
+    # complex-query e2e path. 20Gi is the sweet spot — enough for the
+    # model + concurrent conversation context on CPU without starving the
+    # runtime pod (bumped to 40Gi) on a 49Gi node. Long-term fix is to
+    # migrate the LLM to vLLM for continuous batching once a vLLM-hosted
+    # gemma4 build is available.
     resources:
       requests:
         cpu: "2"
         memory: "4Gi"
       limits:
         cpu: "4"
-        memory: "24Gi"
+        memory: "20Gi"
     nodeSelector: {}
     tolerations: []
 
