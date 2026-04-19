@@ -125,13 +125,22 @@ llm:
     persistence:
       storageClass: "local-path"
       size: "20Gi"
+    # Ollama serializes requests per model and keeps context state resident
+    # per conversation. Under orchestration load (detailed_report_agent fires
+    # multiple agents → multiple LLM calls → parallel context windows),
+    # gemma4:e2b pushed a 16Gi cap into repeated OOMKills and hung the
+    # complex-query e2e path. Raise the memory LIMIT (only memory-limit
+    # matters for OOMKill; request stays modest so the pod still schedules
+    # on a 49Gi node alongside the rest of the workload).
+    # Long-term fix is to migrate the LLM to vLLM for continuous batching
+    # — once a vLLM-hosted gemma4 build is available.
     resources:
       requests:
         cpu: "2"
         memory: "4Gi"
       limits:
         cpu: "4"
-        memory: "16Gi"
+        memory: "24Gi"
     nodeSelector: {}
     tolerations: []
 

@@ -239,8 +239,18 @@ class TestQueryEnhancementViaGateway:
         )
 
     def test_gateway_confidence_in_range(self):
-        """Gateway classification confidence should be in [0.4, 1.0] for clear queries."""
-        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        """Gateway classification confidence should be in [0.4, 1.0] for clear queries.
+
+        This query is classified 'complex' by the gateway and hands off to the
+        OrchestratorAgent, which fires 5+ ChainOfThought LLM calls through
+        local Ollama on CPU. End-to-end latency on a dev k3d cluster regularly
+        lands north of 10 minutes. The default 300s httpx timeout tripped
+        before the orchestration could return a 200, so the test failed on
+        ReadTimeout instead of surfacing the actual confidence score. Give
+        the pipeline a 900s budget to complete on CPU hardware; if real
+        latency regresses past that it's a separate signal.
+        """
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
