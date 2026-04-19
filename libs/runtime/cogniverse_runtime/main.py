@@ -6,6 +6,7 @@ This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
 - Enables clean deployment and scaling
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -125,6 +126,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Startup
     import time as _time
+
+    # Bound the default asyncio executor — every ``asyncio.to_thread`` /
+    # ``run_in_executor(None, ...)`` in the codebase shares this pool.
+    # Without a cap, bursts of sync work (agent instantiation, Mem0 HTTP,
+    # wiki auto-file, GLiNER predict) spawn up to 32 workers and
+    # third-party libraries pile on more, landing the runtime north of
+    # 200 Python threads under e2e load. GIL contention then starves the
+    # event loop past the readiness probe timeout.
+    from concurrent.futures import ThreadPoolExecutor
+
+    _event_loop = asyncio.get_running_loop()
+    _event_loop.set_default_executor(
+        ThreadPoolExecutor(max_workers=16, thread_name_prefix="cv-worker")
+    )
+    logger.info("Default asyncio executor capped at 16 workers")
 
     logger.info("Starting Cogniverse Runtime...")
 
