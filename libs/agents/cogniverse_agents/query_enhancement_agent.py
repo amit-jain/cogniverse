@@ -6,7 +6,7 @@ to improve search quality and recall.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import dspy
 from pydantic import Field
@@ -87,51 +87,97 @@ class QueryEnhancementModule(dspy.Module):
         self.enhancer = dspy.ChainOfThought(QueryEnhancementSignature)
 
     def forward(self, query: str) -> dspy.Prediction:
-        """Enhance query using DSPy"""
+        """Enhance query using DSPy.
+
+        Treats three shapes as LLM failure and falls through to the
+        heuristic expander:
+          1. DSPy raises.
+          2. Output fields come back empty (DSPy emits None on unparseable).
+          3. The LLM echoes the input verbatim — small models sometimes
+             do this when they can't think of an expansion. An echo is
+             indistinguishable from a no-op, and recording it as
+             ``enhanced_query == query`` poisons downstream optimizers
+             (SIMBA trains on identity pairs and learns nothing).
+        """
         try:
             result = self.enhancer(query=query)
         except Exception as e:
             logger.warning(f"Query enhancement failed: {e}, using fallback")
             return self._fallback_enhancement(query)
-        # DSPy silently emits None for unparseable output fields. Treat that
-        # as the same failure mode as an exception and fall through to
-        # heuristic expansion so the contract (non-empty enhanced_query)
-        # still holds for smaller local LMs.
         if not result.enhanced_query or not result.expansion_terms:
             logger.warning(
                 "Query enhancement produced empty fields, using fallback"
             )
             return self._fallback_enhancement(query)
+        if result.enhanced_query.strip() == query.strip():
+            logger.warning(
+                "Query enhancement echoed input (no enhancement), using fallback"
+            )
+            return self._fallback_enhancement(query)
         return result
 
     def _fallback_enhancement(self, query: str) -> dspy.Prediction:
-        """Fallback enhancement using simple heuristics"""
-        # Simple enhancement: add basic expansions
-        words = query.lower().split()
+        """Heuristic fallback when the LLM fails or echoes.
 
-        # Common expansions
-        expansions = []
+        Must produce an ``enhanced_query`` that is meaningfully different
+        from the input — otherwise downstream consumers (SIMBA trainset,
+        query_variants) get identity pairs that carry no signal.
+        """
+        lower = query.lower()
+        words = lower.split()
+
+        acronym_expansions: List[Tuple[str, str]] = [
+            ("ml", "machine learning"),
+            ("ai", "artificial intelligence"),
+            ("nlp", "natural language processing"),
+            ("cv", "computer vision"),
+            ("rl", "reinforcement learning"),
+            ("cnn", "convolutional neural network"),
+            ("rnn", "recurrent neural network"),
+            ("lstm", "long short-term memory"),
+            ("gan", "generative adversarial network"),
+            ("llm", "large language model"),
+        ]
+
+        expansions: List[str] = []
+        for acronym, expansion in acronym_expansions:
+            if acronym in words and expansion not in lower:
+                expansions.append(expansion)
+
         if "video" in words or "show" in words:
             expansions.extend(["tutorial", "guide", "demonstration"])
-        if "ml" in query.lower():
-            expansions.append("machine learning")
-        if "ai" in query.lower():
-            expansions.append("artificial intelligence")
+        if "find" in words or "search" in words:
+            expansions.extend(["locate", "discover"])
 
-        # Basic synonyms
-        synonyms = []
+        synonyms: List[str] = []
         if "show" in words:
             synonyms.extend(["display", "present"])
         if "find" in words:
             synonyms.extend(["search", "locate"])
+        if "video" in words:
+            synonyms.append("clip")
+        if "tutorial" in words:
+            synonyms.append("guide")
+
+        # Guarantee enhanced_query differs from input: append the first
+        # expansion (or synonym) so the heuristic can never produce an
+        # identity mapping.  Small LMs poison SIMBA trainsets when they
+        # echo the input, and the previous implementation did exactly
+        # that by setting ``enhanced_query=query``.
+        if expansions:
+            enhanced_query = f"{query} {expansions[0]}".strip()
+        elif synonyms:
+            enhanced_query = f"{query} ({synonyms[0]})"
+        else:
+            enhanced_query = f"{query} related content"
 
         return dspy.Prediction(
-            enhanced_query=query,  # Keep original in fallback
+            enhanced_query=enhanced_query,
             expansion_terms=", ".join(expansions) if expansions else "",
             synonyms=", ".join(synonyms) if synonyms else "",
             context="",
             confidence="0.5",
-            reasoning="Fallback enhancement with basic term expansion",
+            reasoning="Fallback enhancement with heuristic expansion",
         )
 
 

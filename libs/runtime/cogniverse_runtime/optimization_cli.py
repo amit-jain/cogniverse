@@ -521,9 +521,10 @@ async def run_simba_optimization(
         if not original or not enhanced:
             continue
         if enhanced.strip() == original.strip():
-            # Degenerate: the LLM echoed the query unchanged. SIMBA has no
-            # gradient to learn from an identity mapping — it will just
-            # replay the same demo. Drop these to keep the trainset honest.
+            # Belt-and-suspenders: QueryEnhancementAgent now guarantees
+            # enhanced != query, so new spans won't hit this branch. Older
+            # spans (from before that fix) can still be in the lookback
+            # window; skip them so SIMBA doesn't train on identity pairs.
             continue
 
         example = dspy.Example(

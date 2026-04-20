@@ -1765,7 +1765,10 @@ class TestEnhancedQueryEnhancementAgent:
 
     @pytest.mark.asyncio
     async def test_dspy_failure_graceful_fallback(self, qe_agent):
-        """When DSPy call raises, fallback heuristics are used."""
+        """When DSPy call raises, fallback heuristics produce a real
+        enhancement.  The previous behaviour (setting enhanced_query=query)
+        silently poisoned downstream SIMBA trainsets with identity pairs —
+        the fallback must leave a non-identity signal."""
         qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         inp = QueryEnhancementInput(query="show me AI tutorials")
@@ -1773,12 +1776,12 @@ class TestEnhancedQueryEnhancementAgent:
 
         assert isinstance(output, QueryEnhancementOutput)
         assert output.original_query == "show me AI tutorials"
-        # Fallback keeps original query
-        assert output.enhanced_query == "show me AI tutorials"
+        # Fallback MUST produce a non-identity enhancement.
+        assert output.enhanced_query != "show me AI tutorials"
+        assert output.enhanced_query.startswith("show me AI tutorials")
         assert output.confidence == 0.5
         # Fallback with "show" and "ai" triggers expansions
         assert "artificial intelligence" in output.expansion_terms
-        # Fallback: enhanced == original, but expansion terms produce one variant
         assert isinstance(output.query_variants, list)
 
     @pytest.mark.asyncio
