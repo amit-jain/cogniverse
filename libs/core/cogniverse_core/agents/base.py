@@ -324,6 +324,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         Returns:
             DSPy Prediction from the module
         """
+        import asyncio
+
         if self._progress_queue is not None:
             import dspy
 
@@ -344,9 +346,10 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                     self.emit_progress(
                         "token", str(chunk), data={"accumulated": accumulated}
                     )
-            return prediction or module.forward(**kwargs)
+            if prediction is None:
+                prediction = await asyncio.to_thread(module.forward, **kwargs)
+            return prediction
         else:
-            import asyncio
             return await asyncio.to_thread(module.forward, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:

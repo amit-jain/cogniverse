@@ -365,6 +365,7 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
         metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
     ) -> str:
         """
         Add content to agent's memory.
@@ -374,57 +375,53 @@ class Mem0MemoryManager:
             tenant_id: Tenant identifier
             agent_name: Agent name
             metadata: Optional metadata
+            infer: If True, Mem0 runs an LLM extraction pass before storing.
+                If False, the content is stored verbatim. Set False for
+                user-provided memories where the text is already curated.
 
         Returns:
-            Memory ID
+            Memory ID of the stored memory.
+
+        Raises:
+            RuntimeError: If the backend is not initialised or Mem0 did not
+                persist any memory (e.g. LLM extraction returned no facts).
         """
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
 
-        try:
-            # Mem0 uses user_id and agent_id for namespacing
-            result = self.memory.add(
-                content,
-                user_id=tenant_id,
-                agent_id=agent_name,
-                metadata=metadata or {},
+        result = self.memory.add(
+            content,
+            user_id=tenant_id,
+            agent_id=agent_name,
+            metadata=metadata or {},
+            infer=infer,
+        )
+        logger.info(f"Mem0.add() returned: {result}")
+
+        memory_id: Optional[str] = None
+        if isinstance(result, dict):
+            if result.get("id"):
+                memory_id = str(result["id"])
+            else:
+                entries = result.get("results") or []
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("id"):
+                        memory_id = str(entry["id"])
+                        break
+        elif isinstance(result, list):
+            for entry in result:
+                if isinstance(entry, dict) and entry.get("id"):
+                    memory_id = str(entry["id"])
+                    break
+
+        if not memory_id:
+            raise RuntimeError(
+                f"Mem0 stored no memory for {tenant_id}/{agent_name}; "
+                f"raw response: {result!r}"
             )
 
-            # Log what Mem0 returned for debugging
-            logger.info(f"Mem0.add() returned: {result}")
-
-            # Handle different return types from Mem0
-            if isinstance(result, dict):
-                # Could be {"id": "...", ...} or {"results": [...]}
-                if "id" in result:
-                    memory_id = result["id"]
-                elif "results" in result and result["results"]:
-                    memory_id = result["results"][0].get(
-                        "id", str(result["results"][0])
-                    )
-                else:
-                    logger.warning(
-                        f"Mem0 returned dict without id or results: {result}"
-                    )
-                    memory_id = str(result)
-            elif isinstance(result, list) and result:
-                memory_id = (
-                    result[0].get("id")
-                    if isinstance(result[0], dict)
-                    else str(result[0])
-                )
-            else:
-                memory_id = str(result) if result else None
-
-            if memory_id:
-                logger.info(f"Added memory for {tenant_id}/{agent_name}: {memory_id}")
-            else:
-                logger.warning(f"Memory added but no ID returned: {result}")
-            return memory_id
-
-        except Exception as e:
-            logger.error(f"Failed to add memory: {e}")
-            raise
+        logger.info(f"Added memory for {tenant_id}/{agent_name}: {memory_id}")
+        return memory_id
 
     def search_memory(
         self,

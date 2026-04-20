@@ -253,8 +253,9 @@ class BackendVectorStore(VectorStoreBase):
     def delete(self, vector_id: str) -> None:
         """Delete via backend"""
         try:
-            # VespaBackend.delete_document() only takes document_id
-            self.backend.delete_document(vector_id)
+            self.backend.delete_document(
+                vector_id, schema_name=(self.profile or self.collection_name)
+            )
             logger.debug(f"Deleted memory {vector_id}")
         except Exception as e:
             logger.error(f"Failed to delete {vector_id}: {e}")
@@ -302,8 +303,9 @@ class BackendVectorStore(VectorStoreBase):
                     "embedding", np.array(vector), {"type": "float", "raw": True}
                 )
 
-            # Update via backend (which calls ingest_documents)
-            self.backend.update_document(vector_id, doc)
+            self.backend.update_document(
+                vector_id, doc, schema_name=(self.profile or self.collection_name)
+            )
             logger.debug(f"Updated memory {vector_id}")
         except Exception as e:
             logger.error(f"Failed to update {vector_id}: {e}")
@@ -315,8 +317,9 @@ class BackendVectorStore(VectorStoreBase):
             return None
 
         try:
-            # VespaBackend.get_document() returns a Document object
-            doc = self.backend.get_document(vector_id)
+            doc = self.backend.get_document(
+                vector_id, schema_name=(self.profile or self.collection_name)
+            )
             if doc is None:
                 return None
 

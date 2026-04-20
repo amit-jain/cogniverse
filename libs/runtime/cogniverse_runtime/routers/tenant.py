@@ -258,6 +258,7 @@ async def create_memory(tenant_id: str, request: MemoryCreateRequest):
         tenant_id=tenant_id,
         agent_name=_USER_MEMORY_AGENT,
         metadata=metadata,
+        infer=False,
     )
     return {
         "status": "saved",

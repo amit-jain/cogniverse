@@ -133,6 +133,7 @@ class TestMem0MemoryManager:
             user_id="tenant1",
             agent_id="test_agent",
             metadata={},
+            infer=True,
         )
 
     @patch("cogniverse_core.memory.manager.Memory")

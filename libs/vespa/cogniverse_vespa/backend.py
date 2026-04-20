@@ -405,20 +405,27 @@ class VespaBackend(Backend):
         if batch:
             yield self.ingest_documents(batch)
 
-    def update_document(self, document_id: str, document: Document) -> bool:
+    def update_document(
+        self,
+        document_id: str,
+        document: Document,
+        schema_name: Optional[str] = None,
+    ) -> bool:
         """
         Update a document in Vespa.
 
         Args:
             document_id: ID of document to update
             document: Updated Document object
+            schema_name: Vespa schema to write to. If omitted, falls back to
+                ``self.config["schema_name"]``.
 
         Returns:
             True if successful
         """
         try:
-            # Get schema name from config
-            schema_name = self.config.get("schema_name")
+            if not schema_name:
+                schema_name = self.config.get("schema_name")
             if not schema_name:
                 logger.error("No schema_name in config for update operation")
                 return False
@@ -429,12 +436,18 @@ class VespaBackend(Backend):
             logger.error(f"Failed to update document {document_id}: {e}")
             return False
 
-    def delete_document(self, document_id: str) -> bool:
+    def delete_document(
+        self, document_id: str, schema_name: Optional[str] = None
+    ) -> bool:
         """
         Delete a document from Vespa.
 
         Args:
             document_id: ID of document to delete
+            schema_name: Vespa schema to delete from. If omitted, falls back to
+                ``self.config["schema_name"]``. Callers that share a backend
+                across multiple schemas (e.g. the Mem0 vector store) should
+                pass this explicitly.
 
         Returns:
             True if successful
@@ -443,8 +456,8 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Get schema name from config
-            schema_name = self.config.get("schema_name")
+            if not schema_name:
+                schema_name = self.config.get("schema_name")
             if not schema_name:
                 logger.error("No schema_name in config for delete operation")
                 return False
@@ -596,7 +609,9 @@ class VespaBackend(Backend):
         # ValueError if missing.
         return self._vespa_search_backend.search(query_dict)
 
-    def get_document(self, document_id: str) -> Optional[Document]:
+    def get_document(
+        self, document_id: str, schema_name: Optional[str] = None
+    ) -> Optional[Document]:
         """
         Retrieve a document by ID via the ingestion client (pyvespa get_data).
 
@@ -605,11 +620,16 @@ class VespaBackend(Backend):
 
         Args:
             document_id: Document ID
+            schema_name: Vespa schema to fetch from. If omitted, falls back to
+                ``self.config["schema_name"]``. Callers that share a backend
+                across multiple schemas (e.g. the Mem0 vector store) should
+                pass this explicitly.
 
         Returns:
             Document or None
         """
-        schema_name = self.config.get("schema_name")
+        if not schema_name:
+            schema_name = self.config.get("schema_name")
         if not schema_name:
             raise ValueError(
                 "No schema_name in config — cannot determine which Vespa schema to read from."
