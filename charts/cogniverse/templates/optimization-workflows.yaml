@@ -179,8 +179,12 @@ spec:
           readOnly: true
 
     - name: restart-deployment
+      # bitnami/kubectl stopped publishing versioned tags on Docker Hub
+      # (only :latest + manifest signatures remain), so the previous
+      # :1.33 image never pulled. rancher/kubectl publishes stable
+      # v1.33.x tags — keep us on the same kubectl minor as the cluster.
       container:
-        image: bitnami/kubectl:1.33
+        image: rancher/kubectl:v1.33.9
         command: ["kubectl"]
         args:
           - "rollout"
@@ -250,8 +254,12 @@ spec:
           readOnly: true
 
     - name: restart-deployment
+      # bitnami/kubectl stopped publishing versioned tags on Docker Hub
+      # (only :latest + manifest signatures remain), so the previous
+      # :1.33 image never pulled. rancher/kubectl publishes stable
+      # v1.33.x tags — keep us on the same kubectl minor as the cluster.
       container:
-        image: bitnami/kubectl:1.33
+        image: rancher/kubectl:v1.33.9
         command: ["kubectl"]
         args:
           - "rollout"
