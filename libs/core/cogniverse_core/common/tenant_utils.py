@@ -7,6 +7,18 @@ Supports two formats:
 """
 
 from pathlib import Path
+from typing import Optional
+
+# Reserved cluster identity — used by runtime startup for state that is not
+# tenant-specific (SystemConfig lookups, startup telemetry probes, backend
+# registry bootstrap). Must NEVER appear in a request body. validate_tenant_id
+# rejects names with a leading "__" so user-registered tenants cannot collide.
+SYSTEM_TENANT_ID = "__system__"
+
+# Sentinel used by unit/integration test fixtures. tests/conftest.py registers
+# it once per session via POST /admin/tenants; tests that need a tenant_id
+# use this constant instead of a literal string.
+TEST_TENANT_ID = "test:unit"
 
 
 def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
@@ -97,6 +109,14 @@ def validate_tenant_id(tenant_id: str) -> None:
     if not isinstance(tenant_id, str):
         raise ValueError(f"tenant_id must be string, got {type(tenant_id)}")
 
+    # Identifiers starting with "__" are reserved for runtime-internal
+    # identities (e.g. SYSTEM_TENANT_ID). Users may not register them.
+    if tenant_id.startswith("__"):
+        raise ValueError(
+            f"Invalid tenant_id '{tenant_id}': identifiers starting with '__' "
+            f"are reserved for runtime-internal use"
+        )
+
     # Allow alphanumeric, underscores, hyphens, and colons
     allowed_chars = tenant_id.replace("_", "").replace("-", "").replace(":", "")
     if not allowed_chars.isalnum():
@@ -116,3 +136,62 @@ def validate_tenant_id(tenant_id: str) -> None:
             raise ValueError(
                 f"Invalid tenant_id '{tenant_id}': both org and tenant parts must be non-empty"
             )
+
+
+def require_tenant_id(tenant_id: Optional[str], *, source: str) -> str:
+    """
+    Enforce that a request/input/context carries an explicit tenant_id.
+
+    Pure ValueError raiser — no framework dependency.  FastAPI routes should
+    catch and translate to HTTPException(400); agent code can let the error
+    propagate up to the dispatcher which already maps ValueError to a 400.
+
+    Args:
+        tenant_id: The value read off the request / input / dispatch context.
+        source: Short descriptor of where the id was expected (e.g.
+            "SearchRequest", "A2A metadata", "AgentInput"). Appears in the
+            error message to help debugging.
+
+    Returns:
+        The validated tenant_id (unchanged, for convenient inline use).
+
+    Raises:
+        ValueError: If tenant_id is None, empty, or not a string.
+    """
+    if tenant_id is None or tenant_id == "":
+        raise ValueError(
+            f"tenant_id is required on {source}. The runtime no longer falls "
+            f"back to a bootstrap tenant for user requests — pass tenant_id "
+            f"explicitly in the request body or A2A metadata."
+        )
+    if not isinstance(tenant_id, str):
+        raise ValueError(
+            f"tenant_id on {source} must be a string, got {type(tenant_id).__name__}"
+        )
+    return tenant_id
+
+
+async def assert_tenant_exists(tenant_id: str) -> None:
+    """
+    Raise HTTPException(404) if tenant_id was never registered.
+
+    Looks up the tenant via TenantManager.get_tenant_internal, which reads
+    Vespa's tenant_metadata schema. SYSTEM_TENANT_ID bypasses the check
+    (it's a runtime-internal identity that isn't registered as a user
+    tenant).
+
+    Lazy imports keep this module free of a FastAPI / runtime dependency.
+    """
+    if tenant_id == SYSTEM_TENANT_ID:
+        return
+
+    from fastapi import HTTPException
+
+    from cogniverse_runtime.admin.tenant_manager import get_tenant_internal
+
+    tenant = await get_tenant_internal(tenant_id)
+    if tenant is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tenant '{tenant_id}' not registered",
+        )
