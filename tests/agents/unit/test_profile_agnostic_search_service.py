@@ -49,7 +49,14 @@ def mock_config():
 
 @pytest.fixture
 def mock_config_manager():
-    return Mock()
+    # _get_profile_config tries ConfigManager.get_backend_config first, then
+    # falls back to the startup snapshot. Returning None from the live
+    # lookup forces the fallback path these tests want to exercise. A bare
+    # Mock() would auto-conjure nested attributes and leak back as a Mock
+    # from the "config" call-site, breaking config["embedding_model"].
+    cm = Mock()
+    cm.get_backend_config.return_value = None
+    return cm
 
 
 @pytest.fixture

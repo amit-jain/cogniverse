@@ -66,10 +66,16 @@ def orchestrator(mock_registry):
 
 
 def _make_httpx_mock(response_factory):
-    """Create httpx mock that returns responses from a factory function.
+    """Create an httpx client mock compatible with the orchestrator's
+    loop-pooled client (``_get_http_client``).
 
     Args:
         response_factory: callable(url, json) -> dict to return as JSON response
+
+    Returns:
+        (patch_target, mock_client) — apply with
+        ``patch("cogniverse_agents.orchestrator_agent._get_http_client",
+                new=AsyncMock(return_value=mock_client))``.
     """
 
     async def mock_post(url, json=None, **kwargs):
@@ -80,12 +86,8 @@ def _make_httpx_mock(response_factory):
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(side_effect=mock_post)
-
-    mock_cm = Mock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-    return mock_cm, mock_client
+    mock_client.is_closed = False
+    return mock_client
 
 
 @pytest.mark.unit
@@ -110,11 +112,11 @@ class TestA2APipelineFlow:
                 return {"status": "success", "results": [{"title": "ML Tutorial"}]}
             return {"status": "error", "message": "Unknown agent"}
 
-        mock_cm, _ = _make_httpx_mock(response_factory)
+        mock_client = _make_httpx_mock(response_factory)
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
                 OrchestratorInput(query="ML videos")
@@ -143,11 +145,11 @@ class TestA2APipelineFlow:
             captured_bodies.append(json_body)
             return {"status": "success", "results": []}
 
-        mock_cm, _ = _make_httpx_mock(response_factory)
+        mock_client = _make_httpx_mock(response_factory)
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator._process_impl(
                 OrchestratorInput(
@@ -156,10 +158,11 @@ class TestA2APipelineFlow:
             )
 
         # Verify tenant_id and session_id propagated in the request body
+        # (the orchestrator nests them under body["context"]).
         assert len(captured_bodies) >= 1
-        body = captured_bodies[0]
-        assert body.get("tenant_id") == "acme_corp"
-        assert body.get("session_id") == "sess-123"
+        ctx = captured_bodies[0].get("context", {})
+        assert ctx.get("tenant_id") == "acme_corp"
+        assert ctx.get("session_id") == "sess-123"
 
 
 @pytest.mark.unit
@@ -177,13 +180,13 @@ class TestRegistryDiscovery:
             )
         )
 
-        mock_cm, _ = _make_httpx_mock(
+        mock_client = _make_httpx_mock(
             lambda url, json: {"status": "success", "entities": ["ML"]}
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator._process_impl(
                 OrchestratorInput(query="machine learning")
@@ -228,11 +231,11 @@ class TestParallelExecution:
             )
         )
 
-        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+        mock_client = _make_httpx_mock(lambda url, json: {"status": "success"})
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
                 OrchestratorInput(query="ML videos")
@@ -255,13 +258,13 @@ class TestParallelExecution:
             )
         )
 
-        mock_cm, _ = _make_httpx_mock(
+        mock_client = _make_httpx_mock(
             lambda url, json: {"status": "success", "result": "mock"}
         )
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
                 OrchestratorInput(query="test query")
@@ -296,14 +299,11 @@ class TestErrorHandling:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=ConnectionError("Agent unreachable"))
-
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(OrchestratorInput(query="test"))
 
@@ -339,7 +339,7 @@ class TestConversationHistory:
 
         orchestrator.dspy_module.forward = mock_forward
 
-        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+        mock_client = _make_httpx_mock(lambda url, json: {"status": "success"})
 
         history = [
             {"role": "user", "content": "search for cat videos"},
@@ -347,8 +347,8 @@ class TestConversationHistory:
         ]
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator._process_impl(
                 OrchestratorInput(
@@ -377,11 +377,11 @@ class TestConversationHistory:
 
         orchestrator.dspy_module.forward = mock_forward
 
-        mock_cm, _ = _make_httpx_mock(lambda url, json: {"status": "success"})
+        mock_client = _make_httpx_mock(lambda url, json: {"status": "success"})
 
         with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator._process_impl(OrchestratorInput(query="search for dogs"))
 

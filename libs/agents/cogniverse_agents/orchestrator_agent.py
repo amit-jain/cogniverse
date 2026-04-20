@@ -16,7 +16,6 @@ Features:
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 from enum import Enum
@@ -80,7 +79,12 @@ async def _get_http_client() -> httpx.AsyncClient:
 # sub-agent HTTP calls; without a cap, a handful of concurrent complex
 # queries saturates both the shared httpx pool and the runtime's
 # FastAPI worker pool, starving /health/live past the readiness probe.
-_ORCH_CONCURRENCY = int(os.environ.get("COGNIVERSE_ORCHESTRATION_CONCURRENCY", "4"))
+# Hard-coded here rather than env-driven because agent modules must not
+# read process environment at import time (project rule: env lookups
+# happen at startup boundaries only). If dynamic tuning is ever needed,
+# read the value in the runtime startup hook and thread it through the
+# constructor.
+_ORCH_CONCURRENCY = 4
 _orch_semaphores: Dict[int, asyncio.Semaphore] = {}
 
 

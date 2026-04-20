@@ -52,7 +52,18 @@ class TestDocumentAgent:
 
     @patch("sentence_transformers.SentenceTransformer")
     def test_text_embedding_model_lazy_loading(self, mock_sentence_transformer):
-        """Test text embedding model is lazy loaded"""
+        """Test text embedding model is lazy loaded.
+
+        The semantic_embedder module caches embedders in a process-wide
+        dict keyed on model name. A prior test that already loaded the
+        same model would return the cached instance here and the mock
+        would never fire — clearing the cache isolates this test from
+        ordering effects.
+        """
+        from cogniverse_core.common.models import semantic_embedder
+
+        semantic_embedder._cache.clear()
+
         mock_model = MagicMock()
         mock_sentence_transformer.return_value = mock_model
 
