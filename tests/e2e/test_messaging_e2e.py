@@ -101,8 +101,14 @@ def _bot_token_valid() -> bool:
     if not BOT_TOKEN:
         return False
     try:
+        # trust_env=False bypasses any implicit HTTP proxy picked up from the
+        # dev machine (k3d / Docker Desktop / VPN). Telegram's public API is
+        # reachable direct; going through a local proxy drops the connection
+        # mid-handshake and makes the bot look invalid.
         resp = httpx.get(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10.0
+            f"https://api.telegram.org/bot{BOT_TOKEN}/getMe",
+            timeout=10.0,
+            trust_env=False,
         )
         return resp.status_code == 200 and resp.json().get("ok")
     except Exception:
@@ -123,14 +129,14 @@ class TestTelegramRealFlow:
 
     def test_bot_can_send_message(self):
         """Verify bot can send a message to test chat."""
-        resp = httpx.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": TEST_CHAT_ID,
-                "text": "E2E test: bot is alive",
-            },
-            timeout=10.0,
-        )
+        with httpx.Client(trust_env=False, timeout=10.0) as client:
+            resp = client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": TEST_CHAT_ID,
+                    "text": "E2E test: bot is alive",
+                },
+            )
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
@@ -153,7 +159,7 @@ class TestTelegramRealFlow:
             await app.start()
 
             # Send a test message via bot API
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 await client.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                     json={
@@ -196,7 +202,7 @@ class TestTelegramRealFlow:
                 assert len(chunks) >= 1
 
                 # Send formatted response to real Telegram chat
-                async with httpx.AsyncClient() as http:
+                async with httpx.AsyncClient(trust_env=False) as http:
                     for chunk in chunks:
                         resp = await http.post(
                             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",

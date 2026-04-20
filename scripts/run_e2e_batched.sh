@@ -25,6 +25,17 @@ NS=cogniverse
 LOG_DIR=${LOG_DIR:-/tmp/cogniverse_e2e_runs}
 mkdir -p "$LOG_DIR"
 
+# Load repo-level .env so tests like the Telegram flow pick up
+# TELEGRAM_BOT_TOKEN / TELEGRAM_TEST_CHAT_ID without relying on the caller's
+# shell having exported them. Without this the tests skipif-out.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
 # Batch 1: light/medium tests that don't exercise the heavy ingestion
 # pipeline. Gateway classification, orchestration (LLM-bound but no
 # ColPali frame-encoding), search, CRUD, registry, multi-turn, synthetic
