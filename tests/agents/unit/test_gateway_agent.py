@@ -491,6 +491,7 @@ class TestArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
 
             agent.telemetry_manager = mock_tm
+            agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()
 
         assert agent.deps.fast_path_confidence_threshold == 0.55
@@ -526,6 +527,7 @@ class TestArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
 
             agent.telemetry_manager = mock_tm
+            agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()
 
         assert agent.deps.fast_path_confidence_threshold == 0.6
@@ -544,6 +546,7 @@ class TestArtifactLoading:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
             agent.telemetry_manager = mock_tm
+            agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()
 
         assert agent.deps.fast_path_confidence_threshold == 0.4

@@ -1852,6 +1852,7 @@ class TestQueryEnhancementArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
             qe_agent.telemetry_manager = mock_tm
+            qe_agent._artifact_tenant_id = "test:unit"
             qe_agent.dspy_module = MagicMock()
             qe_agent._load_artifact()
 
@@ -1877,4 +1878,5 @@ class TestQueryEnhancementArtifactLoading:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
             qe_agent.telemetry_manager = mock_tm
+            qe_agent._artifact_tenant_id = "test:unit"
             qe_agent._load_artifact()  # Should not raise

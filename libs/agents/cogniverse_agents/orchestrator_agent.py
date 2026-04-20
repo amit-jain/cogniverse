@@ -1263,7 +1263,12 @@ class OrchestratorAgent(
         """Emit cogniverse.orchestration telemetry span."""
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
-        tenant_id = getattr(self, "_current_tenant_id", "default")
+        tenant_id = getattr(self, "_current_tenant_id", None)
+        if not tenant_id:
+            raise RuntimeError(
+                f"{type(self).__name__}._emit_orchestration_span called before "
+                f"_process_impl set self._current_tenant_id"
+            )
         try:
             with self.telemetry_manager.span(
                 name="cogniverse.orchestration",

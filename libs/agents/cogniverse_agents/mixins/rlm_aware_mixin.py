@@ -57,6 +57,27 @@ class RLMAwareMixin:
 
     _rlm_instance: Optional[RLMInference] = None
 
+    def _resolve_tenant_id_for_rlm(self, explicit: Optional[str]) -> str:
+        """Resolve the tenant_id to stamp on an RLM call.
+
+        Order of precedence:
+          1. An explicit ``tenant_id`` argument passed by the caller.
+          2. ``self.tenant_id`` set by the dispatcher on the agent instance.
+
+        Anything else is a bug — the old code silently substituted
+        ``"default"`` and that hid every missing-tenant plumbing error.
+        """
+        tid = explicit or getattr(self, "tenant_id", None)
+        if not tid:
+            raise RuntimeError(
+                f"{type(self).__name__}: RLM inference requires a tenant_id, "
+                f"but neither the caller nor self.tenant_id provided one. "
+                f"The dispatcher must set self.tenant_id before the mixin is "
+                f"invoked; get_rlm callers should pass tenant_id=... when "
+                f"self.tenant_id isn't available."
+            )
+        return tid
+
     def get_rlm(
         self,
         llm_config: LLMEndpointConfig,
@@ -91,7 +112,7 @@ class RLMAwareMixin:
                 timeout_seconds=timeout_seconds,
                 event_queue=event_queue,
                 task_id=task_id,
-                tenant_id=tenant_id or getattr(self, "tenant_id", "default"),
+                tenant_id=self._resolve_tenant_id_for_rlm(tenant_id),
             )
 
         # Create cached instance if config changed (no event_queue)
@@ -167,7 +188,7 @@ class RLMAwareMixin:
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
             task_id=task_id,
-            tenant_id=getattr(self, "tenant_id", "default"),
+            tenant_id=self._resolve_tenant_id_for_rlm(None),
         )
 
         logger.info(
@@ -217,7 +238,7 @@ class RLMAwareMixin:
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
             task_id=task_id,
-            tenant_id=getattr(self, "tenant_id", "default"),
+            tenant_id=self._resolve_tenant_id_for_rlm(None),
         )
 
         logger.info(

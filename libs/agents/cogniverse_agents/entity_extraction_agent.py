@@ -182,7 +182,12 @@ class EntityExtractionAgent(
 
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
-            tenant_id = getattr(self, "_artifact_tenant_id", "default")
+            tenant_id = getattr(self, "_artifact_tenant_id", None)
+            if not tenant_id:
+                raise RuntimeError(
+                    f"{type(self).__name__}._load_artifact called before the "
+                    f"dispatcher injected _artifact_tenant_id"
+                )
             provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
             am = ArtifactManager(provider, tenant_id)
 

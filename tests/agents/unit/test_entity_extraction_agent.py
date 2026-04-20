@@ -565,6 +565,7 @@ class TestEntityExtractionArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
             entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
             entity_agent.dspy_module = MagicMock()
             entity_agent._load_artifact()
 
@@ -592,4 +593,5 @@ class TestEntityExtractionArtifactLoading:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
             entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
             entity_agent._load_artifact()

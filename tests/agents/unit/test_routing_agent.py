@@ -394,6 +394,7 @@ class TestRoutingArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
             agent.telemetry_manager = mock_tm
+            agent._artifact_tenant_id = "test:unit"
             agent.routing_module = MagicMock()
             agent._load_artifact()
 
@@ -424,4 +425,5 @@ class TestRoutingArtifactLoading:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
             agent.telemetry_manager = mock_tm
+            agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()

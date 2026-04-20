@@ -400,6 +400,7 @@ class TestProfileSelectionArtifactLoading:
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
             profile_agent.telemetry_manager = mock_tm
+            profile_agent._artifact_tenant_id = "test:unit"
             profile_agent.dspy_module = MagicMock()
             profile_agent._load_artifact()
 
@@ -427,4 +428,5 @@ class TestProfileSelectionArtifactLoading:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
             profile_agent.telemetry_manager = mock_tm
+            profile_agent._artifact_tenant_id = "test:unit"
             profile_agent._load_artifact()

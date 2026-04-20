@@ -63,14 +63,20 @@ class TestQueryEnhancementModule:
         assert result.confidence == "0.85"
 
     def test_forward_fallback(self):
-        """Test fallback when DSPy fails"""
+        """Test fallback when DSPy fails.
+
+        The fallback must NOT echo the input — that was the old bug which
+        silently poisoned SIMBA trainsets with identity pairs.  It must
+        append at least one heuristic expansion so enhanced_query differs
+        from the original while still containing it.
+        """
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
         result = module.forward(query="Show me ML videos")
 
-        # Fallback should add basic expansions
-        assert result.enhanced_query == "Show me ML videos"  # Keeps original
+        assert result.enhanced_query != "Show me ML videos"
+        assert result.enhanced_query.startswith("Show me ML videos")
         assert "machine learning" in result.expansion_terms.lower()
         assert result.confidence == "0.5"
 
