@@ -260,7 +260,12 @@ class TestMultiProfileDashboardUI:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        search_input = page.get_by_label("Enter your search query")
+        # get_by_label also matches the adjacent help-button with the same
+        # aria-label; narrow to the actual textbox by role to keep Playwright
+        # strict-mode happy.
+        search_input = page.get_by_role(
+            "textbox", name="Enter your search query"
+        )
         search_input.fill("sports throwing discus")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
