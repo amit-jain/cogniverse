@@ -181,9 +181,13 @@ def generate_spans_for_batch_jobs():
         q = f"{ENTITY_QUERIES[i % len(ENTITY_QUERIES)]} case {i}"
         _call_agent("entity_extraction_agent", q)
 
-    # Query enhancement spans
+    # Query enhancement spans.  Do NOT append a numeric suffix here: small
+    # models (gemma4:e2b) treat "variant 5" as opaque content they must
+    # preserve and end up echoing the whole input back unchanged, which
+    # makes SIMBA train on degenerate identity pairs.  Cycling through the
+    # base list is fine — spans are unique by span_id, not query text.
     for i in range(spans_per_agent):
-        q = f"{ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]} variant {i}"
+        q = ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]
         _call_agent("query_enhancement_agent", q)
 
     # Profile selection spans

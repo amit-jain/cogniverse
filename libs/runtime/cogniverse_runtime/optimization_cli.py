@@ -520,6 +520,11 @@ async def run_simba_optimization(
 
         if not original or not enhanced:
             continue
+        if enhanced.strip() == original.strip():
+            # Degenerate: the LLM echoed the query unchanged. SIMBA has no
+            # gradient to learn from an identity mapping — it will just
+            # replay the same demo. Drop these to keep the trainset honest.
+            continue
 
         example = dspy.Example(
             query=original,
@@ -553,6 +558,10 @@ async def run_simba_optimization(
             except (ValueError, TypeError):
                 continue
         if isinstance(inp, dict):
+            q = str(inp.get("query", "")).strip()
+            eq = str(inp.get("enhanced_query", "")).strip()
+            if q and eq and q == eq:
+                continue
             example = dspy.Example(**inp).with_inputs("query")
             trainset.append(example)
     logger.info(
