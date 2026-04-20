@@ -970,18 +970,18 @@ class VespaSearchBackend(SearchBackend):
         if query_embeddings is not None:
             inputs_needed = rank_config.get("inputs", {})
 
-            logger.error(
+            logger.debug(
                 f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}"
             )
-            logger.error(
+            logger.debug(
                 f"[{correlation_id}] Input query_embeddings shape: {query_embeddings.shape}, dtype: {query_embeddings.dtype}"
             )
             if query_embeddings.ndim == 2:
-                logger.error(
+                logger.debug(
                     f"[{correlation_id}] Input query_embeddings (2D) first vector (first 5): {query_embeddings[0][:5].tolist()}"
                 )
             else:
-                logger.error(
+                logger.debug(
                     f"[{correlation_id}] Input query_embeddings (1D) first 5 values: {query_embeddings[:5].tolist()}"
                 )
 
@@ -990,8 +990,7 @@ class VespaSearchBackend(SearchBackend):
                 vespa_param_name = f"input.query({input_name})"
 
                 if input_name == "qt" and "float" in input_type:
-                    # Float embeddings needed
-                    logger.error(
+                    logger.debug(
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
                     # For multi-vector models, convert to dict format as per Vespa docs
@@ -1005,14 +1004,13 @@ class VespaSearchBackend(SearchBackend):
                         query_params[vespa_param_name] = query_embeddings.tolist()
 
                 elif input_name == "qtb" and "int8" in input_type:
-                    # Binary embeddings needed
-                    logger.error(
+                    logger.debug(
                         f"[{correlation_id}] Adding binary embeddings for {vespa_param_name}"
                     )
                     binary_embeddings = self._generate_binary_embeddings(
                         query_embeddings
                     )
-                    logger.error(
+                    logger.debug(
                         f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}"
                     )
                     # For multi-vector models, convert to dict format as per Vespa docs
@@ -1022,18 +1020,17 @@ class VespaSearchBackend(SearchBackend):
                             str(index): vector.tolist()
                             for index, vector in enumerate(binary_embeddings)
                         }
-                        logger.error(
+                        logger.debug(
                             f"[{correlation_id}] Binary embeddings (2D) first vector (first 5): {binary_embeddings[0][:5].tolist()}"
                         )
                     else:
                         query_params[vespa_param_name] = binary_embeddings.tolist()
-                        logger.error(
+                        logger.debug(
                             f"[{correlation_id}] Binary embeddings (1D) first 5 values: {binary_embeddings[:5].tolist()}"
                         )
 
                 elif input_name == "q":
-                    # Generic query tensor (used by some schemas)
-                    logger.error(
+                    logger.debug(
                         f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}"
                     )
                     query_params[vespa_param_name] = query_embeddings.tolist()
