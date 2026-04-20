@@ -1155,11 +1155,45 @@ class E2EReportCollector:
 _report_collector: E2EReportCollector | None = None
 
 
+def _ensure_playwright_browsers() -> None:
+    """Install Chromium for Playwright tests on first use.
+
+    pytest-playwright declares the Python package dep but the Chromium
+    binary is a separate download (~150MB) that lives in a user cache
+    dir. Doing it here means ``uv sync --dev`` + ``pytest`` is all a
+    fresh dev machine needs — no out-of-band ``playwright install``
+    step to remember. Idempotent: if the binary is already on disk
+    the launch succeeds immediately.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return  # pytest-playwright not installed; nothing to do
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch(headless=True).close()
+        return
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["playwright", "install", "chromium"],
+            capture_output=True,
+            timeout=600,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        # Let the individual dashboard tests surface the error; don't
+        # abort the whole suite just because one optional install failed.
+        pass
+
+
 def pytest_configure(config):
-    """Install the HTTP recording hook at session start."""
+    """Install the HTTP recording hook and Playwright browsers at session start."""
     global _report_collector
     _report_collector = E2EReportCollector()
     _report_collector.install_hook()
+    _ensure_playwright_browsers()
 
 
 def pytest_unconfigure(config):
