@@ -401,17 +401,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
 
-    # 8b. Deploy wiki schema and install per-tenant WikiManager factory.
-    # Audit fix #12 — wiki is now per-tenant. We install a factory rather
-    # than a singleton so each request gets a manager bound to the right
-    # tenant. The factory caches one manager per tenant.
+    # 8b. Install per-tenant WikiManager factory.
+    # Wiki pages are genuinely per-tenant — each tenant gets its own
+    # wiki_pages_<tenant> Vespa schema for hard isolation. The factory
+    # below deploys that schema lazily on first access per tenant; no
+    # startup pre-deploy is needed.
     try:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
         from cogniverse_runtime.routers import wiki as wiki_router
 
+        # The backend handle itself is cluster-wide: one Vespa client used
+        # by every tenant's WikiManager. Scope it under SYSTEM_TENANT_ID so
+        # the registry key is semantically correct.
         wiki_backend = BackendRegistry.get_instance().get_ingestion_backend(
             name=bootstrap.backend_type,
-            tenant_id="default",
+            tenant_id=SYSTEM_TENANT_ID,
             config={
                 "backend": {
                     "url": bootstrap.backend_url,
@@ -422,21 +426,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             schema_loader=schema_loader,
         )
 
-        # Deploy wiki_pages schema for the default tenant. Per-tenant schemas
-        # for non-default tenants are created on first access via the factory.
-        try:
-            wiki_backend.schema_registry.deploy_schema(
-                tenant_id="default", base_schema_name="wiki_pages"
-            )
-            logger.info("Wiki schema deployed for default tenant")
-        except Exception as schema_err:
-            logger.warning(f"Wiki schema deploy skipped: {schema_err}")
-
-        # Register a backend profile with type="wiki" so WikiManager.search
-        # can resolve. Schema deploy and profile registration are separate
-        # concerns in VespaSearchBackend — Mem0 does the same thing in
+        # Register the "wiki" backend profile (type="wiki") so
+        # WikiManager.search can resolve via the shared profile registry.
+        # Schema deploy and profile registration are separate concerns in
+        # VespaSearchBackend — Mem0 does the same thing in
         # memory/manager.py for "agent_memories". The profile_change_listener
-        # wired above fans this into every cached search backend.
+        # wired above fans this into every cached search backend. The
+        # registration itself is cluster-wide (all tenants see the same
+        # profile shape), so it lives under SYSTEM_TENANT_ID.
         try:
             from cogniverse_foundation.config.unified_config import (
                 BackendProfileConfig,
@@ -454,7 +451,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             }
             config_manager.add_backend_profile(
                 BackendProfileConfig.from_dict("wiki_pages", wiki_profile),
-                tenant_id="default",
+                tenant_id=SYSTEM_TENANT_ID,
                 service="backend",
             )
             logger.info("Wiki backend profile registered")
@@ -506,14 +503,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning(f"WikiManager init failed (non-fatal): {e}")
 
-    # 8c. Deploy knowledge graph schema and wire GraphManager factory
+    # 8c. Install per-tenant GraphManager factory.
+    # Knowledge-graph is now per-tenant: each tenant gets its own
+    # knowledge_graph_<tenant> Vespa schema, mirroring the wiki pattern.
+    # Hard Vespa-schema isolation is the right level — a field-only
+    # filter inside a shared schema is fragile (any new query path has
+    # to remember the tenant_id filter, admin tooling sees every
+    # tenant's data, and a noisy tenant can dominate shared storage).
+    # The factory below deploys the per-tenant schema lazily on first
+    # access; no startup pre-deploy.
     try:
         from cogniverse_agents.graph.graph_manager import GraphManager
         from cogniverse_runtime.routers import graph as graph_router
 
+        # Cluster-wide backend handle (one Vespa client shared by every
+        # tenant's GraphManager). Registry key lives under SYSTEM_TENANT_ID.
         graph_backend = BackendRegistry.get_instance().get_ingestion_backend(
             name=bootstrap.backend_type,
-            tenant_id="default",
+            tenant_id=SYSTEM_TENANT_ID,
             config={
                 "backend": {
                     "url": bootstrap.backend_url,
@@ -523,34 +530,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        try:
-            graph_backend.schema_registry.deploy_schema(
-                tenant_id="default", base_schema_name="knowledge_graph"
-            )
-            logger.info("Knowledge graph schema deployed for default tenant")
-        except Exception as schema_err:
-            logger.warning(f"Knowledge graph schema deploy skipped: {schema_err}")
 
-        # Single shared schema across all tenants. Isolation is enforced by
-        # the tenant_id field on every document. Deploying a per-tenant schema
-        # conflicts with Vespa's schema-removal safety when multiple tenants
-        # are added dynamically.
         _graph_managers: dict = {}
-        _shared_graph_schema = "knowledge_graph_default"
 
         def _graph_manager_factory(tenant_id: str) -> GraphManager:
+            """Return a GraphManager for the given tenant, building on demand.
+
+            Each tenant gets a dedicated knowledge_graph_<tenant> schema.
+            The first access for a new tenant deploys the schema; subsequent
+            accesses reuse the cached manager. Errors during schema deploy
+            are non-fatal — the manager still constructs and the first
+            feed/query attempt surfaces the real error.
+            """
             if tenant_id in _graph_managers:
                 return _graph_managers[tenant_id]
+
+            try:
+                graph_backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                )
+            except Exception as schema_err:
+                logger.warning(
+                    f"Knowledge graph schema deploy for tenant {tenant_id} "
+                    f"skipped: {schema_err}"
+                )
+
             mgr = GraphManager(
                 backend=graph_backend,
                 tenant_id=tenant_id,
-                schema_name=_shared_graph_schema,
+                schema_name=graph_backend.get_tenant_schema_name(
+                    tenant_id, "knowledge_graph"
+                ),
             )
             _graph_managers[tenant_id] = mgr
             return mgr
 
         graph_router.set_graph_manager_factory(_graph_manager_factory)
-        logger.info("GraphManager factory initialized (shared schema: %s)", _shared_graph_schema)
+        logger.info("GraphManager factory initialized (per-tenant)")
     except Exception as e:
         logger.warning(f"GraphManager init failed (non-fatal): {e}")
 
