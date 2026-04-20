@@ -36,7 +36,12 @@ KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
-LOOKBACK_HOURS = 48
+# Narrow lookback so each batch job analyses only the spans this module's
+# fixture just emitted. 48h dragged in spans from every past local e2e run,
+# and assertions like "simple_count > complex_count" (which reflect THIS
+# fixture's 20-simple + 10-complex query mix) get drowned out when past runs
+# skewed the population. 1h comfortably covers fixture → test-run latency.
+LOOKBACK_HOURS = 1
 RUNTIME = "http://localhost:28000"
 
 
@@ -230,7 +235,7 @@ skip_if_no_kubectl = pytest.mark.skipif(
 def _run_batch_job(
     mode: str,
     tenant_id: str = TENANT_ID,
-    lookback_hours: int = LOOKBACK_HOURS,
+    lookback_hours: float = LOOKBACK_HOURS,
     timeout: int = 180,
 ) -> dict:
     """Run a batch optimization job inside the k3d pod and return parsed JSON."""
@@ -486,19 +491,23 @@ class TestWorkflowOptimization:
             f"got: {demo_queries}"
         )
 
-        # For "analyze...compare with documents" → should use entity_extraction + search + document agents
+        # Workflow demos reflect the orchestrator's agent_sequence — the agents
+        # it explicitly routes to. Entity extraction and query enhancement run
+        # in the gateway preprocessing pipeline BEFORE orchestration starts,
+        # so they aren't part of the orchestrator's recorded sequence. Only
+        # assert on agents the orchestrator actually dispatches.
         compare_demos = [d for d in valid_demos if "compare" in d["query"]]
         if compare_demos:
             agents = compare_demos[0]["agent_sequence"]
             if isinstance(agents, str):
                 agents = [a.strip() for a in agents.split(",") if a.strip()]
-            assert "entity_extraction_agent" in agents, (
-                f"'compare with documents' workflow should use entity_extraction_agent, "
-                f"got: {agents}"
-            )
             assert any(a in agents for a in ("search_agent", "document_agent")), (
                 f"'compare with documents' workflow should use search or document agent, "
                 f"got: {agents}"
+            )
+            assert any(a in agents for a in ("summarizer_agent", "detailed_report_agent")), (
+                f"'compare' workflow should aggregate results via summarizer or "
+                f"report agent, got: {agents}"
             )
 
         # All agents must be valid registered agents

@@ -362,7 +362,7 @@ async def _query_spans_by_name(
     telemetry_provider,
     tenant_id: str,
     span_name: str,
-    lookback_hours: int,
+    lookback_hours: float,
 ):
     """Query spans from Phoenix filtered by span name.
 
@@ -472,7 +472,7 @@ async def _load_approved_synthetic_data(
 
 async def run_simba_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """SIMBA query enhancement optimization.
 
@@ -619,7 +619,7 @@ async def run_simba_optimization(
 
 async def run_workflow_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """Workflow orchestration optimization.
 
@@ -761,7 +761,7 @@ async def run_workflow_optimization(
 
 async def run_gateway_thresholds_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """Gateway confidence threshold tuning.
 
@@ -901,7 +901,7 @@ async def run_gateway_thresholds_optimization(
 
 async def run_profile_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """Profile selection optimization.
 
@@ -1045,7 +1045,7 @@ async def run_profile_optimization(
 
 async def run_entity_extraction_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """Entity extraction optimization.
 
@@ -1174,7 +1174,7 @@ async def run_entity_extraction_optimization(
 
 async def run_routing_optimization(
     tenant_id: str,
-    lookback_hours: int = 24,
+    lookback_hours: float = 24.0,
 ) -> dict:
     """Routing decision optimization.
 
@@ -1456,9 +1456,11 @@ def main():
     parser.add_argument("--memory-retention-days", type=int, default=30)
     parser.add_argument(
         "--lookback-hours",
-        type=int,
-        default=24,
-        help="Hours of span history to analyze (simba, workflow, gateway-thresholds, profile, entity-extraction, routing)",
+        type=float,
+        default=24.0,
+        help="Hours of span history to analyze. Accepts fractions (e.g. 0.1 "
+             "= 6 minutes) so e2e tests can scope to the current fixture "
+             "window without picking up spans from earlier runs.",
     )
     args = parser.parse_args()
 
