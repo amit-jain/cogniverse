@@ -275,12 +275,20 @@ class TestMultiProfileDashboardUI:
         page.wait_for_timeout(SEARCH_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        results_heading = page.locator('text="Search Results"')
-        no_results = page.locator('[data-testid="stAlert"]:has-text("No results")')
+        # The dashboard renders a heading <h3 id="search-results">🎯 Search Results</h3>
+        # after the search completes. Exact-text locator like text="Search Results"
+        # doesn't match because the heading is prefixed with an emoji — pin by the
+        # stable element id instead. If no hits are found, Streamlit shows an
+        # st.info/st.warning alert with a "No results" or "No matching" banner.
+        results_heading = page.locator("#search-results")
+        no_results = page.locator(
+            '[data-testid="stAlert"]:has-text("No results"), '
+            '[data-testid="stAlert"]:has-text("No matching")'
+        )
 
-        # Must show either results or "no results" (search executed)
         assert results_heading.count() > 0 or no_results.count() > 0, (
-            "Dashboard search must execute and render results section"
+            "Dashboard search must execute and render the Search Results section "
+            "(or an explicit 'No results' alert when the query matches nothing)"
         )
 
     def test_ingestion_tab_shows_profile_options(self, page):
