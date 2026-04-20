@@ -943,6 +943,7 @@ dev = [
     { name = "cogniverse-cli" },
     { name = "isort" },
     { name = "mypy" },
+    { name = "pytest-playwright" },
     { name = "ruff" },
 ]
 docs = [
@@ -1044,6 +1045,7 @@ dev = [
     { name = "cogniverse-cli", editable = "libs/cli" },
     { name = "isort", specifier = ">=6.0.1" },
     { name = "mypy", specifier = ">=1.17.1" },
+    { name = "pytest-playwright", specifier = ">=0.7.2" },
     { name = "ruff", specifier = ">=0.12.9" },
 ]
 docs = [
