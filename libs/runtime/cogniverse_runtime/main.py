@@ -15,6 +15,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import get_config
@@ -74,7 +75,7 @@ def _probe_phoenix_reachability() -> None:
             )
             return
 
-        with tm.span("startup.probe", tenant_id="default") as span:
+        with tm.span("startup.probe", tenant_id=SYSTEM_TENANT_ID) as span:
             # NoOpSpan has no record_exception/set_attribute side effects;
             # if we got a real span we set an attribute to force any error
             # in the export pipeline to surface here rather than later.
@@ -196,7 +197,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             BackendRegistry.remove_profile_from_backends(profile_name)
 
     config_manager.set_profile_change_listener(_profile_change_listener)
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    # SystemConfig is cluster-wide, not user-tenant-specific; scope it under
+    # the reserved SYSTEM_TENANT_ID so it can't collide with a user tenant.
+    config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 
     # 3. Initialize SchemaLoader
@@ -680,9 +683,10 @@ if __name__ == "__main__":
 
     from cogniverse_foundation.config.utils import create_default_config_manager
 
-    # Load config to get port
+    # Load config to get port. SystemConfig is cluster-wide (port, host,
+    # runtime-level settings), so read it under SYSTEM_TENANT_ID.
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
     port = config.get("runtime", {}).get("port", 8000)
     host = config.get("runtime", {}).get("host", "0.0.0.0")
