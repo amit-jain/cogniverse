@@ -44,6 +44,30 @@ from cogniverse_cli.images import (
 
 console = Console()
 
+
+def _resolve_cli_tenant(tenant: str | None) -> str:
+    """Pick the tenant_id to use for a CLI command.
+
+    Order:
+      1. Explicit ``--tenant`` flag.
+      2. ``$COGNIVERSE_TENANT_ID`` env var.
+      3. Error out with a clear pointer.
+
+    The runtime no longer falls back to a "default" tenant — every request
+    needs an explicit tenant_id that maps to a registered tenant. CLI
+    callers can register one with ``cogniverse tenant create <id>`` (when
+    that command is available) or POST /admin/tenants directly.
+    """
+    tid = tenant or os.environ.get("COGNIVERSE_TENANT_ID")
+    if tid:
+        return tid
+    raise click.ClickException(
+        "No tenant configured. Pass --tenant <id>, set "
+        "$COGNIVERSE_TENANT_ID, or register a tenant via the runtime: "
+        'curl -X POST http://localhost:28000/admin/tenants -H '
+        "'Content-Type: application/json' -d '{\"tenant_id\":\"<id>\"}'"
+    )
+
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
     "Runtime": "http://localhost:8000/health",
@@ -380,7 +404,7 @@ def graph_stats(tenant: str | None) -> None:
     """Show graph statistics: node/edge counts and top-degree nodes."""
     from cogniverse_cli.graph import cmd_stats
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     cmd_stats(tenant_id)
 
 
@@ -392,7 +416,7 @@ def graph_search(query: str, tenant: str | None, top_k: int) -> None:
     """Semantic search over graph nodes."""
     from cogniverse_cli.graph import cmd_search
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     cmd_search(tenant_id, query, top_k=top_k)
 
 
@@ -404,7 +428,7 @@ def graph_neighbors(node: str, tenant: str | None, depth: int) -> None:
     """Show direct neighbors of a node."""
     from cogniverse_cli.graph import cmd_neighbors
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     cmd_neighbors(tenant_id, node, depth=depth)
 
 
@@ -417,7 +441,7 @@ def graph_path(source: str, target: str, tenant: str | None, max_depth: int) -> 
     """Find the shortest path between two nodes."""
     from cogniverse_cli.graph import cmd_path
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     cmd_path(tenant_id, source, target, max_depth=max_depth)
 
 
@@ -498,7 +522,7 @@ def code(tenant: str | None, language: str, iterations: int, codebase: str) -> N
     """Interactive coding agent REPL."""
     from cogniverse_cli.code import run_repl
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     run_repl(
         tenant_id=tenant_id,
         language=language,
@@ -527,7 +551,7 @@ def index(path: str, content_type: str, tenant: str | None, profile: str | None)
         console.print(f"[yellow]--type {content_type} is not yet implemented. Only 'code' is supported.[/yellow]")
         return
 
-    tenant_id = tenant or os.environ.get("COGNIVERSE_TENANT_ID", "default")
+    tenant_id = _resolve_cli_tenant(tenant)
     index_files(
         root=P(path).resolve(),
         content_type=content_type,
