@@ -330,8 +330,10 @@ class TestProfileSelectionAgent:
         assert attrs["profile_selection.intent"] == "video_search"
 
     @pytest.mark.asyncio
-    async def test_span_uses_default_tenant_when_tenant_id_is_none(self, profile_agent):
-        """Span emitted with tenant_id='default' when tenant_id is None."""
+    async def test_missing_tenant_id_raises(self, profile_agent):
+        """Span emission requires tenant_id; the silent ``or "default"``
+        fallback was banned. Missing tenant raises ValueError so the
+        dispatcher can surface it as a 400 to the caller."""
         mock_telemetry = Mock()
         profile_agent.telemetry_manager = mock_telemetry
 
@@ -346,13 +348,10 @@ class TestProfileSelectionAgent:
             )
         )
 
-        await profile_agent._process_impl(
-            ProfileSelectionInput(query="cat videos")
-        )
-
-        mock_telemetry.span.assert_called_once()
-        call_kwargs = mock_telemetry.span.call_args
-        assert call_kwargs[1]["tenant_id"] == "default"
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            await profile_agent._process_impl(
+                ProfileSelectionInput(query="cat videos")
+            )
 
     @pytest.mark.asyncio
     async def test_span_failure_does_not_raise(self, profile_agent):

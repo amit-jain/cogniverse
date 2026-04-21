@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -384,10 +385,17 @@ class ProfileSelectionAgent(
         """Emit cogniverse.profile_selection telemetry span."""
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
+        # Tenant validation must propagate; only telemetry/transport errors
+        # are swallowed.  The old broad except swallowed ValueError too,
+        # which silently dropped missing-tenant requests instead of
+        # surfacing a 400.
+        validated_tenant = require_tenant_id(
+            tenant_id, source="ProfileSelectionInput"
+        )
         try:
             with self.telemetry_manager.span(
                 "cogniverse.profile_selection",
-                tenant_id=tenant_id or "default",
+                tenant_id=validated_tenant,
                 attributes={
                     "profile_selection.query": query[:200],
                     "profile_selection.selected_profile": selected_profile,

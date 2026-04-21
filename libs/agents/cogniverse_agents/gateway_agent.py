@@ -15,6 +15,7 @@ from pydantic import Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -467,7 +468,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                 f"(confidence={overall_confidence:.2f})"
             )
 
-        tenant_id = input.tenant_id or "default"
+        tenant_id = require_tenant_id(input.tenant_id, source="GatewayInput")
         self._emit_gateway_span(
             tenant_id=tenant_id,
             query=input.query,

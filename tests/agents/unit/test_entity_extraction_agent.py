@@ -14,6 +14,7 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionOutput,
     Relationship,
 )
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
 
 def _make_extraction_agent():
@@ -98,7 +99,7 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="Show me Barack Obama in Chicago")
+            EntityExtractionInput(query="Show me Barack Obama in Chicago", tenant_id=TEST_TENANT_ID)
         )
 
         assert isinstance(result, EntityExtractionOutput)
@@ -119,7 +120,7 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="show me some videos")
+            EntityExtractionInput(query="show me some videos", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.entity_count == 0
@@ -129,7 +130,7 @@ class TestEntityExtractionAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, entity_agent):
         """Test processing empty query"""
-        result = await entity_agent._process_impl(EntityExtractionInput(query=""))
+        result = await entity_agent._process_impl(EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID))
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -139,7 +140,7 @@ class TestEntityExtractionAgent:
     async def test_process_missing_query(self, entity_agent):
         """Test processing with missing query field (defaults to empty string)"""
         # With typed inputs, we provide an empty query as equivalent to missing
-        result = await entity_agent._process_impl(EntityExtractionInput(query=""))
+        result = await entity_agent._process_impl(EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID))
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -205,7 +206,7 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="Obama and Trump at White House")
+            EntityExtractionInput(query="Obama and Trump at White House", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.dominant_types[0] == "PERSON"  # Most common type
@@ -264,7 +265,7 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="Obama speech")
+            EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "dspy"
@@ -278,7 +279,7 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="hello")
+            EntityExtractionInput(query="hello", tenant_id=TEST_TENANT_ID)
         )
 
         assert isinstance(result.relationships, list)
@@ -313,7 +314,7 @@ class TestGLiNERFastPath:
         fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = []
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Barack Obama in Chicago")
+            EntityExtractionInput(query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "fast"
@@ -339,7 +340,7 @@ class TestGLiNERFastPath:
         ]
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Obama at the White House")
+            EntityExtractionInput(query="Obama at the White House", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "fast"
@@ -358,7 +359,7 @@ class TestGLiNERFastPath:
         ]
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Obama speech")
+            EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "fast"
@@ -377,7 +378,7 @@ class TestGLiNERFastPath:
         )
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Obama speech")
+            EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "dspy"
@@ -399,7 +400,7 @@ class TestGLiNERFastPath:
         agent.dspy_module = MagicMock()
         agent.dspy_module.forward.return_value = mock_result
 
-        input_data = EntityExtractionInput(query="Python programming")
+        input_data = EntityExtractionInput(query="Python programming", tenant_id=TEST_TENANT_ID)
         result = await agent._process_impl(input_data)
 
         assert result.entity_count >= 1
@@ -485,23 +486,23 @@ class TestTelemetrySpanEmission:
             )
 
             result = await agent._process_impl(
-                EntityExtractionInput(query="hello")
+                EntityExtractionInput(query="hello", tenant_id=TEST_TENANT_ID)
             )
 
             assert result.entity_count == 0
 
     @pytest.mark.asyncio
-    async def test_default_tenant_in_span(self, agent_with_telemetry):
-        """When tenant_id is None, 'default' is used in span."""
+    async def test_missing_tenant_id_raises(self, agent_with_telemetry):
+        """When tenant_id is missing, _process_impl raises rather than silently
+        emitting the span under "default". The telemetry hook in AgentBase now
+        calls require_tenant_id."""
         agent = agent_with_telemetry
         agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(entities="", entity_types="")
         )
 
-        await agent._process_impl(EntityExtractionInput(query="hello"))
-
-        call_kwargs = agent.telemetry_manager.span.call_args
-        assert call_kwargs[1]["tenant_id"] == "default"
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            await agent._process_impl(EntityExtractionInput(query="hello"))
 
     @pytest.mark.asyncio
     async def test_span_query_truncated(self, agent_with_telemetry):
@@ -512,7 +513,9 @@ class TestTelemetrySpanEmission:
         )
 
         long_query = "x" * 500
-        await agent._process_impl(EntityExtractionInput(query=long_query))
+        await agent._process_impl(
+            EntityExtractionInput(query=long_query, tenant_id=TEST_TENANT_ID)
+        )
 
         call_kwargs = agent.telemetry_manager.span.call_args
         attrs = call_kwargs[1]["attributes"]

@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cogniverse_agents.search.service import SearchService
+from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -78,7 +79,10 @@ async def search(
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Union[StreamingResponse, SearchResponse]:
     """Execute a search query. Returns SSE stream if stream=True, else JSON."""
-    tenant_id = request.tenant_id or "default"
+    try:
+        tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     telemetry_manager = get_telemetry_manager()
 

@@ -154,11 +154,14 @@ class TestCreateMemory:
         assert data["status"] == "saved"
         assert data["id"] == "mem-123"
         assert data["type"] == "preference"
+        # User-posted memories pass infer=False so the LLM extraction step
+        # is skipped (the user wrote exactly what they want stored).
         mgr.add_memory.assert_called_once_with(
             content="I prefer dark mode",
             tenant_id="acme",
             agent_name="_user_memories",
             metadata={},
+            infer=False,
         )
 
     def test_creates_memory_with_category(self, tenant_client):
@@ -181,6 +184,7 @@ class TestCreateMemory:
             tenant_id="acme",
             agent_name="_user_memories",
             metadata={"category": "search"},
+            infer=False,
         )
 
 

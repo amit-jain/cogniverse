@@ -267,7 +267,11 @@ class TestAgentDispatcherCapabilityRouting:
         dispatcher._registry.get_agent.return_value = agent_ep
 
         with pytest.raises(ValueError, match="no supported execution path"):
-            await dispatcher.dispatch(agent_name="weird_agent", query="test")
+            await dispatcher.dispatch(
+                agent_name="weird_agent",
+                query="test",
+                context={"tenant_id": "test:unit"},
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast

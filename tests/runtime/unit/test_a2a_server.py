@@ -194,6 +194,10 @@ class TestA2AMessageSend:
                     "messageId": "test-msg-2",
                     "parts": [{"kind": "text", "text": "find videos about dogs"}],
                 },
+                "metadata": {
+                    # No agent_name → routing_agent default; tenant_id required.
+                    "tenant_id": "test_tenant",
+                },
             },
         }
 
@@ -222,6 +226,7 @@ class TestA2AMessageSend:
                 },
                 "metadata": {
                     "agent_name": "bad_agent",
+                    "tenant_id": "test_tenant",
                 },
             },
         }
@@ -284,7 +289,7 @@ class TestA2AMessageSend:
                     "messageId": "msg-first-1",
                     "parts": [{"kind": "text", "text": "search for cats"}],
                 },
-                "metadata": {"agent_name": "search_agent"},
+                "metadata": {"agent_name": "search_agent", "tenant_id": "test_tenant"},
             },
         }
 
@@ -336,7 +341,7 @@ class TestA2AMultiTurn:
                     "contextId": context_id,
                     "parts": [{"kind": "text", "text": "search for cat videos"}],
                 },
-                "metadata": {"agent_name": "search_agent"},
+                "metadata": {"agent_name": "search_agent", "tenant_id": "test_tenant"},
             },
         }
 
@@ -360,7 +365,7 @@ class TestA2AMultiTurn:
                     "taskId": task_id,
                     "parts": [{"kind": "text", "text": "show me longer ones"}],
                 },
-                "metadata": {"agent_name": "search_agent"},
+                "metadata": {"agent_name": "search_agent", "tenant_id": "test_tenant"},
             },
         }
 

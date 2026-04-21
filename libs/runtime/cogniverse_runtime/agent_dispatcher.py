@@ -15,6 +15,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 if TYPE_CHECKING:
@@ -132,7 +133,9 @@ class AgentDispatcher:
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found in registry")
 
-        tenant_id = context.get("tenant_id", "default")
+        tenant_id = require_tenant_id(
+            context.get("tenant_id"), source="AgentTask.context"
+        )
         capabilities = set(agent.capabilities)
 
         conversation_history = context.get("conversation_history", [])

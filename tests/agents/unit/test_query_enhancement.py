@@ -30,6 +30,7 @@ from cogniverse_agents.search_agent import SearchAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
@@ -1578,7 +1579,7 @@ class TestEnhancedQueryEnhancementAgent:
 
     def test_input_defaults_entities_to_none(self):
         """When omitted, entities/relationships default to None."""
-        inp = QueryEnhancementInput(query="hello")
+        inp = QueryEnhancementInput(query="hello", tenant_id=TEST_TENANT_ID)
         assert inp.entities is None
         assert inp.relationships is None
 
@@ -1742,6 +1743,7 @@ class TestEnhancedQueryEnhancementAgent:
             relationships=[
                 {"subject": "robots", "relation": "playing", "object": "soccer"}
             ],
+            tenant_id=TEST_TENANT_ID,
         )
         output = await qe_agent._process_impl(inp)
 
@@ -1756,7 +1758,7 @@ class TestEnhancedQueryEnhancementAgent:
     async def test_process_empty_query(self, qe_agent):
         """Empty query returns zero-state output with empty variants."""
         output = await qe_agent._process_impl(
-            QueryEnhancementInput(query="")
+            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
         )
         assert output.original_query == ""
         assert output.enhanced_query == ""
@@ -1771,7 +1773,7 @@ class TestEnhancedQueryEnhancementAgent:
         the fallback must leave a non-identity signal."""
         qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-        inp = QueryEnhancementInput(query="show me AI tutorials")
+        inp = QueryEnhancementInput(query="show me AI tutorials", tenant_id=TEST_TENANT_ID)
         output = await qe_agent._process_impl(inp)
 
         assert isinstance(output, QueryEnhancementOutput)

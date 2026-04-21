@@ -257,14 +257,20 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
 
         Span name is ``f"{ClassName}.process"`` so QualityMonitor and other
         consumers can look up an agent's processing span by class name. The
-        ``tenant_id`` is pulled from the input model when present, otherwise
-        defaults to ``"default"`` because TelemetryManager.span() rejects
-        empty tenant_ids. If no telemetry manager is attached, this returns
-        a ``nullcontext`` so the wrap is a zero-cost no-op.
+        ``tenant_id`` is pulled from the input model and MUST be present —
+        the runtime no longer falls back to a bootstrap tenant for user
+        requests. If no telemetry manager is attached, this returns a
+        ``nullcontext`` so the wrap is a zero-cost no-op without demanding
+        a tenant_id (useful for unit tests that construct bare inputs).
         """
         if self.telemetry_manager is None:
             return nullcontext()
-        tenant_id = getattr(typed_input, "tenant_id", None) or "default"
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        tenant_id = require_tenant_id(
+            getattr(typed_input, "tenant_id", None),
+            source=type(typed_input).__name__,
+        )
         span_name = f"{self.__class__.__name__}.process"
         return self.telemetry_manager.span(span_name, tenant_id=tenant_id)
 

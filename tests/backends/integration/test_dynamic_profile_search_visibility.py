@@ -97,9 +97,11 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
     """
     import json
     import time
-    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
     import numpy as np
     import requests
+
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
     registry = BackendRegistry.get_instance()
     tenant_id = f"dyn_roundtrip_{uuid.uuid4().hex[:8]}"

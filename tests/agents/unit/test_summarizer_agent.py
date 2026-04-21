@@ -15,6 +15,7 @@ from cogniverse_agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
 
 @pytest.mark.unit
@@ -899,6 +900,7 @@ class TestA2AExecutorStreaming:
             "agent_name": "summarizer_agent",
             "query": "summarize this",
             "stream": True,
+            "tenant_id": TEST_TENANT_ID,
         }
         mock_context.task_id = "task_123"
         mock_context.context_id = "ctx_456"
@@ -941,6 +943,7 @@ class TestA2AExecutorStreaming:
         mock_context.metadata = {
             "agent_name": "summarizer_agent",
             "query": "summarize this",
+            "tenant_id": TEST_TENANT_ID,
             # stream not set — defaults to False
         }
         mock_context.task_id = "task_123"

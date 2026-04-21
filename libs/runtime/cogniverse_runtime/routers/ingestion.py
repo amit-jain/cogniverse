@@ -15,6 +15,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
@@ -108,7 +109,12 @@ async def start_ingestion(
 
         # Get backend with dependency injection
         backend_registry = BackendRegistry.get_instance()
-        tenant_id = request.tenant_id or "default"
+        try:
+            tenant_id = require_tenant_id(
+                request.tenant_id, source="IngestionRequest"
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         _backend = backend_registry.get_ingestion_backend(
             name=request.backend,
             tenant_id=tenant_id,
@@ -183,7 +189,12 @@ async def upload_video(
         # Process file through ingestion pipeline
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        upload_tenant_id = tenant_id or "default"
+        try:
+            upload_tenant_id = require_tenant_id(
+                tenant_id, source="/ingestion/upload"
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         pipeline = VideoIngestionPipeline(
             tenant_id=upload_tenant_id,
@@ -369,7 +380,14 @@ async def run_ingestion(
     try:
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        tenant_id = request.tenant_id or "default"
+        # Background task: the originating /ingestion endpoint already
+        # validated tenant_id via require_tenant_id before enqueuing, so
+        # this is belt-and-suspenders.  Missing tenant here is a logic
+        # bug, not a user error — raise and let the task status record
+        # the failure rather than silently ingesting under a ghost tenant.
+        tenant_id = require_tenant_id(
+            request.tenant_id, source="run_ingestion background task"
+        )
 
         pipeline = VideoIngestionPipeline(
             tenant_id=tenant_id,

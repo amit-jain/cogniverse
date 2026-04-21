@@ -21,6 +21,7 @@ from a2a.server.events import EventQueue
 from a2a.types import Message, TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils import get_message_text, new_agent_text_message
 
+from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,9 @@ class CogniverseAgentExecutor(AgentExecutor):
 
         agent_name = metadata.get("agent_name", "")
         query = metadata.get("query", user_text)
-        tenant_id = metadata.get("tenant_id", "default")
+        tenant_id = require_tenant_id(
+            metadata.get("tenant_id"), source="A2A request metadata"
+        )
         top_k = int(metadata.get("top_k", 10))
         stream = metadata.get("stream", False)
 

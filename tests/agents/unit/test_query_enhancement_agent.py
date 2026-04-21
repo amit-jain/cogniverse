@@ -12,6 +12,7 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementModule,
     QueryEnhancementOutput,
 )
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
 
 @pytest.fixture
@@ -125,7 +126,7 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="ML tutorials")
+            QueryEnhancementInput(query="ML tutorials", tenant_id=TEST_TENANT_ID)
         )
 
         assert isinstance(result, QueryEnhancementOutput)
@@ -139,7 +140,7 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, query_agent):
         """Test processing empty query"""
-        result = await query_agent._process_impl(QueryEnhancementInput(query=""))
+        result = await query_agent._process_impl(QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID))
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -150,7 +151,7 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_missing_query(self, query_agent):
         """Test processing with missing query field (empty string equivalent)"""
-        result = await query_agent._process_impl(QueryEnhancementInput(query=""))
+        result = await query_agent._process_impl(QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID))
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -169,7 +170,7 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process_impl(QueryEnhancementInput(query="test"))
+        result = await query_agent._process_impl(QueryEnhancementInput(query="test", tenant_id=TEST_TENANT_ID))
 
         assert result.confidence == 0.7  # Default fallback
 
@@ -188,7 +189,7 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="simple query")
+            QueryEnhancementInput(query="simple query", tenant_id=TEST_TENANT_ID)
         )
 
         assert len(result.expansion_terms) == 0
@@ -210,7 +211,7 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="Python tutorials")
+            QueryEnhancementInput(query="Python tutorials", tenant_id=TEST_TENANT_ID)
         )
 
         assert len(result.context_additions) == 3

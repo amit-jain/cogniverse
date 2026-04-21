@@ -14,6 +14,7 @@ from pydantic import Field
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +347,9 @@ class QueryEnhancementAgent(
 
         # Emit telemetry span
         self._emit_enhancement_span(
-            tenant_id=input.tenant_id or "default",
+            tenant_id=require_tenant_id(
+                input.tenant_id, source="QueryEnhancementInput"
+            ),
             original_query=query,
             enhanced_query=enhanced_query,
             variant_count=len(variants),

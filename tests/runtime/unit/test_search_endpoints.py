@@ -186,7 +186,7 @@ class TestSearchEndpoint:
 
         resp = search_client.post(
             "/search",
-            json={"query": "find sunset scenes", "top_k": 5},
+            json={"query": "find sunset scenes", "top_k": 5, "tenant_id": "test:unit"},
         )
 
         assert resp.status_code == 200
@@ -202,7 +202,7 @@ class TestSearchEndpoint:
         mock_instance.search.return_value = []
         mock_service_cls.return_value = mock_instance
 
-        resp = search_client.post("/search", json={"query": "nonexistent content"})
+        resp = search_client.post("/search", json={"query": "nonexistent content", "tenant_id": "test:unit"})
 
         assert resp.status_code == 200
         assert resp.json()["results_count"] == 0
@@ -213,7 +213,9 @@ class TestSearchEndpoint:
         """POST /search returns 500 when SearchService raises."""
         mock_service_cls.side_effect = RuntimeError("Backend unavailable")
 
-        resp = search_client.post("/search", json={"query": "test"})
+        resp = search_client.post(
+            "/search", json={"query": "test", "tenant_id": "test:unit"}
+        )
         assert resp.status_code == 500
         assert "Backend unavailable" in resp.json()["detail"]
 
@@ -226,7 +228,7 @@ class TestSearchEndpoint:
 
         resp = search_client.post(
             "/search",
-            json={"query": "test", "session_id": "sess-abc123"},
+            json={"query": "test", "session_id": "sess-abc123", "tenant_id": "test:unit"},
         )
 
         assert resp.status_code == 200
@@ -248,7 +250,7 @@ class TestSearchStreaming:
 
         resp = search_client.post(
             "/search",
-            json={"query": "sunset", "stream": True},
+            json={"query": "sunset", "stream": True, "tenant_id": "test:unit"},
         )
 
         assert resp.status_code == 200
@@ -275,7 +277,7 @@ class TestSearchStreaming:
 
         resp = search_client.post(
             "/search",
-            json={"query": "test", "stream": True},
+            json={"query": "test", "stream": True, "tenant_id": "test:unit"},
         )
 
         assert resp.status_code == 200  # SSE always returns 200

@@ -46,8 +46,13 @@ class TestPhoenixProbe:
             with caplog.at_level("INFO"):
                 _probe_phoenix_reachability()
 
-        # Span was attempted with the right name and tenant_id.
-        mock_tm.span.assert_called_once_with("startup.probe", tenant_id="default")
+        # Span was attempted with the right name and the reserved system
+        # identity (cluster-wide identity for runtime-internal telemetry).
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+        mock_tm.span.assert_called_once_with(
+            "startup.probe", tenant_id=SYSTEM_TENANT_ID
+        )
         # Success was logged.
         assert any("Phoenix reachability probe OK" in r.message for r in caplog.records)
 

@@ -14,6 +14,7 @@ from cogniverse_agents.gateway_agent import (
     GatewayInput,
     GatewayOutput,
 )
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -83,6 +84,8 @@ class TestGatewayModels:
             GatewayInput()  # type: ignore[call-arg]
 
     def test_input_with_query(self):
+        # The Pydantic model still permits an absent tenant_id at construction
+        # — that's only enforced at _process_impl-time via require_tenant_id.
         inp = GatewayInput(query="find me a video")
         assert inp.query == "find me a video"
         assert inp.tenant_id is None
@@ -249,7 +252,7 @@ class TestProcessImpl:
             {"text": "cooking videos", "label": "video_content", "score": 0.92},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Show me cooking videos")
+            GatewayInput(query="Show me cooking videos", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "simple"
         assert result.modality == "video"
@@ -265,7 +268,7 @@ class TestProcessImpl:
             {"text": "documents", "label": "document_content", "score": 0.80},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Compare the video with the PDF document")
+            GatewayInput(query="Compare the video with the PDF document", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "complex"
         assert result.modality == "both"
@@ -276,7 +279,7 @@ class TestProcessImpl:
         """No entities → always complex, regardless of query."""
         mock_gliner_model.predict_entities.return_value = []
         result = await gateway_agent._process_impl(
-            GatewayInput(query="hello world")
+            GatewayInput(query="hello world", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "complex"
         assert result.routed_to == "orchestrator_agent"
@@ -288,7 +291,7 @@ class TestProcessImpl:
             {"text": "something", "label": "video_content", "score": 0.35},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="something vague")
+            GatewayInput(query="something vague", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "complex"
         assert result.routed_to == "orchestrator_agent"
@@ -302,7 +305,7 @@ class TestProcessImpl:
         ]
         # "brief of the cooking video" — no analysis keywords, single modality
         result = await gateway_agent._process_impl(
-            GatewayInput(query="brief of the cooking video")
+            GatewayInput(query="brief of the cooking video", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "simple"
         assert result.generation_type == "summary"
@@ -315,7 +318,7 @@ class TestProcessImpl:
             {"text": "photo", "label": "image_content", "score": 0.91},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Find photos of cats")
+            GatewayInput(query="Find photos of cats", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "simple"
         assert result.modality == "image"
@@ -328,7 +331,7 @@ class TestProcessImpl:
             {"text": "podcast", "label": "audio_content", "score": 0.87},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Find podcast episodes about AI")
+            GatewayInput(query="Find podcast episodes about AI", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "simple"
         assert result.modality == "audio"
@@ -342,7 +345,7 @@ class TestProcessImpl:
             {"text": "report", "label": "detailed_report_request", "score": 0.78},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="full writeup of the spreadsheet data")
+            GatewayInput(query="full writeup of the spreadsheet data", tenant_id=TEST_TENANT_ID)
         )
         assert result.complexity == "complex"
         assert result.generation_type == "detailed_report"
@@ -443,13 +446,14 @@ class TestTelemetrySpan:
         ]
         gateway_agent.telemetry_manager = None
         result = await gateway_agent._process_impl(
-            GatewayInput(query="cooking videos")
+            GatewayInput(query="cooking videos", tenant_id=TEST_TENANT_ID)
         )
         assert result.routed_to == "search_agent"
 
     @pytest.mark.asyncio
-    async def test_default_tenant_id_in_span(self, gateway_agent, mock_gliner_model):
-        """When tenant_id is None, span uses 'default'."""
+    async def test_missing_tenant_id_raises(self, gateway_agent, mock_gliner_model):
+        """When tenant_id is None, _process_impl raises ValueError rather
+        than silently routing under "default"."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
@@ -458,12 +462,10 @@ class TestTelemetrySpan:
         mock_tm.span.return_value.__exit__ = Mock(return_value=False)
         gateway_agent.telemetry_manager = mock_tm
 
-        await gateway_agent._process_impl(
-            GatewayInput(query="videos", tenant_id=None)
-        )
-
-        call_kwargs = mock_tm.span.call_args
-        assert call_kwargs[1]["tenant_id"] == "default"
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            await gateway_agent._process_impl(
+                GatewayInput(query="videos", tenant_id=None)
+            )
 
 
 # ---------------------------------------------------------------------------

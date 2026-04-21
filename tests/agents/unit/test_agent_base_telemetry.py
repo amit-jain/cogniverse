@@ -133,17 +133,19 @@ class TestAgentBaseTelemetrySpan:
         assert events[-1]["data"]["result"] == "processed: hi"
 
     @pytest.mark.asyncio
-    async def test_missing_tenant_id_defaults_to_default(self):
-        """TelemetryManager.span() rejects empty tenant_ids — AgentBase must
-        substitute "default" rather than raising. Ensures legacy inputs that
-        don't carry tenant_id still emit a usable span."""
+    async def test_missing_tenant_id_raises(self):
+        """AgentBase MUST refuse to emit a span for an input that has no
+        tenant_id.  The old silent ``or "default"`` fallback hid every
+        missing-tenant plumbing bug in the runtime; now the ValueError
+        surfaces to the dispatcher and the request returns 400."""
         spy = _SpyTelemetryManager()
         agent = _TelemetryAgent(deps=_TelemetryDeps())
         agent.set_telemetry_manager(spy)
 
-        await agent.process(_TelemetryInput(query="hi"))
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            await agent.process(_TelemetryInput(query="hi"))
 
-        assert spy.calls[0]["tenant_id"] == "default"
+        assert spy.calls == [], "no span should have been emitted"
 
     @pytest.mark.asyncio
     async def test_subclass_set_telemetry_manager_pre_init_is_preserved(self):
