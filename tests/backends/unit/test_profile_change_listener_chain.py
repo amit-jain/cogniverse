@@ -117,9 +117,10 @@ def test_delete_backend_profile_propagates_removal(clean_backend_registry):
         schema_name="to_delete",
     )
     cm.add_backend_profile(profile, tenant_id="test:unit", service="backend")
-    assert cm.delete_backend_profile(
-        "to_delete", tenant_id="test:unit", service="backend"
-    ) is True
+    assert (
+        cm.delete_backend_profile("to_delete", tenant_id="test:unit", service="backend")
+        is True
+    )
 
     fake_backend.remove_profile.assert_called_once_with("to_delete")
 

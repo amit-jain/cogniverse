@@ -101,7 +101,9 @@ class TestBackendConfigDataclasses:
         profile = BackendProfileConfig(
             profile_name="test_profile", schema_name="test_schema"
         )
-        config = BackendConfig(profiles={"test_profile": profile}, tenant_id="test:unit")
+        config = BackendConfig(
+            profiles={"test_profile": profile}, tenant_id="test:unit"
+        )
 
         retrieved = config.get_profile("test_profile")
         assert retrieved is not None

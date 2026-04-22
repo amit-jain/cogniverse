@@ -855,7 +855,9 @@ class VespaBackend(Backend):
                 registry_by_full_name: Dict[str, Any] = {}
                 if self.schema_registry is not None:
                     for schema_info in self.schema_registry._get_all_schemas() or []:
-                        registry_by_full_name[schema_info.full_schema_name] = schema_info
+                        registry_by_full_name[schema_info.full_schema_name] = (
+                            schema_info
+                        )
 
                 unresolved = []
                 for full_name in unknown_in_vespa:
@@ -912,9 +914,7 @@ class VespaBackend(Backend):
             # explicitly asked for it. The merge above + live Vespa discovery
             # should make the override unnecessary; if something still slips
             # through, failing loudly beats silently dropping a schema.
-            self._deploy_package(
-                app_package, allow_schema_removal=allow_schema_removal
-            )
+            self._deploy_package(app_package, allow_schema_removal=allow_schema_removal)
 
             # Wait for content nodes to converge with the new schema
             # Vespa config server accepts the package immediately but content/distributor
@@ -1425,9 +1425,7 @@ class VespaBackend(Backend):
     # both the ingestion path (reads config directly) and the search
     # path (reads via VespaSearchBackend.profiles).
 
-    def add_profile(
-        self, profile_name: str, profile_config: Dict[str, Any]
-    ) -> None:
+    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
         """Register a profile at runtime; mirror into owned search backend."""
         if hasattr(self, "config") and isinstance(self.config, dict):
             profiles = self.config.setdefault("profiles", {})

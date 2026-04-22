@@ -19,8 +19,9 @@ from cogniverse_vespa.search_backend import VespaSearchBackend
 
 def _make_backend(profiles: dict | None = None) -> VespaSearchBackend:
     """Build a backend without touching real Vespa / pool / metrics."""
-    with patch("cogniverse_vespa.search_backend.ConnectionPool"), patch(
-        "cogniverse_vespa.search_backend.SearchMetrics"
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
     ):
         backend = VespaSearchBackend(
             config={
@@ -81,8 +82,9 @@ def test_initialize_populates_profiles_from_top_level_config():
     the backend with an empty profiles dict at query time.
     """
     backend = _make_backend()
-    with patch("cogniverse_vespa.search_backend.ConnectionPool"), patch(
-        "cogniverse_vespa.search_backend.SearchMetrics"
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
     ):
         backend.initialize(
             {
@@ -100,8 +102,9 @@ def test_initialize_reads_profiles_from_nested_backend_section():
     """``get_search_backend`` passes profiles under config['backend'] in some
     call paths (see ``backend_registry.get_search_backend``)."""
     backend = _make_backend()
-    with patch("cogniverse_vespa.search_backend.ConnectionPool"), patch(
-        "cogniverse_vespa.search_backend.SearchMetrics"
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
     ):
         backend.initialize(
             {
@@ -155,6 +158,7 @@ def test_concurrent_add_and_remove_leaves_consistent_state():
         t.start()
     # Let them contend for a short while
     import time
+
     time.sleep(0.1)
     stop.set()
     for t in threads:
