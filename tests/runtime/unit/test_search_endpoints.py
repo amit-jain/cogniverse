@@ -303,7 +303,10 @@ class TestRerankEndpoint:
         """POST /search/rerank without query returns 400."""
         resp = search_client.post(
             "/search/rerank",
-            json={"results": [{"id": "1", "score": 0.5}]},
+            json={
+                "tenant_id": "test_tenant",
+                "results": [{"id": "1", "score": 0.5}],
+            },
         )
         assert resp.status_code == 400
 
@@ -311,7 +314,7 @@ class TestRerankEndpoint:
         """POST /search/rerank without results returns 400."""
         resp = search_client.post(
             "/search/rerank",
-            json={"query": "test"},
+            json={"tenant_id": "test_tenant", "query": "test"},
         )
         assert resp.status_code == 400
 
@@ -320,6 +323,7 @@ class TestRerankEndpoint:
         resp = search_client.post(
             "/search/rerank",
             json={
+                "tenant_id": "test_tenant",
                 "query": "test",
                 "results": [{"id": "1", "score": 0.5}],
                 "strategy": "nonexistent_strategy",
@@ -328,3 +332,12 @@ class TestRerankEndpoint:
         # Unknown strategy → 400 from the endpoint (before import failure)
         assert resp.status_code == 400
         assert "Unknown strategy" in resp.json()["detail"]
+
+    def test_rerank_missing_tenant_id(self, search_client):
+        """POST /search/rerank without tenant_id returns 400 (not 500)."""
+        resp = search_client.post(
+            "/search/rerank",
+            json={"query": "test", "results": [{"id": "1", "score": 0.5}]},
+        )
+        assert resp.status_code == 400
+        assert "tenant_id" in resp.json()["detail"]

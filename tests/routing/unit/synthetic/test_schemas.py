@@ -354,6 +354,7 @@ class TestSyntheticDataRequest:
     def test_valid_request(self):
         """Test creating valid request"""
         request = SyntheticDataRequest(
+            tenant_id="test:unit",
             optimizer="cross_modal",
             count=100,
             vespa_sample_size=200,
@@ -367,24 +368,31 @@ class TestSyntheticDataRequest:
     def test_request_count_validation(self):
         """Test count bounds validation"""
         # Valid
-        SyntheticDataRequest(optimizer="modality", count=1)
-        SyntheticDataRequest(optimizer="modality", count=10000)
+        SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=1)
+        SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10000)
 
         # Invalid
         with pytest.raises(ValidationError):
-            SyntheticDataRequest(optimizer="modality", count=0)
+            SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=0)
 
         with pytest.raises(ValidationError):
-            SyntheticDataRequest(optimizer="modality", count=10001)
+            SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10001)
 
     def test_request_defaults(self):
-        """Test default values"""
-        request = SyntheticDataRequest(optimizer="modality", count=100)
+        """Test default values for optional fields — tenant_id is required."""
+        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=100)
 
         assert request.vespa_sample_size == 200
         assert request.strategies == ["diverse"]
         assert request.max_profiles == 3
-        assert request.tenant_id == "default"
+        assert request.tenant_id == "test:unit"
+
+    def test_request_rejects_missing_tenant_id(self):
+        """SyntheticDataRequest must raise on missing tenant_id."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            SyntheticDataRequest(optimizer="modality", count=1)
 
 
 class TestSyntheticDataResponse:

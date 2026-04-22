@@ -324,6 +324,11 @@ async def rerank_results(
 
     except HTTPException:
         raise
+    except ValueError as e:
+        # require_tenant_id and similar client-input validators raise
+        # ValueError — surface that as 400, not 500.
+        logger.warning(f"Rerank bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Rerank error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

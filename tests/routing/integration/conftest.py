@@ -188,6 +188,7 @@ def vespa_instance():
 def test_generator_config():
     """Create test generator configuration with all required optimizer configs"""
     return SyntheticGeneratorConfig(
+        tenant_id="test:unit",
         optimizer_configs={
             "modality": OptimizerGenerationConfig(
                 optimizer_type="modality",

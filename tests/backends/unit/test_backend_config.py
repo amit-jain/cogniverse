@@ -503,7 +503,7 @@ class TestBackendConfigEdgeCases:
         config = BackendConfig(tenant_id="test:unit")
         data = config.to_dict()
 
-        assert data["tenant_id"] == "default"
+        assert data["tenant_id"] == "test:unit"
         assert data["type"] == "vespa"
         assert data["profiles"] == {}
 
