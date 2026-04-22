@@ -121,7 +121,7 @@ class TestInteractiveSearch:
         click_top_tab(page, "Interactive Search")
 
         # Verify search widgets present
-        assert page.get_by_label("Enter your search query").count() > 0, (
+        assert page.get_by_role("textbox", name="Enter your search query").count() > 0, (
             "Search input must be present"
         )
         assert page.locator('button[kind="primary"]:has-text("Search")').count() > 0, (
@@ -130,7 +130,7 @@ class TestInteractiveSearch:
 
         # Use .fill() to properly trigger Streamlit's React component bridge.
         # .type() and JS-based fill don't reliably commit to session state.
-        search_input = page.get_by_label("Enter your search query")
+        search_input = page.get_by_role("textbox", name="Enter your search query")
         search_input.fill("sports activity")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
@@ -143,7 +143,7 @@ class TestInteractiveSearch:
 
         # Verify search actually executed — "Search Results" heading is the
         # authoritative proof (not statistics metrics which are always present)
-        results_heading = page.locator('text="Search Results"')
+        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
         no_results_alert = page.locator(
             '[data-testid="stAlert"]:has-text("No results")'
         )
@@ -175,7 +175,7 @@ class TestInteractiveSearch:
 
         # Fill search input — .fill() + Enter commits the value in Streamlit's
         # session state via the React bridge.
-        search_input = page.get_by_label("Enter your search query")
+        search_input = page.get_by_role("textbox", name="Enter your search query")
         search_input.fill("throwing discus")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
@@ -189,7 +189,7 @@ class TestInteractiveSearch:
         page.wait_for_load_state("networkidle")
 
         # Verify search executed — "Search Results" heading or "No results" must appear
-        results_heading = page.locator('text="Search Results"')
+        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
         no_results_info = page.locator(
             '[data-testid="stAlert"]:has-text("No results")'
         )
@@ -241,7 +241,7 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        search_input = page.get_by_label("Enter your search query")
+        search_input = page.get_by_role("textbox", name="Enter your search query")
         search_input.fill("sports throwing discus")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
@@ -253,7 +253,7 @@ class TestInteractiveSearch:
         page.wait_for_timeout(SEARCH_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        results_heading = page.locator('text="Search Results"')
+        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
         no_results_info = page.locator(
             '[data-testid="stAlert"]:has-text("No results")'
         )

@@ -59,11 +59,12 @@ def render_routing_evaluation_tab():
     """Render the routing evaluation tab with metrics and visualizations"""
     st.subheader("🎯 Routing Evaluation Dashboard")
 
-    # Configuration section
+    # Configuration section — tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
     with st.expander("⚙️ Configuration", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            tenant_id = st.text_input("Tenant ID", value="default", help="Tenant to analyze")
+            st.text(f"Tenant: {tenant_id}")
         with col2:
             lookback_hours = st.number_input(
                 "Lookback Period (hours)", min_value=1, max_value=168, value=24

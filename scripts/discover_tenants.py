@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_sdk.interfaces.config_store import ConfigScope
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -33,9 +33,8 @@ def discover_tenants() -> list[str]:
         config_manager = create_default_config_manager()
 
         # Get all routing configs across tenants
-        configs = config_manager.store.list_configs(
+        configs = config_manager.store.list_all_configs(
             scope=ConfigScope.ROUTING,
-            tenant_id=None  # Get all tenants
         )
 
         # Extract unique tenant IDs
@@ -50,8 +49,7 @@ def discover_tenants() -> list[str]:
 
     except Exception as e:
         logger.error(f"Failed to discover tenants: {e}")
-        # Fallback to default tenant
-        return ["default"]
+        raise
 
 
 def main():
@@ -65,8 +63,11 @@ def main():
     tenant_ids = discover_tenants()
 
     if not tenant_ids:
-        logger.warning("No tenants found, using default")
-        tenant_ids = ["default"]
+        logger.error(
+            "No tenants found with routing configs. Auto-optimization requires "
+            "at least one tenant to be registered and configured."
+        )
+        return 1
 
     # Output JSON array to stdout for Argo
     output = json.dumps(tenant_ids)

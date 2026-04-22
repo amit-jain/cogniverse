@@ -20,27 +20,28 @@ def render_memory_management_tab():
     """Render memory management UI"""
     st.subheader("🧠 Agent Memory Management")
 
-    # Tenant and Agent Selection (get inputs first)
-    col1, col2 = st.columns(2)
-    with col1:
-        tenant_id = st.text_input(
-            "Tenant ID", value="default", help="Enter tenant ID to view/manage memories"
-        )
+    # Tenant is fixed to the gate-validated current_tenant; the sidebar
+    # Active Tenant selector is the only place tenant can change.
+    tenant_id = st.session_state["current_tenant"]
 
-    with col2:
-        agent_name = st.text_input(
-            "Agent Name",
-            value="routing_agent",
-            help="Enter agent name (e.g., routing_agent, video_agent)",
-        )
+    # Agent selection (tenant comes from the gate)
+    agent_name = st.text_input(
+        "Agent Name",
+        value="routing_agent",
+        help="Enter agent name (e.g., routing_agent, video_agent)",
+    )
+    st.caption(f"Memories scoped to tenant **{tenant_id}**")
 
-    # Check if Vespa is available first
+    # Probe the backend configured in SystemConfig (not a hardcoded
+    # localhost:8080 — in k3d the backend lives at an in-cluster service).
+    config_manager = create_default_config_manager()
+    system_config = config_manager.get_system_config()
     try:
         import httpx
 
-        backend_url = st.session_state.get("backend_url", "http://localhost")
-        backend_port = st.session_state.get("backend_port", "8080")
-        vespa_check_url = f"{backend_url}:{backend_port}/ApplicationStatus"
+        vespa_check_url = (
+            f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
+        )
         vespa_response = httpx.get(vespa_check_url, timeout=2)
         vespa_available = vespa_response.status_code == 200
     except Exception:
@@ -49,10 +50,9 @@ def render_memory_management_tab():
     if not vespa_available:
         st.warning("⚠️ Vespa backend is not running")
         st.info(
-            "💡 Memory management requires Vespa. Start Vespa with: `docker run --detach --name vespa --hostname vespa-container -p 8080:8080 vespaengine/vespa`"
-        )
-        st.info(
-            "Or if Vespa is running elsewhere, update the connection settings in the code."
+            f"💡 Memory management requires Vespa. Configured backend: "
+            f"`{system_config.backend_url}:{system_config.backend_port}`. "
+            "Check the backend is reachable from the dashboard pod."
         )
         return
 

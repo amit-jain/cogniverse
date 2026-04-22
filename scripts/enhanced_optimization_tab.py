@@ -184,11 +184,12 @@ def _render_search_annotation_tab():
     st.subheader("⭐ Search Result Annotations")
     st.markdown("Annotate search results to provide feedback for optimization")
 
-    # Configuration
+    # Configuration — tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
     with st.expander("⚙️ Settings", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            tenant_id = st.text_input("Tenant ID", value="default")
+            st.text(f"Tenant: {tenant_id}")
             lookback_hours = st.number_input("Lookback Hours", min_value=1, max_value=168, value=24)
         with col2:
             annotation_type = st.selectbox(
@@ -402,10 +403,11 @@ def _render_golden_dataset_tab():
     st.subheader("📚 Golden Dataset Builder")
     st.markdown("Build ground truth datasets from telemetry annotations")
 
-    # Configuration
+    # Configuration — tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
     col1, col2, col3 = st.columns(3)
     with col1:
-        tenant_id = st.text_input("Tenant ID", value="default", key="golden_tenant")
+        st.text(f"Tenant: {tenant_id}")
     with col2:
         min_rating = st.slider("Min Rating Threshold", 0.0, 1.0, 0.8, 0.1)
     with col3:
@@ -607,7 +609,9 @@ def _render_synthetic_data_tab():
             )
         with col2:
             max_profiles = st.slider("Max Profiles", 1, 10, 3)
-            tenant_id = st.text_input("Tenant ID", value="default", key="synthetic_data_tenant_id")
+            # Tenant comes from the gate-validated session state
+            tenant_id = st.session_state["current_tenant"]
+            st.text(f"Tenant: {tenant_id}")
 
     # Generate synthetic data
     if st.button("🚀 Generate Synthetic Data", type="primary"):
@@ -616,7 +620,15 @@ def _render_synthetic_data_tab():
                 # Call synthetic data API
                 import requests
 
-                api_base = st.session_state.get("api_base_url", "http://localhost:8000")
+                api_base = st.session_state.get(
+                    "runtime_url", st.session_state.get("api_base_url", "")
+                )
+                if not api_base:
+                    st.error(
+                        "Runtime URL not set in session state. Cannot reach "
+                        "/synthetic/generate endpoint."
+                    )
+                    return
                 request_payload = {
                     "optimizer": optimizer,
                     "count": count,
@@ -784,11 +796,9 @@ def _render_routing_optimization_tab():
 
     col1, col2 = st.columns(2)
     with col1:
-        tenant_id = st.text_input(
-            "Tenant ID",
-            value="default",
-            help="Tenant identifier for optimization"
-        )
+        # Tenant comes from the gate-validated session state
+        tenant_id = st.session_state["current_tenant"]
+        st.text(f"Tenant: {tenant_id}")
         optimizer_type = st.selectbox(
             "Module to Optimize",
             ["modality", "cross_modal", "routing", "workflow", "unified"],
@@ -1132,7 +1142,9 @@ def _render_profile_selection_tab():
     st.subheader("📈 Profile Selection Optimization")
     st.markdown("Learn which processing profile works best for different query types from telemetry data")
 
-    tenant_id = st.text_input("Tenant ID", value="default", key="profile_opt_tenant_id")
+    # Tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
+    st.caption(f"Tenant: **{tenant_id}**")
 
     # Check telemetry provider availability
     try:
@@ -1169,8 +1181,7 @@ def _render_profile_selection_tab():
 
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        # Get telemetry provider
-        tenant_id = st.text_input("Tenant ID", value="default", key="profile_tenant_id")
+        # Get telemetry provider (reuse gate-validated tenant_id from above)
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -1410,7 +1421,9 @@ def _render_metrics_dashboard_tab():
     st.subheader("📉 Optimization Metrics Dashboard")
     st.markdown("Track routing accuracy, search quality, and optimization improvements from telemetry")
 
-    tenant_id = st.text_input("Tenant ID", value="default", key="metrics_tenant_id")
+    # Tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
+    st.caption(f"Tenant: **{tenant_id}**")
 
     # Check telemetry provider availability
     try:

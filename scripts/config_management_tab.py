@@ -574,6 +574,7 @@ def render_config_history_ui(manager, tenant_id: str):
     with col2:
         # Get services for selected scope
         configs = manager.store.list_configs(
+            tenant_id=tenant_id,
             scope=ConfigScope(scope),
         )
         services = sorted(set(c.service for c in configs)) if configs else []
@@ -596,6 +597,7 @@ def render_config_history_ui(manager, tenant_id: str):
 
     # Get history
     history = manager.store.get_config_history(
+        tenant_id=tenant_id,
         scope=ConfigScope(scope),
         service=service,
         config_key=config_key,

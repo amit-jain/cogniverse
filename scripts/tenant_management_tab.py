@@ -11,18 +11,20 @@ import streamlit as st
 
 
 def get_runtime_api_url() -> str:
-    """Get the runtime API URL from session state or default."""
+    """Get the runtime API URL from the dashboard's shared session state.
+
+    The top-level dashboard app populates `runtime_url` from SystemConfig at
+    startup; that is the authoritative source in k3d/production where the
+    runtime lives at an in-cluster service URL. Fall back to the runtime
+    service env var only as a last resort.
+    """
+    if "runtime_url" in st.session_state:
+        return st.session_state["runtime_url"]
     if "runtime_api_url" in st.session_state:
-        return st.session_state.runtime_api_url
+        return st.session_state["runtime_api_url"]
 
-    try:
-        if "config_manager" in st.session_state:
-            system_config = st.session_state.config_manager.get_system_config()
-            return system_config.ingestion_api_url
-    except Exception:
-        pass
-
-    return "http://localhost:8000"
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    return create_default_config_manager().get_system_config().agent_registry_url
 
 
 def _api_call(method: str, path: str, **kwargs) -> Dict[str, Any]:
@@ -46,7 +48,7 @@ def _api_call(method: str, path: str, **kwargs) -> Dict[str, Any]:
     except httpx.ConnectError:
         return {
             "success": False,
-            "error": "Runtime not running. Start it on port 8000.",
+            "error": f"Runtime not reachable at {get_runtime_api_url()}.",
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

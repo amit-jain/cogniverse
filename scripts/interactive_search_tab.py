@@ -253,6 +253,7 @@ def render_interactive_search_tab(agent_status: dict):
                 final = display_streaming_result(
                     agent_name="summarizer_agent",
                     query=summary_query,
+                    tenant_id=current_tenant,
                 )
                 if final and "summary" in final:
                     st.markdown("### Key Points")

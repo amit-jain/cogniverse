@@ -97,7 +97,9 @@ def render_orchestration_annotation_tab():
     """
     )
 
-    tenant_id = st.text_input("Tenant ID", value="default", key="orchestration_tenant_id")
+    # Tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
+    st.caption(f"Annotations scoped to tenant **{tenant_id}**")
     storage = OrchestrationAnnotationStorage(tenant_id=tenant_id)
 
     st.subheader("📋 Recent Orchestration Workflows")
