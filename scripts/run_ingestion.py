@@ -51,8 +51,13 @@ async def main_async():
         description="Content Ingestion Pipeline (video, image, audio, document)"
     )
     parser.add_argument(
-        "--tenant-id", type=str, default="default_tenant",
-        help="Tenant identifier (default: default_tenant)",
+        "--tenant-id", type=str, required=True,
+        help=(
+            "Tenant identifier (required). Schemas, memory, and telemetry "
+            "are per-tenant in cogniverse — there is no default tenant. "
+            "Register the tenant first via "
+            "POST /admin/tenants if it does not already exist."
+        ),
     )
     parser.add_argument("--video_dir", type=Path, help="Directory containing content files")
     parser.add_argument("--content-dir", type=Path, help="Directory containing content files (alias for --video_dir)")
@@ -81,7 +86,7 @@ async def main_async():
     )
 
     config_manager = create_default_config_manager()
-    app_config = get_config(tenant_id="default", config_manager=config_manager)
+    app_config = get_config(tenant_id=args.tenant_id, config_manager=config_manager)
 
     if args.profile:
         profiles_to_process = args.profile

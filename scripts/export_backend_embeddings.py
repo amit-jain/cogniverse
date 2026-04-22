@@ -346,6 +346,15 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
 def main():
     parser = argparse.ArgumentParser(description="Export embeddings from any backend")
     parser.add_argument(
+        "--tenant-id",
+        required=True,
+        help=(
+            "Tenant identifier (required). The fully-qualified schema "
+            "name is derived as ``{base_schema}_{sanitised_tenant}`` so "
+            "exports are always scoped to one tenant."
+        ),
+    )
+    parser.add_argument(
         "--backend",
         default="vespa",
         choices=["vespa"],  # Add more as implemented
@@ -357,9 +366,13 @@ def main():
         help="Backend URL"
     )
     parser.add_argument(
-        "--schema",
-        default="video_frame",
-        help="Schema/index to export from"
+        "--base-schema",
+        required=True,
+        help=(
+            "Base schema name (e.g. video_colpali_smol500_mv_frame). "
+            "The export targets the tenant-scoped form "
+            "``{base_schema}_{sanitised_tenant}``."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -399,31 +412,40 @@ def main():
     )
     
     args = parser.parse_args()
-    
+
+    # Derive the tenant-scoped schema name. Sanitisation matches what
+    # the runtime applies when writing schemas (colons → underscores).
+    sanitised_tenant = args.tenant_id.replace(":", "_")
+    tenant_schema = f"{args.base_schema}_{sanitised_tenant}"
+    print(
+        f"📦 Exporting embeddings for tenant={args.tenant_id} "
+        f"profile={args.base_schema} -> schema={tenant_schema}"
+    )
+
     # Create backend instance
     backend = get_backend(
         args.backend,
         url=args.backend_url,
-        schema=args.schema
+        schema=tenant_schema,
     )
-    
+
     # Create filters if provided
     filters = None
     if args.filter_key and args.filter_value:
         filters = {args.filter_key: args.filter_value}
-    
+
     # Create exporter
     exporter = BackendEmbeddingExporter(backend)
-    
+
     # Export embeddings
     output_path = exporter.export_embeddings(
         output_path=args.output,
-        schema=args.schema,
+        schema=tenant_schema,
         profile=args.profile,
         max_documents=args.max_documents,
         filters=filters,
         reduce_dims=not args.no_reduction,
-        dim_reduction_method=args.reduction_method
+        dim_reduction_method=args.reduction_method,
     )
     
     if output_path:

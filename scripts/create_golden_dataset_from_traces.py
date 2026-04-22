@@ -32,7 +32,7 @@ class GoldenDatasetGenerator:
     """
     
     def __init__(self,
-                 tenant_id: str = "default",
+                 tenant_id: str,
                  hours_back: int = 48,
                  min_occurrences: int = 2,
                  score_threshold: float = 0.5,
@@ -41,13 +41,18 @@ class GoldenDatasetGenerator:
         Initialize the generator
 
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required; Phoenix projects are
+                per-tenant so there is no cluster-wide "default").
             hours_back: How many hours back to analyze
             min_occurrences: Minimum times a query must appear
             score_threshold: Maximum avg score to be considered "low-scoring"
             top_n_queries: Number of queries to include in dataset
         """
-        self.tenant_id = tenant_id
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        self.tenant_id = require_tenant_id(
+            tenant_id, source="GoldenDatasetFromTraces"
+        )
         self.hours_back = hours_back
         self.min_occurrences = min_occurrences
         self.score_threshold = score_threshold
@@ -55,7 +60,7 @@ class GoldenDatasetGenerator:
 
         # Get telemetry provider for trace queries
         telemetry_manager = get_telemetry_manager()
-        self.provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+        self.provider = telemetry_manager.get_provider(tenant_id=self.tenant_id)
     
     async def fetch_traces_with_evaluations(self) -> pd.DataFrame:
         """
@@ -426,8 +431,11 @@ async def async_main():
     )
     parser.add_argument(
         "--tenant-id",
-        default="default",
-        help="Tenant identifier (default: default)"
+        required=True,
+        help=(
+            "Tenant identifier (required). Phoenix projects are "
+            "per-tenant, so there is no cluster-wide default."
+        ),
     )
     parser.add_argument(
         "--hours",

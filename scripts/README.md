@@ -625,9 +625,12 @@ uv run streamlit run scripts/phoenix_dashboard.py -- \
 **Export embeddings from any backend for dimensionality reduction/visualization**
 
 ```bash
-# Export embeddings (tenant-aware)
+# Export embeddings (tenant-aware; targets {base_schema}_{sanitised_tenant}).
+# --profile labels the parquet rows for query comparison; --base-schema
+# is the name the tenant schema was deployed under.
 uv run python scripts/export_backend_embeddings.py \
   --tenant-id acme:production \
+  --base-schema video_colpali_smol500_mv_frame \
   --profile video_colpali_smol500_mv_frame \
   --output embeddings/video_embeddings.parquet \
   --max-documents 10000
