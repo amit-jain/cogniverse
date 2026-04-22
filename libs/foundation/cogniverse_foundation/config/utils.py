@@ -387,7 +387,7 @@ def get_config(tenant_id: str, config_manager: ConfigManager) -> ConfigUtils:
 def get_config_value(
     key: str,
     default: Any = None,
-    tenant_id: str = "default",
+    tenant_id: str = None,
     config_manager: "ConfigManager" = None,
 ) -> Any:
     """
@@ -396,20 +396,23 @@ def get_config_value(
     Args:
         key: Configuration key
         default: Default value if not found
-        tenant_id: Tenant identifier
+        tenant_id: Tenant identifier (required)
         config_manager: ConfigManager instance (REQUIRED - no fallback)
 
     Returns:
         Configuration value
 
     Raises:
-        ValueError: If config_manager is not provided
+        ValueError: If config_manager or tenant_id is not provided
     """
+    from cogniverse_core.common.tenant_utils import require_tenant_id
+
     if config_manager is None:
         raise ValueError(
             "config_manager is required for get_config_value(). "
             "Dependency injection is mandatory - pass ConfigManager() explicitly."
         )
+    tenant_id = require_tenant_id(tenant_id, source="get_config_value")
     config = ConfigUtils(tenant_id, config_manager)
     return config.get(key, default)
 

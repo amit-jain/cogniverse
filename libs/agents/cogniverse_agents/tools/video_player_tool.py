@@ -23,14 +23,16 @@ class VideoPlayerTool(BaseTool):
     """Tool for playing videos with frame tagging based on search results"""
 
     def __init__(
-        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+        self, tenant_id: str = None, config_manager: "ConfigManager" = None
     ):
         """Initialize video player tool
 
         Args:
-            tenant_id: Tenant identifier for multi-tenancy support
+            tenant_id: Tenant identifier for multi-tenancy support (required)
             config_manager: ConfigManager instance for configuration access
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         super().__init__(
             name="VideoPlayer",
             description="Play videos with frame tagging and timeline markers for search results",
@@ -38,9 +40,11 @@ class VideoPlayerTool(BaseTool):
         if config_manager is None:
             raise ValueError("config_manager is required for VideoPlayerTool")
 
-        self.tenant_id = tenant_id
+        self.tenant_id = require_tenant_id(tenant_id, source="VideoPlayerTool")
         self.config_manager = config_manager
-        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        self.config = get_config(
+            tenant_id=self.tenant_id, config_manager=config_manager
+        )
         self.video_dir = Path(self.config.get("video_dir", "data/videos"))
 
     async def execute(

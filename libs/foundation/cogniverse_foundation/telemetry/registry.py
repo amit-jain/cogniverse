@@ -145,7 +145,7 @@ class TelemetryRegistry:
     def get_telemetry_provider(
         cls,
         name: Optional[str] = None,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> TelemetryProvider:
         """
@@ -154,14 +154,18 @@ class TelemetryRegistry:
         Args:
             name: Provider name (e.g., "phoenix", "langsmith").
                   If None, uses first available provider (fallback mode).
-            tenant_id: Tenant identifier (required for multi-tenancy)
+            tenant_id: Tenant identifier (required — per-tenant Phoenix
+                project / per-tenant LangSmith scope). Pass
+                ``SYSTEM_TENANT_ID`` explicitly for cluster-wide startup
+                telemetry.
             config: Generic configuration dictionary (provider interprets)
 
         Returns:
             Initialized TelemetryProvider instance
 
         Raises:
-            ValueError: If no providers available or specified provider not found
+            ValueError: If no providers available, specified provider not
+                found, or tenant_id not supplied.
 
         Example:
             # Explicit selection
@@ -177,6 +181,10 @@ class TelemetryRegistry:
                 tenant_id="customer-123"
             )
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        tenant_id = require_tenant_id(tenant_id, source="get_telemetry_provider")
+
         # Lazy discovery on first call
         if not cls._entry_points_loaded:
             cls.discover_providers()

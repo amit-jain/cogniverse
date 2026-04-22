@@ -1379,13 +1379,18 @@ async def lifespan(app: FastAPI):
     """Initialize agent on startup — tenant-agnostic, no env vars."""
     global orchestrator_agent
 
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
 
-    # AgentRegistry reads agents from config.json > agents section
-    registry = AgentRegistry(config_manager=config_manager)
+    # AgentRegistry reads agents from config.json > agents section.
+    # Startup is cluster-scope (no request tenant); per-request flow
+    # still routes through the dispatcher with its own tenant.
+    registry = AgentRegistry(
+        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+    )
 
     deps = OrchestratorDeps()
     orchestrator_agent = OrchestratorAgent(
@@ -1428,11 +1433,14 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(
+        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+    )
     deps = OrchestratorDeps()
     agent = OrchestratorAgent(
         deps=deps, registry=registry, config_manager=config_manager, port=8013

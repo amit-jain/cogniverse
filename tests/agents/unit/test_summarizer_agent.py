@@ -61,7 +61,7 @@ class TestVLMInterface:
         mock_get_config.return_value = mock_config
         mock_create_dspy_lm.return_value = Mock()
 
-        vlm = VLMInterface(config_manager=Mock())
+        vlm = VLMInterface(config_manager=Mock(), tenant_id="test:unit")
 
         assert vlm.config is not None
         mock_create_dspy_lm.assert_called_once_with(mock_endpoint)
@@ -74,7 +74,7 @@ class TestVLMInterface:
         mock_get_config.return_value = mock_config
 
         with pytest.raises(ValueError, match="LLM configuration missing"):
-            VLMInterface(config_manager=Mock())
+            VLMInterface(config_manager=Mock(), tenant_id="test:unit")
 
     @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
     @patch("cogniverse_core.common.vlm_interface.get_config")
@@ -107,7 +107,7 @@ class TestVLMInterface:
         mock_predict_instance.return_value = mock_result
         mock_predict.return_value = mock_predict_instance
 
-        vlm = VLMInterface(config_manager=Mock())
+        vlm = VLMInterface(config_manager=Mock(), tenant_id="test:unit")
         result = await vlm.analyze_visual_content(
             ["/path/to/image1.jpg", "/path/to/image2.jpg"], "test query"
         )

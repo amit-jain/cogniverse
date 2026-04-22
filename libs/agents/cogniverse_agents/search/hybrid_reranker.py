@@ -40,7 +40,7 @@ class HybridReranker:
         strategy: Optional[str] = None,
         learned_weight: Optional[float] = None,
         heuristic_weight: Optional[float] = None,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         config_manager: "ConfigManager" = None,
     ):
         """
@@ -52,17 +52,20 @@ class HybridReranker:
             strategy: Fusion strategy (loads from config if None)
             learned_weight: Weight for learned scores (loads from config if None)
             heuristic_weight: Weight for heuristic scores (loads from config if None)
-            tenant_id: Tenant identifier for config scoping
+            tenant_id: Tenant identifier for config scoping (required)
             config_manager: ConfigManager instance (required for dependency injection)
 
         Raises:
             ValueError: If config_manager is not provided
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for HybridReranker. "
                 "Pass create_default_config_manager() explicitly."
             )
+        tenant_id = require_tenant_id(tenant_id, source="HybridReranker")
 
         # Load config
         rerank_config = get_config_value(

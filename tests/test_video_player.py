@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 async def test_video_player():
@@ -22,7 +23,10 @@ async def test_video_player():
     print("=" * 50)
 
     # Initialize the tool
-    player_tool = VideoPlayerTool()
+    player_tool = VideoPlayerTool(
+        tenant_id="test:unit",
+        config_manager=create_default_config_manager(),
+    )
 
     # Sample search results that would come from video search
     sample_search_results = json.dumps(

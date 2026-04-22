@@ -20,19 +20,22 @@ class PromptManager:
     def __init__(
         self,
         config_manager: "ConfigManager" = None,
-        tenant_id: str = "default",
+        tenant_id: str = None,
     ):
         """
         Initialize the prompt manager.
 
         Args:
             config_manager: ConfigManager instance for dependency injection (required)
-            tenant_id: Tenant identifier for config retrieval
+            tenant_id: Tenant identifier for config retrieval (required)
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for PromptManager initialization"
             )
+        tenant_id = require_tenant_id(tenant_id, source="PromptManager")
         self.config = get_config(
             tenant_id=tenant_id, config_manager=config_manager
         ).get_all()

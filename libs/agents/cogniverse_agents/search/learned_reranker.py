@@ -40,7 +40,7 @@ class LearnedReranker:
     def __init__(
         self,
         model: Optional[str] = None,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         config_manager: "ConfigManager" = None,
     ):
         """
@@ -50,17 +50,20 @@ class LearnedReranker:
             model: Model name (e.g., "cohere/rerank-english-v3.0", "openai/bge-reranker-v2-m3")
                    For Ollama models, use "openai/<model_name>" with api_base set
                    If None, loads from config.json
-            tenant_id: Tenant identifier for config scoping
+            tenant_id: Tenant identifier for config scoping (required)
             config_manager: ConfigManager instance (required for dependency injection)
 
         Raises:
             ValueError: If config_manager is not provided
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for LearnedReranker. "
                 "Pass create_default_config_manager() explicitly."
             )
+        tenant_id = require_tenant_id(tenant_id, source="LearnedReranker")
 
         # Load config
         rerank_config = get_config_value(

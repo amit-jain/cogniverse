@@ -415,13 +415,13 @@ class ConfigurableMultiModalReranker:
     """
 
     def __init__(
-        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+        self, tenant_id: str = None, config_manager: "ConfigManager" = None
     ):
         """
         Initialize configurable reranker from config.json
 
         Args:
-            tenant_id: Tenant identifier for config scoping
+            tenant_id: Tenant identifier for config scoping (required)
             config_manager: ConfigManager instance (required for dependency injection)
 
         Raises:
@@ -431,6 +431,7 @@ class ConfigurableMultiModalReranker:
 
         from cogniverse_agents.search.hybrid_reranker import HybridReranker
         from cogniverse_agents.search.learned_reranker import LearnedReranker
+        from cogniverse_core.common.tenant_utils import require_tenant_id
         from cogniverse_foundation.config.utils import get_config_value
 
         if config_manager is None:
@@ -438,6 +439,9 @@ class ConfigurableMultiModalReranker:
                 "config_manager is required for ConfigurableMultiModalReranker. "
                 "Pass create_default_config_manager() explicitly."
             )
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigurableMultiModalReranker"
+        )
 
         logger = logging.getLogger(__name__)
 

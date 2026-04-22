@@ -51,12 +51,15 @@ class VLMInterface:
     """Interface for Vision Language Model operations using DSPy"""
 
     def __init__(
-        self, config_manager: "ConfigManager" = None, tenant_id: str = "default"
+        self, config_manager: "ConfigManager" = None, tenant_id: str = None
     ):
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for VLMInterface initialization"
             )
+        tenant_id = require_tenant_id(tenant_id, source="VLMInterface")
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self._initialize_vlm_client()
 

@@ -189,7 +189,7 @@ class VespaVideoSearchClient:
         self,
         backend_url: str = "http://localhost",
         backend_port: int = 8080,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         config_manager=None,
     ):
         """
@@ -198,7 +198,7 @@ class VespaVideoSearchClient:
         Args:
             backend_url: Backend server URL
             backend_port: Backend server port
-            tenant_id: Tenant identifier for configuration
+            tenant_id: Tenant identifier for configuration (required)
             config_manager: ConfigManager instance for retrieving config
         """
         # Load configuration
@@ -206,6 +206,7 @@ class VespaVideoSearchClient:
         from pathlib import Path
 
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
+        from cogniverse_core.common.tenant_utils import require_tenant_id
         from cogniverse_foundation.config.utils import get_config
 
         # Require config_manager via dependency injection
@@ -214,6 +215,7 @@ class VespaVideoSearchClient:
                 "config_manager is required for VespaSearchClient. "
                 "Dependency injection is mandatory - pass ConfigManager instance explicitly."
             )
+        tenant_id = require_tenant_id(tenant_id, source="VespaSearchClient")
 
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         # Get schema from environment or config (optional - can be provided in search params)

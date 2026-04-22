@@ -69,16 +69,18 @@ class ConfigAPIMixin:
 
     Usage:
         class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
-            def __init__(self):
+            def __init__(self, tenant_id, config_manager):
                 config = AgentConfig(...)
                 self.initialize_dynamic_dspy(config)
 
                 app = FastAPI()
-                self.setup_config_endpoints(app)
+                self.setup_config_endpoints(
+                    app, config_manager, tenant_id=tenant_id
+                )
     """
 
     def setup_config_endpoints(
-        self, app, config_manager: ConfigManager, tenant_id: str = "default"
+        self, app, config_manager: ConfigManager, tenant_id: str = None
     ):
         """
         Setup configuration API endpoints on FastAPI app.
@@ -86,9 +88,13 @@ class ConfigAPIMixin:
         Args:
             app: FastAPI application instance
             config_manager: ConfigManager instance for persistence
-            tenant_id: Tenant identifier for config persistence
+            tenant_id: Tenant identifier for config persistence (required)
         """
-        self._config_tenant_id = tenant_id
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        self._config_tenant_id = require_tenant_id(
+            tenant_id, source="setup_config_endpoints"
+        )
         self._config_manager = config_manager
 
         @app.get("/config")

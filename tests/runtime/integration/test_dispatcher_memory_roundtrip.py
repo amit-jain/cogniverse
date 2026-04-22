@@ -22,7 +22,9 @@ from tests.utils.async_polling import wait_for_vespa_indexing
 def real_dispatcher(config_manager, schema_loader):
     """Construct a real AgentDispatcher wired to the test Vespa via DI."""
     return AgentDispatcher(
-        agent_registry=AgentRegistry(config_manager=config_manager),
+        agent_registry=AgentRegistry(
+            tenant_id="test:unit", config_manager=config_manager
+        ),
         config_manager=config_manager,
         schema_loader=schema_loader,
     )

@@ -263,31 +263,45 @@ async def list_profiles(
 
 
 @router.post("/rerank")
-async def rerank_results(request: Dict[str, Any]) -> Dict[str, Any]:
+async def rerank_results(
+    request: Dict[str, Any],
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
     """Rerank search results using specified strategy."""
     try:
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         query = request.get("query")
         results = request.get("results", [])
         strategy = request.get("strategy", "learned")
+        tenant_id = require_tenant_id(
+            request.get("tenant_id"), source="/search/rerank body"
+        )
 
         if not query or not results:
             raise HTTPException(
                 status_code=400, detail="Query and results are required"
             )
 
-        # Import reranker based on strategy
+        # Import reranker based on strategy. Learned/hybrid rerankers
+        # load tenant-scoped config (model name, weights); MultiModalReranker
+        # is the heuristic base class and doesn't need config.
         if strategy == "learned":
             from cogniverse_agents.search.learned_reranker import (
                 LearnedReranker,
             )
 
-            reranker = LearnedReranker()
+            reranker = LearnedReranker(
+                tenant_id=tenant_id, config_manager=config_manager
+            )
         elif strategy == "hybrid":
             from cogniverse_agents.search.hybrid_reranker import (
                 HybridReranker,
             )
 
-            reranker = HybridReranker()
+            reranker = HybridReranker(
+                tenant_id=tenant_id, config_manager=config_manager
+            )
         elif strategy == "multi_modal":
             from cogniverse_agents.search.multi_modal_reranker import (
                 MultiModalReranker,

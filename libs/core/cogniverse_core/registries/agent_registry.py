@@ -37,23 +37,27 @@ class AgentRegistry:
     """
 
     def __init__(
-        self, tenant_id: str = "default", config_manager: "ConfigManager" = None
+        self, tenant_id: str, config_manager: "ConfigManager" = None
     ):
         """Initialize agent registry with dependency injection
 
         Args:
-            tenant_id: Tenant identifier for config isolation
+            tenant_id: Tenant identifier for config isolation (required)
             config_manager: ConfigManager instance (required for dependency injection)
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for AgentRegistry. "
                 "Dependency injection is mandatory - pass ConfigManager() explicitly."
             )
 
-        self.tenant_id = tenant_id
+        self.tenant_id = require_tenant_id(tenant_id, source="AgentRegistry")
         self.config_manager = config_manager
-        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        self.config = get_config(
+            tenant_id=self.tenant_id, config_manager=config_manager
+        )
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         self.http_client = httpx.AsyncClient(timeout=10.0)

@@ -147,7 +147,9 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")
     )
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(
+        tenant_id="test:unit", config_manager=config_manager
+    )
 
     # All four sub-agents live at a single in-process ASGI host. Path routing
     # (/agents/{name}/process) selects the target agent, matching production

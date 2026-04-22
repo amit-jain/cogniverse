@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, require_tenant_id
 from cogniverse_foundation.config.agent_config import AgentConfig
 from cogniverse_foundation.config.unified_config import (
     AgentConfigUnified,
@@ -246,18 +247,21 @@ class ConfigManager:
     # ========== Routing Configuration ==========
 
     def get_routing_config(
-        self, tenant_id: str = "default", service: str = "routing_agent"
+        self, tenant_id: str = None, service: str = "routing_agent"
     ) -> RoutingConfigUnified:
         """
         Get routing configuration.
 
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
             RoutingConfigUnified instance
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_routing_config"
+        )
         entry = self.store.get_config(
             tenant_id=tenant_id,
             scope=ConfigScope.ROUTING,
@@ -307,18 +311,22 @@ class ConfigManager:
     # ========== Telemetry Configuration ==========
 
     def get_telemetry_config(
-        self, tenant_id: str = "default", service: str = "telemetry"
+        self, tenant_id: str = None, service: str = "telemetry"
     ) -> TelemetryConfig:
         """
         Get telemetry configuration.
 
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required — pass
+                ``SYSTEM_TENANT_ID`` for cluster-wide telemetry config).
             service: Service name
 
         Returns:
             TelemetryConfig instance
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_telemetry_config"
+        )
         entry = self.store.get_config(
             tenant_id=tenant_id,
             scope=ConfigScope.TELEMETRY,
@@ -337,7 +345,7 @@ class ConfigManager:
     def set_telemetry_config(
         self,
         telemetry_config: TelemetryConfig,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         service: str = "telemetry",
     ) -> TelemetryConfig:
         """
@@ -351,6 +359,9 @@ class ConfigManager:
         Returns:
             Updated TelemetryConfig
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.set_telemetry_config"
+        )
         self.store.set_config(
             tenant_id=tenant_id,
             scope=ConfigScope.TELEMETRY,
@@ -365,18 +376,21 @@ class ConfigManager:
     # ========== Backend Configuration ==========
 
     def get_backend_config(
-        self, tenant_id: str = "default", service: str = "backend"
+        self, tenant_id: str = None, service: str = "backend"
     ) -> BackendConfig:
         """
         Get backend configuration for tenant.
 
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
             BackendConfig instance (may be empty if no tenant overrides)
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_backend_config"
+        )
         entry = self.store.get_config(
             tenant_id=tenant_id,
             scope=ConfigScope.BACKEND,
@@ -425,26 +439,29 @@ class ConfigManager:
         return backend_config
 
     def get_backend_profile(
-        self, profile_name: str, tenant_id: str = "default", service: str = "backend"
+        self, profile_name: str, tenant_id: str = None, service: str = "backend"
     ) -> Optional[BackendProfileConfig]:
         """
         Get a specific backend profile for tenant.
 
         Args:
             profile_name: Profile name
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
             BackendProfileConfig if found, None otherwise
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_backend_profile"
+        )
         backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
         return backend_config.get_profile(profile_name)
 
     def add_backend_profile(
         self,
         profile: BackendProfileConfig,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         service: str = "backend",
     ) -> BackendProfileConfig:
         """
@@ -455,12 +472,15 @@ class ConfigManager:
 
         Args:
             profile: BackendProfileConfig instance
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
             Updated BackendProfileConfig
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.add_backend_profile"
+        )
         with self._backend_lock:
             backend_config = self.get_backend_config(
                 tenant_id=tenant_id, service=service
@@ -486,7 +506,7 @@ class ConfigManager:
         self,
         profile_name: str,
         overrides: Dict[str, Any],
-        base_tenant_id: str = "default",
+        base_tenant_id: str = SYSTEM_TENANT_ID,
         target_tenant_id: Optional[str] = None,
         service: str = "backend",
     ) -> BackendProfileConfig:
@@ -499,8 +519,10 @@ class ConfigManager:
         Args:
             profile_name: Name of profile to update
             overrides: Dictionary of fields to override (supports deep merge)
-            base_tenant_id: Tenant to get base profile from (default = "default")
-            target_tenant_id: Tenant to save updated profile to (default = base_tenant_id)
+            base_tenant_id: Tenant to inherit the base profile from. Defaults
+                to ``SYSTEM_TENANT_ID`` (cluster-wide system profiles).
+            target_tenant_id: Tenant to save updated profile to (defaults to
+                ``base_tenant_id`` when omitted).
             service: Service name
 
         Returns:
@@ -514,8 +536,8 @@ class ConfigManager:
             manager.update_backend_profile(
                 profile_name="video_colpali_smol500_mv_frame",
                 overrides={"embedding_model": "custom/model"},
-                base_tenant_id="default",  # Get system profile
-                target_tenant_id="acme"     # Save to acme tenant
+                base_tenant_id=SYSTEM_TENANT_ID,  # Inherit from cluster base
+                target_tenant_id="acme",           # Save to acme tenant
             )
         """
         if target_tenant_id is None:
@@ -544,30 +566,33 @@ class ConfigManager:
             return merged_profile
 
     def list_backend_profiles(
-        self, tenant_id: str = "default", service: str = "backend"
+        self, tenant_id: str = None, service: str = "backend"
     ) -> Dict[str, BackendProfileConfig]:
         """
         List all backend profiles for a tenant.
 
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
             Dictionary mapping profile names to BackendProfileConfig instances
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.list_backend_profiles"
+        )
         backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
         return backend_config.profiles
 
     def delete_backend_profile(
-        self, profile_name: str, tenant_id: str = "default", service: str = "backend"
+        self, profile_name: str, tenant_id: str = None, service: str = "backend"
     ) -> bool:
         """
         Delete a backend profile for a tenant.
 
         Args:
             profile_name: Name of profile to delete
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (required)
             service: Service name
 
         Returns:
@@ -576,6 +601,9 @@ class ConfigManager:
         Example:
             manager.delete_backend_profile("custom_profile", tenant_id="acme")
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.delete_backend_profile"
+        )
         with self._backend_lock:
             backend_config = self.get_backend_config(
                 tenant_id=tenant_id, service=service

@@ -229,7 +229,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 4. Initialize registries
     backend_registry = BackendRegistry.get_instance()
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    # Startup registry lookup is cluster-scope (no request tenant yet);
+    # per-request code creates tenant-scoped registries via the
+    # dispatcher.
+    agent_registry = AgentRegistry(
+        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+    )
     logger.info("Registries initialized")
 
     # 5. Initialize SandboxManager (optional — gracefully degrades)
