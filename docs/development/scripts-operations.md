@@ -57,12 +57,14 @@ scripts/
 │
 ├── Deployment & Setup
 │   ├── deploy_json_schema.py         # Deploy single JSON schema
-│   ├── deploy_all_schemas.py         # Deploy all schemas at once
 │   ├── deploy_memory_schema.py       # Deploy memory schema
 │   ├── setup_system.py               # System initialization
 │   ├── setup_ollama.py               # Ollama model setup
 │   ├── setup_gliner.py               # GLiNER setup
 │   └── setup_video_processing.py    # Video processing setup
+│   (bulk schema deploy flows through the runtime admin API:
+│    POST /admin/profiles/{profile}/deploy — see charts/cogniverse/
+│    templates/init-jobs.yaml for the in-cluster init job.)
 │
 ├── Optimization & Experiments
 │   ├── run_experiments_with_visualization.py  # Phoenix experiments
@@ -88,8 +90,7 @@ scripts/
 │
 └── Utilities & Analysis
     ├── analyze_traces.py             # Phoenix trace analysis
-    ├── export_vespa_embeddings.py    # Export embeddings
-    ├── export_backend_embeddings.py  # Backend embedding export
+    ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
     └── manage_phoenix_data.py        # Phoenix data management
 ```
 
@@ -220,22 +221,20 @@ flowchart TB
         Deploy1 --> Verify
     end
 
-    subgraph Multi["<span style='color:#000'>Multi-Schema Deployment</span>"]
-        Multi1["<span style='color:#000'>deploy_all_schemas.py<br/>Multi-Schema Deployment</span>"]
-        Discovery["<span style='color:#000'>Schema Discovery<br/>• Scan configs/schemas/*.json<br/>• Load all schema files</span>"]
-        Package2["<span style='color:#000'>ApplicationPackage Multi-Schema<br/>• Create single package<br/>• Add all schemas<br/>• Add validation overrides</span>"]
-        Extract["<span style='color:#000'>Ranking Strategy Extraction<br/>• Extract from all schemas<br/>• Save to ranking_strategies.json</span>"]
+    subgraph Multi["<span style='color:#000'>Multi-Tenant Deployment</span>"]
+        Multi1["<span style='color:#000'>Runtime admin API<br/>POST /admin/profiles/{profile}/deploy</span>"]
+        Registry["<span style='color:#000'>SchemaRegistry.deploy_schema<br/>• Per-tenant scoping<br/>• Merge with live cluster via<br/>  list_deployed_document_types()</span>"]
+        Package2["<span style='color:#000'>ApplicationPackage<br/>• Merged schemas (registry + Vespa)<br/>• allow_schema_removal=False<br/>  (fail-loud on unresolved drops)</span>"]
 
-        Multi1 --> Discovery
-        Discovery --> Package2
-        Package2 --> Extract
+        Multi1 --> Registry
+        Registry --> Package2
     end
 
     style Single1 fill:#90caf9,stroke:#1565c0,color:#000
     style Multi1 fill:#90caf9,stroke:#1565c0,color:#000
     style Parser fill:#ffcc80,stroke:#ef6c00,color:#000
     style Package1 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Discovery fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Registry fill:#ffcc80,stroke:#ef6c00,color:#000
     style Package2 fill:#ffcc80,stroke:#ef6c00,color:#000
     style Deploy1 fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Verify fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -412,109 +411,43 @@ python scripts/deploy_json_schema.py \
 
 ---
 
-### 3. deploy_all_schemas.py
+### 3. Bulk per-tenant schema deployment (runtime admin API)
 
-**Purpose:** Deploy schemas with two modes: base schema deployment and tenant-specific deployment
+**Replaced the legacy `scripts/deploy_all_schemas.py` bulk deploy.**
+Schema deployment is now always per-tenant and always flows through the
+runtime admin API so it goes through `SchemaRegistry.deploy_schema` and
+the hardened `VespaBackend.deploy_schemas` merge path. The script
+previously used a Vespa `schema-removal` validation override to force
+deploys through, which silently dropped peer-tenant schemas — exactly
+the class of bug task #34 eradicated.
 
-**Location:** `scripts/deploy_all_schemas.py` (268 lines)
+**In-cluster path:** `charts/cogniverse/templates/init-jobs.yaml`
+iterates `.Values.config.tenants` × `.Values.initJobs.schemaDeployment.profiles`
+and calls the runtime:
 
-**Dual-Mode Operation:**
-
-This script supports two deployment modes:
-1. **Base schema deployment** (default): Deploys all schema templates from `configs/schemas/`
-2. **Tenant schema deployment** (`--tenant-id`): Deploys tenant-specific schemas via `SchemaRegistry`
-
-**Base Schema Deployment:**
-```python
-def deploy_base_schemas(logger):
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from vespa.package import ApplicationPackage, Validation
-
-    config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
-
-    schema_manager = VespaSchemaManager(
-        backend_endpoint=config.get("backend_url"),
-        backend_port=config.get("backend_port")
-    )
-
-    schemas_dir = Path("configs/schemas")
-    schema_files = list(schemas_dir.glob("*.json"))
-
-    app_package = ApplicationPackage(name="cogniverse")
-    for schema_file in schema_files:
-        parser = JsonSchemaParser()
-        schema = parser.load_schema_from_json_file(str(schema_file))
-        app_package.add_schema(schema)
-
-    # Add validation overrides for schema changes
-    validation = Validation(validation_id="schema-removal", until=until_date)
-    app_package.validations = [validation]
-
-    schema_manager._deploy_package(app_package)
-
-    # Extract and save ranking strategies after deployment
-    from cogniverse_vespa.ranking_strategy_extractor import (
-        extract_all_ranking_strategies, save_ranking_strategies
-    )
-    strategies = extract_all_ranking_strategies(schemas_dir)
-    save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
+```yaml
+curl -X POST "$RUNTIME_URL/admin/profiles/{{ . }}/deploy" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "{{ $tenant.id }}", "force": false}'
 ```
 
-**Tenant Schema Deployment:**
-```python
-def deploy_tenant_schemas(tenant_id, base_schemas, force, logger):
-    from cogniverse_core.registries.schema_registry import SchemaRegistry
-    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.unified_config import BackendConfig
-    from cogniverse_vespa.backend import VespaBackend
+**Local path:**
 
-    schema_loader = FilesystemSchemaLoader(schemas_dir)
-
-    backend_config = BackendConfig(
-        tenant_id=tenant_id,
-        backend_type="vespa",
-        url=config.get("backend_url", "http://localhost"),
-        port=config.get("backend_port", 8080),
-    )
-    backend = VespaBackend(
-        backend_config=backend_config,
-        schema_loader=schema_loader,
-        config_manager=config_manager,
-    )
-
-    registry = SchemaRegistry(
-        config_manager=config_manager,
-        backend=backend,
-        schema_loader=schema_loader,
-    )
-
-    for base_schema in schemas_to_deploy:
-        tenant_schema_name = registry.deploy_schema(
-            tenant_id=tenant_id,
-            base_schema_name=base_schema,
-            force=force
-        )
-```
-
-**Command Line Options:**
 ```bash
---tenant-id ID          # Tenant ID (triggers tenant mode)
---base-schemas LIST     # Comma-separated base schemas (tenant mode only)
---force                 # Force redeploy (tenant mode only)
---log-level LEVEL       # DEBUG|INFO|WARNING|ERROR (default: INFO)
+RUNTIME_URL=http://localhost:8080
+# Register tenant (deploys tenant_metadata etc.)
+curl -X POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production"}'
+
+# Deploy a profile's content schema for that tenant
+curl -X POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production", "force": false}'
 ```
 
-**Benefits:**
-
-- Single deployment for all base schemas
-
-- Tenant-specific schema isolation via SchemaRegistry
-
-- Ranking strategy extraction after base deployment
-
-- Validation override handling
+For a single-schema JSON deploy from the filesystem (dev workflow),
+`scripts/deploy_json_schema.py` still works.
 
 ---
 
@@ -1002,46 +935,30 @@ User Command
 
 ### 2. Schema Deployment Flow
 
+Per-tenant deployment flows through the runtime admin API rather than a
+bulk script; single-schema JSON deploys continue to work via
+``deploy_json_schema.py`` for dev iteration.
+
 ```text
-User Command
+User / init-job
     │
-    ├─> deploy_json_schema.py OR deploy_all_schemas.py
-    │       │
-    │       ├─> Load Schema Files
-    │       │   • Single: specified file
-    │       │   • All: configs/schemas/*.json
-    │       │
-    │       ├─> Parse Schemas
-    │       │   • JsonSchemaParser.parse_schema()
-    │       │   • Validate structure
-    │       │   • Convert to Vespa Schema objects
-    │       │
-    │       ├─> Create Application Package
-    │       │   • ApplicationPackage(name="cogniverse")
-    │       │   • Add schema(s)
-    │       │   • Add validation overrides (if multi-schema)
-    │       │
-    │       ├─> Generate ZIP
-    │       │   • app_package.to_zip()
-    │       │
-    │       ├─> Deploy via HTTP
-    │       │   POST http://localhost:19071/application/v2/tenant/default/prepareandactivate
-    │       │   • Content-Type: application/zip
-    │       │   • Body: ZIP bytes
-    │       │   • Timeout: 60s
-    │       │
-    │       ├─> Wait for Propagation
-    │       │   • sleep(5)
-    │       │
-    │       ├─> Verify Deployment
-    │       │   GET http://localhost:8080/ApplicationStatus
-    │       │   • Check 200 OK
-    │       │
-    │       └─> Extract Ranking Strategies (if deploy_all_schemas)
-    │           • Parse rank-profiles from schemas
-    │           • Save to ranking_strategies.json
+    ├─> Per-tenant (production):
+    │   POST $RUNTIME_URL/admin/profiles/{profile}/deploy
+    │   body: {"tenant_id": "...", "force": false}
+    │     │
+    │     └─> SchemaRegistry.deploy_schema(tenant_id, base_schema_name)
+    │           │
+    │           ├─> Transform base schema → tenant-scoped schema name
+    │           ├─> Merge existing registry schemas + live Vespa document
+    │           │   types (VespaBackend.deploy_schemas)
+    │           ├─> ApplicationPackage with ``allow_schema_removal=False``
+    │           │   (refuses to drop peer-tenant schemas)
+    │           ├─> _deploy_package -> Vespa config server
+    │           │   POST /application/v2/tenant/default/prepareandactivate
+    │           └─> _wait_for_schema_convergence (source-ref visibility)
     │
-    └─> Print Success/Failure
+    └─> Single-schema dev deploy:
+        deploy_json_schema.py → ApplicationPackage → Vespa
 ```
 
 ### 3. Experiment Workflow Flow
@@ -1266,19 +1183,14 @@ python scripts/deploy_json_schema.py \
 # Deployment complete!
 # ============================================================
 
-# Deploy all schemas at once
-python scripts/deploy_all_schemas.py
-
-# Output:
-# 🚀 Found 8 schemas to deploy
-# 📄 Loading schema from video_colpali_smol500_mv_frame_schema.json
-# ✅ Added schema: video_colpali_smol500_mv_frame
-# 📄 Loading schema from video_videoprism_base_mv_chunk_30s_schema.json
-# ✅ Added schema: video_videoprism_base_mv_chunk_30s
-# ...
-# 📦 Deploying all schemas to Vespa...
-# ✅ All schemas deployed successfully!
-# 🎉 Schema deployment complete!
+# Deploy tenant schemas via the runtime admin API (single profile)
+RUNTIME_URL=http://localhost:8080
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production"}'
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production", "force": false}'
 ```
 
 ### Example 5: Phoenix Experiments
@@ -1488,15 +1400,13 @@ results = await pipeline.process_videos_concurrent(
 ```
 
 **Schema Deployment:**
-```python
-# Deploy all schemas at once (faster than sequential)
-python scripts/deploy_all_schemas.py  # Single deployment
+```bash
+# Production: init-job loops tenant × profile against the runtime admin
+# API — see charts/cogniverse/templates/init-jobs.yaml. The runtime
+# merges existing Vespa document types into every redeploy so peer
+# tenants never get dropped.
 
-# vs
-
-# Multiple sequential deployments (slower)
-for schema in schemas:
-    python scripts/deploy_json_schema.py {schema}
+# Dev: iterate a single schema file through deploy_json_schema.py.
 ```
 
 ### 2. Error Handling
@@ -1670,12 +1580,16 @@ for i in range(0, len(videos), videos_per_batch):
 ### 6. Best Practices
 
 **Schema Management:**
-```python
-# 1. Always use deploy_all_schemas.py for consistency
-# 2. Version control all schema JSON files
-# 3. Test schema changes in staging before production
-# 4. Extract ranking strategies after deployment
-# 5. Validate schemas before deployment
+```text
+1. Deploy per-tenant via the runtime admin API; the Helm init job
+   (charts/cogniverse/templates/init-jobs.yaml) runs tenant × profile
+   on install. Never bulk-deploy with allow_schema_removal overrides
+   — that path silently drops peer-tenant schemas.
+2. Version-control all schema JSON files in configs/schemas/.
+3. Test schema changes in staging before production.
+4. Ranking strategies are extracted at search time (no separate step).
+5. Validate schemas before deployment with deploy_json_schema.py
+   against a local Vespa container.
 ```
 
 **Ingestion Pipeline:**

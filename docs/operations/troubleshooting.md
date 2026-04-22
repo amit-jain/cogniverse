@@ -420,8 +420,11 @@ Mismatch between code expectations and deployed schema.
 
 **Solution:**
 ```bash
-# Re-deploy schema
-uv run python scripts/deploy_all_schemas.py
+# Re-deploy schema for the affected tenant
+RUNTIME_URL=http://localhost:8000
+curl -sfX POST "$RUNTIME_URL/admin/profiles/<profile>/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "<tenant_id>", "force": true}'
 
 # Verify deployment
 curl http://localhost:19071/application/v2/tenant/default/application/default

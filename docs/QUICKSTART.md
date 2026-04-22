@@ -39,22 +39,28 @@ curl http://localhost:6006/                   # Phoenix
 
 ---
 
-## 3. Deploy Schemas & Create a Tenant
+## 3. Create a Tenant & Deploy Its Schemas
 
-Before ingesting or searching, deploy the Vespa schemas and create a tenant:
+Schema deployment is always per-tenant in cogniverse — there is no
+"default" tenant. Create a tenant first; the runtime provisions the
+tenant's metadata schemas. Then deploy the profile's content schema
+for that tenant.
 
 ```bash
-# Deploy all base schemas to Vespa
-uv run python scripts/deploy_all_schemas.py
+RUNTIME_URL=http://localhost:8000
 
-# Create a tenant (auto-provisions org + deploys tenant-scoped schemas)
-curl -X POST http://localhost:8000/admin/tenants \
-  -H "Content-Type: application/json" \
+# Create the tenant (auto-provisions org + deploys tenant metadata)
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
   -d '{
     "tenant_id": "quickstart",
-    "created_by": "admin",
-    "base_schemas": ["video_colpali_smol500_mv_frame"]
+    "created_by": "admin"
   }'
+
+# Deploy the profile's content schema for that tenant
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "quickstart", "force": false}'
 ```
 
 > **Note:** The tenant management API is available on the main Runtime (port 8000) at `/admin/tenants`, or as a standalone service on port 9000 if run separately.

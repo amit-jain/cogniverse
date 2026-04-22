@@ -146,21 +146,26 @@ curl http://localhost:9000/admin/organizations/acme/tenants
 
 ### Path B: Via CLI Scripts (Dev Setup)
 
-For base schema deployment without the API:
+Schema deployment always flows through the runtime admin API so it
+goes through ``SchemaRegistry.deploy_schema`` and the live-Vespa merge
+path:
 
 ```bash
-# Deploy all base schemas (no tenant — just the templates)
-uv run python scripts/deploy_all_schemas.py
+RUNTIME_URL=http://localhost:8000
 
-# Deploy schemas for a specific tenant
-uv run python scripts/deploy_all_schemas.py --tenant-id acme:production
+# Deploy a profile's content schema for a tenant
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production", "force": false}'
 
-# Deploy specific schemas only
-uv run python scripts/deploy_all_schemas.py \
-  --tenant-id acme:production \
-  --base-schemas video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s
+# Multiple profiles for the same tenant
+for profile in video_colpali_smol500_mv_frame video_videoprism_base_mv_chunk_30s; do
+  curl -sfX POST "$RUNTIME_URL/admin/profiles/$profile/deploy" \
+    -H 'Content-Type: application/json' \
+    -d '{"tenant_id": "acme:production"}'
+done
 
-# Deploy a single schema file directly
+# Single-schema dev deploy from a JSON file
 uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
 ```
 

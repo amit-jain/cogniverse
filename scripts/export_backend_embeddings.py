@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Export embeddings from any backend using the backend abstraction.
-Replaces the Vespa-specific export_vespa_embeddings.py
-"""
+"""Export embeddings from any backend using the backend abstraction."""
 
 import argparse
 import logging

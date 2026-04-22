@@ -541,31 +541,27 @@ uv run python scripts/deploy_production.py \
 
 ---
 
-#### `deploy_all_schemas.py` - Deploy Vespa Schemas
-**Deploy all Vespa schemas for multi-modal search**
+#### Schema deployment — use the runtime, not a bulk script
+
+Schema deployment is per-tenant and flows through the runtime:
 
 ```bash
-# Deploy all schemas
-uv run python scripts/deploy_all_schemas.py \
-  --vespa-endpoint http://localhost:8080
+# Register a tenant (deploys the tenant's metadata schemas):
+curl -X POST "$RUNTIME_URL/admin/tenants" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:production"}'
 
-# Deploy specific schemas
-uv run python scripts/deploy_all_schemas.py \
-  --schemas video_colpali_mv_frame document_visual audio_content \
-  --vespa-endpoint http://vespa.svc.cluster.local:8080
+# Deploy a profile's content schema for a tenant:
+curl -X POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:production"}'
 ```
 
-**Schemas:**
-- `video_colpali_mv_frame` - Frame-based video search
-- `video_colpali_sv_segment` - Segment-based video search
-- `document_visual` - Visual document strategy (ColPali)
-- `document_text` - Text document strategy (semantic)
-- `image_content` - Image search
-- `audio_content` - Audio search with transcripts
-- `dataframe_content` - Structured data search
-
-**Imports:**
-- `cogniverse_vespa.schema_deployer` - Schema deployment
+In cluster, `charts/cogniverse/templates/init-jobs.yaml` wires this up
+as a Helm init job that runs per tenant × profile combination at install
+time. The legacy `deploy_all_schemas.py` bulk-deploy script has been
+removed — it bypassed SchemaRegistry and used the silent-schema-removal
+Vespa validation override.
 
 ---
 
@@ -625,22 +621,16 @@ uv run streamlit run scripts/phoenix_dashboard.py -- \
 
 ---
 
-#### `export_vespa_embeddings.py` - Export Embeddings for Analysis
-**Export embeddings from Vespa for dimensionality reduction/visualization**
+#### `export_backend_embeddings.py` - Export Embeddings for Analysis
+**Export embeddings from any backend for dimensionality reduction/visualization**
 
 ```bash
-# Export embeddings
-uv run python scripts/export_vespa_embeddings.py \
-  --schema video_colpali_mv_frame \
-  --output embeddings/video_embeddings.npz \
-  --limit 10000
-
-# With metadata
-uv run python scripts/export_vespa_embeddings.py \
-  --schema document_visual \
-  --output embeddings/doc_embeddings.npz \
-  --include-metadata \
-  --format parquet
+# Export embeddings (tenant-aware)
+uv run python scripts/export_backend_embeddings.py \
+  --tenant-id acme:production \
+  --profile video_colpali_smol500_mv_frame \
+  --output embeddings/video_embeddings.parquet \
+  --max-documents 10000
 ```
 
 ---
@@ -737,8 +727,15 @@ uv run python scripts/setup_system.py
 # 2. Start services
 bash scripts/run_servers.sh
 
-# 3. Deploy Vespa schemas
-uv run python scripts/deploy_all_schemas.py
+# 3. Deploy Vespa schemas via the runtime admin API
+#    (schemas are per-tenant; register tenant first, then deploy profiles)
+RUNTIME_URL=http://localhost:8080
+curl -X POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "demo"}'
+curl -X POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "demo"}'
 
 # 4. Ingest sample data
 uv run python scripts/run_ingestion.py \
@@ -945,8 +942,8 @@ bash scripts/start_phoenix.sh
 | **Ingestion** | 5 | `run_ingestion.py`, `ingest_documents.py`, `ingest_audio.py`, `ingest_images.py` |
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
-| **Deployment** | 3 | `deploy_production.py`, `deploy_all_schemas.py` |
-| **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_vespa_embeddings.py`, `embedding_atlas_tab.py` |
+| **Deployment** | 2 | `deploy_production.py` (schema deployment flows through runtime `POST /admin/profiles/{profile}/deploy`) |
+| **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_backend_embeddings.py`, `embedding_atlas_tab.py` |
 | **Setup** | 5 | `setup_system.py`, `start_phoenix.py`, `run_servers.sh`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |
 
