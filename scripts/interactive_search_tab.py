@@ -210,7 +210,7 @@ def render_interactive_search_tab(agent_status: dict):
                                             "agent_name": "routing_agent",
                                             "query": search_query,
                                             "context": {
-                                                "tenant_id": "default",
+                                                "tenant_id": current_tenant,
                                                 "action": "optimize_routing",
                                                 "examples": [
                                                     {
@@ -317,7 +317,7 @@ def _call_runtime_search(
     top_k: int,
     profile: str,
     strategy: str,
-    tenant_id: str = "default",
+    tenant_id: str,
     session_id: str | None = None,
 ) -> dict:
     """Call the unified Runtime's POST /search/ endpoint."""

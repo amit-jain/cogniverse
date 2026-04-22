@@ -79,7 +79,7 @@ RUNTIME_URL = "http://localhost:8000"
 def stream_agent_call(
     agent_name: str,
     query: str,
-    tenant_id: str = "default",
+    tenant_id: str,
     metadata: dict | None = None,
 ) -> list[dict]:
     """Stream an agent call via A2A message/stream and return parsed events."""
@@ -133,7 +133,7 @@ def stream_agent_call(
 def display_streaming_result(
     agent_name: str,
     query: str,
-    tenant_id: str = "default",
+    tenant_id: str,
     metadata: dict | None = None,
 ) -> dict | None:
     """Call an agent with streaming and display progressive results in Streamlit."""
@@ -910,6 +910,54 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+# Tenant gate — the dashboard refuses to render user/admin/monitoring
+# tabs until an explicit tenant has been selected in the sidebar AND
+# validated against the runtime. No "default" tenant fallback: every
+# downstream feature (analytics, search, memory, experiments) is
+# per-tenant scoped, and silently rendering against a placeholder
+# tenant would show misleading data.
+_selected_tenant = st.session_state.get("current_tenant", "").strip()
+if not _selected_tenant:
+    st.warning(
+        "⚠️  Select an **Active Tenant** in the sidebar before using the "
+        "dashboard. Every feature — analytics, search, memory, ingestion, "
+        "experiments — is per-tenant. There is no default tenant."
+    )
+    st.info(
+        "If the tenant doesn't exist yet, create it first via the Admin "
+        "API: `POST {base}/admin/tenants`.".format(base=RUNTIME_URL)
+    )
+    st.stop()
+
+# Validate the tenant against the runtime's registered list before
+# letting tabs render. Cached for 30s so the sidebar picker stays
+# responsive.
+@st.cache_data(ttl=30)
+def _validate_tenant(tenant_id: str) -> tuple[bool, str]:
+    try:
+        resp = httpx.get(
+            f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0
+        )
+    except Exception as exc:  # pragma: no cover - network-dependent
+        return False, f"runtime unreachable at {RUNTIME_URL}: {exc}"
+    if resp.status_code == 200:
+        return True, ""
+    if resp.status_code == 404:
+        return False, f"tenant '{tenant_id}' is not registered"
+    return False, f"HTTP {resp.status_code} from /admin/tenants/{tenant_id}"
+
+
+_tenant_ok, _tenant_err = _validate_tenant(_selected_tenant)
+if not _tenant_ok:
+    st.error(
+        f"❌ Tenant **{_selected_tenant}** cannot be used: {_tenant_err}. "
+        "Register the tenant first via `POST /admin/tenants` or pick a "
+        "registered tenant in the sidebar."
+    )
+    st.stop()
+
+st.caption(f"Scope: tenant **{_selected_tenant}**")
 
 # Create two-level tab structure for user/admin separation
 # Top-level tabs: User | Admin | Monitoring
@@ -2441,7 +2489,9 @@ with monitoring_tabs[5]:
                     get_config,
                 )
 
-                _tenant = st.session_state.get("current_tenant", "") or "default"
+                # The tenant gate at the top of this file guarantees
+                # `current_tenant` is set before any tab renders.
+                _tenant = st.session_state["current_tenant"]
                 _cm = create_default_config_manager()
                 _cfg = get_config(tenant_id=_tenant, config_manager=_cm)
                 _llm = _cfg.get_llm_config().primary

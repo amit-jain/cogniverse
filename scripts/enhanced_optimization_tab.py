@@ -380,7 +380,7 @@ def _save_search_annotation(
                 label=label,
                 score=float(rating),
                 metadata=annotation_data,
-                project=f"cogniverse-{st.session_state.get('tenant_id', 'default')}",
+                project=f"cogniverse-{st.session_state['current_tenant']}",
             )
 
         run_async_in_streamlit(save_annotation())
@@ -1461,9 +1461,13 @@ def _render_metrics_dashboard_tab():
         )
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        # Get telemetry provider
+        # Get telemetry provider for the currently-selected tenant.
+        # The dashboard gate at the top of phoenix_dashboard_standalone
+        # guarantees `current_tenant` is set before this tab can render.
         telemetry_manager = get_telemetry_manager()
-        provider = telemetry_manager.get_provider(tenant_id="default")
+        provider = telemetry_manager.get_provider(
+            tenant_id=st.session_state["current_tenant"]
+        )
 
         # Calculate time range
         end_time = datetime.now()
@@ -1878,14 +1882,20 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
             )
             review_items.append(review_item)
 
+        # The generator result records the tenant it ran for; if an
+        # older record is missing it, fall back to the currently
+        # selected dashboard tenant rather than a silent "default".
+        batch_tenant = result.get(
+            "tenant_id", st.session_state["current_tenant"]
+        )
         batch = ApprovalBatch(
             batch_id=batch_id,
             items=review_items,
             context={
-                "optimizer": result['optimizer'],
-                "tenant_id": result.get('tenant_id', 'default'),
-                "profiles": result['selected_profiles']
-            }
+                "optimizer": result["optimizer"],
+                "tenant_id": batch_tenant,
+                "profiles": result["selected_profiles"],
+            },
         )
 
         # Store in session state for approval queue tab
