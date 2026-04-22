@@ -64,7 +64,7 @@ class SearchService:
 
         logger.info("SearchService initialized (profile-agnostic)")
 
-    def _get_profile_config(self, profile: str) -> Dict[str, Any]:
+    def _get_profile_config(self, profile: str, tenant_id: str) -> Dict[str, Any]:
         """Get profile configuration from backend config.
 
         Reads from ConfigManager at query time first so profiles added
@@ -72,10 +72,15 @@ class SearchService:
         after SearchService was constructed are visible. Falls back to
         the startup snapshot in ``self.config`` if ConfigManager lookup
         fails (keeps behavior for tests that don't wire one up fully).
+
+        The ``tenant_id`` is the caller's request tenant — profiles are
+        per-tenant, so scoping the lookup by the incoming tenant is the
+        correct read. Previously this method hard-coded ``"default"``,
+        silently serving profiles from the wrong tenant on every query.
         """
         try:
             live = self.config_manager.get_backend_config(
-                tenant_id="default", service="backend"
+                tenant_id=tenant_id, service="backend"
             )
             live_profile = live.profiles.get(profile) if live else None
             if live_profile is not None:
@@ -189,7 +194,7 @@ class SearchService:
         )
 
         # Resolve profile config and encoder
-        profile_config = self._get_profile_config(profile)
+        profile_config = self._get_profile_config(profile, tenant_id)
         query_encoder = self._get_encoder(profile, profile_config)
         search_backend = self._get_backend(profile, profile_config, query_encoder)
 
@@ -280,7 +285,7 @@ class SearchService:
         Returns:
             Document as dictionary or None if not found
         """
-        profile_config = self._get_profile_config(profile)
+        profile_config = self._get_profile_config(profile, tenant_id)
         query_encoder = self._get_encoder(profile, profile_config)
         backend = self._get_backend(profile, profile_config, query_encoder)
 

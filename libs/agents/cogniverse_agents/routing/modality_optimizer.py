@@ -87,7 +87,7 @@ class ModalityOptimizer:
     - Tracks training history and performance metrics
 
     Usage:
-        optimizer = ModalityOptimizer(tenant_id="default")
+        optimizer = ModalityOptimizer(tenant_id="acme:production")
 
         # Evaluate and potentially train all modalities
         results = await optimizer.optimize_all_modalities()

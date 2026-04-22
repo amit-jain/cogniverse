@@ -268,8 +268,10 @@ async def analyze_text_endpoint(
 
 
 if __name__ == "__main__":
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
     config = get_config(
-        tenant_id="default", config_manager=create_default_config_manager()
+        tenant_id=SYSTEM_TENANT_ID, config_manager=create_default_config_manager()
     )
     port = config.get("text_analysis_port", 8005)
 

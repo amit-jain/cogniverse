@@ -48,14 +48,23 @@ class ConfigLoader:
         "orchestrator_agent": "cogniverse_agents.orchestrator_agent:OrchestratorAgent",
     }
 
-    def __init__(self, tenant_id: str = "default"):
-        """Initialize config loader."""
+    def __init__(self):
+        """Initialize config loader.
+
+        ConfigLoader loads cluster-wide config sections (``backends``,
+        ``agents``) from config.json and registers their classes. It is
+        a singleton accessed without a tenant context, so the internal
+        ``get_config`` read is scoped to ``SYSTEM_TENANT_ID`` — the
+        cluster-wide view. Per-request tenant scoping happens in the
+        code that *uses* the loaded backends/agents, not in the loader.
+        """
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         self.config_manager = create_default_config_manager()
         self.backend_registry = BackendRegistry.get_instance()
         self.config = get_config(
-            tenant_id=tenant_id, config_manager=self.config_manager
+            tenant_id=SYSTEM_TENANT_ID, config_manager=self.config_manager
         )
 
     def load_backends(self) -> None:
@@ -196,12 +205,20 @@ class ConfigLoader:
         """Get runtime configuration."""
         return self.config.get("runtime", {})
 
-    def reload_config(self, tenant_id: str = "default") -> None:
-        """Reload configuration and re-initialize components."""
+    def reload_config(self) -> None:
+        """Reload configuration and re-initialize components.
+
+        Re-reads cluster-wide config (scoped to ``SYSTEM_TENANT_ID``)
+        and re-registers backends/agents. Tenant-scoped config changes
+        take effect through ``ConfigManager`` on the next per-request
+        read — they don't flow through this loader.
+        """
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
         logger.info("Reloading configuration...")
 
         self.config = get_config(
-            tenant_id=tenant_id, config_manager=self.config_manager
+            tenant_id=SYSTEM_TENANT_ID, config_manager=self.config_manager
         )
         self.load_backends()
         self.load_agents()

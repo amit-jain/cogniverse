@@ -206,8 +206,11 @@ class TelemetryManager:
             attributes: Optional span attributes
 
         Usage:
-            # User operation (search, routing, etc.) - unified tenant project
-            tenant_id = context.get("tenant_id", config.default_tenant_id)
+            # User operation (search, routing, etc.) - unified tenant project.
+            # The request handler must have resolved an explicit tenant_id
+            # before this call; there is no silent default.
+            tenant_id = require_tenant_id(context.get("tenant_id"),
+                                          source="telemetry.span")
             with telemetry.span("search", tenant_id=tenant_id) as span:
                 span.set_attribute("query", "test")
 
@@ -695,19 +698,21 @@ class NoOpSpan:
 _telemetry_manager: Optional[TelemetryManager] = None
 
 
-def get_telemetry_manager(
-    config_manager=None, tenant_id: str = "default"
-) -> TelemetryManager:
+def get_telemetry_manager(config_manager=None) -> TelemetryManager:
     """
-    Get global telemetry manager instance.
+    Get the global telemetry manager singleton.
 
-    On first call, creates TelemetryManager with config loaded from ConfigManager.
+    On first call, loads telemetry config from ConfigManager under
+    ``SYSTEM_TENANT_ID`` — telemetry config is cluster-wide (OTLP
+    endpoint, batch/export settings). Per-request tenant scoping
+    happens inside ``TelemetryManager.span(tenant_id=...)``, not here.
 
     Args:
         config_manager: Optional ConfigManager to load config from.
             If None on first call, creates one via create_default_config_manager().
-        tenant_id: Tenant ID for loading telemetry config.
     """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
     global _telemetry_manager
     if _telemetry_manager is None:
         if config_manager is None:
@@ -716,7 +721,7 @@ def get_telemetry_manager(
             )
 
             config_manager = create_default_config_manager()
-        config = config_manager.get_telemetry_config(tenant_id)
+        config = config_manager.get_telemetry_config(SYSTEM_TENANT_ID)
         _telemetry_manager = TelemetryManager(config)
 
         # Apply TELEMETRY_OTLP_ENDPOINT env var override (set by Helm chart

@@ -142,8 +142,12 @@ class ConfigUtils:
 
         # Merge system base with tenant overrides
         if system_backend_data:
-            # Create BackendConfig from system JSON
-            system_backend_data["tenant_id"] = "default"  # Mark as system config
+            # Create BackendConfig from system JSON. The record represents
+            # the cluster-wide backend base (before tenant overrides merge
+            # in), so it's tagged with SYSTEM_TENANT_ID.
+            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+            system_backend_data["tenant_id"] = SYSTEM_TENANT_ID
             system_backend_config = BackendConfig.from_dict(system_backend_data)
 
             # Deep merge tenant overrides into system base

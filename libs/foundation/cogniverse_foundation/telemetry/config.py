@@ -78,7 +78,6 @@ class TelemetryConfig:
     # Multi-tenant settings
     tenant_project_template: str = "cogniverse-{tenant_id}"
     tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
-    default_tenant_id: str = "default"
     max_cached_tenants: int = 100  # LRU cache size
     tenant_cache_ttl_seconds: int = 3600  # 1 hour
 
@@ -138,7 +137,6 @@ class TelemetryConfig:
             "provider_config": self.provider_config,
             "tenant_project_template": self.tenant_project_template,
             "tenant_service_template": self.tenant_service_template,
-            "default_tenant_id": self.default_tenant_id,
             "max_cached_tenants": self.max_cached_tenants,
             "tenant_cache_ttl_seconds": self.tenant_cache_ttl_seconds,
             "max_queue_size": self.batch_config.max_queue_size,
@@ -189,7 +187,6 @@ class TelemetryConfig:
             tenant_service_template=data.get(
                 "tenant_service_template", "cogniverse-{tenant_id}-{service}"
             ),
-            default_tenant_id=data.get("default_tenant_id", "default"),
             max_cached_tenants=data.get("max_cached_tenants", 100),
             tenant_cache_ttl_seconds=data.get("tenant_cache_ttl_seconds", 3600),
             batch_config=batch_config,
