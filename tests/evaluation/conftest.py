@@ -821,7 +821,7 @@ def search_evaluator_provider(phoenix_container):
     provider = PhoenixEvaluationProvider()
     provider.initialize(
         {
-            "tenant_id": "default",
+            "tenant_id": "test:unit",
             "http_endpoint": phoenix_endpoint,
             "grpc_endpoint": grpc_endpoint,
         }

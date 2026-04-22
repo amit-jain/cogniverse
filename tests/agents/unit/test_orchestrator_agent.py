@@ -320,7 +320,7 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan)
+            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         assert len(results) == 2
         assert "query_enhancement_agent" in results
@@ -345,7 +345,7 @@ class TestOrchestratorAgent:
             reasoning="Test plan",
         )
 
-        results = await orchestrator_agent._execute_plan(plan)
+        results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         assert "summarizer_agent" in results
         assert results["summarizer_agent"]["status"] == "success" or True  # Agent exists in registry
@@ -374,7 +374,7 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan)
+            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         assert "search_agent" in results
         assert results["search_agent"]["status"] == "error"
@@ -412,7 +412,7 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan)
+            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         assert results["search_agent"]["status"] == "error"
         # Old behavior: message == "" for empty-str exceptions.
@@ -586,7 +586,7 @@ class TestOrchestratorStreaming:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            await orchestrator_agent._execute_plan(plan)
+            await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         # Should have "executing" and "step_complete" events
         phases = [e["phase"] for e in progress_events]
@@ -642,7 +642,7 @@ class TestOrchestratorCheckpointing:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            await agent._execute_plan(plan, workflow_id="wf_test")
+            await agent._execute_plan(plan, tenant_id="test:unit", workflow_id="wf_test")
 
         # Checkpoint storage should have been called
         mock_storage.save_checkpoint.assert_called_once()

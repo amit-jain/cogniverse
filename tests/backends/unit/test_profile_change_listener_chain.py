@@ -84,7 +84,7 @@ def test_add_backend_profile_propagates_to_cached_search_backend(
         schema_config={"embedding_dims": 768},
     )
 
-    cm.add_backend_profile(profile, tenant_id="default", service="backend")
+    cm.add_backend_profile(profile, tenant_id="test:unit", service="backend")
 
     fake_backend.add_profile.assert_called_once()
     called_args = fake_backend.add_profile.call_args
@@ -116,9 +116,9 @@ def test_delete_backend_profile_propagates_removal(clean_backend_registry):
         type="memory",
         schema_name="to_delete",
     )
-    cm.add_backend_profile(profile, tenant_id="default", service="backend")
+    cm.add_backend_profile(profile, tenant_id="test:unit", service="backend")
     assert cm.delete_backend_profile(
-        "to_delete", tenant_id="default", service="backend"
+        "to_delete", tenant_id="test:unit", service="backend"
     ) is True
 
     fake_backend.remove_profile.assert_called_once_with("to_delete")
@@ -138,7 +138,7 @@ def test_listener_exception_does_not_break_add_backend_profile(
         profile_name="safe", type="memory", schema_name="safe"
     )
     # Must not raise even though listener does.
-    result = cm.add_backend_profile(profile, tenant_id="default", service="backend")
+    result = cm.add_backend_profile(profile, tenant_id="test:unit", service="backend")
     assert result.profile_name == "safe"
 
 

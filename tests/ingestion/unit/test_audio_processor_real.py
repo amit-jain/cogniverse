@@ -38,10 +38,11 @@ class TestAudioProcessor:
         assert processor._whisper is None  # Lazy loading
 
     def test_processor_defaults(self, mock_logger):
-        """Test processor with default values."""
+        """Test processor with default values — `base` keeps the pod
+        footprint bounded; larger Whisper tiers must be opted into."""
         processor = AudioProcessor(mock_logger)
 
-        assert processor.model == "whisper-large-v3"
+        assert processor.model == "base"
         assert processor.language == "auto"
         assert processor._whisper is None
 
@@ -96,7 +97,9 @@ class TestAudioProcessor:
             ("whisper-small", "small"),
             ("whisper-base", "base"),
             ("whisper-tiny", "tiny"),
-            ("unknown-model", "large-v3"),  # fallback
+            # Unknown names fall through to the raw model string — lets
+            # callers pass bare Whisper names like "base" / "tiny" directly.
+            ("unknown-model", "unknown-model"),
         ]
 
         for our_model, expected_whisper_model in test_cases:

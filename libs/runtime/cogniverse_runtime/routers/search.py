@@ -9,7 +9,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    assert_tenant_exists,
+    require_tenant_id,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -84,6 +87,8 @@ async def search(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    await assert_tenant_exists(tenant_id)
+
     telemetry_manager = get_telemetry_manager()
 
     # Use session_span if session_id provided, otherwise regular span
@@ -123,7 +128,22 @@ async def search(
                 config_manager=config_manager,
                 schema_loader=schema_loader,
             )
-            profile = request.profile or config.get("default_profile", "default")
+            # Resolve profile: request wins, else config.active_video_profile,
+            # else the first registered backend profile.  No silent "default"
+            # string fallback — the string "default" isn't a valid profile.
+            profile = request.profile or config.get("active_video_profile")
+            if not profile:
+                profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
+                if profiles_dict:
+                    profile = next(iter(profiles_dict))
+            if not profile:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "No profile specified on the request and no "
+                        "active_video_profile configured on the runtime."
+                    ),
+                )
 
             if request.stream:
                 # Streaming response
@@ -214,7 +234,7 @@ async def list_strategies() -> Dict[str, Any]:
 
 @router.get("/profiles")
 async def list_profiles(
-    tenant_id: str = Query(default="default", description="Tenant identifier"),
+    tenant_id: str = Query(..., description="Tenant identifier (required)"),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> Dict[str, Any]:
     """List available search profiles for a tenant.

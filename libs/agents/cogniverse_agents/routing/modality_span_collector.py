@@ -30,7 +30,7 @@ class ModalitySpanCollector:
     - Return Dict[QueryModality, List[SpanData]]
     """
 
-    def __init__(self, tenant_id: str = "default"):
+    def __init__(self, tenant_id: str,):
         """
         Initialize modality span collector
 

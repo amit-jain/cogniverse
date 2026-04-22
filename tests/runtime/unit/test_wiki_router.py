@@ -193,11 +193,12 @@ class TestPerTenantWikiGetEndpoints:
         assert "tenant_c" in managers
         managers["tenant_c"].lint.assert_called_once()
 
-    def test_get_endpoints_default_to_default_tenant(self, wiki_client):
-        """Backward compat: omitting ?tenant_id= falls back to "default"."""
+    def test_get_endpoints_reject_missing_tenant_id(self, wiki_client):
+        """Omitting ?tenant_id= returns 422 — no silent default tenant."""
         client, managers = wiki_client
-        client.get("/index")
-        assert "default" in managers
+        resp = client.get("/index")
+        assert resp.status_code == 422
+        assert managers == {}
 
 
 @pytest.mark.unit

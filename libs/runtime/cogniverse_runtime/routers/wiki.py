@@ -12,7 +12,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +56,12 @@ class WikiSaveRequest(BaseModel):
     response: Dict[str, Any]
     entities: List[str] = []
     agent_name: str = "routing_agent"
-    tenant_id: str = "default"
+    tenant_id: str = Field(..., description="Tenant identity; required")
 
 
 class WikiSearchRequest(BaseModel):
     query: str
-    tenant_id: str = "default"
+    tenant_id: str = Field(..., description="Tenant identity; required")
     top_k: int = 5
 
 
@@ -89,7 +89,7 @@ async def search_wiki(request: WikiSearchRequest) -> Dict[str, Any]:
 
 @router.get("/topic/{slug}")
 async def get_wiki_topic(
-    slug: str, tenant_id: str = Query("default")
+    slug: str, tenant_id: str = Query(..., description="Tenant identity")
 ) -> Dict[str, Any]:
     """Retrieve a topic page by slug for the given tenant."""
     wm = get_wiki_manager_for_tenant(tenant_id)
@@ -101,7 +101,7 @@ async def get_wiki_topic(
 
 @router.get("/index")
 async def get_wiki_index(
-    tenant_id: str = Query("default"),
+    tenant_id: str = Query(..., description="Tenant identity"),
 ) -> Dict[str, Any]:
     """Return the rendered wiki index for the given tenant."""
     wm = get_wiki_manager_for_tenant(tenant_id)
@@ -111,7 +111,7 @@ async def get_wiki_index(
 
 @router.get("/lint")
 async def lint_wiki(
-    tenant_id: str = Query("default"),
+    tenant_id: str = Query(..., description="Tenant identity"),
 ) -> Dict[str, Any]:
     """Run lint checks for the given tenant and return a quality report."""
     wm = get_wiki_manager_for_tenant(tenant_id)
@@ -120,7 +120,7 @@ async def lint_wiki(
 
 @router.delete("/topic/{slug}")
 async def delete_wiki_topic(
-    slug: str, tenant_id: str = Query("default")
+    slug: str, tenant_id: str = Query(..., description="Tenant identity")
 ) -> Dict[str, Any]:
     """Delete a topic page by slug for the given tenant."""
     wm = get_wiki_manager_for_tenant(tenant_id)

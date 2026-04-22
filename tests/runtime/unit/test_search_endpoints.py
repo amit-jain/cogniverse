@@ -83,9 +83,15 @@ def search_client():
         lambda: schema_loader
     )
 
+    async def _noop_tenant_check(tenant_id: str) -> None:
+        return None
+
     with patch(
         "cogniverse_runtime.routers.search.get_telemetry_manager",
         return_value=_make_noop_telemetry_manager(),
+    ), patch(
+        "cogniverse_runtime.routers.search.assert_tenant_exists",
+        new=_noop_tenant_check,
     ):
         with TestClient(test_app) as client:
             yield client
@@ -127,15 +133,10 @@ class TestListStrategies:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestListProfiles:
-    def test_list_profiles_default_tenant(self, search_client):
-        """GET /search/profiles returns profiles for default tenant."""
+    def test_list_profiles_missing_tenant_rejected(self, search_client):
+        """GET /search/profiles without tenant_id returns 422 — no silent default."""
         resp = search_client.get("/search/profiles")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "tenant_id" in data
-        assert "count" in data
-        assert "profiles" in data
-        assert data["tenant_id"] == "default"
+        assert resp.status_code == 422
 
     def test_list_profiles_custom_tenant(self, search_client):
         """GET /search/profiles?tenant_id=acme scopes to that tenant."""
@@ -145,11 +146,10 @@ class TestListProfiles:
 
     def test_list_profiles_response_structure(self, search_client):
         """Profile list entries have name, model, and type fields."""
-        resp = search_client.get("/search/profiles")
+        resp = search_client.get("/search/profiles?tenant_id=acme")
         data = resp.json()
         assert isinstance(data["count"], int)
         assert isinstance(data["profiles"], list)
-        # Each profile entry should have the expected keys
         for profile in data["profiles"]:
             assert "name" in profile
             assert "model" in profile

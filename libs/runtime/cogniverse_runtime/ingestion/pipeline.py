@@ -33,6 +33,7 @@ from typing import Any, Optional
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.events import (
     EventQueue,
     TaskState,
@@ -113,7 +114,7 @@ class PipelineConfig:
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         config_manager = create_default_config_manager()
-        config = get_config(tenant_id="default", config_manager=config_manager)
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
         # Get profile-specific config from backend section
         backend_config = config.get("backend", {})

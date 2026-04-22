@@ -135,7 +135,7 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         schema_config={"embedding_dims": 768},
     )
     temp_config_manager.add_backend_profile(
-        profile, tenant_id="default", service="backend"
+        profile, tenant_id="test:unit", service="backend"
     )
     assert profile_name in search_backend.profiles
 
@@ -310,7 +310,7 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
         schema_config={"embedding_dims": 768},
     )
     temp_config_manager.add_backend_profile(
-        profile, tenant_id="default", service="backend"
+        profile, tenant_id="test:unit", service="backend"
     )
 
     # Step 3: full field-level assertion on what the live backend sees.
@@ -356,7 +356,7 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
 
     # Step 5: delete → profile disappears from the live backend.
     deleted = temp_config_manager.delete_backend_profile(
-        target_profile, tenant_id="default", service="backend"
+        target_profile, tenant_id="test:unit", service="backend"
     )
     assert deleted is True
     assert target_profile not in search_backend.profiles, (

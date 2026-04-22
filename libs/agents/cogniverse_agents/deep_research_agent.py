@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class DeepResearchInput(AgentInput):
     query: str = Field(..., description="Research question")
     max_iterations: int = Field(3, description="Maximum research iterations")
-    tenant_id: str = Field("default", description="Tenant identifier")
+    tenant_id: str = Field(..., description="Tenant identifier (required)")
     rlm: Optional[RLMOptions] = Field(
         None,
         description="RLM configuration. None=disabled, set RLMOptions to enable RLM synthesis over accumulated evidence",
@@ -64,7 +64,7 @@ class DeepResearchOutput(AgentOutput):
 
 
 class DeepResearchDeps(AgentDeps):
-    tenant_id: str = "default"
+    tenant_id: str
 
 
 class TaskDecompositionSignature(dspy.Signature):

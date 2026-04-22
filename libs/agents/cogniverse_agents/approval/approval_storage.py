@@ -65,7 +65,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         self,
         grpc_endpoint: str,
         http_endpoint: str,
-        tenant_id: str = "default",
+        tenant_id: str,
         telemetry_manager: Optional["TelemetryManager"] = None,
     ):
         """

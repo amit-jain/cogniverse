@@ -195,6 +195,7 @@ class TelemetryStorage:
                 try:
                     import asyncio
 
+                    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
                     from cogniverse_evaluation.providers import (
                         get_evaluation_provider,
                     )
@@ -204,14 +205,14 @@ class TelemetryStorage:
 
                     telemetry_manager = get_telemetry_manager()
                     telemetry_manager.register_project(
-                        tenant_id="default",
+                        tenant_id=SYSTEM_TENANT_ID,
                         project_name="evaluation",
                         http_endpoint=self.config.http_endpoint,
                         grpc_endpoint=self.config.otlp_endpoint,
                     )
 
                     self.provider = get_evaluation_provider(
-                        tenant_id="default",
+                        tenant_id=SYSTEM_TENANT_ID,
                         config={
                             "project_name": "evaluation",
                             "http_endpoint": self.config.http_endpoint,

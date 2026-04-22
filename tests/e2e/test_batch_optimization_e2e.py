@@ -858,7 +858,7 @@ class TestRoutingOptimization:
                 "from cogniverse_foundation.telemetry.config import TelemetryConfig; "
                 "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
                 "cm = create_default_config_manager(); "
-                "config = get_config(tenant_id='default', config_manager=cm); "
+                "config = get_config(tenant_id='test:unit', config_manager=cm); "
                 "llm = config.get_llm_config().resolve('routing_agent'); "
                 "agent = RoutingAgent(deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=True), llm_config=llm)); "
                 "agent.telemetry_manager = get_telemetry_manager(); "

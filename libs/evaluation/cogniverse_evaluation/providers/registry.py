@@ -139,8 +139,8 @@ class EvaluationRegistry:
     @classmethod
     def get_evaluation_provider(
         cls,
+        tenant_id: str,
         name: Optional[str] = None,
-        tenant_id: str = "default",
         config: Optional[Dict[str, Any]] = None,
     ) -> EvaluationProvider:
         """
@@ -310,16 +310,28 @@ def get_evaluation_registry() -> EvaluationRegistry:
 
 
 def get_evaluation_provider(
+    tenant_id: Optional[str] = None,
     name: Optional[str] = None,
-    tenant_id: str = "default",
     config: Optional[Dict[str, Any]] = None,
 ) -> EvaluationProvider:
     """
     Convenience function to get evaluation provider.
 
+    When ``tenant_id`` is omitted, lookup runs under the cluster-wide
+    ``SYSTEM_TENANT_ID``. This keeps framework-level callers (that only
+    read static provider metadata such as the evaluator base class) from
+    having to fabricate a tenant id; callers doing per-tenant work must
+    still pass their tenant explicitly.
+
     See EvaluationRegistry.get_evaluation_provider() for details.
     """
-    return _evaluation_registry.get_evaluation_provider(name, tenant_id, config)
+    if tenant_id is None:
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+        tenant_id = SYSTEM_TENANT_ID
+    return _evaluation_registry.get_evaluation_provider(
+        name=name, tenant_id=tenant_id, config=config
+    )
 
 
 def set_evaluation_provider(provider: EvaluationProvider) -> None:

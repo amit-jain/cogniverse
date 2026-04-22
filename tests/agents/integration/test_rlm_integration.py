@@ -840,10 +840,13 @@ class TestRLMRealInferenceIntegration:
 
         context = "Python is a popular programming language for data science and ML."
 
+        # Production dispatcher stamps tenant_id on the agent before calling
+        # the mixin. Bare-mixin callers (tests/tooling) pass it explicitly.
         result = mixin.process_with_rlm(
             query="What is Python used for?",
             context=context,
             rlm_options=rlm_options,
+            tenant_id="test:unit",
         )
 
         # VALIDATE: Result from mixin

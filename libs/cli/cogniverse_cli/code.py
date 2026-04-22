@@ -197,7 +197,7 @@ def _handle_slash_command(session: CodingSession, line: str) -> bool:
 
 
 def run_repl(
-    tenant_id: str = "default",
+    tenant_id: str,
     language: str = "python",
     max_iterations: int = 5,
     codebase_path: str = "",

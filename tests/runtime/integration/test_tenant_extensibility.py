@@ -233,13 +233,13 @@ class TestMemoryManagementRealMem0:
 
         mm.add_memory(
             content="I always prefer using ColPali model for video searches",
-            tenant_id="default",
+            tenant_id="test:unit",
             agent_name="_test_tenant_ext_rt",
         )
 
         results = mm.search_memory(
             query="ColPali video search preference",
-            tenant_id="default",
+            tenant_id="test:unit",
             agent_name="_test_tenant_ext_rt",
             top_k=5,
         )
@@ -256,21 +256,25 @@ class TestMemoryManagementRealMem0:
         """clear_agent_memory removes all memories for that namespace."""
         mm = memory_manager
 
+        # infer=False: Mem0's LLM extraction on a short synthetic sentence
+        # is too brittle to rely on in a clear-then-verify test. The purpose
+        # here is clear_agent_memory, not LLM-driven fact distillation.
         mm.add_memory(
             content="Temporary data for clear test",
-            tenant_id="default",
+            tenant_id="test:unit",
             agent_name="_test_tenant_ext_clear",
+            infer=False,
         )
 
         success = mm.clear_agent_memory(
-            tenant_id="default",
+            tenant_id="test:unit",
             agent_name="_test_tenant_ext_clear",
         )
         assert success is True
 
         results = mm.search_memory(
             query="temporary data clear test",
-            tenant_id="default",
+            tenant_id="test:unit",
             agent_name="_test_tenant_ext_clear",
             top_k=5,
         )
@@ -300,7 +304,7 @@ class TestJobExecutorRealLLM:
         )
 
         cm = create_default_config_manager()
-        llm = get_config(tenant_id="default", config_manager=cm).get_llm_config()
+        llm = get_config(tenant_id="test:unit", config_manager=cm).get_llm_config()
         endpoint = llm.resolve("primary")
         lm = create_dspy_lm(endpoint)
         dspy.configure(lm=lm)
@@ -357,7 +361,7 @@ class TestJobExecutorRealLLM:
         )
 
         cm = create_default_config_manager()
-        llm = get_config(tenant_id="default", config_manager=cm).get_llm_config()
+        llm = get_config(tenant_id="test:unit", config_manager=cm).get_llm_config()
         endpoint = llm.resolve("primary")
         lm = create_dspy_lm(endpoint)
 

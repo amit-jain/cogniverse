@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.utils import get_config
 
 from .base import Evaluator, create_evaluation_result
@@ -32,7 +33,7 @@ class ConfigurableVisualJudge(Evaluator):
 
         # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
-        config = get_config(tenant_id="default", config_manager=config_manager)
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
         self.evaluator_name = evaluator_name
 
         # Get evaluator config
@@ -86,7 +87,7 @@ class ConfigurableVisualJudge(Evaluator):
 
         # Initialize ConfigManager for dependency injection
         frames_config_manager = create_default_config_manager()
-        config = get_config(tenant_id="default", config_manager=frames_config_manager)
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=frames_config_manager)
         evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
         frames_per_video = evaluator_config.get("frames_per_video", 30)
         max_videos = evaluator_config.get("max_videos", 2)
@@ -235,7 +236,7 @@ class ConfigurableVisualJudge(Evaluator):
                 # Initialize ConfigManager for dependency injection
                 sample_config_manager = create_default_config_manager()
                 config = get_config(
-                    tenant_id="default", config_manager=sample_config_manager
+                    tenant_id=SYSTEM_TENANT_ID, config_manager=sample_config_manager
                 )
                 evaluator_config = config.get("evaluators", {}).get(
                     self.evaluator_name, {}

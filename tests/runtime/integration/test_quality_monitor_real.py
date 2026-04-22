@@ -33,7 +33,7 @@ from tests.utils.llm_config import get_llm_model
 logger = logging.getLogger(__name__)
 
 COLPALI_MODEL_NAME = "vidore/colsmol-500m"
-TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_default"
+TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_qm_real_test"
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
@@ -61,8 +61,97 @@ def colpali_model():
 
 
 @pytest.fixture(scope="module")
-def seeded_vespa(vespa_instance, colpali_model):
-    """Feed test documents into Vespa with real ColPali embeddings."""
+def seeded_vespa(vespa_instance, colpali_model, config_manager, schema_loader):
+    """Feed test documents into Vespa with real ColPali embeddings.
+
+    Deploys the tenant-scoped schema for the ``qm_real_test`` tenant via
+    SchemaRegistry — same code path production uses. The registry's
+    deploy_schemas call merges schemas already present in the live Vespa
+    cluster (e.g. the ``_test_unit`` baseline from the module conftest),
+    so the redeploy preserves them instead of treating them as removals.
+
+    Keeping a distinct ``qm_real_test`` tenant (rather than reusing
+    ``test:unit``) isolates Phoenix baselines — the golden-eval baseline
+    tests read back what they write, so a shared tenant would collide
+    with neighbouring tests under the same TestGoldenEvalRealVespa run.
+    """
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_vespa.backend import VespaBackend
+
+    # Build a dedicated backend for the qm_real_test tenant. Going through
+    # BackendRegistry would cache the instance across tests; a local
+    # instance keeps teardown simple and the schema deploy isolated.
+    qm_tenant = "qm_real_test"
+    backend_config = BackendConfig(
+        backend_type="vespa",
+        url="http://localhost",
+        port=vespa_instance["http_port"],
+        tenant_id=qm_tenant,
+    )
+    backend = VespaBackend(
+        backend_config=backend_config,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
+    )
+    backend.initialize({"tenant_id": qm_tenant})
+
+    registry = SchemaRegistry(
+        config_manager=config_manager,
+        backend=backend,
+        schema_loader=schema_loader,
+    )
+    backend.schema_registry = registry
+    backend.schema_manager._schema_registry = registry
+
+    # deploy_schema() triggers backend.deploy_schemas(), which in turn
+    # (per the fix in this session) discovers deployed document types
+    # from Vespa and merges them with the new qm_real_test schema.
+    registry.deploy_schema(
+        tenant_id=qm_tenant,
+        base_schema_name="video_colpali_smol500_mv_frame",
+    )
+
+    # Wait for the new schema to be addressable for feeds. GET on the
+    # document API returns 404 for any URL — even bogus schemas — so
+    # it can't tell us when the content distributor has converged.
+    # /search/ with model.restrict exposes the real state: Vespa errors
+    # out listing the set of valid source refs, and we proceed once our
+    # schema is in that set.
+    probe_url = f"http://localhost:{vespa_instance['http_port']}/search/"
+    last_state = None
+    for attempt in range(120):
+        probe = requests.post(
+            probe_url,
+            json={
+                "yql": "select documentid from sources * where true limit 0",
+                "hits": 0,
+                "model.restrict": TENANT_SCHEMA_NAME,
+            },
+            timeout=5,
+        )
+        if probe.status_code == 200:
+            body = probe.json()
+            errors = body.get("root", {}).get("errors", [])
+            msg = " ".join(e.get("message", "") for e in errors)
+            last_state = msg or "ok"
+            if TENANT_SCHEMA_NAME in msg or not errors:
+                logger.info(
+                    f"{TENANT_SCHEMA_NAME} visible to /search/ after "
+                    f"{attempt + 1}s"
+                )
+                break
+        time.sleep(1)
+    else:
+        raise RuntimeError(
+            f"Schema {TENANT_SCHEMA_NAME!r} not visible to /search/ after "
+            f"120s — last state: {last_state}"
+        )
+
+    # Document API (feed path) converges a few seconds after /search/ can
+    # see the schema; a small post-search buffer avoids a racy first feed.
+    time.sleep(5)
+
     model, processor, device = colpali_model
     http_port = vespa_instance["http_port"]
 

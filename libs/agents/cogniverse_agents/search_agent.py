@@ -498,12 +498,12 @@ class SearchAgent(
         self.config_manager = config_manager
 
         # Load system-level infrastructure config (profiles, models, backend URLs).
-        # This is NOT tenant-scoped data — "default" is the config manager's system scope.
         # Tenant-scoped operations (backend creation, schema routing) happen per-request.
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
         from cogniverse_foundation.config.utils import get_config
 
         self.search_config = get_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
         )
 
         # Memory is initialized per-request via MemoryAwareMixin.initialize_memory()

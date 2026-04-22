@@ -117,7 +117,7 @@ class RLMInference:
             timeout_seconds: Maximum time for RLM processing (default: 300s/5min)
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events (required if event_queue provided)
-            tenant_id: Tenant identifier for events
+            tenant_id: Tenant identifier — required when event_queue is provided
         """
         self.llm_config = llm_config
         self.model = llm_config.model
@@ -126,7 +126,12 @@ class RLMInference:
         self.timeout_seconds = timeout_seconds
         self._event_queue = event_queue
         self._task_id = task_id
-        self._tenant_id = tenant_id or "default"
+        if event_queue is not None and not tenant_id:
+            raise ValueError(
+                "tenant_id is required when event_queue is provided — "
+                "RLM events must be tenant-scoped"
+            )
+        self._tenant_id = tenant_id
         self._rlm = None  # Lazy initialization
 
     def _create_lm(self):

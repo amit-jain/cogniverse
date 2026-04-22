@@ -299,7 +299,7 @@ class TestGatewayAgentArtifactRoundTrip:
         # Real GLiNER model loads on first use (lazy)
 
         result_default = await agent_default._process_impl(
-            GatewayInput(query=test_query)
+            GatewayInput(query=test_query, tenant_id="test:unit")
         )
         # GLiNER scores ~0.8 for this query. With default 0.4 → simple
         assert result_default.complexity == "simple", (
@@ -332,7 +332,7 @@ class TestGatewayAgentArtifactRoundTrip:
         )
 
         result_optimized = await agent_optimized._process_impl(
-            GatewayInput(query=test_query)
+            GatewayInput(query=test_query, tenant_id="test:unit")
         )
         # Same query, same GLiNER model, but 0.95 threshold → complex
         assert result_optimized.complexity == "complex", (
@@ -795,7 +795,7 @@ class TestDispatcherArtifactWiring:
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         registry = AgentRegistry(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
 
         registry.register_agent(AgentEndpoint(
@@ -863,7 +863,7 @@ class TestDispatcherArtifactWiring:
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         registry = AgentRegistry(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
 
         registry.register_agent(AgentEndpoint(
@@ -980,7 +980,7 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                QueryEnhancementInput(query="ML papers")
+                QueryEnhancementInput(query="ML papers", tenant_id="test:unit")
             )
 
         # The demos teach: "ML papers" → "machine learning research papers and publications"
@@ -1164,7 +1164,7 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM via DSPy fallback
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                EntityExtractionInput(query="Netflix producing AI documentaries")
+                EntityExtractionInput(query="Netflix producing AI documentaries", tenant_id="test:unit")
             )
 
         # The demos teach: "Netflix producing AI documentaries" → Netflix=ORG, AI=CONCEPT
@@ -1263,7 +1263,7 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                ProfileSelectionInput(query="find cooking videos")
+                ProfileSelectionInput(query="find cooking videos", tenant_id="test:unit")
             )
 
         # The demo teaches: video queries → video_colpali_smol500_mv_frame

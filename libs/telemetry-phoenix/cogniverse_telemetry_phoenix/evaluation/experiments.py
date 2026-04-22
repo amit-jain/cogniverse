@@ -48,13 +48,14 @@ class PhoenixExperimentPlugin:
 
             # Import search service
             from cogniverse_agents.search.service import SearchService
+            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
             from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )
 
             config_manager = create_default_config_manager()
-            main_config = get_config(tenant_id="default", config_manager=config_manager)
+            main_config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
             all_results = {}
 
             # Run searches for each profile/strategy (similar to Inspect solver)

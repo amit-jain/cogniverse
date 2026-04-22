@@ -340,14 +340,16 @@ async def _optimize_agent(
         return {"status": "failed", "error": str(e)}
 
 
-async def run_cleanup(log_retention_days: int, memory_retention_days: int) -> dict:
+async def run_cleanup(
+    tenant_id: str, log_retention_days: int, memory_retention_days: int
+) -> dict:
     """Run cleanup tasks."""
     results = {}
 
     try:
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
-        mem_manager = Mem0MemoryManager(tenant_id="default")
+        mem_manager = Mem0MemoryManager(tenant_id=tenant_id)
         mem_manager.cleanup(retention_days=memory_retention_days)
         results["memory_cleanup"] = "completed"
     except Exception as e:
@@ -1443,7 +1445,7 @@ def main():
         ],
         required=True,
     )
-    parser.add_argument("--tenant-id", default="default")
+    parser.add_argument("--tenant-id", required=True)
     parser.add_argument(
         "--agents",
         help="Comma-separated agent names for triggered mode",
@@ -1471,7 +1473,9 @@ def main():
 
     if args.mode == "cleanup":
         result = asyncio.run(
-            run_cleanup(args.log_retention_days, args.memory_retention_days)
+            run_cleanup(
+                args.tenant_id, args.log_retention_days, args.memory_retention_days
+            )
         )
     elif args.mode == "triggered":
         if not args.agents or not args.trigger_dataset:

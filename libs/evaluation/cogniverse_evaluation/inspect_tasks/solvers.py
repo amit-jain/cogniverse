@@ -9,6 +9,7 @@ from typing import Any
 from inspect_ai.solver import Solver, solver
 
 from cogniverse_agents.search.service import SearchService
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class CogniverseRetrievalSolver(Solver):
 
         # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
-        self.config = get_config(tenant_id="default", config_manager=config_manager)
+        self.config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
         self.search_services = {}
 
         # Initialize search services for each profile

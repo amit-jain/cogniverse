@@ -22,7 +22,7 @@ class AudioProcessor(BaseProcessor):
     def __init__(
         self,
         logger: logging.Logger,
-        model: str = "whisper-large-v3",
+        model: str = "base",
         language: str = "auto",
     ):
         """
@@ -45,7 +45,7 @@ class AudioProcessor(BaseProcessor):
         """Create audio processor from configuration."""
         return cls(
             logger=logger,
-            model=config.get("model", "whisper-large-v3"),
+            model=config.get("model", "base"),
             language=config.get("language", "auto"),
         )
 
@@ -65,7 +65,7 @@ class AudioProcessor(BaseProcessor):
                     "whisper-base": "base",
                     "whisper-tiny": "tiny",
                 }
-                whisper_model_name = model_map.get(self.model, "large-v3")
+                whisper_model_name = model_map.get(self.model, self.model)
                 from cogniverse_core.common.models import model_load_lock
 
                 with model_load_lock:

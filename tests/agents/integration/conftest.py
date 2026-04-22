@@ -77,7 +77,7 @@ skip_if_no_teacher_api = pytest.mark.skipif(
 def _dspy_lm_instance():
     """Module-scoped: create the LM once per module (expensive)."""
     cm = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=cm)
+    config = get_config(tenant_id="test:unit", config_manager=cm)
     llm_cfg = config.get("llm_config", {}).get("primary", {})
 
     # Disable qwen3 thinking mode — it puts output in a 'thinking' field

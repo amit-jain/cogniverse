@@ -101,24 +101,32 @@ def vespa_instance(request):
             create_adapter_registry_schema(),
         ]
 
-        # Parse the data schema used by search tests.
-        # Rename to include "_default" tenant suffix to match the multi-tenant
-        # naming convention (BackendRegistry generates tenant-specific schema names).
+        # Pre-deploy the baseline data + agent_memories schemas under the
+        # canonical TEST_TENANT_ID suffix ("test_unit" → sanitised form of
+        # "test:unit"). Production eradicated the "_default" tenant in #34;
+        # tests follow the same rule — per-test tenants deploy their own
+        # schemas at runtime via VespaBackend.deploy_schemas (which now
+        # discovers deployed document types from Vespa directly and
+        # preserves peer tenants through partial redeploys).
         schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
         with open(schema_file) as f:
-            schema_json = json.load(f)
-        schema_json["name"] = "video_colpali_smol500_mv_frame_default"
-        schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_default"
-        parser = JsonSchemaParser()
-        data_schema = parser.parse_schema(schema_json)
-
-        # Parse agent_memories schema for Mem0 strategy storage tests.
+            data_schema_base = json.load(f)
         memory_schema_file = SCHEMAS_DIR / "agent_memories_schema.json"
         with open(memory_schema_file) as f:
-            memory_schema_json = json.load(f)
-        memory_schema_json["name"] = "agent_memories_default"
-        memory_schema_json["document"]["name"] = "agent_memories_default"
-        memory_schema = parser.parse_schema(memory_schema_json)
+            memory_schema_base = json.load(f)
+
+        parser = JsonSchemaParser()
+        data_def = json.loads(json.dumps(data_schema_base))
+        data_name = "video_colpali_smol500_mv_frame_test_unit"
+        data_def["name"] = data_name
+        data_def["document"]["name"] = data_name
+        data_schema = parser.parse_schema(data_def)
+
+        mem_def = json.loads(json.dumps(memory_schema_base))
+        mem_name = "agent_memories_test_unit"
+        mem_def["name"] = mem_name
+        mem_def["document"]["name"] = mem_name
+        memory_schema = parser.parse_schema(mem_def)
 
         all_schemas = metadata_schemas + [data_schema, memory_schema]
         app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
@@ -137,7 +145,7 @@ def vespa_instance(request):
         # take additional time to become available for queries.
         import requests as _requests
 
-        data_schema_name = "video_colpali_smol500_mv_frame_default"
+        data_schema_name = "video_colpali_smol500_mv_frame_test_unit"
         http_port = container_info["http_port"]
         for attempt in range(30):
             try:
@@ -213,6 +221,7 @@ def config_manager(vespa_instance):
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="vidore/colsmol-500m",
         ),
+        tenant_id="test:unit",
     )
     cm.add_backend_profile(
         BackendProfileConfig(
@@ -221,7 +230,33 @@ def config_manager(vespa_instance):
             schema_name="video_videoprism_base_mv_chunk_30s",
             embedding_model="google/videoprism-base",
         ),
+        tenant_id="test:unit",
     )
+
+    # Tests under this module use per-test tenant_ids to isolate Mem0 /
+    # Phoenix / config state between cases. Each needs the production default
+    # "video_colpali_smol500_mv_frame" profile registered under its own
+    # tenant so the search router can resolve the profile. The list is
+    # test-ergonomics only — it has nothing to do with schema deployment,
+    # which VespaBackend.deploy_schemas now discovers from Vespa directly.
+    _per_test_tenants = [
+        "test:unit",
+        "qm_real_test",
+        "force_cycle_test",
+        "force_cycle_live_test",
+        "xgboost_gate_test",
+        "xgboost_skip_test",
+    ]
+    for _tenant in _per_test_tenants:
+        cm.add_backend_profile(
+            BackendProfileConfig(
+                profile_name="video_colpali_smol500_mv_frame",
+                type="video",
+                schema_name="video_colpali_smol500_mv_frame",
+                embedding_model="vidore/colsmol-500m",
+            ),
+            tenant_id=_tenant,
+        )
 
     cm.add_backend_profile(
         BackendProfileConfig(
@@ -233,37 +268,48 @@ def config_manager(vespa_instance):
         tenant_id="tenant_b",
     )
 
-    # Register the data schema that was deployed in vespa_instance fixture.
-    # Without this, SchemaRegistry.deploy_schema() (called during agent memory
-    # init) won't find it in _get_all_schemas() and will redeploy WITHOUT it,
-    # dropping the data schema from the Vespa application package.
-    # Register the data schema in the ConfigStore so SchemaRegistry.deploy_schema()
-    # includes it when redeploying (e.g., during agent memory init).
-    # The schema_definition must be the real SD content — Vespa uses it in redeployment.
+    # Seed SchemaRegistry with the baseline schemas the vespa_instance
+    # fixture pre-deployed directly to Vespa. Without these entries, the
+    # SchemaRegistry cache has no record of "agent_memories_test_unit" /
+    # "video_colpali_smol500_mv_frame_test_unit", so when a test-time
+    # deploy_schemas() call discovers them in the live cluster, the backend
+    # has no schema definition to reconstruct and (correctly) refuses to
+    # silently drop them. We register each (tenant_id, base_schema) pair
+    # whose physical name was materialised in Vespa.
     from datetime import datetime, timezone
 
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-    schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
-    with open(schema_file) as f:
-        reg_schema_json = json.load(f)
-    reg_schema_json["name"] = "video_colpali_smol500_mv_frame_default"
-    reg_schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_default"
+    baseline_schemas = [
+        ("video_colpali_smol500_mv_frame", "test_unit", "video_colpali_smol500_mv_frame_schema.json"),
+        ("agent_memories", "test_unit", "agent_memories_schema.json"),
+    ]
+    for base_name, suffix, schema_filename in baseline_schemas:
+        schema_path = SCHEMAS_DIR / schema_filename
+        with open(schema_path) as f:
+            reg_schema_json = json.load(f)
+        full_name = f"{base_name}_{suffix}"
+        reg_schema_json["name"] = full_name
+        reg_schema_json["document"]["name"] = full_name
 
-    cm.store.set_config(
-        tenant_id="default",
-        scope=ConfigScope.SCHEMA,
-        service="schema_registry",
-        config_key="schema_video_colpali_smol500_mv_frame",
-        config_value={
-            "tenant_id": "default",
-            "base_schema_name": "video_colpali_smol500_mv_frame",
-            "full_schema_name": "video_colpali_smol500_mv_frame_default",
-            "schema_definition": json.dumps(reg_schema_json),
-            "config": {},
-            "deployment_time": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+        # ConfigStore key: (tenant_id=suffix-as-stored, scope=SCHEMA,
+        # service="schema_registry", config_key="schema_{base}").
+        # tenant_id "test_unit" matches the sanitised form of "test:unit"
+        # the backend uses as the actual Vespa schema suffix.
+        cm.store.set_config(
+            tenant_id=suffix,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=f"schema_{base_name}",
+            config_value={
+                "tenant_id": suffix,
+                "base_schema_name": base_name,
+                "full_schema_name": full_name,
+                "schema_definition": json.dumps(reg_schema_json),
+                "config": {},
+                "deployment_time": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     return cm
 
@@ -321,7 +367,7 @@ def memory_manager(vespa_instance, config_manager, schema_loader):
     Mem0MemoryManager._instances.clear()
     BackendRegistry._backend_instances.clear()
 
-    mm = Mem0MemoryManager(tenant_id="default")
+    mm = Mem0MemoryManager(tenant_id="test:unit")
     mm.initialize(
         backend_host="http://localhost",
         backend_port=vespa_instance["http_port"],
@@ -385,7 +431,12 @@ def search_client(vespa_instance, config_manager, schema_loader, real_telemetry)
     Only the search router is mounted (no lifespan needed).
     Dependency overrides point at the real Vespa-backed ConfigManager.
     Real TelemetryManager singleton is set up via real_telemetry fixture.
+    assert_tenant_exists is patched to a no-op: these tests exercise search
+    plumbing, not tenant lifecycle, and the local Vespa instance isn't
+    seeded with tenant_metadata entries.
     """
+    from unittest.mock import patch as _patch
+
     test_app = FastAPI()
     test_app.include_router(search.router, prefix="/search")
 
@@ -396,8 +447,15 @@ def search_client(vespa_instance, config_manager, schema_loader, real_telemetry)
         lambda: schema_loader
     )
 
-    with TestClient(test_app) as client:
-        yield client
+    async def _noop_tenant_check(tenant_id: str) -> None:
+        return None
+
+    with _patch(
+        "cogniverse_runtime.routers.search.assert_tenant_exists",
+        new=_noop_tenant_check,
+    ):
+        with TestClient(test_app) as client:
+            yield client
 
 
 @pytest.fixture(scope="module")
@@ -452,7 +510,7 @@ def _dspy_lm_instance():
     )
 
     cm = _cdcm()
-    config = get_config(tenant_id="default", config_manager=cm)
+    config = get_config(tenant_id="test:unit", config_manager=cm)
     llm_cfg = config.get("llm_config", {}).get("primary", {})
 
     # Disable qwen3 thinking mode — it puts output in a 'thinking' field
@@ -486,7 +544,7 @@ def dspy_lm(_dspy_lm_instance):
 @pytest.fixture(scope="module")
 def agent_registry(config_manager):
     """AgentRegistry with a search_agent registered."""
-    registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+    registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
     registry.register_agent(
         AgentEndpoint(
             name="search_agent",

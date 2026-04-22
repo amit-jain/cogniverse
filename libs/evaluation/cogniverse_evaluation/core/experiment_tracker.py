@@ -35,6 +35,7 @@ class ExperimentTracker:
 
     def __init__(
         self,
+        tenant_id: str,
         experiment_project_name: str = "experiments",
         output_dir: Path | None = None,
         enable_quality_evaluators: bool = True,
@@ -43,7 +44,6 @@ class ExperimentTracker:
         llm_model: str | None = None,
         llm_base_url: str | None = None,
         evaluation_provider: Optional[EvaluationProvider] = None,
-        tenant_id: str = "default",
     ):
         """
         Initialize the experiment tracker with provider-agnostic evaluation framework.

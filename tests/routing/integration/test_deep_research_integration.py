@@ -87,14 +87,14 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.timeout(120)
     async def test_full_research_cycle(self, real_search_fn):
         """Decompose → search Vespa → evaluate → synthesize with real Ollama."""
-        deps = DeepResearchDeps(tenant_id="default")
+        deps = DeepResearchDeps(tenant_id="test:unit")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 
         result = await agent.process(
             DeepResearchInput(
                 query="What visual content appears in outdoor scenes?",
                 max_iterations=2,
-                tenant_id="default",
+                tenant_id="test:unit",
             )
         )
 
@@ -113,7 +113,7 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.timeout(60)
     async def test_decomposition_produces_real_subquestions(self, real_search_fn):
         """DSPy decomposition with real Ollama produces meaningful sub-questions."""
-        deps = DeepResearchDeps(tenant_id="default")
+        deps = DeepResearchDeps(tenant_id="test:unit")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 
         sub_qs = await agent._decompose(

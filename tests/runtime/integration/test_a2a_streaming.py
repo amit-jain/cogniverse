@@ -51,7 +51,7 @@ KNOWN_AGENTS = {
 @pytest.fixture(scope="module")
 def streaming_registry(config_manager):
     """Registry with all streaming-capable agents registered."""
-    registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+    registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
     agents = [
         ("summarizer_agent", ["summarization", "text_generation"]),
@@ -133,7 +133,7 @@ def _collect_stream_events(agent, typed_input) -> list[dict[str, Any]]:
     return events
 
 
-def _send_a2a_stream(client, text, agent_name="summarizer_agent", tenant_id="default"):
+def _send_a2a_stream(client, text, agent_name="summarizer_agent", tenant_id="test:unit"):
     """Send A2A message/stream and collect SSE events."""
     payload = {
         "jsonrpc": "2.0",
@@ -226,7 +226,7 @@ class TestSummarizerAgentStreaming:
         )
 
         agent = SummarizerAgent(
-            deps=SummarizerDeps(tenant_id="default"),
+            deps=SummarizerDeps(tenant_id="test:unit"),
             config_manager=config_manager,
         )
 
@@ -340,7 +340,7 @@ class TestRoutingAgentStreaming:
             agent,
             RoutingInput(
                 query="show me videos of robots playing soccer",
-                tenant_id="default",
+                tenant_id="test:unit",
             ),
         )
 
@@ -397,7 +397,7 @@ class TestOrchestratorAgentStreaming:
             agent,
             OrchestratorInput(
                 query="find machine learning videos and summarize them",
-                tenant_id="default",
+                tenant_id="test:unit",
             ),
         )
 
@@ -461,7 +461,7 @@ class TestQueryEnhancementAgentStreaming:
 
         events = _collect_stream_events(
             agent,
-            QueryEnhancementInput(query="ML videos", tenant_id="default"),
+            QueryEnhancementInput(query="ML videos", tenant_id="test:unit"),
         )
 
         _assert_no_errors(events, "QueryEnhancementAgent")
@@ -509,7 +509,7 @@ class TestEntityExtractionAgentStreaming:
             agent,
             EntityExtractionInput(
                 query="Tesla stock price analysis in 2025",
-                tenant_id="default",
+                tenant_id="test:unit",
             ),
         )
 
@@ -546,7 +546,7 @@ class TestProfileSelectionAgentStreaming:
 
         events = _collect_stream_events(
             agent,
-            ProfileSelectionInput(query="find cat videos", tenant_id="default"),
+            ProfileSelectionInput(query="find cat videos", tenant_id="test:unit"),
         )
 
         _assert_no_errors(events, "ProfileSelectionAgent")
@@ -602,7 +602,7 @@ class TestDetailedReportAgentStreaming:
         )
 
         agent = DetailedReportAgent(
-            deps=DetailedReportDeps(tenant_id="default"),
+            deps=DetailedReportDeps(tenant_id="test:unit"),
             config_manager=config_manager,
         )
 
@@ -695,7 +695,7 @@ class TestSearchAgentStreaming:
             agent,
             SearchInput(
                 query="machine learning videos",
-                tenant_id="default",
+                tenant_id="test:unit",
                 modality="video",
                 top_k=5,
             ),
@@ -742,7 +742,7 @@ class TestImageSearchAgentStreaming:
         agent = ImageSearchAgent(
             deps=ImageSearchDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="default",
+                tenant_id="test:unit",
             )
         )
 
@@ -782,7 +782,7 @@ class TestAudioAnalysisAgentStreaming:
         agent = AudioAnalysisAgent(
             deps=AudioAnalysisDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="default",
+                tenant_id="test:unit",
             )
         )
 
@@ -822,7 +822,7 @@ class TestDocumentAgentStreaming:
         agent = DocumentAgent(
             deps=DocumentAgentDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="default",
+                tenant_id="test:unit",
             )
         )
 
@@ -920,7 +920,7 @@ class TestRoutingOptimizationIntegration:
                 agent_name="routing_agent",
                 query="optimize routing",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "optimize_routing",
                     "examples": examples,
                 },
@@ -941,7 +941,7 @@ class TestRoutingOptimizationIntegration:
             streaming_dispatcher.dispatch(
                 agent_name="routing_agent",
                 query="find cat videos",
-                context={"tenant_id": "default"},
+                context={"tenant_id": "test:unit"},
             )
         )
 
@@ -965,7 +965,7 @@ class TestRoutingOptimizationIntegration:
                 agent_name="routing_agent",
                 query="optimize routing",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "optimize_routing",
                     "examples": [],
                 },
@@ -989,7 +989,7 @@ class TestRoutingOptimizationIntegration:
                 agent_name="routing_agent",
                 query="optimization status",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "get_optimization_status",
                 },
             )
@@ -1014,7 +1014,7 @@ class TestRoutingOptimizationIntegration:
                 agent_name="routing_agent",
                 query="optimize routing",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "optimize_routing",
                     # No examples — triggers automated cycle from traces
                 },
@@ -1067,7 +1067,7 @@ class TestFullOptimizationPipeline:
                 streaming_dispatcher.dispatch(
                     agent_name="routing_agent",
                     query=query,
-                    context={"tenant_id": "default"},
+                    context={"tenant_id": "test:unit"},
                 )
             )
             routing_results.append(result)
@@ -1116,7 +1116,7 @@ class TestFullOptimizationPipeline:
                 agent_name="routing_agent",
                 query="optimize routing",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "optimize_routing",
                     "examples": examples,
                 },
@@ -1133,7 +1133,7 @@ class TestFullOptimizationPipeline:
                 agent_name="routing_agent",
                 query="optimize routing",
                 context={
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                     "action": "optimize_routing",
                 },
             )
@@ -1147,7 +1147,7 @@ class TestFullOptimizationPipeline:
             streaming_dispatcher.dispatch(
                 agent_name="routing_agent",
                 query="find cat videos with music",
-                context={"tenant_id": "default"},
+                context={"tenant_id": "test:unit"},
             )
         )
         assert final_result["status"] == "success", (

@@ -257,8 +257,9 @@ class TestOrchestratorWithRealAgents:
         with dspy.context(lm=dspy_lm):
             result = await entity_agent._process_impl(
                 EntityExtractionInput(
-                    query="Find videos about Python programming by Google"
-                )
+                    query="Find videos about Python programming by Google",
+                tenant_id="test:unit",
+            )
             )
 
         assert result is not None
@@ -295,7 +296,7 @@ class TestOrchestratorWithRealAgents:
         original = "find videos about robotic arm assembly in manufacturing"
         with dspy.context(lm=dspy_lm):
             result = await query_agent._process_impl(
-                QueryEnhancementInput(query=original)
+                QueryEnhancementInput(query=original, tenant_id="test:unit")
             )
 
         assert result is not None
@@ -331,7 +332,7 @@ class TestOrchestratorWithRealAgents:
         profile_agent = agent_instances["http://localhost:8011"]
         with dspy.context(lm=dspy_lm):
             result = await profile_agent._process_impl(
-                ProfileSelectionInput(query="find tutorial videos about deep learning")
+                ProfileSelectionInput(query="find tutorial videos about deep learning", tenant_id="test:unit")
             )
 
         assert result is not None

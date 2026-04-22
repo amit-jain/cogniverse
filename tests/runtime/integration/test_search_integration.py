@@ -22,7 +22,7 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 logger = logging.getLogger(__name__)
 
 COLPALI_MODEL_NAME = "vidore/colsmol-500m"
-TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_default"
+TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_test_unit"
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
@@ -143,11 +143,11 @@ class TestListProfilesIntegration:
         Profile list includes both system profiles (from configs/config.json)
         and tenant-specific profiles seeded via ConfigManager.add_backend_profile().
         """
-        resp = search_client.get("/search/profiles")
+        resp = search_client.get("/search/profiles?tenant_id=test:unit")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["tenant_id"] == "default"
+        assert data["tenant_id"] == "test:unit"
         # Count includes system profiles merged with seeded test profiles
         assert data["count"] >= 2
 
@@ -207,6 +207,7 @@ class TestSearchIntegration:
                 "profile": "test_colpali",
                 "strategy": "default",
                 "top_k": 5,
+                "tenant_id": "test:unit",
             },
         )
 
@@ -237,6 +238,7 @@ class TestSearchIntegration:
                 "strategy": "default",
                 "top_k": 3,
                 "stream": True,
+                "tenant_id": "test:unit",
             },
         )
 

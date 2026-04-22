@@ -133,10 +133,11 @@ class TestTenantParsing:
         assert learner.tenant_id == "acme:alice"
 
     def test_simple_tenant_id(self):
+        """Simple (no colon) tenant_id sets org_id to the same value."""
         mm = MagicMock()
         mm.memory = MagicMock()
-        learner = StrategyLearner(memory_manager=mm, tenant_id="default")
-        assert learner.org_id == "default"
+        learner = StrategyLearner(memory_manager=mm, tenant_id="simpleorg")
+        assert learner.org_id == "simpleorg"
 
     def test_explicit_org_id(self):
         mm = MagicMock()

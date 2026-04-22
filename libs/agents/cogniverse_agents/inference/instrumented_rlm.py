@@ -93,7 +93,12 @@ class InstrumentedRLM(dspy.RLM):
         super().__init__(signature, **kwargs)
         self._event_queue = event_queue
         self._task_id = task_id
-        self._tenant_id = tenant_id or "default"
+        if event_queue is not None and not tenant_id:
+            raise ValueError(
+                "tenant_id is required when event_queue is provided — "
+                "RLM events must be tenant-scoped"
+            )
+        self._tenant_id = tenant_id
         self._emit_artifacts = emit_artifacts
 
     def _emit_sync(self, event) -> None:

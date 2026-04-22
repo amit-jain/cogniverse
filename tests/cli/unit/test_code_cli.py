@@ -34,13 +34,16 @@ class TestA2ARequestBuilder:
             {"role": "user", "content": "write a retry decorator"},
             {"role": "assistant", "content": "Created retry.py"},
         ]
-        req = _build_a2a_request("now add tests", conversation_history=history)
+        req = _build_a2a_request(
+            "now add tests", tenant_id="acme", conversation_history=history
+        )
         msg_meta = req["params"]["message"]["metadata"]
         assert msg_meta["conversation_history"] == history
 
     def test_includes_context(self):
         req = _build_a2a_request(
             "add pagination",
+            tenant_id="acme",
             context={"language": "rust", "max_iterations": 3},
         )
         meta = req["params"]["metadata"]

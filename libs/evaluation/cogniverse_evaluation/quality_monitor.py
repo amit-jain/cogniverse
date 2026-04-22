@@ -354,6 +354,7 @@ class QualityMonitor:
                         "query": query,
                         "profile": self.search_profile,
                         "top_k": 10,
+                        "tenant_id": self.tenant_id,
                     },
                 )
 

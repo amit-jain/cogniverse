@@ -71,7 +71,7 @@ def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[obje
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Quality Monitor")
     parser.add_argument(
-        "--tenant-id", default="default", help="Tenant ID to monitor"
+        "--tenant-id", required=True, help="Tenant ID to monitor"
     )
     parser.add_argument(
         "--runtime-url",

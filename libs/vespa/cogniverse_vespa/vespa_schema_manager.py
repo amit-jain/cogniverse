@@ -1507,3 +1507,65 @@ class VespaSchemaManager:
             raise ValueError("schema_registry required for tenant schema operations")
 
         return self._schema_registry.schema_exists(tenant_id, base_schema_name)
+
+    def list_deployed_document_types(self, query_port: int) -> List[str]:
+        """Return the document-type names currently deployed in Vespa.
+
+        Queries the running cluster's search endpoint (``query_port``, not
+        the config port this manager was initialised with) to get the
+        authoritative answer for "what's deployed right now", independent of
+        the SchemaRegistry's cache. Used by :py:meth:`VespaBackend.deploy_schemas`
+        to preserve peer schemas that exist in Vespa but aren't (yet) in the
+        registry's record (for example, schemas deployed by a different
+        process or by an integration-test fixture that pushes an
+        ApplicationPackage directly).
+
+        Returns an empty list if discovery fails for any reason — the caller
+        is expected to treat that as "don't know, fall back to registry".
+        """
+        import requests
+
+        base_url = re.sub(r":\d+$", "", self.backend_endpoint)
+        # A YQL query against a deliberately-bogus source forces Vespa to
+        # respond with an error whose message enumerates every deployed
+        # source ref. This is the most reliable Vespa API — /config endpoints
+        # vary across Vespa versions and cluster layouts.
+        probe_url = f"{base_url}:{query_port}/search/"
+        probe_body = {
+            "yql": "select documentid from __cogniverse_probe_missing__ where true",
+            "hits": 0,
+        }
+        try:
+            resp = requests.post(probe_url, json=probe_body, timeout=10)
+        except requests.RequestException as exc:
+            self._logger.warning(
+                f"list_deployed_document_types: Vespa probe failed: {exc}"
+            )
+            return []
+
+        try:
+            body = resp.json()
+        except ValueError:
+            return []
+
+        errors = body.get("root", {}).get("errors", [])
+        for err in errors:
+            msg = err.get("message", "")
+            # Vespa returns: "... Valid source refs are cogniverse_content,
+            # cogniverse_content.foo, cogniverse_content.bar." — i.e. the
+            # refs themselves contain dots, and the message ends with a
+            # period. Capture everything after the prefix up to end-of-string
+            # or end-of-sentence, then strip the final period.
+            m = re.search(r"Valid source refs are (.+)$", msg)
+            if not m:
+                continue
+            raw = m.group(1).rstrip().rstrip(".")
+            parts = [p.strip() for p in raw.split(",")]
+            # Entries are either the bare cluster name ("cogniverse_content")
+            # or "cluster.document_type" — keep only the latter.
+            doc_types = []
+            for part in parts:
+                if "." in part:
+                    doc_types.append(part.split(".", 1)[1])
+            return sorted(set(doc_types))
+        return []

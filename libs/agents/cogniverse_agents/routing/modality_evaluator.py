@@ -87,8 +87,8 @@ class ModalityEvaluator:
 
     def __init__(
         self,
+        tenant_id: str,
         span_collector: Optional[ModalitySpanCollector] = None,
-        tenant_id: str = "default",
     ):
         """
         Initialize modality evaluator

@@ -39,7 +39,7 @@ class AnnotationFeedbackLoop:
     def __init__(
         self,
         optimizer: AdvancedRoutingOptimizer,
-        tenant_id: str = "default",
+        tenant_id: str,
         poll_interval_minutes: int = 15,
         min_annotations_for_update: int = 10,
         automation_rules: AutomationRulesConfig | None = None,

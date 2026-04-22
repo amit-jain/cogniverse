@@ -23,6 +23,7 @@ from cogniverse_agents.routing.dspy_routing_signatures import (
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -284,7 +285,7 @@ class RoutingAgent(
             )
 
             cm = create_default_config_manager()
-            config = get_config(tenant_id="default", config_manager=cm)
+            config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=cm)
             llm_config = config.get_llm_config().resolve("routing_agent")
             self.logger.info(
                 f"Resolved LLM config from config.json: {llm_config.model}"

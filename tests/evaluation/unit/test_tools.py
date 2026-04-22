@@ -202,6 +202,7 @@ class TestPhoenixQueryTool:
         ):
             tool_func = phoenix_query_tool()
             results = await tool_func(
+                tenant_id="test:unit",
                 query_type="traces", filter="name == 'search'", limit=10
             )
 
@@ -232,7 +233,7 @@ class TestPhoenixQueryTool:
             return_value=mock_provider,
         ):
             tool_func = phoenix_query_tool()
-            result = await tool_func(query_type="datasets", name="test_dataset")
+            result = await tool_func(tenant_id="test:unit", query_type="datasets", name="test_dataset")
 
             assert result["name"] == "test_dataset"
             assert result["num_examples"] == 5
@@ -250,7 +251,7 @@ class TestPhoenixQueryTool:
             tool_func = phoenix_query_tool()
 
             with pytest.raises(RuntimeError) as exc_info:
-                await tool_func(query_type="datasets")
+                await tool_func(tenant_id="test:unit", query_type="datasets")
 
             assert "Dataset name is required" in str(exc_info.value)
 
@@ -285,14 +286,14 @@ class TestPhoenixQueryTool:
             mock_provider.telemetry.traces.get_spans = AsyncMock(
                 return_value=mock_df_list
             )
-            result = await tool_func(query_type="experiments")
+            result = await tool_func(tenant_id="test:unit", query_type="experiments")
             assert result == {"experiments": ["exp1", "exp2", "exp3"], "count": 3}
 
             # Test getting specific experiment
             mock_provider.telemetry.traces.get_spans = AsyncMock(
                 return_value=mock_df_specific
             )
-            result = await tool_func(query_type="experiments", name="exp1")
+            result = await tool_func(tenant_id="test:unit", query_type="experiments", name="exp1")
             assert result == {
                 "experiment_name": "exp1",
                 "traces": mock_df_specific.to_dict(orient="records"),
@@ -311,7 +312,7 @@ class TestPhoenixQueryTool:
             tool_func = phoenix_query_tool()
 
             with pytest.raises(RuntimeError) as exc_info:
-                await tool_func(query_type="unknown")
+                await tool_func(tenant_id="test:unit", query_type="unknown")
 
             assert "Unknown query type" in str(exc_info.value)
 
@@ -334,7 +335,7 @@ class TestPhoenixQueryTool:
 
             # The function raises RuntimeError wrapping the original exception
             with pytest.raises(RuntimeError) as exc_info:
-                await tool_func(query_type="traces")
+                await tool_func(tenant_id="test:unit", query_type="traces")
 
             assert "Phoenix query tool failed" in str(exc_info.value)
             assert "Phoenix connection failed" in str(exc_info.value)
@@ -360,6 +361,7 @@ class TestPhoenixQueryTool:
             end_time = datetime.now()
 
             await tool_func(
+                tenant_id="test:unit",
                 query_type="traces",
                 filter="status == 'success'",
                 start_time=start_time,

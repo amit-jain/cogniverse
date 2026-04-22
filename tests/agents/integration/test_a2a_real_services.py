@@ -113,7 +113,7 @@ class TestGatewayWithRealGLiNER:
         from cogniverse_agents.gateway_agent import GatewayInput
 
         result = await gateway_agent.process(
-            GatewayInput(query="search for video content about AI")
+            GatewayInput(query="search for video content about AI", tenant_id="test:unit")
         )
 
         assert result.query == "search for video content about AI"
@@ -138,7 +138,8 @@ class TestGatewayWithRealGLiNER:
 
         result = await gateway_agent.process(
             GatewayInput(
-                query="summarize the research papers into a report"
+                query="summarize the research papers into a report",
+                tenant_id="test:unit",
             )
         )
 
@@ -165,7 +166,7 @@ class TestGatewayWithRealGLiNER:
         from cogniverse_agents.gateway_agent import GatewayInput
 
         result = await gateway_agent.process(
-            GatewayInput(query="find audio recordings of jazz music")
+            GatewayInput(query="find audio recordings of jazz music", tenant_id="test:unit")
         )
 
         # GLiNER detects audio_content with 7-label set -> audio modality
@@ -204,7 +205,8 @@ class TestEntityExtractionRealGLiNERSpaCy:
 
         result = await entity_agent.process(
             EntityExtractionInput(
-                query="Tesla cars driving in San Francisco near Google headquarters"
+                query="Tesla cars driving in San Francisco near Google headquarters",
+                tenant_id="test:unit",
             )
         )
 
@@ -253,7 +255,8 @@ class TestEntityExtractionRealGLiNERSpaCy:
 
         result = await entity_agent.process(
             EntityExtractionInput(
-                query="Python TensorFlow machine learning"
+                query="Python TensorFlow machine learning",
+                tenant_id="test:unit",
             )
         )
 
@@ -281,7 +284,8 @@ class TestEntityExtractionRealGLiNERSpaCy:
 
         result = await entity_agent.process(
             EntityExtractionInput(
-                query="Elon Musk founded SpaceX in California to launch rockets"
+                query="Elon Musk founded SpaceX in California to launch rockets",
+                tenant_id="test:unit",
             )
         )
 
@@ -308,7 +312,7 @@ class TestEntityExtractionRealGLiNERSpaCy:
         """Empty query should return empty entities gracefully."""
         from cogniverse_agents.entity_extraction_agent import EntityExtractionInput
 
-        result = await entity_agent.process(EntityExtractionInput(query=""))
+        result = await entity_agent.process(EntityExtractionInput(query="", tenant_id="test:unit"))
 
         assert result.entity_count == 0
         assert not result.has_entities
@@ -345,6 +349,7 @@ class TestQueryEnhancementRealDSPy:
             QueryEnhancementInput(
                 query="find ML videos",
                 entities=[{"text": "ML", "type": "CONCEPT"}],
+                tenant_id="test:unit",
             )
         )
 
@@ -376,7 +381,7 @@ class TestQueryEnhancementRealDSPy:
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
 
         result = await enhancement_agent.process(
-            QueryEnhancementInput(query="TensorFlow tutorial")
+            QueryEnhancementInput(query="TensorFlow tutorial", tenant_id="test:unit")
         )
 
         assert result.enhanced_query, "Should produce enhanced query without entities"
@@ -390,7 +395,7 @@ class TestQueryEnhancementRealDSPy:
         """Empty query should return gracefully with zero confidence."""
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
 
-        result = await enhancement_agent.process(QueryEnhancementInput(query=""))
+        result = await enhancement_agent.process(QueryEnhancementInput(query="", tenant_id="test:unit"))
 
         assert result.enhanced_query == ""
         assert result.confidence == 0.0
@@ -546,7 +551,7 @@ class TestFullPipelineWithVespa:
         query = "find videos about robots"
 
         # Step 1: Gateway classification
-        gateway_result = await gateway_agent.process(GatewayInput(query=query))
+        gateway_result = await gateway_agent.process(GatewayInput(query=query, tenant_id="test:unit"))
         assert gateway_result.modality in ("video", "both"), (
             f"Gateway should detect video modality, got {gateway_result.modality!r}"
         )
@@ -556,7 +561,7 @@ class TestFullPipelineWithVespa:
 
         # Step 2: Entity extraction
         entity_result = await entity_agent.process(
-            EntityExtractionInput(query=query)
+            EntityExtractionInput(query=query, tenant_id="test:unit")
         )
         assert isinstance(entity_result.entities, list)
         entity_texts = [e.text.lower() for e in entity_result.entities]
@@ -574,6 +579,7 @@ class TestFullPipelineWithVespa:
                 query=query,
                 entities=entity_dicts,
                 relationships=rel_dicts,
+                tenant_id="test:unit",
             )
         )
         assert enhancement_result.enhanced_query, (
@@ -630,7 +636,7 @@ class TestFullPipelineWithVespa:
 
         query = "summarize robot videos"
 
-        gateway_result = await gateway_agent.process(GatewayInput(query=query))
+        gateway_result = await gateway_agent.process(GatewayInput(query=query, tenant_id="test:unit"))
 
         # For summarization query, gateway should detect summary generation type
         # or classify as complex and forward to orchestrator

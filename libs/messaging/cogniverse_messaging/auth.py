@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class UserTenantMapper:
         try:
             results = self.memory_manager.search_memory(
                 query=f"User {external_user_id} on {platform} tenant mapping",
-                tenant_id="default",
+                tenant_id=SYSTEM_TENANT_ID,
                 agent_name=GATEWAY_AGENT_NAME,
                 top_k=5,
             )

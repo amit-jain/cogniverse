@@ -55,7 +55,7 @@ class TestDispatcherMemoryRoundTrip:
 
         # Production wiring: dispatcher initializes memory for this agent.
         real_dispatcher._init_agent_memory(
-            agent, agent_name="roundtrip_test_agent", tenant_id="default"
+            agent, agent_name="roundtrip_test_agent", tenant_id="test:unit"
         )
 
         # After init: memory must be enabled with a real manager.
@@ -63,7 +63,7 @@ class TestDispatcherMemoryRoundTrip:
             "_init_agent_memory must set up a real Mem0 backend, not silently no-op"
         )
         assert agent.memory_manager is not None
-        assert agent._memory_tenant_id == "default"
+        assert agent._memory_tenant_id == "test:unit"
         assert agent._memory_agent_name == "roundtrip_test_agent"
 
     def test_dispatcher_initialized_agent_can_write_and_read_memory(
@@ -82,7 +82,7 @@ class TestDispatcherMemoryRoundTrip:
         real_dispatcher._init_agent_memory(
             agent,
             agent_name="dispatcher_rt_agent",
-            tenant_id="default",
+            tenant_id="test:unit",
         )
 
         memory_id = agent.update_memory(
@@ -117,5 +117,5 @@ class TestDispatcherMemoryRoundTrip:
         agent = _NonMemoryAgent()
         # Must not raise.
         real_dispatcher._init_agent_memory(
-            agent, agent_name="non_memory", tenant_id="default"
+            agent, agent_name="non_memory", tenant_id="test:unit"
         )

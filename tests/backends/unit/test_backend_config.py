@@ -320,13 +320,13 @@ class TestConfigManagerBackendMethods:
             embedding_model="base/model",
             pipeline_config={"extract_keyframes": True},
         )
-        config_manager.add_backend_profile(base_profile, tenant_id="default")
+        config_manager.add_backend_profile(base_profile, tenant_id="test:unit")
 
         # Tenant "acme" wants to tweak the embedding model
         updated = config_manager.update_backend_profile(
             profile_name="base_profile",
             overrides={"embedding_model": "acme/custom-model"},
-            base_tenant_id="default",
+            base_tenant_id="test:unit",
             target_tenant_id="acme",
         )
 
@@ -341,7 +341,7 @@ class TestConfigManagerBackendMethods:
 
         # Verify default tenant unchanged
         default_profile = config_manager.get_backend_profile(
-            "base_profile", tenant_id="default"
+            "base_profile", tenant_id="test:unit"
         )
         assert default_profile.embedding_model == "base/model"
 
@@ -421,7 +421,7 @@ class TestConfigUtilsBackendConfig:
         monkeypatch.chdir(tmp_path)
 
         config_utils = ConfigUtils(
-            tenant_id="default", config_manager=memory_config_manager
+            tenant_id="test:unit", config_manager=memory_config_manager
         )
         backend = config_utils.get("backend")
 

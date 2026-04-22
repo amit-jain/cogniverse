@@ -337,7 +337,7 @@ class TestDSPyLMConfigurationIntegration:
         from cogniverse_foundation.config.utils import get_config
 
         config_helper = get_config(
-            tenant_id="default", config_manager=test_config_manager
+            tenant_id="test:unit", config_manager=test_config_manager
         )
         llm_config = config_helper.get_llm_config()
         assert llm_config.primary.model is not None

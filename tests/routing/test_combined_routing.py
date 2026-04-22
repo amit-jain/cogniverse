@@ -74,7 +74,7 @@ class CombinedRoutingTester:
 
     def __init__(self):
         config_manager = create_default_config_manager()
-        self.config = get_config(tenant_id="default", config_manager=config_manager)
+        self.config = get_config(tenant_id="test:unit", config_manager=config_manager)
 
     def load_test_queries(self, filename: str = "test_queries.txt") -> list[TestQuery]:
         """Load test queries from file."""

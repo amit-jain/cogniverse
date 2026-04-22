@@ -29,8 +29,8 @@ class SpanEvaluator:
 
     def __init__(
         self,
+        tenant_id: str,
         provider: Optional["EvaluationProvider"] = None,
-        tenant_id: str = "default",
         project_name: str = "cogniverse-default",
     ):
         """

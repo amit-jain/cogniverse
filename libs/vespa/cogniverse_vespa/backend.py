@@ -8,6 +8,7 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 import logging
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from cogniverse_core.registries.exceptions import BackendDeploymentError
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend
 
@@ -692,12 +693,18 @@ class VespaBackend(Backend):
     # Schema Management Operations (Backend interface implementation)
     # ============================================================================
 
-    def deploy_schemas(self, schema_definitions: List[Dict[str, Any]]) -> bool:
+    def deploy_schemas(
+        self,
+        schema_definitions: List[Dict[str, Any]],
+        allow_schema_removal: bool = False,
+    ) -> bool:
         """
         Deploy multiple schemas together.
 
         This is the low-level deployment interface called by SchemaRegistry.
-        Deploys ALL provided schemas in a single Vespa ApplicationPackage.
+        Deploys ALL provided schemas in a single Vespa ApplicationPackage,
+        merging any schemas already present in the registry or the live
+        Vespa cluster to avoid silently dropping them.
 
         Args:
             schema_definitions: List of schema definition dicts, each containing:
@@ -705,12 +712,20 @@ class VespaBackend(Backend):
                 - definition: Schema JSON definition
                 - tenant_id: Tenant identifier
                 - base_schema_name: Original base schema name
+            allow_schema_removal: When True, pass the Vespa
+                ``contentTypeRemoval`` validation override and skip the
+                discovery check that normally refuses to silently drop
+                schemas. Defaults to False — an operator who actually wants
+                to remove a schema must opt in explicitly.
 
         Returns:
             True if successful, False otherwise
 
         Raises:
             RuntimeError: If backend not initialized
+            BackendDeploymentError: If the live cluster has schemas the
+                registry can't reconstruct and ``allow_schema_removal`` is
+                False.
             Exception: If deployment fails
         """
         if not self.schema_manager:
@@ -747,21 +762,34 @@ class VespaBackend(Backend):
             # Deploy all schemas together in one ApplicationPackage
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
 
-            # Merge existing schemas from the SchemaRegistry into the deployment
-            # package. Vespa rejects an application deploy that would implicitly
-            # remove existing schemas, so a partial deploy (only the schemas
-            # being added) fails when the cluster has any pre-existing tenant
-            # schemas. Merging makes the deploy look like an "add", not a
-            # "remove + add".
+            # Merge existing schemas into the deployment so the redeploy looks
+            # like an "add" rather than "remove + add". Two sources feed the
+            # merge:
+            #
+            #   1. SchemaRegistry — definitive schema JSON keyed by
+            #      (tenant_id, base_schema) pair. Used to pick up every
+            #      schema this process has ever deployed through the registry.
+            #   2. Vespa itself (via schema_manager.list_deployed_document_types)
+            #      — authoritative list of what the cluster currently has,
+            #      catching schemas deployed out-of-band (tests pushing their
+            #      own ApplicationPackage, prior crashes, or another process).
+            #
+            # A schema discovered only in Vespa is preserved using the
+            # best-effort reconstruction from registry data keyed by name;
+            # if no definition is available, deploy FAILS instead of silently
+            # dropping the schema.
             new_schema_names = {s.name for s in schemas_to_deploy}
             merged_schemas = list(schemas_to_deploy)
+            merged_schema_names = set(new_schema_names)
+
+            parser_for_existing = JsonSchemaParser()
+
             if self.schema_registry is not None:
                 try:
                     existing_schemas = self.schema_registry._get_all_schemas() or []
-                    parser_for_existing = JsonSchemaParser()
                     for schema_info in existing_schemas:
-                        if schema_info.full_schema_name in new_schema_names:
-                            # Replace the existing version with the new one
+                        full_name = schema_info.full_schema_name
+                        if full_name in merged_schema_names:
                             continue
                         try:
                             existing_def = schema_info.schema_definition
@@ -773,19 +801,97 @@ class VespaBackend(Backend):
                                 existing_def
                             )
                             merged_schemas.append(existing_obj)
+                            merged_schema_names.add(full_name)
                         except Exception as merge_exc:
                             logger.warning(
-                                f"Skipping existing schema {schema_info.full_schema_name} "
-                                f"during merge: {merge_exc}"
+                                f"Skipping existing schema {full_name} "
+                                f"during registry merge: {merge_exc}"
                             )
                     logger.info(
-                        f"Merged {len(merged_schemas) - len(schemas_to_deploy)} existing "
+                        f"Merged {len(merged_schemas) - len(schemas_to_deploy)} "
                         f"schemas from registry into deployment package"
                     )
                 except Exception as registry_exc:
                     logger.warning(
-                        f"Could not fetch existing schemas from registry "
-                        f"(will rely on allow_schema_removal): {registry_exc}"
+                        f"Could not fetch existing schemas from registry: {registry_exc}"
+                    )
+
+            # Second source: ask Vespa what it currently has deployed. Any
+            # schema name here that the registry didn't cover must be
+            # reconstructed or the deploy fails — silently dropping a
+            # peer-tenant schema is never acceptable. Discovery uses the
+            # HTTP query port (self._port), not the config port the
+            # schema_manager was initialised with.
+            try:
+                vespa_deployed = self.schema_manager.list_deployed_document_types(
+                    query_port=self._port
+                )
+            except Exception as probe_exc:
+                logger.warning(
+                    f"Vespa schema discovery failed, relying on registry alone: "
+                    f"{probe_exc}"
+                )
+                vespa_deployed = []
+
+            # Skip Vespa-managed metadata schemas — they're re-added below via
+            # add_metadata_schemas_to_package and shouldn't round-trip through
+            # JsonSchemaParser (their definitions aren't in the registry).
+            metadata_names = {
+                "tenant_metadata",
+                "organization_metadata",
+                "config_metadata",
+                "adapter_registry",
+            }
+
+            unknown_in_vespa = [
+                name
+                for name in vespa_deployed
+                if name not in merged_schema_names and name not in metadata_names
+            ]
+            if unknown_in_vespa:
+                # Try to reconstruct from registry-keyed-by-full-name (a
+                # cross-instance registry may have the definition even if
+                # the (tenant, base) lookup missed it).
+                registry_by_full_name: Dict[str, Any] = {}
+                if self.schema_registry is not None:
+                    for schema_info in self.schema_registry._get_all_schemas() or []:
+                        registry_by_full_name[schema_info.full_schema_name] = schema_info
+
+                unresolved = []
+                for full_name in unknown_in_vespa:
+                    schema_info = registry_by_full_name.get(full_name)
+                    if schema_info is None:
+                        unresolved.append(full_name)
+                        continue
+                    try:
+                        existing_def = schema_info.schema_definition
+                        if isinstance(existing_def, str):
+                            existing_def = json.loads(existing_def)
+                        merged_schemas.append(
+                            parser_for_existing.parse_schema(existing_def)
+                        )
+                        merged_schema_names.add(full_name)
+                    except Exception as reconstruct_exc:
+                        logger.error(
+                            f"Schema {full_name} exists in Vespa but can't be "
+                            f"reconstructed: {reconstruct_exc}"
+                        )
+                        unresolved.append(full_name)
+
+                if unresolved and not allow_schema_removal:
+                    raise BackendDeploymentError(
+                        "Refusing to deploy: Vespa has schemas "
+                        f"{sorted(unresolved)} that are not in SchemaRegistry "
+                        "and cannot be reconstructed. Redeploying without them "
+                        "would silently drop them. Register these schemas via "
+                        "SchemaRegistry.register_schema() before redeploying, "
+                        "or pass allow_schema_removal=True to explicitly "
+                        "remove them."
+                    )
+                if unresolved and allow_schema_removal:
+                    logger.warning(
+                        "allow_schema_removal=True — dropping Vespa schemas "
+                        f"{sorted(unresolved)} that could not be reconstructed."
                     )
 
             # Get application name from system config
@@ -802,10 +908,13 @@ class VespaBackend(Backend):
             add_metadata_schemas_to_package(app_package)
             logger.debug("Added metadata schemas to deployment package")
 
-            # allow_schema_removal=True is a fallback safety net. The merge
-            # above should make this unnecessary, but the registry may not
-            # always reflect every schema actually in the cluster.
-            self._deploy_package(app_package, allow_schema_removal=True)
+            # Only pass the Vespa validation override when the caller has
+            # explicitly asked for it. The merge above + live Vespa discovery
+            # should make the override unnecessary; if something still slips
+            # through, failing loudly beats silently dropping a schema.
+            self._deploy_package(
+                app_package, allow_schema_removal=allow_schema_removal
+            )
 
             # Wait for content nodes to converge with the new schema
             # Vespa config server accepts the package immediately but content/distributor
@@ -914,16 +1023,26 @@ class VespaBackend(Backend):
             raise
 
     def _wait_for_schema_convergence(
-        self, schema_names: List[str], timeout: int = 30
+        self, schema_names: List[str], timeout: int = 60
     ) -> None:
         """
         Wait for Vespa content nodes to converge after schema deployment.
 
-        After deploying an application package, the config server accepts it
-        immediately but content/distributor nodes need time to recognize new
-        document types. This method polls until a PUT-based probe confirms
-        the document types are available, preventing 'Document type does not
-        exist' errors during immediate post-deploy ingestion.
+        After deploying an application package, the config server accepts
+        it immediately but content/distributor nodes need extra time to
+        recognise new document types. Queries via ``/search/`` can return
+        200 before content distributors are ready, and ``GET /document/v1/``
+        returns 404 for *any* URL (even an unknown schema), so neither is
+        discriminative.
+
+        The only probe that actually fails until the schema is addressable
+        on the feed path is ``POST /search/`` with ``model.restrict=<name>``:
+        when the schema is unknown Vespa errors out listing every valid
+        source ref, and the new schema appears in that list exactly when
+        the content distributor has caught up. Once every probed schema is
+        visible we add a short buffer — search visibility converges a
+        beat before the document API accepts feeds, so without this
+        buffer the first feed still races.
 
         Args:
             schema_names: Names of schemas that were just deployed
@@ -941,32 +1060,55 @@ class VespaBackend(Backend):
             return
 
         base_url = re.sub(r":\d+$", "", self._url)
-        probe_url = f"{base_url}:{self._port}/document/v1/{schema_names[0]}/{schema_names[0]}/docid/convergence_probe"
+        probe_url = f"{base_url}:{self._port}/search/"
 
         logger.info(
             f"Waiting for content node convergence (schemas: {schema_names})..."
         )
+        remaining = set(schema_names)
         for i in range(timeout):
-            try:
-                # A GET on the document API returns 404 (doc not found) when the
-                # document type is recognized, but 400 with 'Document type does
-                # not exist' when the content node hasn't converged yet.
-                response = requests.get(probe_url, timeout=5)
-                if response.status_code in (200, 404):
-                    # 404 = document type recognized, doc just doesn't exist
-                    logger.info(
-                        f"Content nodes converged after {i + 1}s "
-                        f"(status: {response.status_code})"
+            for name in list(remaining):
+                try:
+                    response = requests.post(
+                        probe_url,
+                        json={
+                            "yql": "select documentid from sources * where true limit 0",
+                            "hits": 0,
+                            "model.restrict": name,
+                        },
+                        timeout=5,
                     )
-                    return
-                # 400 typically means "Document type X does not exist" — keep waiting
-            except requests.exceptions.ConnectionError:
-                pass
+                    if response.status_code != 200:
+                        continue
+                    body = response.json()
+                    errors = body.get("root", {}).get("errors", [])
+                    if not errors:
+                        remaining.discard(name)
+                        continue
+                    joined = " ".join(e.get("message", "") for e in errors)
+                    # Vespa lists every deployed source ref in its error
+                    # message; once the current name appears there the
+                    # search layer has picked it up.
+                    if name in joined:
+                        remaining.discard(name)
+                except (requests.exceptions.ConnectionError, ValueError):
+                    pass
+
+            if not remaining:
+                logger.info(
+                    f"Content nodes converged after {i + 1}s (schemas={schema_names})"
+                )
+                # Feed-path (document/v1) converges a beat after search
+                # visibility — a short buffer eliminates the first-feed
+                # race without significantly slowing deploys.
+                time.sleep(3)
+                return
             time.sleep(1)
 
         logger.warning(
-            f"Content node convergence not confirmed after {timeout}s — "
-            f"proceeding anyway (feed retries may compensate)"
+            f"Content node convergence not confirmed after {timeout}s "
+            f"(still missing: {sorted(remaining)}) — proceeding anyway "
+            "(feed retries may compensate)"
         )
 
     def delete_schema(

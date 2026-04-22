@@ -250,7 +250,14 @@ class AgentDispatcher:
 
         from cogniverse_runtime.config_loader import ConfigLoader
 
-        class_path = ConfigLoader.AGENT_CLASSES.get(agent_name)
+        # AGENT_CLASSES is keyed on the fully-qualified type name (e.g.
+        # "query_enhancement_agent"), but the orchestrator plans steps
+        # with the bare capability name ("query_enhancement"). Accept
+        # both: try the given name first, then the "_agent" suffixed
+        # form.
+        class_path = ConfigLoader.AGENT_CLASSES.get(agent_name) or (
+            ConfigLoader.AGENT_CLASSES.get(f"{agent_name}_agent")
+        )
         if not class_path:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path "

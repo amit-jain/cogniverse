@@ -178,7 +178,7 @@ class TestVespaBackendIngestion:
 
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -218,7 +218,7 @@ class TestVespaBackendIngestion:
 
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -255,7 +255,7 @@ class TestVespaBackendIngestion:
 
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -291,7 +291,7 @@ class TestVespaBackendIngestion:
 
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -353,7 +353,7 @@ class TestComprehensiveIngestion:
             try:
                 config_manager = create_default_config_manager()
                 config = PipelineConfig.from_config(
-                    tenant_id="default", config_manager=config_manager
+                    tenant_id="test:unit", config_manager=config_manager
                 )
                 config.video_dir = all_test_videos[0].parent
                 config.search_backend = "vespa"
@@ -395,7 +395,7 @@ class TestComprehensiveIngestion:
 
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"
@@ -445,7 +445,7 @@ class TestProfileConfigPropagation:
         from cogniverse_foundation.config.utils import get_config
 
         config = get_config(
-            tenant_id="default", config_manager=config_manager
+            tenant_id="test:unit", config_manager=config_manager
         )
         backend = config.get("backend")
         profiles = backend.get("profiles", {})

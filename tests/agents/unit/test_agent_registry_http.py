@@ -28,7 +28,7 @@ class TestAgentRegistryHTTPEndpoints:
     @pytest.fixture
     def agent_registry(self, config_manager):
         """Create agent registry for testing"""
-        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
         return registry
 
     @pytest.fixture
@@ -248,7 +248,7 @@ class TestAgentRegistryIntegration:
 
         # Setup
         config_manager = Mock()
-        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
         set_agent_registry(registry)
 
         app = FastAPI()
@@ -318,7 +318,7 @@ class TestProcessAgentTaskDispatch:
 
         config_manager = Mock()
         schema_loader = Mock()
-        registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
         set_agent_registry(registry)
         set_agent_dependencies(config_manager, schema_loader)
 
@@ -357,7 +357,7 @@ class TestProcessAgentTaskDispatch:
                 json={
                     "agent_name": "routing_agent",
                     "query": "test query",
-                    "context": {"tenant_id": "default"},
+                    "context": {"tenant_id": "test:unit"},
                 },
             )
             assert response.status_code == 200
@@ -392,7 +392,7 @@ class TestProcessAgentTaskDispatch:
                 json={
                     "agent_name": "search_agent",
                     "query": "find videos",
-                    "context": {"tenant_id": "default"},
+                    "context": {"tenant_id": "test:unit"},
                 },
             )
             assert response.status_code == 200
@@ -422,7 +422,7 @@ class TestProcessAgentTaskDispatch:
                 json={
                     "agent_name": "hybrid_agent",
                     "query": "test",
-                    "context": {"tenant_id": "default"},
+                    "context": {"tenant_id": "test:unit"},
                 },
             )
             assert response.status_code == 200
@@ -445,7 +445,7 @@ class TestProcessAgentTaskDispatch:
             json={
                 "agent_name": "unknown_agent",
                 "query": "test",
-                "context": {"tenant_id": "default"},
+                "context": {"tenant_id": "test:unit"},
             },
         )
         assert response.status_code == 501

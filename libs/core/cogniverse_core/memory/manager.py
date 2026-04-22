@@ -16,6 +16,7 @@ os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.caching import TenantLRUCache
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ class Mem0MemoryManager:
         from cogniverse_core.registries.backend_registry import get_backend_registry
         from cogniverse_foundation.config.utils import get_config
 
-        config = get_config(tenant_id="default", config_manager=config_manager)
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
 
@@ -247,7 +248,7 @@ class Mem0MemoryManager:
                 )
                 config_manager.add_backend_profile(
                     profile_config,
-                    tenant_id="default",
+                    tenant_id=SYSTEM_TENANT_ID,
                     service="backend",
                 )
             except Exception as exc:
@@ -305,13 +306,19 @@ class Mem0MemoryManager:
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
-        # Configure Mem0 with provider from config (provider-agnostic)
+        # Strip any litellm-style "provider/" prefix from model names — the
+        # OpenAI-compatible endpoint (Ollama, vLLM, etc.) expects the bare
+        # model name. Leaving "ollama/qwen3:4b" would make Ollama reply with
+        # "model 'ollama/qwen3:4b' not found".
+        def _bare_model_name(name: str) -> str:
+            return name.split("/", 1)[1] if "/" in name else name
+
         llm_provider_config = {
-            "model": llm_model,
+            "model": _bare_model_name(llm_model),
             "temperature": 0.1,
         }
         embedder_provider_config = {
-            "model": embedding_model,
+            "model": _bare_model_name(embedding_model),
         }
 
         # Ollama exposes an OpenAI-compatible API at /v1. Using Mem0's

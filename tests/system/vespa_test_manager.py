@@ -236,11 +236,33 @@ class VespaTestManager:
             config_manager = create_default_config_manager()
             print("🔧 config_manager created with backend store")
 
+            # Seed the test Vespa's ConfigStore with a SystemConfig that
+            # points back at itself. Without this, agents that later call
+            # get_system_config() (e.g. MemoryAwareMixin during
+            # dispatcher._init_agent_memory) get the SystemConfig()
+            # default (localhost:8080) and silently connect to whatever
+            # Vespa happens to be running on the host's standard port —
+            # i.e. the developer's production Vespa. Before backend.py's
+            # schema-preservation guard caught this, `allow_schema_removal=True`
+            # was silently dropping real tenant schemas from that Vespa.
+            from cogniverse_foundation.config.unified_config import SystemConfig
+
+            config_manager.set_system_config(
+                SystemConfig(
+                    backend_url="http://localhost",
+                    backend_port=self.http_port,
+                )
+            )
+            print(
+                f"🔧 Seeded SystemConfig → backend_url=http://localhost, "
+                f"backend_port={self.http_port}"
+            )
+
             # Store config_manager as instance variable so tests can access it
             self.config_manager = config_manager
 
             _original_config_values = get_config(
-                tenant_id="default", config_manager=config_manager
+                tenant_id="test:unit", config_manager=config_manager
             )
             _original_config_vespa_url = _original_config_values.get("backend_url")
             _original_config_vespa_port = _original_config_values.get("backend_port")
@@ -281,7 +303,7 @@ class VespaTestManager:
 
             # IMPORTANT: Reuse temp DB config_manager created above, don't create a new one!
             current_config = get_config(
-                tenant_id="default", config_manager=config_manager
+                tenant_id="test:unit", config_manager=config_manager
             )
             current_backend_config = current_config.get("backend", {})
             loaded_profiles = current_backend_config.get("profiles", {})
@@ -558,7 +580,7 @@ class VespaTestManager:
             config_manager = self.config_manager
 
             # Load full config with backend section
-            full_config = get_config(tenant_id="default", config_manager=config_manager)
+            full_config = get_config(tenant_id="test:unit", config_manager=config_manager)
 
             # Local instantiation in test utility (acceptable pattern)
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))

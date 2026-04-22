@@ -45,6 +45,7 @@ import asyncio
 
 import httpx
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
@@ -72,7 +73,7 @@ if _system_config.telemetry_collector_endpoint != "localhost:4317":
 def stream_agent_call(
     agent_name: str,
     query: str,
-    tenant_id: str = "default",
+    tenant_id: str,
     metadata: dict | None = None,
 ) -> list[dict]:
     """Stream an agent call via A2A message/stream and return parsed events.
@@ -130,7 +131,7 @@ def stream_agent_call(
 def display_streaming_result(
     agent_name: str,
     query: str,
-    tenant_id: str = "default",
+    tenant_id: str,
     metadata: dict | None = None,
 ) -> dict | None:
     """Call an agent with streaming and display progressive results in Streamlit.
@@ -1540,7 +1541,7 @@ if enable_rca and len(tabs) > 6:
 
                                     config_manager = create_default_config_manager()
                                     config = get_config(
-                                        tenant_id="default",
+                                        tenant_id=SYSTEM_TENANT_ID,
                                         config_manager=config_manager,
                                     )
                                     phoenix_base_url = config.get(
@@ -1651,7 +1652,7 @@ if enable_rca and len(tabs) > 6:
                 if summary.get("failed_traces", 0) > 0:
                     config_manager = create_default_config_manager()
                     config = get_config(
-                        tenant_id="default", config_manager=config_manager
+                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
                     )
                     phoenix_base_url = config.get(
                         "phoenix_base_url", "http://localhost:6006"
@@ -1745,7 +1746,7 @@ if enable_rca and len(tabs) > 6:
                     burst_data = []
                     config_manager = create_default_config_manager()
                     config = get_config(
-                        tenant_id="default", config_manager=config_manager
+                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
                     )
                     phoenix_base_url = config.get(
                         "phoenix_base_url", "http://localhost:6006"
@@ -1800,7 +1801,7 @@ if enable_rca and len(tabs) > 6:
                                     st.code(phoenix_time_query, language="python")
                             config_manager = create_default_config_manager()
                             config = get_config(
-                                tenant_id="default", config_manager=config_manager
+                                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
                             )
                             phoenix_base_url = config.get(
                                 "phoenix_base_url", "http://localhost:6006"
@@ -1826,7 +1827,7 @@ if enable_rca and len(tabs) > 6:
                 if summary.get("performance_degraded", 0) > 0 and "threshold" in perf:
                     config_manager = create_default_config_manager()
                     config = get_config(
-                        tenant_id="default", config_manager=config_manager
+                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
                     )
                     phoenix_base_url = config.get(
                         "phoenix_base_url", "http://localhost:6006"
@@ -2185,7 +2186,7 @@ with main_tabs[5]:
                 from cogniverse_foundation.config.utils import get_config
 
                 _cm = create_default_config_manager()
-                _cfg = get_config(tenant_id="default", config_manager=_cm)
+                _cfg = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=_cm)
                 _llm = _cfg.get_llm_config().primary
                 st.session_state.modality_optimizer = ModalityOptimizer(llm_config=_llm)
 
@@ -3130,7 +3131,7 @@ with main_tabs[10]:
             final = display_streaming_result(
                 agent_name="summarizer_agent",
                 query=summary_query,
-                tenant_id="default",
+                tenant_id=st.session_state.get("current_tenant"),
             )
             if final and "summary" in final:
                 st.markdown("### Key Points")
@@ -3180,7 +3181,7 @@ with main_tabs[10]:
 
                         eval_provider = EvaluationRegistry.get_evaluation_provider(
                             name="phoenix",
-                            tenant_id="default",
+                            tenant_id=st.session_state.get("current_tenant"),
                             config={
                                 "http_endpoint": agent_config.get(
                                     "phoenix_base_url", "http://localhost:6006"

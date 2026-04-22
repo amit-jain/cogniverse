@@ -133,7 +133,11 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
 class AudioTranscriptionStrategy(BaseStrategy):
     """Transcribe audio from video."""
 
-    def __init__(self, model: str = "whisper-large-v3", language: str = "auto"):
+    def __init__(self, model: str = "base", language: str = "auto"):
+        # Default to the "base" Whisper model (~150MB) to keep the ingestion
+        # pod's memory footprint bounded. Profiles that genuinely need larger
+        # accuracy should set "model": "large-v3" (3GB) or another tier
+        # explicitly in the profile's strategy params.
         self.model = model
         self.language = language
 

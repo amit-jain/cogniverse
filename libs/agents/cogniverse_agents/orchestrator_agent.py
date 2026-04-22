@@ -34,6 +34,7 @@ from cogniverse_agents.orchestrator.checkpoint_types import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
 if TYPE_CHECKING:
     from cogniverse_agents.orchestrator.checkpoint_storage import (
@@ -401,7 +402,7 @@ class OrchestratorAgent(
             from cogniverse_foundation.config.utils import get_config
 
             config = get_config(
-                tenant_id="default", config_manager=self._config_manager
+                tenant_id=SYSTEM_TENANT_ID, config_manager=self._config_manager
             )
 
             llm_config = config.get_llm_config()
@@ -776,8 +777,8 @@ class OrchestratorAgent(
     async def _execute_plan(
         self,
         plan: OrchestrationPlan,
+        tenant_id: str,
         workflow_id: str = "",
-        tenant_id: str = "default",
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -926,6 +927,7 @@ class OrchestratorAgent(
             if self._should_checkpoint():
                 await self._save_checkpoint(
                     plan,
+                    tenant_id=tenant_id,
                     workflow_id=workflow_id,
                     current_step=step_count,
                     status=CheckpointStatus.ACTIVE,
@@ -1158,6 +1160,7 @@ class OrchestratorAgent(
     async def _save_checkpoint(
         self,
         plan: OrchestrationPlan,
+        tenant_id: str,
         workflow_id: str,
         current_step: int,
         status: CheckpointStatus,
@@ -1189,7 +1192,7 @@ class OrchestratorAgent(
             checkpoint = WorkflowCheckpoint(
                 checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
                 workflow_id=workflow_id,
-                tenant_id="default",
+                tenant_id=tenant_id,
                 workflow_status="running" if status == CheckpointStatus.ACTIVE else status.value,
                 current_phase=current_step,
                 original_query=plan.query,

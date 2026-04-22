@@ -34,7 +34,7 @@ def mock_config_manager():
 
     # Mock get_backend_config to return proper BackendConfig
     mock_backend_config = BackendConfig(
-        tenant_id="default",
+        tenant_id="test:unit",
         backend_type="vespa",
         url="http://localhost",
         port=8080,
@@ -48,7 +48,7 @@ def mock_config_manager():
     mock_cm.get_system_config.return_value = mock_system_config
 
     # Mock get_routing_config
-    mock_routing_config = RoutingConfigUnified(tenant_id="default")
+    mock_routing_config = RoutingConfigUnified(tenant_id="test:unit")
     mock_cm.get_routing_config.return_value = mock_routing_config
 
     # Mock get_telemetry_config

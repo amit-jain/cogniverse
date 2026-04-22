@@ -505,7 +505,7 @@ def test_profile_with_queries(
 
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id="test:unit", config_manager=config_manager)
 
     try:
         search_service = SearchService(

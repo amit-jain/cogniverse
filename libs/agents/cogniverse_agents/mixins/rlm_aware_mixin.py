@@ -159,6 +159,7 @@ class RLMAwareMixin:
         system_prompt: Optional[str] = None,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> RLMResult:
         """
         Process query using RLM with the specified options.
@@ -170,6 +171,10 @@ class RLMAwareMixin:
             system_prompt: Optional system instructions
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events
+            tenant_id: Explicit tenant_id. Required if ``self.tenant_id``
+                wasn't stamped by the dispatcher (e.g. callers driving the
+                mixin directly from tests or tooling). When both are
+                provided, the explicit arg wins.
 
         Returns:
             RLMResult with answer and telemetry data
@@ -188,7 +193,7 @@ class RLMAwareMixin:
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
             task_id=task_id,
-            tenant_id=self._resolve_tenant_id_for_rlm(None),
+            tenant_id=self._resolve_tenant_id_for_rlm(tenant_id),
         )
 
         logger.info(

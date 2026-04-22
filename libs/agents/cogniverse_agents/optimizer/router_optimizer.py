@@ -684,6 +684,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Don't use manually crafted examples",
     )
+    parser.add_argument("--tenant-id", required=True, help="Tenant to optimize for.")
 
     args = parser.parse_args()
 
@@ -700,7 +701,7 @@ if __name__ == "__main__":
     student_config = llm_config.primary
     teacher_config = llm_config.teacher if args.use_teacher else None
 
-    tenant_id = "default"
+    tenant_id = args.tenant_id
     telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
 
     # Run optimization

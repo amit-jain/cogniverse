@@ -102,7 +102,7 @@ class AnnotationAgent:
 
     def __init__(
         self,
-        tenant_id: str = "default",
+        tenant_id: str,
         confidence_threshold: float = 0.6,
         failure_lookback_hours: int = 24,
         max_annotations_per_run: int = 50,

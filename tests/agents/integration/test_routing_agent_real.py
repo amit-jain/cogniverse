@@ -105,7 +105,7 @@ async def test_routes_video_query_to_search_agent(routing_agent):
     """'Show me videos of cats' must route to a search-type agent."""
     decision = await routing_agent.route_query(
         query="Show me videos of cats",
-        tenant_id="default",
+        tenant_id="test:unit",
     )
 
     assert decision.recommended_agent, "recommended_agent must not be empty"
@@ -125,7 +125,7 @@ async def test_routes_summary_request_to_summarizer(routing_agent):
     """
     decision = await routing_agent.route_query(
         query="Generate a detailed summary report of all the machine learning video content",
-        tenant_id="default",
+        tenant_id="test:unit",
     )
 
     assert decision.recommended_agent, "recommended_agent must not be empty"
@@ -144,7 +144,7 @@ async def test_returns_entities(routing_agent):
     """A factual query with named entities must produce non-empty entity list."""
     decision = await routing_agent.route_query(
         query="Find videos of Tesla electric cars on highways",
-        tenant_id="default",
+        tenant_id="test:unit",
     )
 
     # In A2A architecture, entity extraction is upstream (QueryEnhancementAgent).
@@ -163,7 +163,7 @@ async def test_confidence_is_positive(routing_agent):
     """Every routing decision must have positive confidence."""
     decision = await routing_agent.route_query(
         query="What is machine learning?",
-        tenant_id="default",
+        tenant_id="test:unit",
     )
 
     assert decision.confidence > 0.0, (

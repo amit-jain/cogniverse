@@ -383,7 +383,7 @@ class TestCodingAgentWithOllama:
         )
 
         cm = create_default_config_manager()
-        config = get_config(tenant_id="default", config_manager=cm)
+        config = get_config(tenant_id="test:unit", config_manager=cm)
         endpoint = config.get_llm_config().resolve("coding_agent")
         lm = create_dspy_lm(endpoint)
         dspy.configure(lm=lm)

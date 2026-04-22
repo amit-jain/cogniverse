@@ -188,7 +188,7 @@ class TestEmptySpanHandling:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_simba_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -200,7 +200,7 @@ class TestEmptySpanHandling:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_workflow_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -214,7 +214,7 @@ class TestEmptySpanHandling:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_gateway_thresholds_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -226,7 +226,7 @@ class TestEmptySpanHandling:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_profile_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -266,7 +266,7 @@ class TestSpansWithNoExamples:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_simba_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
@@ -296,7 +296,7 @@ class TestSpansWithNoExamples:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_profile_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
@@ -355,7 +355,7 @@ class TestGatewayThresholdAnalysis:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_gateway_thresholds_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
 
         assert result["status"] == "success"
@@ -393,7 +393,7 @@ class TestGatewayThresholdAnalysis:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_gateway_thresholds_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
 
         assert result["status"] == "success"
@@ -446,7 +446,7 @@ class TestWorkflowOptimization:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_workflow_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
 
         assert result["status"] == "success"
@@ -471,7 +471,7 @@ class TestEntityExtractionOptimization:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_entity_extraction_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -501,7 +501,7 @@ class TestEntityExtractionOptimization:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_entity_extraction_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
@@ -523,7 +523,7 @@ class TestRoutingOptimization:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_routing_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
@@ -552,7 +552,7 @@ class TestRoutingOptimization:
         p1, p2 = _patch_infra(mgr)
         with p1, p2:
             result = await run_routing_optimization(
-                tenant_id="default", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
@@ -692,7 +692,7 @@ class TestSyntheticGeneration:
         p1, p2 = _patch_infra(fake_telemetry_manager)
         with p1, p2:
             result = await run_synthetic_generation(
-                tenant_id="default",
+                tenant_id="test:unit",
                 optimizer_types=["simba"],
                 count=5,
             )

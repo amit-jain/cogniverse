@@ -297,7 +297,7 @@
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
   "colpali_model": "vidore/colsmol-500m",
-  "embedding_model": "all-MiniLM-L6-v2",
+  "embedding_model": "nomic-embed-text",
   "local_llm_model": "deepseek-r1:7b",
   "prompts": {
     "artifacts_path": null,

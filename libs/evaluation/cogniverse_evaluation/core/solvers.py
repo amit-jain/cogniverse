@@ -198,12 +198,13 @@ def create_batch_solver(
         backend = None
         if config.get("use_backend_for_ground_truth", False):
             from cogniverse_agents.search.service import SearchService
+            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
             from cogniverse_foundation.config.manager import ConfigManager
             from cogniverse_foundation.config.utils import get_config
 
             ground_truth_config_manager = ConfigManager()
             main_config = get_config(
-                tenant_id="default", config_manager=ground_truth_config_manager
+                tenant_id=SYSTEM_TENANT_ID, config_manager=ground_truth_config_manager
             )
             search_service = SearchService(main_config)
             backend = search_service.backend

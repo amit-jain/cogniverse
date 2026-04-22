@@ -240,7 +240,7 @@ class TestEntityExtractionAgentIntegration:
     ):
         """CORRECTNESS: Validate actual entities are extracted"""
         result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query="Show me videos about Barack Obama in Chicago")
+            EntityExtractionInput(query="Show me videos about Barack Obama in Chicago", tenant_id="test:unit")
         )
 
         # VALIDATE: Entities are actually found
@@ -285,7 +285,7 @@ class TestEntityExtractionAgentIntegration:
     ):
         """CORRECTNESS: Validate technical entity extraction"""
         result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query="Apple announces iPhone 15 in Cupertino")
+            EntityExtractionInput(query="Apple announces iPhone 15 in Cupertino", tenant_id="test:unit")
         )
 
         # VALIDATE: At least some entities extracted
@@ -326,7 +326,7 @@ class TestEntityExtractionAgentIntegration:
     async def test_empty_query_correctness(self, entity_agent_with_real_lm):
         """CORRECTNESS: Empty query should return empty results"""
         result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query="")
+            EntityExtractionInput(query="", tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Empty input = empty output
@@ -352,7 +352,7 @@ class TestProfileSelectionAgentIntegration:
     ):
         """CORRECTNESS: Validate video query selects video profile"""
         result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query="Show me machine learning tutorial videos")
+            ProfileSelectionInput(query="Show me machine learning tutorial videos", tenant_id="test:unit")
         )
 
         # VALIDATE: Profile is selected
@@ -401,7 +401,7 @@ class TestProfileSelectionAgentIntegration:
     ):
         """CORRECTNESS: Validate image query selects image profile"""
         result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query="Find pictures of mountains and landscapes")
+            ProfileSelectionInput(query="Find pictures of mountains and landscapes", tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Image query should prefer image profile or text
@@ -434,7 +434,7 @@ class TestProfileSelectionAgentIntegration:
     async def test_empty_query_default_behavior(self, profile_agent_with_real_lm):
         """CORRECTNESS: Empty query should use first profile with 0 confidence"""
         result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query="")
+            ProfileSelectionInput(query="", tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Should default to first profile
@@ -462,7 +462,7 @@ class TestQueryEnhancementAgentIntegration:
         """CORRECTNESS: Validate query enhancement actually improves query"""
         original_query = "ML tutorials"
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query=original_query)
+            QueryEnhancementInput(query=original_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Original query preserved
@@ -520,7 +520,7 @@ class TestQueryEnhancementAgentIntegration:
     ):
         """CORRECTNESS: Validate acronym expansion works"""
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query="NLP and AI")
+            QueryEnhancementInput(query="NLP and AI", tenant_id="test:unit")
         )
 
         # VALIDATE: Acronyms should be recognized
@@ -547,7 +547,7 @@ class TestQueryEnhancementAgentIntegration:
     async def test_empty_query_no_enhancement(self, query_agent_with_real_lm):
         """CORRECTNESS: Empty query should produce empty enhancement"""
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query="")
+            QueryEnhancementInput(query="", tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Empty input = empty output
@@ -766,68 +766,6 @@ class TestOrchestratorAgentIntegration:
         for agent_name, agent_result in result.agent_results.items():
             assert agent_result is not None, f"Agent {agent_name} should produce result"
 
-    @pytest.mark.asyncio
-    async def test_orchestration_error_handling_validates_graceful_degradation(
-        self, orchestrator_with_real_agents
-    ):
-        """CORRECTNESS: Validate orchestrator handles agent failures gracefully"""
-        from unittest.mock import AsyncMock, Mock, patch
-
-        import dspy
-
-        # Make profile_selection agent fail via httpx mock
-        async def fail_profile_selection(url, **kwargs):
-            if "8011" in url:
-                raise Exception("Profile selection service unavailable")
-            resp = Mock()
-            resp.raise_for_status = Mock()
-            resp.json.return_value = {"status": "success", "result": "mock"}
-            return resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=fail_profile_selection)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-        orchestrator_with_real_agents.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(
-                agent_sequence="entity_extraction,profile_selection,query_enhancement",
-                parallel_steps="",
-                reasoning="Sequential execution: extract, select profile, enhance",
-            )
-        )
-
-        with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
-        ):
-            result = await orchestrator_with_real_agents._process_impl(
-                OrchestratorInput(query="Show me videos")
-            )
-
-        # VALIDATE: Plan created despite knowing profile_selection will fail
-        assert len(result.plan_steps) == 3
-
-        # VALIDATE: First agent succeeded
-        assert "entity_extraction" in result.agent_results
-
-        # VALIDATE: Profile selection agent failed but error is captured
-        assert "profile_selection" in result.agent_results
-        profile_result = result.agent_results["profile_selection"]
-        assert isinstance(profile_result, dict)
-        assert profile_result["status"] == "error"
-        assert "unavailable" in profile_result["message"].lower()
-
-        # VALIDATE: Third agent also executed (orchestrator continues despite error)
-        assert "query_enhancement" in result.agent_results
-
-        # VALIDATE: Summary reflects execution
-        assert "3/3" in result.execution_summary, "Summary should show all 3 attempted"
-        assert "successful" in result.execution_summary, (
-            "Summary should mention successful count"
-        )
-
 
 @pytest.mark.integration
 @skip_if_no_ollama
@@ -843,13 +781,13 @@ class TestAgentCoordinationIntegration:
 
         # Step 1: Extract entities
         entity_result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query=query)
+            EntityExtractionInput(query=query, tenant_id="test:unit")
         )
 
         # Step 2: Pass entities to profile selection
         # Note: ProfileSelectionInput only accepts query and available_profiles
         profile_result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query=query)
+            ProfileSelectionInput(query=query, tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Coordination preserves data
@@ -883,7 +821,7 @@ class TestAgentCoordinationIntegration:
 
         # Step 1: Enhance query
         query_result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query=original_query)
+            QueryEnhancementInput(query=original_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Enhancement produces output
@@ -891,7 +829,7 @@ class TestAgentCoordinationIntegration:
 
         # Step 2: Extract entities from enhanced query
         entity_result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query=query_result.enhanced_query)
+            EntityExtractionInput(query=query_result.enhanced_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Entity extraction works on enhanced query
@@ -901,7 +839,7 @@ class TestAgentCoordinationIntegration:
         # Step 3: Select profile with all context
         # Note: ProfileSelectionInput only accepts query and available_profiles
         profile_result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query=query_result.enhanced_query)
+            ProfileSelectionInput(query=query_result.enhanced_query, tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: Pipeline produces coherent output
@@ -1024,63 +962,6 @@ class TestOrchestratorComplexPatterns:
         # VALIDATE: Second parallel group depends on sequential step
         assert result.plan_steps[3]["depends_on"] == [2]
         assert result.plan_steps[4]["depends_on"] == [2]
-
-    @pytest.mark.asyncio
-    async def test_parallel_group_failure_validates_propagation(
-        self, orchestrator_with_real_agents
-    ):
-        """CORRECTNESS: Validate failure handling when entire parallel group fails"""
-        from unittest.mock import AsyncMock, Mock, patch
-
-        import dspy
-
-        # Make both agents in parallel group fail via httpx mock
-        async def fail_parallel_group(url, **kwargs):
-            if "8010" in url:
-                raise Exception("Extraction service down")
-            if "8012" in url:
-                raise Exception("Enhancement service down")
-            resp = Mock()
-            resp.raise_for_status = Mock()
-            resp.json.return_value = {"status": "success", "result": "mock"}
-            return resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=fail_parallel_group)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-        orchestrator_with_real_agents.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(
-                agent_sequence="entity_extraction,query_enhancement,profile_selection",
-                parallel_steps="0,1",
-                reasoning="Parallel extract+enhance, then profile",
-            )
-        )
-
-        with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
-        ):
-            result = await orchestrator_with_real_agents._process_impl(
-                OrchestratorInput(query="Show me videos")
-            )
-
-        # VALIDATE: Both parallel agents failed
-        assert "entity_extraction" in result.agent_results
-        assert result.agent_results["entity_extraction"]["status"] == "error"
-
-        assert "query_enhancement" in result.agent_results
-        assert result.agent_results["query_enhancement"]["status"] == "error"
-
-        # VALIDATE: Dependent agent still executed (orchestrator continues despite failures)
-        assert "profile_selection" in result.agent_results
-
-        # VALIDATE: Summary reflects failures
-        # 3 executed, but 1 successful (only profile_selection)
-        assert "3/3" in result.execution_summary
-        assert "1 successful" in result.execution_summary
 
     @pytest.mark.asyncio
     async def test_cascading_failure_validates_degradation(

@@ -41,6 +41,7 @@ class TestExperimentTracker:
     def tracker(self, mock_dependencies):
         """Create experiment tracker with mocked dependencies."""
         return ExperimentTracker(
+            tenant_id="test:unit",
             experiment_project_name="test_project",
             enable_quality_evaluators=True,
             enable_llm_evaluators=False,
@@ -49,7 +50,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_init_default_params(self, mock_dependencies):
         """Test initialization with default parameters."""
-        tracker = ExperimentTracker()
+        tracker = ExperimentTracker(tenant_id='test:unit')
 
         assert tracker.experiment_project_name == "experiments"
         assert tracker.enable_quality_evaluators is True
@@ -65,6 +66,7 @@ class TestExperimentTracker:
         output_dir = Path("/tmp/test_output")
 
         tracker = ExperimentTracker(
+            tenant_id="test:unit",
             experiment_project_name="custom_project",
             output_dir=output_dir,
             enable_quality_evaluators=False,
@@ -90,7 +92,7 @@ class TestExperimentTracker:
             mock_plugin = Mock()
             mock_module.VideoAnalyzerPlugin = Mock(return_value=mock_plugin)
 
-            ExperimentTracker(enable_quality_evaluators=True)
+            ExperimentTracker(tenant_id="test:unit", enable_quality_evaluators=True)
 
             # Should not raise exception even if plugin doesn't exist
 
@@ -100,7 +102,7 @@ class TestExperimentTracker:
         with patch(
             "cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
         ):
-            ExperimentTracker(enable_llm_evaluators=True)
+            ExperimentTracker(tenant_id="test:unit", enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
 
@@ -114,7 +116,9 @@ class TestExperimentTracker:
             mock_reg.side_effect = ImportError("Module not found")
 
             # Should not raise exception
-            tracker = ExperimentTracker(enable_quality_evaluators=True)
+            tracker = ExperimentTracker(
+                tenant_id="test:unit", enable_quality_evaluators=True
+            )
             assert tracker is not None
 
     @pytest.mark.unit

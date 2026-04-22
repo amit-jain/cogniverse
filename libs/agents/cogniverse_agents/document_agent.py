@@ -643,8 +643,10 @@ class DocumentAgent(
 if __name__ == "__main__":
     import asyncio
 
+    from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+
     async def test_agent():
-        deps = DocumentAgentDeps(tenant_id="default")
+        deps = DocumentAgentDeps(tenant_id=TEST_TENANT_ID)
         agent = DocumentAgent(deps=deps)
         results = await agent.search_documents(
             "machine learning algorithms", strategy="auto"

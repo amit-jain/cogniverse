@@ -151,6 +151,7 @@ class TestRLMAwareMixinProcess:
             query="What is the capital of France?",
             context=_FRANCE_CONTEXT,
             rlm_options=opts,
+            tenant_id="test:unit",
         )
 
         assert isinstance(result, RLMResult)
@@ -170,6 +171,7 @@ class TestRLMAwareMixinProcess:
             query="When was Python created and by whom?",
             context=_PYTHON_OLD,
             rlm_options=opts,
+            tenant_id="test:unit",
         )
 
         telemetry = result.to_telemetry_dict()
@@ -193,6 +195,7 @@ class TestRLMAwareMixinProcess:
                 query="test",
                 context="test context",
                 rlm_options=opts,
+                tenant_id="test:unit",
             )
 
         # The underlying error should mention the missing model

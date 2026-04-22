@@ -73,7 +73,7 @@ class TestEndToEnd:
                     "use_ragas": False,
                     "use_custom": True,
                     "custom_metrics": ["diversity", "result_count"],
-                    "tenant_id": "default",
+                    "tenant_id": "test:unit",
                 },
             )
 
@@ -150,7 +150,7 @@ class TestEndToEnd:
         from tests.evaluation.conftest import intercept_search_calls
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as cfg:
-            json.dump({"tenant_id": "default"}, cfg)
+            json.dump({"tenant_id": "test:unit"}, cfg)
             cfg_path = cfg.name
 
         try:
@@ -213,7 +213,7 @@ class TestEndToEnd:
 
             config_file_path = os.path.join(tmpdir, "tenant_config.json")
             with open(config_file_path, "w") as f:
-                json.dump({"tenant_id": "default"}, f)
+                json.dump({"tenant_id": "test:unit"}, f)
 
             with intercept_search_calls(eval_search_client):
                 runner = CliRunner()
@@ -265,7 +265,7 @@ class TestEndToEnd:
                 "use_custom": True,
                 "custom_metrics": ["diversity"],
                 "top_k": 5,
-                "tenant_id": "default",
+                "tenant_id": "test:unit",
             }
 
             with open(config_file, "w") as f:
@@ -309,7 +309,7 @@ class TestEndToEnd:
                 dataset_name="test_dataset",
                 profiles=["test_colpali"],
                 strategies=["default"],
-                config={"use_custom": True, "tenant_id": "default"},
+                config={"use_custom": True, "tenant_id": "test:unit"},
             )
 
             results = inspect_eval(task, model=OLLAMA_MODEL)

@@ -27,7 +27,7 @@ class SystemTester:
 
     def __init__(self):
         config_manager = create_default_config_manager()
-        self.config = get_config(tenant_id="default", config_manager=config_manager)
+        self.config = get_config(tenant_id="test:unit", config_manager=config_manager)
         self.client = httpx.AsyncClient(timeout=30.0)
         self.test_results = []
         self.failed_tests = []
@@ -212,7 +212,7 @@ class SystemTester:
 
             resp = await self.client.post(
                 f"{url}/search",
-                json={"query": test_query, "tenant_id": "default", "top_k": 5},
+                json={"query": test_query, "tenant_id": "test:unit", "top_k": 5},
             )
             response = resp.json()
 
@@ -447,7 +447,7 @@ class SystemTester:
                 # Call OrchestratorAgent via HTTP
                 resp = await self.client.post(
                     f"{orchestrator_url}/process",
-                    json={"query": query, "tenant_id": "default", "top_k": 20},
+                    json={"query": query, "tenant_id": "test:unit", "top_k": 20},
                 )
                 result = resp.json()
 

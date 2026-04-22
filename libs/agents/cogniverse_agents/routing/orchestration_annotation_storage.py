@@ -81,7 +81,7 @@ class OrchestrationAnnotationStorage:
     Stores annotations in telemetry backend using annotations API.
     """
 
-    def __init__(self, tenant_id: str = "default", project_name: str = "cogniverse"):
+    def __init__(self, tenant_id: str, project_name: str = "cogniverse"):
         """Initialize annotation storage"""
         self.tenant_id = tenant_id
         self.project_name = project_name

@@ -32,10 +32,12 @@ class TestAudioProcessor:
         assert processor._whisper is None  # Lazy loading
 
     def test_processor_initialization_defaults(self, mock_logger):
-        """Test processor with default values."""
+        """Test processor with default values — defaults to `base` so the
+        ingestion pod's memory footprint stays bounded; profiles that need
+        higher accuracy must pass model=large-v3 explicitly."""
         processor = AudioProcessor(mock_logger)
 
-        assert processor.model == "whisper-large-v3"
+        assert processor.model == "base"
         assert processor.language == "auto"
 
     def test_from_config_factory_method(self, mock_logger):

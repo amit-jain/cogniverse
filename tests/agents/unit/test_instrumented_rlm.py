@@ -51,13 +51,23 @@ class TestInstrumentedRLMBasics:
         assert rlm._task_id == "task_123"
         assert rlm._tenant_id == "tenant_1"
 
-    def test_default_tenant_id(self):
-        """Default tenant_id is 'default'."""
+    def test_tenant_id_required_when_event_queue_provided(self):
+        """tenant_id is required when event_queue is provided (no silent default)."""
+        mock_queue = MagicMock()
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            InstrumentedRLM(
+                "context, query -> answer",
+                event_queue=mock_queue,
+                tenant_id=None,
+            )
+
+    def test_tenant_id_optional_without_event_queue(self):
+        """tenant_id may remain None when no event_queue is attached."""
         rlm = InstrumentedRLM(
             "context, query -> answer",
             tenant_id=None,
         )
-        assert rlm._tenant_id == "default"
+        assert rlm._tenant_id is None
 
 
 class TestRLMCancelledError:
@@ -93,6 +103,7 @@ class TestInstrumentedRLMCancellation:
             "context, query -> answer",
             event_queue=mock_queue,
             task_id="task_123",
+            tenant_id="test:unit",
         )
         # Should not raise
         rlm._check_cancelled()
@@ -107,6 +118,7 @@ class TestInstrumentedRLMCancellation:
             "context, query -> answer",
             event_queue=mock_queue,
             task_id="task_123",
+            tenant_id="test:unit",
         )
 
         with pytest.raises(RLMCancelledError) as exc_info:
@@ -132,6 +144,7 @@ class TestInstrumentedRLMEventEmission:
             "context, query -> answer",
             event_queue=mock_queue,
             task_id=None,
+            tenant_id="test:unit",
         )
         # Should not raise
         rlm._emit_sync(MagicMock())

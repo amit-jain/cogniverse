@@ -40,7 +40,7 @@ class RoutingSpanEvaluator:
     def __init__(
         self,
         optimizer: AdvancedRoutingOptimizer,
-        tenant_id: str = "default",
+        tenant_id: str,
         online_evaluator: "OnlineEvaluator | None" = None,
     ):
         """Initialize span evaluator with routing optimizer"""

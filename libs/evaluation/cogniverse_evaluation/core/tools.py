@@ -34,6 +34,7 @@ def video_search_tool():
         try:
             # Import here to avoid circular dependencies
             from cogniverse_agents.search.service import SearchService
+            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
             from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
@@ -41,7 +42,7 @@ def video_search_tool():
 
             # Initialize ConfigManager for dependency injection
             config_manager = create_default_config_manager()
-            config = get_config(tenant_id="default", config_manager=config_manager)
+            config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
             # Create search service with specified profile
             search_service = SearchService(config, profile)
@@ -116,10 +117,13 @@ def phoenix_query_tool():
         Returns:
             Query results
         """
+        from cogniverse_core.common.tenant_utils import require_tenant_id
         from cogniverse_evaluation.providers import get_evaluation_provider
 
         provider = get_evaluation_provider(
-            tenant_id=kwargs.get("tenant_id", "default"),
+            tenant_id=require_tenant_id(
+                kwargs.get("tenant_id"), source="EvaluationTools.query"
+            ),
             project_name=kwargs.get("project_name", "cogniverse-default"),
         )
 

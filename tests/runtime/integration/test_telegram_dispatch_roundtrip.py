@@ -39,7 +39,7 @@ def real_runtime_app(vespa_instance, config_manager, schema_loader):
 
     backend = BackendRegistry.get_instance().get_ingestion_backend(
         name="vespa",
-        tenant_id="default",
+        tenant_id="test:unit",
         config={
             "backend": {
                 "url": "http://localhost",

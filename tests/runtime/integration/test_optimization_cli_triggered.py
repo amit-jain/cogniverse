@@ -129,7 +129,7 @@ class TestTriggeredOptimization:
 
         learner = StrategyLearner(
             memory_manager=memory_manager,
-            tenant_id="default",
+            tenant_id="test:unit",
         )
         strategies = await learner.learn_from_trigger_dataset(trigger_df)
 
@@ -146,7 +146,7 @@ class TestTriggeredOptimization:
         from cogniverse_runtime.optimization_cli import run_triggered_optimization
 
         result = await run_triggered_optimization(
-            tenant_id="default",
+            tenant_id="test:unit",
             agents=["search"],
             trigger_dataset=trigger_dataset_in_phoenix,
             config_manager=config_manager,

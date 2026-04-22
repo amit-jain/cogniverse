@@ -678,6 +678,7 @@ async def main():
 
     optimizer = DSPyAgentPromptOptimizer()
 
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_foundation.config import create_default_config_manager
     from cogniverse_foundation.config.utils import get_config
     from cogniverse_foundation.telemetry import get_telemetry_manager
@@ -693,7 +694,7 @@ async def main():
 
     pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
-    tenant_id = "default"
+    tenant_id = SYSTEM_TENANT_ID
     telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
 
     try:

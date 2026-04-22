@@ -4,7 +4,7 @@ Verifies that two tenants writing wiki pages end up in DIFFERENT real
 Vespa schemas (`wiki_pages_<tenant>`), not the shared default schema.
 
 Audit fix #12 — before this fix the wiki router bound a singleton
-``WikiManager(tenant_id="default")`` at startup and ignored
+``WikiManager(tenant_id="test:unit")`` at startup and ignored
 ``WikiSaveRequest.tenant_id``. Every tenant's writes ended up in the
 default wiki. This test would have caught the bug because it asserts
 that two tenants' pages live in distinct schemas in real Vespa.
@@ -32,7 +32,7 @@ def per_tenant_wiki_app(vespa_instance, config_manager, schema_loader):
 
     backend = BackendRegistry.get_instance().get_ingestion_backend(
         name="vespa",
-        tenant_id="default",
+        tenant_id="test:unit",
         config={
             "backend": {
                 "url": "http://localhost",

@@ -34,7 +34,7 @@ from typing import Dict, List, Optional
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException
 
-from cogniverse_core.common.tenant_utils import parse_tenant_id
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, parse_tenant_id
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
@@ -754,7 +754,7 @@ if __name__ == "__main__":
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
     port = config.get("tenant_manager_port", 9000)
 
     logger.info(f"Starting Tenant Management API on port {port}")

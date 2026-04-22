@@ -11,6 +11,7 @@ import logging
 import os
 from typing import Any, Dict, Optional, Type
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
@@ -315,9 +316,9 @@ class BackendRegistry:
             if "metadata" in config:
                 backend_metadata = config["metadata"]
 
-        # Create BackendConfig object with merged values
+        # Create BackendConfig object with merged values (cluster-scope backend config)
         backend_config_obj = BackendConfig(
-            tenant_id="default",
+            tenant_id=SYSTEM_TENANT_ID,
             backend_type=name,
             url=backend_url,
             port=backend_port,

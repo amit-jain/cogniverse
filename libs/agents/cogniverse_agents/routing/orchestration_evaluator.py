@@ -35,7 +35,7 @@ class OrchestrationEvaluator:
     """
 
     def __init__(
-        self, workflow_intelligence: WorkflowIntelligence, tenant_id: str = "default"
+        self, workflow_intelligence: WorkflowIntelligence, tenant_id: str,
     ):
         """
         Initialize orchestration span evaluator

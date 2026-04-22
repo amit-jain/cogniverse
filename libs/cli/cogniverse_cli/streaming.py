@@ -29,8 +29,8 @@ class CodingResult:
 
 def _build_a2a_request(
     query: str,
+    tenant_id: str,
     agent_name: str = "coding_agent",
-    tenant_id: str = "default",
     context: Optional[Dict[str, Any]] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> dict:
@@ -106,8 +106,8 @@ _PHASE_LABELS = {
 
 def stream_coding_response(
     query: str,
+    tenant_id: str,
     agent_name: str = "coding_agent",
-    tenant_id: str = "default",
     context: Optional[Dict[str, Any]] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
     runtime_url: str = RUNTIME_URL,

@@ -51,7 +51,12 @@ class PhoenixEvaluationProvider(EvaluationProvider):
                 - project_name: Project name for telemetry (default: "evaluation")
                 - Additional Phoenix-specific settings
         """
-        self.tenant_id = config.get("tenant_id", "default")
+        tenant_id = config.get("tenant_id")
+        if not tenant_id:
+            raise ValueError(
+                "tenant_id is required in PhoenixEvaluationProvider config"
+            )
+        self.tenant_id = tenant_id
         project_name = config.get("project_name", "evaluation")
 
         # Resolve endpoints from TelemetryManager config (shared singleton)

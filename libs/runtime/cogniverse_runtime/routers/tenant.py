@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -187,7 +188,7 @@ def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import get_config
 
-        config = get_config(tenant_id="default", config_manager=cm)
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=cm)
         llm_cfg = config.get("llm_config", {}).get("primary", {})
         model = llm_cfg.get("model", "qwen3:4b")
         if "/" in model:

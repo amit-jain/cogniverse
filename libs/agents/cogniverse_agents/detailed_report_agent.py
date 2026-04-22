@@ -21,6 +21,7 @@ from cogniverse_agents.routing_agent import RoutingOutput
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
 
 logger = logging.getLogger(__name__)
@@ -246,9 +247,9 @@ class DetailedReportAgent(
         # Initialize DSPy components
         self._initialize_vlm_client()
 
-        # Initialize VLM for visual analysis
+        # Initialize VLM for visual analysis (cluster-wide VLM config)
         self.vlm = VLMInterface(
-            config_manager=self._config_manager, tenant_id="default"
+            config_manager=self._config_manager, tenant_id=SYSTEM_TENANT_ID
         )
 
         # Configuration from deps
@@ -265,7 +266,7 @@ class DetailedReportAgent(
         from cogniverse_foundation.config.utils import get_config
 
         system_config = get_config(
-            tenant_id="default", config_manager=self._config_manager
+            tenant_id=SYSTEM_TENANT_ID, config_manager=self._config_manager
         )
         llm_config = system_config.get_llm_config()
         endpoint_config = llm_config.resolve("detailed_report_agent")
