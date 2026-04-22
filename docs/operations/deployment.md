@@ -288,64 +288,49 @@ For detailed Modal setup, GPU recommendations, and deployment guides, see:
 
 Cogniverse supports multi-tenant deployment with per-tenant schema isolation.
 
-### Schema Deployment Script
+### Schema Deployment (runtime admin API)
 
-**Note:** The actual `scripts/deploy_all_schemas.py` deploys all schemas at once (not per-tenant). It uses pyvespa's ApplicationPackage to bundle schemas and the VespaSchemaManager's internal deployment method.
+All production schema deployment goes through the runtime's admin API
+so it funnels through ``SchemaRegistry.deploy_schema`` and the
+``VespaBackend.deploy_schemas`` merge path (which discovers deployed
+document types from the live cluster and refuses to silently drop
+peer-tenant schemas). The in-cluster init job at
+``charts/cogniverse/templates/init-jobs.yaml`` wires this up as a
+post-install step that loops ``.Values.config.tenants`` ×
+``.Values.initJobs.schemaDeployment.profiles``:
 
-**Actual Implementation Pattern** (from `scripts/deploy_all_schemas.py`):
+```bash
+RUNTIME_URL="http://$HOST:$PORT"
 
-```python
-# Actual implementation from scripts/deploy_all_schemas.py
-# Note: Import from module paths directly (utils not in __all__)
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from vespa.package import ApplicationPackage
-from pathlib import Path
+# Register a tenant (creates tenant metadata records)
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production"}'
 
-# Get configuration (provides backend connection info)
-config_manager = create_default_config_manager()
-config = get_config(tenant_id="default", config_manager=config_manager)
-
-# Initialize the schema manager with backend config
-# VespaSchemaManager uses backend_endpoint/backend_port (abstracted naming)
-schema_manager = VespaSchemaManager(
-    backend_endpoint=config.get("backend_url"),
-    backend_port=config.get("backend_port")
-)
-
-# Get all schema files from configs/schemas/
-schemas_dir = Path("configs/schemas")
-schema_files = list(schemas_dir.glob("*.json"))  # All JSON schemas
-
-# Create application package to hold all schemas
-app_package = ApplicationPackage(name="cogniverse")
-
-# Parse each schema and add to package
-for schema_file in schema_files:
-    parser = JsonSchemaParser()
-    schema = parser.load_schema_from_json_file(str(schema_file))
-    app_package.add_schema(schema)
-
-# Deploy all schemas at once using internal method
-schema_manager._deploy_package(app_package)
+# Deploy a profile's content schema for that tenant
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production", "force": false}'
 ```
 
-**Tenant-Aware Schema Deployment**:
+**Tenant-Aware Schema Deployment (programmatic path — what the admin
+API calls internally)**:
 
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_vespa.backend import VespaBackend
 from pathlib import Path
 
-# Initialize configuration
+# Initialize configuration (SYSTEM_TENANT_ID reads cluster-wide base config;
+# per-tenant overrides merge in when a specific tenant is resolved later.)
 config_manager = create_default_config_manager()
-config = get_config(tenant_id="default", config_manager=config_manager)
+config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
-# Get backend config for the tenant
-backend_config = config_manager.get_backend_config("default")
+# Get the cluster-wide backend config that tenant overrides merge on top of.
+backend_config = config_manager.get_backend_config(tenant_id=SYSTEM_TENANT_ID)
 
 # Initialize schema loader
 schemas_dir = Path("configs/schemas")
@@ -369,8 +354,10 @@ registry = SchemaRegistry(
     schema_loader=schema_loader
 )
 
-# Deploy schemas for multiple tenants
-tenants = ["acme_corp", "globex_inc", "default"]
+# Deploy schemas for multiple real tenants. There is no "default" tenant
+# in cogniverse — every tenant must have been registered via the admin
+# API or created here programmatically.
+tenants = ["acme_corp", "globex_inc"]
 
 for tenant_id in tenants:
     # Get all video schemas (exclude metadata schemas)
@@ -393,20 +380,28 @@ for tenant_id in tenants:
 ### Deploy Schemas
 
 ```bash
-# Deploy all schemas from configs/schemas/ at once
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_all_schemas.py
+# Production: loop tenant × profile against the runtime admin API
+# (same pattern as the Helm init job):
+RUNTIME_URL="http://localhost:8080"
+for tenant in acme:production globex:staging; do
+  curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+    -H 'Content-Type: application/json' \
+    -d "{\"tenant_id\": \"$tenant\"}"
+  for profile in video_colpali_smol500_mv_frame; do
+    curl -sfX POST "$RUNTIME_URL/admin/profiles/$profile/deploy" \
+      -H 'Content-Type: application/json' \
+      -d "{\"tenant_id\": \"$tenant\"}"
+  done
+done
 
-# Deploy specific schema file (actual script usage)
+# Dev: single-schema JSON deploy from the filesystem
 JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
-
-# Deploy multiple schema files
-for schema in configs/schemas/video_*_schema.json; do
-  JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py "$schema"
-done
 ```
 
-**Note:** For single-schema deployment use `deploy_json_schema.py`. For multi-tenant batch deployment use `deploy_all_schemas.py --tenant-id <tenant_id>`.
+**Note:** The runtime admin API is the production path and the only
+route that preserves peer-tenant schemas through redeploys.
+`deploy_json_schema.py` is kept for single-schema dev iteration.
 
 ### Available Schemas
 

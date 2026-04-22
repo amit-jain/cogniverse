@@ -229,31 +229,33 @@ sequenceDiagram
     API-->>Admin: {"tenant_full_id": "acme:production", "schemas_deployed": [...]}
 ```
 
-**Helper Script: deploy_all_schemas.py**
+**Deployment path: runtime admin API**
 
-The script supports both base schema deployment and tenant-specific deployment:
+Schema deployment flows through the runtime's admin API so it always
+goes through ``SchemaRegistry.deploy_schema`` (with the live-cluster
+merge that preserves peer-tenant schemas). The Helm init job at
+``charts/cogniverse/templates/init-jobs.yaml`` loops tenant × profile
+and issues these calls on install:
 
 ```mermaid
 sequenceDiagram
-    participant Admin as Admin
-    participant Script as deploy_all_schemas.py
+    participant Admin as Admin / Init job
+    participant Runtime as Runtime admin API
     participant Registry as SchemaRegistry
     participant Vespa as Vespa Config Server
 
-    alt No --tenant-id (Base Schema Mode)
-        Admin->>Script: python deploy_all_schemas.py
-        Script->>Script: Load all configs/schemas/*.json
-        Script->>Vespa: Deploy base schema templates
-        Vespa-->>Script: Base schemas deployed
-    else With --tenant-id (Tenant Mode)
-        Admin->>Script: python deploy_all_schemas.py --tenant-id acme:prod
-        loop For each base schema
-            Script->>Registry: deploy_schema(tenant_id, base_schema_name)
-            Registry->>Vespa: Deploy tenant-specific schema
-            Vespa-->>Registry: Schema deployed
-        end
-        Script-->>Admin: Tenant schemas deployed
-    end
+    Admin->>Runtime: POST /admin/tenants {tenant_id}
+    Runtime->>Registry: create tenant record + metadata schemas
+    Registry->>Vespa: Deploy tenant_metadata, agent_memories, ...
+    Vespa-->>Registry: Deployed
+
+    Admin->>Runtime: POST /admin/profiles/{profile}/deploy {tenant_id}
+    Runtime->>Registry: deploy_schema(tenant_id, profile)
+    Registry->>Registry: Merge registry + live Vespa schemas
+    Registry->>Vespa: ApplicationPackage (allow_schema_removal=False)
+    Vespa-->>Registry: Deployed
+    Registry-->>Runtime: tenant-scoped schema name
+    Runtime-->>Admin: 200 OK
 ```
 
 ### Schema Isolation in Vespa

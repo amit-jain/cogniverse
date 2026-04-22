@@ -123,11 +123,16 @@ flowchart TD
 
 1. **Schema Deployment** (First time or schema updates):
    ```bash
-   uv run python scripts/deploy_all_schemas.py
+   RUNTIME_URL=http://localhost:8080
+   curl -sfX POST "$RUNTIME_URL/admin/profiles/<profile>/deploy" \
+     -H 'Content-Type: application/json' \
+     -d '{"tenant_id": "<tenant>"}'
    ```
-   - Reads all schema JSON files from `configs/schemas/`
-   - Deploys schemas to backend as one application package
-   - Automatically extracts ranking strategies → `ranking_strategies.json`
+   - Reads the schema JSON from `configs/schemas/` via `FilesystemSchemaLoader`
+   - Deploys via `SchemaRegistry.deploy_schema` so the package is the
+     union of the new schema + everything already live in the cluster
+   - Ranking strategies are extracted at search time from the loaded
+     schemas — no separate `ranking_strategies.json` step
 
 2. **Profile Processing**:
    ```python

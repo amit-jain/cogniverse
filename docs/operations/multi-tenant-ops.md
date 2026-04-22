@@ -165,22 +165,31 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
 curl http://localhost:8080/document/v1/ | jq '.schemas'
 ```
 
-### Deploy All Schemas
+### Deploy Tenant Schemas
+
+Schema deployment is always per-tenant; the runtime admin API funnels
+through ``SchemaRegistry.deploy_schema`` so peer-tenant schemas are
+preserved through redeploys.
 
 ```bash
-# Deploy all schemas at once
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_all_schemas.py
+RUNTIME_URL=http://localhost:8080
 
-# Or deploy individual schemas
+# Register the tenant first if it isn't already
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "acme:production"}'
+
+# Deploy profile schemas for this tenant
 SCHEMAS=(
   "video_colpali_smol500_mv_frame"
   "video_videoprism_base_mv_chunk_30s"
 )
 
 for schema in "${SCHEMAS[@]}"; do
-  JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-    "configs/schemas/${schema}_schema.json"
-  echo "✓ Deployed: ${schema}"
+  curl -sfX POST "$RUNTIME_URL/admin/profiles/${schema}/deploy" \
+    -H 'Content-Type: application/json' \
+    -d '{"tenant_id": "acme:production"}'
+  echo "✓ Deployed: ${schema} for acme:production"
 done
 ```
 
@@ -752,8 +761,13 @@ echo "Restoring tenant: $TENANT_ID from $BACKUP_DIR"
 # 1. Restore configuration (via ConfigManager API - not file-based)
 # Configuration should be restored using config_manager.set_system_config()
 
-# 2. Deploy schemas (must be deployed before data restore)
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_all_schemas.py
+# 2. Re-register tenant + deploy its schemas via runtime admin API
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d "{\"tenant_id\": \"$TENANT_ID\"}"
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d "{\"tenant_id\": \"$TENANT_ID\", \"force\": true}"
 
 # 3. Restore backend documents
 for doc_file in "$BACKUP_DIR"/*_documents.json; do
@@ -798,7 +812,10 @@ def diagnose_tenant_schemas(tenant_id: str):
         print(f"   - {schema}")
         # To verify: curl http://localhost:8080/document/v1/{schema}/...
 
-    print(f"\n   To deploy: uv run python scripts/deploy_all_schemas.py")
+    print(
+        f"\n   To deploy, POST /admin/profiles/<profile>/deploy with "
+        f"tenant_id={tenant_id} against the runtime."
+    )
 
 # Usage
 diagnose_tenant_schemas("acme_corp")

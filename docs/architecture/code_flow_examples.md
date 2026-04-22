@@ -6,9 +6,16 @@ Real-world code execution flows through the Cogniverse multi-agent system.
 
 ### Deploy Tenant Schema
 ```bash
-# Deploy schema for a new tenant using deploy_all_schemas.py
-# Note: This script deploys schemas from configs/schemas directory
-uv run python scripts/deploy_all_schemas.py
+# Deploy schemas for a new tenant via the runtime admin API.
+# The runtime funnels through SchemaRegistry.deploy_schema so
+# peer-tenant schemas are preserved through every redeploy.
+RUNTIME_URL=http://localhost:8080
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "customer_a"}'
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "customer_a"}'
 ```
 
 **Code Flow:**

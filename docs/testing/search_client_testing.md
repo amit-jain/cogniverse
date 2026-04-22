@@ -152,8 +152,11 @@ curl localhost:8080/ApplicationStatus
 # Check if data is indexed (replace schema name with your deployed schema)
 curl "localhost:8080/search/?yql=select * from video_colpali_smol500_mv_frame where true&hits=1"
 
-# Deploy schemas using the following commands:
-# uv run python scripts/deploy_all_schemas.py
+# Deploy schemas via the runtime admin API (production path):
+# curl -sfX POST "$RUNTIME_URL/admin/tenants" -d '{"tenant_id": "..."}'
+# curl -sfX POST "$RUNTIME_URL/admin/profiles/<profile>/deploy" \
+#   -d '{"tenant_id": "..."}'
+# For single-schema dev iteration:
 # uv run python scripts/deploy_json_schema.py <path_to_schema.json>
 ```
 
