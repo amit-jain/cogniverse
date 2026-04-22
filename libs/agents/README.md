@@ -362,14 +362,14 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_agents.agent_registry import AgentRegistry
 
 # Create orchestrator with agent registry
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Execute multi-agent workflow — DSPy plans the pipeline automatically
 result = await orchestrator._process_impl(
     OrchestratorInput(
         query="Find videos about neural networks and create a summary",
-        tenant_id="default",
+        tenant_id="acme:production",
     )
 )
 

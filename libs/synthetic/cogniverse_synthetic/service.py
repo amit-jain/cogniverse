@@ -82,9 +82,18 @@ class SyntheticDataService:
             generator_config: Synthetic generator configuration
             llm_client: Optional LLM client for profile selection (if None, uses rule-based)
         """
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
         self.backend = backend
-        self.backend_config = backend_config or BackendConfig()
-        self.generator_config = generator_config or SyntheticGeneratorConfig()
+        # Fall back to cluster-wide empty configs when the caller doesn't
+        # supply one; per-tenant synthetic overrides flow through
+        # set_backend_config / set_synthetic_generator_config at runtime.
+        self.backend_config = backend_config or BackendConfig(
+            tenant_id=SYSTEM_TENANT_ID
+        )
+        self.generator_config = generator_config or SyntheticGeneratorConfig(
+            tenant_id=SYSTEM_TENANT_ID
+        )
 
         # Get field mappings from generator config
         field_mappings = self.generator_config.field_mappings

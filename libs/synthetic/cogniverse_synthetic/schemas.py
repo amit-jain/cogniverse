@@ -234,7 +234,7 @@ class SyntheticDataRequest(BaseModel):
     max_profiles: int = Field(
         default=3, ge=1, le=10, description="Maximum number of backend profiles to use"
     )
-    tenant_id: str = Field(default="default", description="Tenant identifier")
+    tenant_id: str = Field(..., description="Tenant identifier (required)")
 
     class Config:
         json_schema_extra = {
@@ -244,7 +244,7 @@ class SyntheticDataRequest(BaseModel):
                 "vespa_sample_size": 200,
                 "strategies": ["diverse"],
                 "max_profiles": 3,
-                "tenant_id": "default",
+                "tenant_id": "acme:production",
             }
         }
 

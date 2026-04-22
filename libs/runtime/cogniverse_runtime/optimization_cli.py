@@ -1364,14 +1364,26 @@ async def run_synthetic_generation(
             backend_config = config.get("backend", {})
             generator_config = config.get("synthetic", {})
 
-            # Create backend instance for content sampling
+            # Create backend instance for content sampling. Stamp the
+            # unpacked dicts with the caller's tenant_id if they don't
+            # already carry one — synthetic runs are always per-tenant.
             from cogniverse_foundation.config.unified_config import (
                 BackendConfig,
                 SyntheticGeneratorConfig,
             )
 
-            bc = BackendConfig(**backend_config) if isinstance(backend_config, dict) else backend_config
-            gc = SyntheticGeneratorConfig(**generator_config) if isinstance(generator_config, dict) else generator_config
+            if isinstance(backend_config, dict):
+                backend_config = {**backend_config}
+                backend_config.setdefault("tenant_id", tenant_id)
+                bc = BackendConfig(**backend_config)
+            else:
+                bc = backend_config
+            if isinstance(generator_config, dict):
+                generator_config = {**generator_config}
+                generator_config.setdefault("tenant_id", tenant_id)
+                gc = SyntheticGeneratorConfig(**generator_config)
+            else:
+                gc = generator_config
 
             from cogniverse_core.registries.backend_registry import BackendRegistry
 

@@ -623,6 +623,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
     synthetic_gen_config = SyntheticGeneratorConfig(
+        tenant_id=SYSTEM_TENANT_ID,
         optimizer_configs={
             "modality": modality_config,
             "routing": routing_config,

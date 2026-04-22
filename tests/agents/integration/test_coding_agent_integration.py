@@ -38,7 +38,7 @@ class TestCodingAgentUnit:
         """CodingInput validates required fields."""
         from cogniverse_agents.coding_agent import CodingInput
 
-        inp = CodingInput(task="Write a hello world function")
+        inp = CodingInput(task="Write a hello world function", tenant_id="test:unit")
         assert inp.task == "Write a hello world function"
         assert inp.language == "python"
         assert inp.max_iterations == 5
@@ -412,6 +412,7 @@ class TestCodingAgentWithOllama:
             task="Write a Python function called 'add' that takes two numbers and returns their sum. Print add(2, 3).",
             language="python",
             max_iterations=3,
+            tenant_id="test:unit",
         )
 
         result = await agent.process(input_data)
@@ -475,6 +476,7 @@ class TestCodingAgentWithOllama:
             task="Write a function that validates email addresses using regex. Print whether 'test@example.com' is valid.",
             language="python",
             max_iterations=3,
+            tenant_id="test:unit",
         )
 
         result = await agent.process(input_data)

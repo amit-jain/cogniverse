@@ -125,7 +125,7 @@ def generator_config():
 @pytest.fixture
 def backend_config():
     """Test backend configuration"""
-    return BackendConfig(profiles={})
+    return BackendConfig(profiles={}, tenant_id="test:unit")
 
 
 @pytest.fixture

@@ -812,7 +812,7 @@ class TestSpanNameByAgent:
 
         class _PinInput(AgentInput):
             query: str
-            tenant_id: str = "default"
+            tenant_id: str = "test:unit"
 
         class _PinOutput(AgentOutput):
             ok: bool

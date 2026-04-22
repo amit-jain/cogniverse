@@ -35,7 +35,7 @@ class TestAgent(DynamicDSPyMixin, ConfigAPIMixin):
         config: AgentConfig,
         app: FastAPI,
         config_manager,
-        tenant_id: str = "default",
+        tenant_id: str = "test:unit",
     ):
         self.initialize_dynamic_dspy(config)
         self.setup_config_endpoints(app, config_manager, tenant_id)

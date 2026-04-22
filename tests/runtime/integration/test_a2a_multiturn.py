@@ -22,7 +22,7 @@ def _send_message(
     text: str,
     context_id: str,
     agent_name: str = "search_agent",
-    tenant_id: str = "default",
+    tenant_id: str = "test:unit",
     task_id: str | None = None,
     rpc_id: int = 1,
 ) -> dict:

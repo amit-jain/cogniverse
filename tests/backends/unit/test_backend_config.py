@@ -101,7 +101,7 @@ class TestBackendConfigDataclasses:
         profile = BackendProfileConfig(
             profile_name="test_profile", schema_name="test_schema"
         )
-        config = BackendConfig(profiles={"test_profile": profile})
+        config = BackendConfig(profiles={"test_profile": profile}, tenant_id="test:unit")
 
         retrieved = config.get_profile("test_profile")
         assert retrieved is not None
@@ -112,7 +112,7 @@ class TestBackendConfigDataclasses:
 
     def test_backend_config_add_profile(self):
         """Test adding a profile"""
-        config = BackendConfig()
+        config = BackendConfig(tenant_id="test:unit")
         assert len(config.profiles) == 0
 
         profile = BackendProfileConfig(
@@ -132,7 +132,7 @@ class TestBackendConfigDataclasses:
             pipeline_config={"extract_keyframes": True, "transcribe_audio": False},
         )
 
-        config = BackendConfig(profiles={"base": base_profile})
+        config = BackendConfig(profiles={"base": base_profile}, tenant_id="test:unit")
 
         # Merge partial overrides
         merged = config.merge_profile(
@@ -158,7 +158,7 @@ class TestBackendConfigDataclasses:
             },
         )
 
-        config = BackendConfig(profiles={"base": base_profile})
+        config = BackendConfig(profiles={"base": base_profile}, tenant_id="test:unit")
 
         # Deep merge strategies
         merged = config.merge_profile(
@@ -178,7 +178,7 @@ class TestBackendConfigDataclasses:
 
     def test_backend_config_merge_profile_not_found(self):
         """Test merging with nonexistent profile raises error"""
-        config = BackendConfig()
+        config = BackendConfig(tenant_id="test:unit")
 
         with pytest.raises(ValueError, match="Base profile 'nonexistent' not found"):
             config.merge_profile("nonexistent", {"embedding_model": "new/model"})
@@ -500,7 +500,7 @@ class TestBackendConfigEdgeCases:
 
     def test_empty_backend_config_to_dict(self):
         """Test serializing empty backend config"""
-        config = BackendConfig()
+        config = BackendConfig(tenant_id="test:unit")
         data = config.to_dict()
 
         assert data["tenant_id"] == "default"

@@ -220,4 +220,4 @@ def test_generator_config():
 @pytest.fixture
 def test_backend_config():
     """Create test backend configuration"""
-    return BackendConfig(profiles={})
+    return BackendConfig(profiles={}, tenant_id="test:unit")

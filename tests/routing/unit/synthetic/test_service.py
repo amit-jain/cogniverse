@@ -78,7 +78,7 @@ class TestSyntheticDataService:
         """Test service with backend configuration"""
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        config = BackendConfig(profiles={})
+        config = BackendConfig(profiles={}, tenant_id="test:unit")
         service = SyntheticDataService(
             backend_config=config, generator_config=create_test_generator_config()
         )
@@ -306,7 +306,7 @@ class TestServiceWithBackendConfig:
         """Test that service uses profiles from backend config"""
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        config = BackendConfig(profiles={})
+        config = BackendConfig(profiles={}, tenant_id="test:unit")
 
         service = SyntheticDataService(
             backend_config=config, generator_config=create_test_generator_config()

@@ -243,9 +243,16 @@ class SystemConfig:
 
 @dataclass
 class RoutingConfigUnified:
-    """Unified routing configuration with tenant support"""
+    """Unified routing configuration with tenant support.
 
-    tenant_id: str = "default"
+    ``tenant_id`` is required — constructors/parsers that omit it will
+    raise ``ValueError`` via ``__post_init__``. The default value is
+    ``None`` only to satisfy the dataclass ordering rule (required
+    fields after defaulted fields is a syntax error); the runtime
+    check enforces the real contract.
+    """
+
+    tenant_id: Optional[str] = None
 
     # Routing mode
     routing_mode: str = "tiered"  # "tiered", "ensemble", "hybrid"
@@ -288,6 +295,11 @@ class RoutingConfigUnified:
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        require_tenant_id(self.tenant_id, source="RoutingConfigUnified")
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -323,9 +335,14 @@ class RoutingConfigUnified:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RoutingConfigUnified":
-        """Create from dictionary"""
+        """Create from dictionary. Raises if tenant_id is absent."""
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        tenant_id = require_tenant_id(
+            data.get("tenant_id"), source="RoutingConfigUnified.from_dict"
+        )
         return cls(
-            tenant_id=data.get("tenant_id", "default"),
+            tenant_id=tenant_id,
             routing_mode=data.get("routing_mode", "tiered"),
             enable_fast_path=data.get("enable_fast_path", True),
             enable_slow_path=data.get("enable_slow_path", True),
@@ -380,8 +397,13 @@ class AgentConfigUnified:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentConfigUnified":
-        """Create from dictionary"""
-        tenant_id = data.pop("tenant_id", "default")
+        """Create from dictionary. Raises if tenant_id is absent."""
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        data = dict(data)  # don't mutate caller's dict
+        tenant_id = require_tenant_id(
+            data.pop("tenant_id", None), source="AgentConfigUnified.from_dict"
+        )
         agent_config = AgentConfig.from_dict(data)
         return cls(tenant_id=tenant_id, agent_config=agent_config)
 
@@ -474,14 +496,24 @@ class BackendProfileConfig:
 
 @dataclass
 class BackendConfig:
-    """Backend configuration with multi-tenant profile support"""
+    """Backend configuration with multi-tenant profile support.
 
-    tenant_id: str = "default"
+    ``tenant_id`` is required; the ``None`` default is only a
+    dataclass-ordering placeholder. ``__post_init__`` raises via
+    ``require_tenant_id`` when callers omit it.
+    """
+
+    tenant_id: Optional[str] = None
     backend_type: str = "vespa"
     url: str = "http://localhost"
     port: int = 8080
     profiles: Dict[str, BackendProfileConfig] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        require_tenant_id(self.tenant_id, source="BackendConfig")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -498,7 +530,12 @@ class BackendConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BackendConfig":
-        """Create from dictionary"""
+        """Create from dictionary. Raises if tenant_id is absent."""
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        tenant_id = require_tenant_id(
+            data.get("tenant_id"), source="BackendConfig.from_dict"
+        )
         profiles_data = data.get("profiles", {})
         profiles = {
             name: BackendProfileConfig.from_dict(name, profile_data)
@@ -506,7 +543,7 @@ class BackendConfig:
         }
 
         return cls(
-            tenant_id=data.get("tenant_id", "default"),
+            tenant_id=tenant_id,
             backend_type=data.get("type", "vespa"),
             url=data.get("url", "http://localhost"),
             port=data.get("port", 8080),
@@ -829,15 +866,24 @@ class SyntheticGeneratorConfig:
     - Agent mapping rules
     - Profile selection scoring
     - Sampling configuration
+
+    ``tenant_id`` is required; the ``None`` default is only a
+    dataclass-ordering placeholder. ``__post_init__`` raises via
+    ``require_tenant_id`` when callers omit it.
     """
 
-    tenant_id: str = "default"
+    tenant_id: Optional[str] = None
     field_mappings: FieldMappingConfig = field(default_factory=FieldMappingConfig)
     optimizer_configs: Dict[str, OptimizerGenerationConfig] = field(
         default_factory=dict
     )
     sampling_config: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        require_tenant_id(self.tenant_id, source="SyntheticGeneratorConfig")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -853,7 +899,12 @@ class SyntheticGeneratorConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SyntheticGeneratorConfig":
-        """Create from dictionary"""
+        """Create from dictionary. Raises if tenant_id is absent."""
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        tenant_id = require_tenant_id(
+            data.get("tenant_id"), source="SyntheticGeneratorConfig.from_dict"
+        )
         field_mappings = FieldMappingConfig.from_dict(data.get("field_mappings", {}))
 
         optimizer_configs = {}
@@ -861,7 +912,7 @@ class SyntheticGeneratorConfig:
             optimizer_configs[key] = OptimizerGenerationConfig.from_dict(config_data)
 
         return cls(
-            tenant_id=data.get("tenant_id", "default"),
+            tenant_id=tenant_id,
             field_mappings=field_mappings,
             optimizer_configs=optimizer_configs,
             sampling_config=data.get("sampling_config", {}),

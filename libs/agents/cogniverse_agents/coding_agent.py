@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class CodingInput(AgentInput):
     task: str = Field(..., description="Coding task description")
     codebase_path: str = Field("", description="Path to codebase for context search")
-    tenant_id: str = Field("default", description="Tenant identifier")
+    tenant_id: str = Field(..., description="Tenant identifier (required)")
     max_iterations: int = Field(5, description="Maximum plan-code-execute iterations")
     language: str = Field("python", description="Primary programming language")
     rlm: Optional[RLMOptions] = Field(
@@ -71,7 +71,9 @@ class CodingOutput(AgentOutput):
 
 
 class CodingDeps(AgentDeps):
-    tenant_id: str = "default"
+    # tenant_id is enforced at CodingAgent.__init__ via require_tenant_id;
+    # the None default is only here to satisfy pydantic's field ordering.
+    tenant_id: Optional[str] = None
     sandbox_manager: Optional[Any] = None
 
 
@@ -154,6 +156,12 @@ class CodingAgent(
         search_fn: Any = None,
         sandbox_manager: Any = None,
     ):
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        # CodingDeps.tenant_id defaults to None so pydantic doesn't force
+        # an order constraint; enforce the real contract here.
+        require_tenant_id(deps.tenant_id, source="CodingAgent(deps.tenant_id)")
+
         if config is None:
             config = A2AAgentConfig(
                 agent_name="coding_agent",

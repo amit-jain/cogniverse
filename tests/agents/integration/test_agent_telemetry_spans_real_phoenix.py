@@ -414,7 +414,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             registry = AgentRegistry.__new__(AgentRegistry)
         registry.agents = {}
         registry.capabilities = {}
-        registry.tenant_id = "default"
+        registry.tenant_id = "test:unit"
         registry.config_manager = MagicMock()
         registry.config = {}
         registry.http_client = MagicMock()
