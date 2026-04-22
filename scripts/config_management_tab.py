@@ -665,6 +665,7 @@ def render_import_export_ui(manager, tenant_id: str):
     if st.button("📥 Export Configurations"):
         try:
             export_data = manager.store.export_configs(
+                tenant_id=tenant_id,
                 include_history=include_history,
             )
 

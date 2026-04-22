@@ -800,8 +800,13 @@ class TestTenantLifecycleDashboard:
         click_sub_tab(page, "Create Organization")
         page.wait_for_load_state("networkidle")
 
-        # Fill org form (use JS fill for hidden inputs)
-        inputs = page.locator('[data-testid="stTextInput"] input')
+        # Scope to the Create Organization tabpanel — the sidebar also
+        # has a text input (Active Tenant) and filling it with an org_id
+        # would corrupt the gate-validated tenant.
+        form_panel = page.locator(
+            '[role="tabpanel"]:has-text("Create Organization")'
+        ).last
+        inputs = form_panel.locator('[data-testid="stTextInput"] input')
         assert inputs.count() >= 2, (
             f"Create Organization form needs at least 2 text inputs, "
             f"got {inputs.count()}"
@@ -811,7 +816,7 @@ class TestTenantLifecycleDashboard:
         fill_input(inputs.nth(1), f"E2E Dashboard Org {org_id}")
 
         # Create Organization button MUST exist
-        submit_btn = page.locator('button:has-text("Create Organization")')
+        submit_btn = form_panel.locator('button:has-text("Create Organization")')
         assert submit_btn.count() > 0, (
             "Create Organization submit button must be present"
         )
