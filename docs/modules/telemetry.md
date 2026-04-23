@@ -1214,7 +1214,6 @@ provider_config: Dict[str, Any]     # Provider-specific config (dict interpreted
 # Multi-tenant settings
 tenant_project_template: str       # "cogniverse-{tenant_id}"
 tenant_service_template: str       # "cogniverse-{tenant_id}-{service}"
-default_tenant_id: str             # "default"
 max_cached_tenants: int            # LRU cache size (default: 100)
 tenant_cache_ttl_seconds: int      # Cache TTL (default: 3600)
 

@@ -81,17 +81,13 @@ cogniverse_runtime/
 │           ├── embedding_processors.py # Model-specific processors
 │           ├── document_builders.py # Document builders (internal)
 │           └── backend_factory.py   # Backend initialization
-├── search/                          # Search service
-│   ├── service.py                   # SearchService implementation
-│   └── base.py                      # Search base classes
+├── search/                          # Search base types
+│   └── base.py                      # SearchResult + backend search interface
 ├── admin/                           # Admin functionality
 │   ├── tenant_manager.py            # Tenant management
 │   ├── models.py                    # Admin models
 │   └── profile_models.py            # Profile configuration models
-├── inference/                       # Inference services
-│   └── modal_inference_service.py   # Modal-based inference
-└── instrumentation/                 # Monitoring
-    └── phoenix.py                   # Phoenix instrumentation
+└── inference_health_check.py        # Startup inference-service probes
 ```
 
 ---

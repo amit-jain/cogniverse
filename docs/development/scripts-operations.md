@@ -257,7 +257,7 @@ flowchart TB
 --output_dir PATH        # Output directory for processed data
 --backend {byaldi,vespa} # Search backend (default: vespa)
 --profile PROFILES       # Processing profiles (space-separated)
---tenant-id TENANT       # Tenant ID for schema isolation (default: "default_tenant")
+--tenant-id TENANT       # Tenant ID for schema isolation (required — no default)
 --max-concurrent INT     # Max concurrent videos (default: 3)
 --max-frames INT         # Maximum frames per video
 --test-mode             # Use test mode with limited frames

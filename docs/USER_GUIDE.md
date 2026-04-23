@@ -407,7 +407,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 - `--video_dir`: Directory containing videos
 - `--profile`: Embedding profile(s) - can specify multiple space-separated values
-- `--tenant-id`: Tenant ID for multi-tenancy (default: default_tenant)
+- `--tenant-id`: Tenant ID for multi-tenancy (required — no default)
 - `--backend`: Backend to use (choices: byaldi, vespa; default: vespa)
 - `--max-concurrent`: Maximum concurrent videos to process (default: 3)
 - `--output_dir`: Output directory for processed data

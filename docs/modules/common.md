@@ -355,7 +355,6 @@ class TelemetryConfig:
     # Multi-tenant settings
     tenant_project_template: str = "cogniverse-{tenant_id}"
     tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
-    default_tenant_id: str = "default"
     max_cached_tenants: int = 100
     tenant_cache_ttl_seconds: int = 3600
 
