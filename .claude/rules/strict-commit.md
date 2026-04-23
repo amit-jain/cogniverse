@@ -37,10 +37,18 @@ If ANY match, route through doc-verifier even if no docs/*.md files changed.
 
 ## Agent 1: lint-and-quality
 
-**What**: Fast static analysis — ruff lint + autofix, banned pattern scan, convention check.
+**What**: Fast static analysis — ruff lint + ruff format + banned pattern scan + convention check.
 **When**: Any code change (*.py, configs/, *.toml).
-**Must pass**: Zero ruff errors, zero banned patterns, zero convention violations.
+**Must pass**:
+- `uv run ruff check <paths>` — zero errors (autofix allowed)
+- `uv run ruff format --check <paths>` — zero reformatting required
+- Zero banned patterns, zero convention violations.
 **If fails**: Fix all issues before proceeding. Never suppress with `# noqa`.
+
+**Why both**: CI runs `ruff check` and `ruff format --check` as separate steps per
+module (e.g., `.github/workflows/vespa-tests.yml` → `lint` job). A file can pass
+`ruff check` but fail `ruff format --check` — they enforce different things (lint
+vs. formatter). Running only one locally lets the other slip into CI.
 
 ---
 

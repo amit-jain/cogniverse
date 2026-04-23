@@ -89,7 +89,7 @@ CODE+DOCS  → lint-and-quality → doc-verifier → quality-enforcer → commit
 ```
 
 **Agents**:
-- **lint-and-quality** — ruff autofix + banned pattern scan + convention check (fast, static)
+- **lint-and-quality** — ruff check + ruff format --check + banned pattern scan + convention check (fast, static)
 - **doc-verifier** — verify docs match actual code (imports, classes, configs, examples)
 - **quality-enforcer** — test discovery + execution, `--tb=long`, 0 failed + 0 skipped
 - **commit-enforcer** — imperative mood, no AI attribution, max 72 chars
@@ -136,6 +136,8 @@ The governing loop for all work: **gather context → take action → verify wor
 
 **Forced Verification**: NEVER report a task as complete until you have:
 - Run `uv run ruff check` on changed files
+- Run `uv run ruff format --check` on changed files (CI enforces this
+  separately from `ruff check` — a file can pass one and fail the other)
 - Run `uv run pytest` on the specific tests that exercise the changed code
 - Verified the test PASSES (not just that it runs)
 - If no test exists for the change, write one FIRST
