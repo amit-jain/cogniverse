@@ -101,28 +101,29 @@ def create_embedding_generator(
     if "schema_name" not in profile_config:
         profile_config["schema_name"] = schema_name
 
-    # Inject remote inference URL from SystemConfig if available. ColPali
-    # keeps a dedicated URL field; ColBERT-family services are resolved from
-    # the ``inference_service_urls`` dict keyed by the profile's
-    # ``inference_service`` name.
+    # Inject remote inference URL from SystemConfig if available. All model
+    # loaders route via ``inference_service_urls`` keyed by the profile's
+    # ``inference_service`` name; fall back to the legacy
+    # ``colpali_inference_url`` field when a ColPali/ColQwen profile has no
+    # ``inference_service`` set.
     if "remote_inference_url" not in profile_config and config_manager is not None:
         system_config = config_manager.get_system_config()
         loader = profile_config.get("model_loader", "")
-        if loader in ("colpali", "colqwen") and system_config.colpali_inference_url:
+        service_name = profile_config.get("inference_service")
+        service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+
+        if service_name:
+            url = service_urls.get(service_name)
+            if not url:
+                available = sorted(service_urls)
+                raise ValueError(
+                    f"Profile {schema_name!r} specifies "
+                    f"inference_service={service_name!r} but no URL is "
+                    f"configured. Deployed services: {available}."
+                )
+            profile_config["remote_inference_url"] = url
+        elif loader in ("colpali", "colqwen") and system_config.colpali_inference_url:
             profile_config["remote_inference_url"] = system_config.colpali_inference_url
-        elif loader == "colbert":
-            service_name = profile_config.get("inference_service")
-            if service_name:
-                service_urls = getattr(system_config, "inference_service_urls", {}) or {}
-                url = service_urls.get(service_name)
-                if not url:
-                    available = sorted(service_urls)
-                    raise ValueError(
-                        f"Profile {schema_name!r} specifies "
-                        f"inference_service={service_name!r} but no URL is "
-                        f"configured. Deployed services: {available}."
-                    )
-                profile_config["remote_inference_url"] = url
 
     # Create and return generator
     return EmbeddingGeneratorFactory.create(

@@ -632,6 +632,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
+        "inference_service": "image",
         "schema_config": {
           "schema_name": "video_colpali",
           "model_name": "ColPali",
@@ -673,6 +674,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
+        "inference_service": "image",
         "schema_config": {
           "schema_name": "image_colpali",
           "model_name": "ColPali",
@@ -839,6 +841,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colqwen",
+        "inference_service": "image",
         "model_specific": {
           "max_patches": 1024,
           "segment_duration": 30.0,

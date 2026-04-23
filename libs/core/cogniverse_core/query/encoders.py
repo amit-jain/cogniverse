@@ -243,7 +243,8 @@ class QueryEncoderFactory:
     Caches encoders by model_name so each model is loaded exactly once.
     """
 
-    _encoder_cache: dict = {}  # model_name → QueryEncoder instance
+    # (model_name, inference_service, embedding_dim) → QueryEncoder instance
+    _encoder_cache: dict = {}
 
     @classmethod
     def create_encoder(
@@ -285,18 +286,26 @@ class QueryEncoderFactory:
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
 
-        # Check cache first — models are expensive to load
-        if model_name in cls._encoder_cache:
-            logger.info(f"Reusing cached encoder for model: {model_name}")
-            return cls._encoder_cache[model_name]
+        # Cache key includes per-profile routing knobs so profiles sharing a
+        # model but declaring different inference services or embedding dims
+        # do not collapse onto the first-constructed encoder.
+        schema_config = profile_config.get("schema_config", {}) or {}
+        cache_key = (
+            model_name,
+            profile_config.get("inference_service"),
+            schema_config.get("embedding_dim"),
+        )
 
-        # Create new encoder
+        if cache_key in cls._encoder_cache:
+            logger.info(f"Reusing cached encoder for key: {cache_key}")
+            return cls._encoder_cache[cache_key]
+
         encoder = cls._create_encoder_instance(
             model_name, profile, profile_config, config
         )
-        cls._encoder_cache[model_name] = encoder
+        cls._encoder_cache[cache_key] = encoder
         logger.info(
-            f"Cached new encoder for model: {model_name} ({type(encoder).__name__})"
+            f"Cached encoder for key {cache_key} ({type(encoder).__name__})"
         )
         return encoder
 
