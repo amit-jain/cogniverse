@@ -31,7 +31,7 @@ class VespaConfigStore(ConfigStore):
     {
         "fields": {
             "config_id": "tenant_id:scope:service:config_key",
-            "tenant_id": "default",
+            "tenant_id": "acme:production",
             "scope": "system",
             "service": "system",
             "config_key": "system_config",

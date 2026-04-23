@@ -5,16 +5,16 @@ Phoenix, builds DSPy training examples, compiles optimized modules, and
 saves artifacts via ArtifactManager. Agents load artifacts at startup.
 
 Usage:
-    python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
-    python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
-    python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
-    python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
-    python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
-    python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
+    python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
     python -m cogniverse_runtime.optimization_cli --mode triggered \
-        --tenant-id default --agents search,summary \
-        --trigger-dataset optimization-trigger-default-20260403_040000
+        --tenant-id acme:production --agents search,summary \
+        --trigger-dataset optimization-trigger-acme-production-20260403_040000
 """
 
 import argparse
