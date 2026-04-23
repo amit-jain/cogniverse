@@ -46,8 +46,8 @@ class TestWorkflowIntelligence:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_record_workflow_execution_appends_to_history(self):
-        """record_workflow_execution converts a plan and appends to history."""
+    async def test_record_workflow_execution_is_noop(self):
+        """record_workflow_execution is a no-op; records are telemetry spans."""
         intelligence = _make_intelligence()
 
         workflow_plan = WorkflowPlan(
@@ -61,14 +61,12 @@ class TestWorkflowIntelligence:
             ],
         )
 
+        # record_workflow_execution is a no-op on the per-request hot path.
+        # Workflow records live in telemetry spans; batch optimization
+        # rebuilds in-memory history via load_historical_data.
         assert len(intelligence.workflow_history) == 0
         await intelligence.record_workflow_execution(workflow_plan)
-        assert len(intelligence.workflow_history) == 1
-        recorded = intelligence.workflow_history[0]
-        assert recorded.workflow_id == "test-workflow"
-        assert recorded.query == "find AI videos"
-        assert recorded.success is True
-        assert recorded.agent_sequence == ["video_search"]
+        assert len(intelligence.workflow_history) == 0
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -164,8 +162,8 @@ class TestSimplifiedWorkflowIntelligence:
         assert isinstance(report, dict)
 
     @pytest.mark.asyncio
-    async def test_record_workflow_execution_appends(self):
-        """record_workflow_execution converts plan and appends to history."""
+    async def test_record_workflow_execution_is_noop_on_hot_path(self):
+        """Per-request record_workflow_execution does not mutate in-memory history."""
         intelligence = _make_intelligence()
         plan = WorkflowPlan(
             workflow_id="test-wf",
@@ -174,8 +172,8 @@ class TestSimplifiedWorkflowIntelligence:
             tasks=[],
         )
         await intelligence.record_workflow_execution(plan)
-        assert len(intelligence.workflow_history) == 1
-        assert intelligence.workflow_history[0].workflow_id == "test-wf"
+        # No-op — spans carry the record; in-memory history unchanged.
+        assert len(intelligence.workflow_history) == 0
 
     @pytest.mark.asyncio
     async def test_record_execution_appends_to_history(self):

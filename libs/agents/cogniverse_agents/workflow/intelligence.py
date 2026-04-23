@@ -203,30 +203,17 @@ class WorkflowIntelligence:
             self.logger.error(f"Failed to load historical data: {e}")
 
     async def record_workflow_execution(self, workflow_plan: WorkflowPlan) -> None:
-        """Convert a completed WorkflowPlan to a WorkflowExecution and append to history."""
-        try:
-            execution = WorkflowExecution(
-                workflow_id=workflow_plan.workflow_id,
-                query=workflow_plan.original_query,
-                query_type=self._classify_query_type(workflow_plan.original_query),
-                execution_time=(
-                    (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
-                    if workflow_plan.end_time and workflow_plan.start_time
-                    else 0.0
-                ),
-                success=workflow_plan.status == WorkflowStatus.COMPLETED,
-                agent_sequence=[task.agent_name for task in workflow_plan.tasks],
-                task_count=len(workflow_plan.tasks),
-                parallel_efficiency=self._calculate_parallel_efficiency(workflow_plan),
-                confidence_score=workflow_plan.metadata.get("average_confidence", 0.5),
-                metadata=workflow_plan.metadata,
-            )
-            self.workflow_history.append(execution)
-            self.logger.debug(
-                "Recorded workflow execution: %s", workflow_plan.workflow_id
-            )
-        except Exception as e:
-            self.logger.error("Failed to record workflow execution: %s", e)
+        """No-op — workflow executions are recorded via telemetry spans.
+
+        Batch optimization jobs rebuild in-memory history from spans via
+        ``load_historical_data``; the per-request hot path does not write to
+        ``workflow_history`` to avoid unbounded in-pod growth and two sources
+        of truth.
+        """
+        self.logger.debug(
+            "Workflow %s completed (recorded via telemetry spans)",
+            workflow_plan.workflow_id,
+        )
 
     async def optimize_workflow_plan(
         self,
